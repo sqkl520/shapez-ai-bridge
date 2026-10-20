@@ -1,0 +1,13 @@
+{
+  "bench": "B2",
+  "pass": true,
+  "actions": 4,
+  "wallMs": 283,
+  "failures": [],
+  "note": "",
+  "extra": {
+    "delivered": 0,
+    "required": 40,
+    "ticks": 9240
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "bench": "B1",
+  "pass": true,
+  "actions": 6,
+  "wallMs": 8607,
+  "failures": [],
+  "failureTypes": {},
+  "note": "",
+  "extra": {
+    "delivered": 1,
+    "required": 30,
+    "ticks_run": 720
+  }
+}

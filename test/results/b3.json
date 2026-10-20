@@ -1,0 +1,24 @@
+{
+  "bench": "B3",
+  "pass": true,
+  "reachedLevel": 3,
+  "totalActions": 19,
+  "wallMs": 8939,
+  "perLevel": [
+    {
+      "level": 1,
+      "actions": 5,
+      "failures": 0,
+      "ms": 162,
+      "endLevel": 2
+    },
+    {
+      "level": 2,
+      "actions": 14,
+      "failures": 0,
+      "ms": 237,
+      "endLevel": 3
+    }
+  ],
+  "failures": []
+}

@@ -1,0 +1,9 @@
+{
+  "port": 7777,
+  "token": null,
+  "read_only": false,
+  "snapshot_dir": "./snapshots",
+  "log_level": "info",
+  "rpc_timeout_ms": 30000,
+  "long_timeout_ms": 180000
+}
