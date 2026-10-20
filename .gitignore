@@ -1,0 +1,32 @@
+# Node
+node_modules/
+
+# Bridge-side savegame snapshots (created by snapshot_save / save tools)
+snapshots/
+
+# Mod backups written by install scripts before overwriting an existing mod
+*.bak-*
+*.bak
+.backup
+
+# Savegame files backed up by snapshot_load before a restore
+*.pre-restore
+
+# ── Reverse-engineering artifacts (MUST NOT be distributed) ─────────────
+# recon/ holds extracts of the local game installation (game code copyright
+# tobspr Games, GPL-3.0). For local research only — never shipped.
+recon/
+
+# Belt-and-braces exclusions in case extraction output lands elsewhere
+*.asar
+app_extract/
+bundle.js
+bundle.pretty.js
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Claude Code local session state (never ship)
+.claude/
+

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "shapez": {
+      "command": "node",
+      "args": [
+        "C:/path/to/shapez-ai-bridge/src/mcp/server.mjs"
+      ],
+      "env": {
+        "SHAPEZ_BRIDGE_URL": "http://127.0.0.1:7777"
+      }
+    }
+  }
+}

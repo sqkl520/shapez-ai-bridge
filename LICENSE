@@ -1,0 +1,41 @@
+MIT License
+
+Copyright (c) 2026 shapez-ai-bridge contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+Third-party components
+================================================================================
+
+src/shared/lz-string.cjs
+    LZ-based compression algorithm (lz-string), version 1.4.5.
+    Copyright (c) 2013 Pieroxy <pieroxy@pieroxy.net>
+    Dual-licensed: you may use this component under the terms of either the
+    MIT License or the WTFPL v2. The vendored copy keeps its original header;
+    the full MIT text shipped with it is in src/shared/lz-string.LICENSE.txt.
+    WTFPL v2 text: http://www.wtfpl.net/
+
+shapez.io
+    shapez.io is (c) tobspr Games (https://shapez.io). This repository contains
+    NO shapez.io game code. All integration happens exclusively through the
+    game's official mod API and the runtime introspection documented in
+    PHASE0-RECON.md. Note: installing any mod disables Steam achievements and
+    the puzzle DLC in shapez.io - that is official game behavior, not a
+    limitation of this project.

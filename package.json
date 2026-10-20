@@ -1,0 +1,18 @@
+{
+  "name": "shapez-ai-bridge",
+  "version": "0.1.0",
+  "description": "AI-operable interface for shapez.io — mod + bridge + MCP",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "bridge": "node src/bridge/bridge.mjs",
+    "mcp": "node src/mcp/server.mjs",
+    "agent": "node src/agent/play.mjs",
+    "smoke": "node scripts/smoke_test.mjs",
+    "selftest:bridge": "node src/bridge/selftest.mjs",
+    "selftest:mcp": "node src/mcp/selftest.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
