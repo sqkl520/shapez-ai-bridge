@@ -99,6 +99,34 @@ for (const k in COMPAT.mods || {}) {
     for (const g of COMPAT.mods[k].game || []) SUPPORTED_GAMES.add(g);
 }
 
+// ─────────────────────── 安全：Origin 校验（红队实证过：无校验时任意网页可遥控游戏） ───────────────────────
+// 威胁模型：浏览器里的任意网页可以发起 WebSocket（WS 无同源策略）和
+// text/plain POST（免 CORS 预检）连到 127.0.0.1:7777，从而遥控游戏。
+// 合法调用方只有两类：
+//   - 游戏 mod：Electron 渲染进程，页面是 file:// → Origin 为 "file://" 或以 file:// 开头
+//   - 本地脚本/MCP/工具：Node 的 WebSocket/fetch 不发 Origin（或发 "null"）
+// 因此：拒绝一切 http(s) 来源的 Origin。
+function originAllowed(req) {
+    const origin = req.headers["origin"];
+    if (!origin) return true; // Node 客户端（mod 之外的本地工具）
+    if (origin === "null") return true; // file:// 的某些 UA 上报 null
+    if (origin.startsWith("file://")) return true; // Electron file:// 页面（游戏 mod）
+    return false; // 网页（http/https 来源）——拒绝
+}
+
+function rejectBadOrigin(res) {
+    res.writeHead(403, { "content-type": "application/json" });
+    res.end(
+        JSON.stringify({
+            error: {
+                code: 403,
+                message: "forbidden_origin: browser pages are not allowed to talk to this bridge",
+                data: { code_name: "forbidden_origin", detail: "Only the game mod (file://) and local non-browser clients may connect" },
+            },
+        })
+    );
+}
+
 // ─────────────────────── 存档目录与快照 ───────────────────────
 
 function getSavesDir() {
@@ -353,6 +381,29 @@ async function handleClientRpc(method, params) {
 
 // ─────────────────────── 快照（§11.3） ───────────────────────
 
+/**
+ * 校验快照名（红队实证：未过滤时 `..\` 可穿越目录、在快照目录外读写任意文件）。
+ * 只允许字母数字、点、下划线、连字符与空格；上限 100 字符；不允许路径分隔符。
+ * 返回 null 表示非法。
+ */
+function sanitizeSnapshotName(name) {
+    if (typeof name !== "string") return null;
+    const trimmed = name.trim();
+    if (!trimmed || trimmed.length > 100) return null;
+    if (trimmed.includes("..") || trimmed.includes("/") || trimmed.includes("\\")) return null;
+    if (trimmed.includes(":")) return null; // drive letters / NTFS streams
+    if (!/^[A-Za-z0-9 ._-]+$/.test(trimmed)) return null;
+    return trimmed;
+}
+
+/** 解析并确认路径确实落在期望目录内（纵深防御：即使名字通过了白名单，也要 resolve 校验） */
+function resolveInsideDir(dir, filename) {
+    const base = path.resolve(dir);
+    const full = path.resolve(base, filename);
+    if (full !== base && !full.startsWith(base + path.sep)) return null;
+    return full;
+}
+
 async function snapshotSave(p) {
     ensureSnapshotDir();
     const res = await callMod("save_now", {});
@@ -373,8 +424,13 @@ async function snapshotSave(p) {
         String(ts.getHours()).padStart(2, "0") +
         String(ts.getMinutes()).padStart(2, "0") +
         String(ts.getSeconds()).padStart(2, "0");
-    const name = p.name || `auto-${stamp}-lv${res.level ?? "?"}`;
-    const dst = path.join(SNAPSHOT_DIR, `${name}.bin`);
+    const rawName = p.name === undefined || p.name === null ? `auto-${stamp}-lv${res.level ?? "?"}` : p.name;
+    const name = sanitizeSnapshotName(rawName);
+    if (!name) {
+        throw rpcError(2001, "invalid snapshot name", "Use letters, digits, spaces, dot, underscore or hyphen (max 100 chars; no path separators)");
+    }
+    const dst = resolveInsideDir(SNAPSHOT_DIR, `${name}.bin`);
+    if (!dst) throw rpcError(2001, "snapshot name resolves outside the snapshot directory");
     fs.copyFileSync(src, dst);
     const sidecar = {
         name,
@@ -383,17 +439,20 @@ async function snapshotSave(p) {
         saved_at: ts.toISOString(),
         game_version: (mod && mod.hello && mod.hello.game_version) || null,
     };
-    fs.writeFileSync(path.join(SNAPSHOT_DIR, `${name}.json`), JSON.stringify(sidecar, null, 2));
+    fs.writeFileSync(resolveInsideDir(SNAPSHOT_DIR, `${name}.json`), JSON.stringify(sidecar, null, 2));
     info(`snapshot saved: ${name} (${internalId}, lv${res.level})`);
     return { ok: true, name, path: dst, internal_id: internalId, level: res.level ?? null };
 }
 
 async function snapshotLoad(p) {
     ensureSnapshotDir();
-    const name = p.name;
-    if (!name || typeof name !== "string") throw rpcError(2001, "snapshot_load requires 'name'");
-    const sidecarPath = path.join(SNAPSHOT_DIR, `${name}.json`);
-    const binPath = path.join(SNAPSHOT_DIR, `${name}.bin`);
+    const name = sanitizeSnapshotName(p.name);
+    if (!name) {
+        throw rpcError(2001, "snapshot_load requires a valid 'name'", "Letters, digits, spaces, dot, underscore, hyphen only");
+    }
+    const sidecarPath = resolveInsideDir(SNAPSHOT_DIR, `${name}.json`);
+    const binPath = resolveInsideDir(SNAPSHOT_DIR, `${name}.bin`);
+    if (!sidecarPath || !binPath) throw rpcError(2001, "snapshot name resolves outside the snapshot directory");
     if (!fs.existsSync(sidecarPath) || !fs.existsSync(binPath)) {
         throw rpcError(2003, `snapshot '${name}' not found in ${SNAPSHOT_DIR}`, "Run snapshot_save first, or check the name");
     }
@@ -403,14 +462,22 @@ async function snapshotLoad(p) {
     } catch (e) {
         throw rpcError(2003, `snapshot sidecar '${name}.json' is corrupted: ${e.message}`);
     }
-    const dst = path.join(SAVES_DIR, `savegame-${sidecar.internal_id}.bin`);
+    // sidecar 的 internal_id 同样要过滤：快照文件可能来自不可信来源
+    const internalId = sidecar.internal_id;
+    if (typeof internalId !== "string" || !/^[A-Za-z0-9_-]{4,80}$/.test(internalId)) {
+        throw rpcError(2003, `snapshot sidecar '${name}.json' has an invalid internal_id`);
+    }
+    const dst = resolveInsideDir(SAVES_DIR, `savegame-${internalId}.bin`);
+    if (!dst) throw rpcError(2001, "resolved savegame path is invalid");
     if (fs.existsSync(dst)) {
-        fs.copyFileSync(dst, dst + ".pre-restore");
+        // 带时间戳的备份：连续 restore 不会互相覆盖（红队发现单槽位 .pre-restore 会丢原始档）
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        fs.copyFileSync(dst, `${dst}.pre-restore-${stamp}`);
     }
     fs.copyFileSync(binPath, dst);
-    await callMod("load_save", { internal_id: sidecar.internal_id });
-    info(`snapshot restored: ${name} -> ${sidecar.internal_id}`);
-    return { ok: true, name, internal_id: sidecar.internal_id, loading: true };
+    await callMod("load_save", { internal_id: internalId });
+    info(`snapshot restored: ${name} -> ${internalId}`);
+    return { ok: true, name, internal_id: internalId, loading: true };
 }
 
 // ─────────────────────── HTTP 服务 ───────────────────────
@@ -448,6 +515,12 @@ const server = http.createServer(async (req, res) => {
 
     if (!authorized(req)) {
         return send(401, { error: { code: 401, message: "unauthorized: provide Authorization: Bearer <token>" } });
+    }
+
+    // 拒绝浏览器页面（http/https 来源）。text/plain POST 可免 CORS 预检，
+    // 因此不能在 handler 里才拦——这里是最早的关口。
+    if (!originAllowed(req)) {
+        return rejectBadOrigin(res);
     }
 
     if (req.method === "GET" && req.url.startsWith("/status")) {
@@ -490,6 +563,12 @@ server.on("upgrade", (req, socket, head) => {
     const url = req.url.split("?")[0];
     if (!authorized(req)) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+    }
+    if (!originAllowed(req)) {
+        // 恶意网页向量：WS 无同源策略，必须在这里拦
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         socket.destroy();
         return;
     }

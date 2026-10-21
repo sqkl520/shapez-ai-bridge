@@ -55,9 +55,11 @@ try {
 const BRIDGE_TOKEN = argv.token || process.env.SHAPEZ_BRIDGE_TOKEN || null;
 const BRIDGE_KIND = BRIDGE_URL.protocol === "https:" ? https : http;
 
-// Request timeout for bridge HTTP calls (ms). Generous: `step`/`await` and
-// `snapshot_*` can legitimately take a while (await up to timeout_ticks).
-const BRIDGE_TIMEOUT_MS = 120_000;
+// Request timeout for bridge HTTP calls (ms). Must be >= the bridge's own
+// long_timeout_ms (180_000, bridge.config) or the MCP layer would cut a
+// legitimately-running long `await`/`step` short and misreport it as
+// "bridge not reachable" — a red-team finding. Keep this strictly above it.
+const BRIDGE_TIMEOUT_MS = 200_000;
 
 function log(...args) {
   process.stderr.write(`[shapez-mcp] ${args.join(" ")}\n`);

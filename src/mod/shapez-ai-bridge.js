@@ -19,15 +19,20 @@ const METADATA = {
     author: "shapez-ai-bridge contributors",
     description:
         "WebSocket bridge that exposes observations and actions for AI agents (MCP-compatible). See docs/PROTOCOL.md.",
-    website: "https://github.com/",
+    website: "https://github.com/sqkl520/shapez-ai-bridge",
     minimumGameVersion: "1.5.6",
-    // 任何 mod 都会禁用成就（官方行为），但我们不写入存档结构，无需污染存档记录
-    doesNotAffectSavegame: false,
+    // true = this mod does not touch savegame structure, so it is NOT written into
+    // the savegame's mod list. The game's loader filter is `!doesNotAffectSavegame`
+    // (recon/bundle.pretty.js `_getModsListForSavega`), i.e. false would make every
+    // save record the mod and warn "missing mods" after uninstall. We only read the
+    // world and place/remove entities through official APIs — the savegame shape is
+    // unchanged, so true is the correct value.
+    doesNotAffectSavegame: true,
     settings: {
         ws_url: "ws://127.0.0.1:7777/mod",
-        allow_step: true, // 允许 step/await 快进（会短时冻结画面）
-        allow_write: true, // 允许放置/删除类动作
-        max_entities: 20000, // 观测实体硬上限
+        allow_step: true, // allow step/await fast-forward (briefly freezes rendering)
+        allow_write: true, // allow placement/deletion actions
+        max_entities: 20000, // hard cap on entities in one observation
     },
 };
 
