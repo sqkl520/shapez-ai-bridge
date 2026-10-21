@@ -352,9 +352,19 @@ function callMod(method, params) {
         }
         const id = nextRpcId++;
         const timeoutMs = needsLongTimeout(method, params) ? CFG.long_timeout_ms : CFG.rpc_timeout_ms;
+        // Protocol §7: an `await` that runs out of wall-clock budget is a 2005
+        // (condition not met — adjust strategy), not a 2004 (something is broken).
+        // Also covers a batch whose actions include an await.
+        const isAwait =
+            (method === "act" && params && params.op === "await") ||
+            (method === "batch" && params && Array.isArray(params.actions) && params.actions.some(a => a && a.op === "await"));
         const timer = setTimeout(() => {
             mod.pending.delete(id);
-            reject(rpcError(2004, `mod did not respond to '${method}' within ${timeoutMs}ms`, "The game may be frozen or busy; check the game window"));
+            if (isAwait) {
+                reject(rpcError(2005, `await exceeded the bridge's ${timeoutMs}ms budget before its condition was met`, "Not an error state: raise timeout_ticks or adjust the plan"));
+            } else {
+                reject(rpcError(2004, `mod did not respond to '${method}' within ${timeoutMs}ms`, "The game may be frozen or busy; check the game window"));
+            }
         }, timeoutMs);
         mod.pending.set(id, { resolve, reject, timer });
         const ok = sendJson(mod, { jsonrpc: "2.0", id, method, params: params || {} });
