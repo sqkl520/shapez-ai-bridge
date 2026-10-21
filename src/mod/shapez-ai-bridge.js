@@ -1247,6 +1247,7 @@ class Mod extends shapez.Mod {
     opStep(root, a) {
         const ticks = a.ticks === undefined ? 60 : a.ticks;
         const collect = !!a.collect;
+        const base = this.captureDiffBaseline(root);
         const out = this.stepTicks(root, ticks);
         const res = {
             ok: true,
@@ -1257,6 +1258,9 @@ class Mod extends shapez.Mod {
             wall_ms: out.wall_ms,
             tick: root.time.now(),
         };
+        // 差分摘要：AI 无需再发一次观测即可知道推进是否有效（可省往返与 token）。
+        const diff = this.computeDiff(root, base);
+        if (diff) res.diff = diff;
         if (collect) {
             res.observation = this.observe({ max_entities: 2000 });
         }
@@ -1278,6 +1282,7 @@ class Mod extends shapez.Mod {
             throw this.rpcError(2001, "invalid_action", "chunk must be int in [1, " + MAX_STEP_TICKS + "]");
         }
         const baseline = this.awaitBaseline(root, until);
+        const diffBase = this.captureDiffBaseline(root);
         let ticksRun = 0; // 请求量（预算视角）
         let actualTicks = 0; // 真实推进的 tick 数（stepTicks 回报）
         let met = false;
@@ -1303,6 +1308,8 @@ class Mod extends shapez.Mod {
             wall_ms: Math.round(performance.now() - t0),
             tick: root.time.now(),
         };
+        const diff = this.computeDiff(root, diffBase);
+        if (diff) res.diff = diff;
         if (a.collect) {
             res.observation = this.observe({ max_entities: 2000 });
         }
@@ -1319,6 +1326,50 @@ class Mod extends shapez.Mod {
                 return { count: root.entityMgr.entities.length };
         }
         return {};
+    }
+
+    /**
+     * step/await 的差分摘要（借鉴 civ6-mcp 的 end_turn 模式）：
+     * "这段时间里世界发生了什么" —— 交付数变化、等级变化、实体数变化、速度变化。
+     * 让 AI 不必在快进后再发一次完整观测就能知道推进是否有效（省 token、省往返）。
+     */
+    captureDiffBaseline(root) {
+        try {
+            return {
+                tick: root.time.now(),
+                level: root.hubGoals.level,
+                delivered: root.hubGoals.getCurrentGoalDelivered(),
+                required: root.hubGoals.currentGoal ? root.hubGoals.currentGoal.required : null,
+                entityCount: root.entityMgr.entities.length,
+                speed: this.speedIdToName(root.time.getSpeed().getId()),
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /** 与 captureDiffBaseline 配对；返回人类/AI 可读的增量字段。 */
+    computeDiff(root, base) {
+        if (!base) return null;
+        try {
+            const now = this.captureDiffBaseline(root);
+            if (!now) return null;
+            const diff = {
+                ticks_elapsed: Math.round((now.tick - base.tick) * 10) / 10,
+                delivered_delta: now.delivered - base.delivered,
+                entities_delta: now.entityCount - base.entityCount,
+                level_changed: now.level !== base.level,
+                level: now.level,
+            };
+            if (now.level !== base.level) diff.level_from = base.level;
+            if (now.required !== null) {
+                diff.delivered = now.delivered;
+                diff.required = now.required;
+            }
+            return diff;
+        } catch (e) {
+            return null;
+        }
     }
 
     awaitCheck(root, until, baseline) {
