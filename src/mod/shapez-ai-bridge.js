@@ -220,6 +220,16 @@ class Mod extends shapez.Mod {
     handleBridgeMessage(msg) {
         // 桥接只发请求（带 id）或通知（无 id）。本 Mod 对未知 method 回 -32601。
         if (msg && msg.id !== undefined && msg.method !== undefined) {
+            // 状态切换类 RPC 必须串行（红队发现：并发 load_save/new_game 时第二次
+            // moveToState 会撞上游戏的状态机 fade 保护而被静默忽略，但 mod 仍回 ok）。
+            // 用一条 Promise 链保证顺序执行；其余 RPC 走原路径不被拖慢。
+            if (msg.method === "load_save" || msg.method === "new_game") {
+                this.stateChain = (this.stateChain || Promise.resolve()).then(
+                    () => this.handleRpc(msg),
+                    () => this.handleRpc(msg)
+                );
+                return;
+            }
             this.handleRpc(msg).catch(err => {
                 this.sendError(msg.id, 2003, "mod_error", String(err && err.stack ? err.stack : err));
             });
@@ -1141,9 +1151,11 @@ class Mod extends shapez.Mod {
             throw this.rpcError(2001, "invalid_action", "ticks must be int in [1, " + MAX_STEP_TICKS + "]");
         }
         if (root.hud.shouldPauseGame()) {
+            // 2002 game_rejected（不是 2003 mod_error）：世界状态不允许推进，
+            // 调用方应"关掉对话框再试"，属于需重新规划的状态问题（红队指出的语义误用）。
             throw this.rpcError(
-                2003,
-                "mod_error",
+                2002,
+                "game_rejected",
                 "game logic is paused by an open dialog/overlay; step would not advance",
                 "Close the in-game dialog (or avoid opening menus) and retry"
             );
@@ -1170,7 +1182,12 @@ class Mod extends shapez.Mod {
         }
         const wallMs = performance.now() - t0;
         const advanced = root.time.now() - tick0;
-        return { ticks_run: ticks, ticks_advanced_seconds: advanced, wall_ms: Math.round(wallMs) };
+        // 真实 tick 数 = 逻辑时间增量 ÷ 每 tick 秒数。
+        // 不能用调用次数：performTicks 每次按预算消费，paused 时一次调用推进 0 tick，
+        // fast_forward（×3 时间乘数）时一次调用可推进多个 tick（红队发现）。
+        const deltaSeconds = root.dynamicTickrate.deltaSeconds || 1 / 60;
+        const actualTicks = Math.round(advanced / deltaSeconds);
+        return { ticks_run: actualTicks, ticks_requested: ticks, ticks_advanced_seconds: advanced, wall_ms: Math.round(wallMs) };
     }
 
     opStep(root, a) {
@@ -1181,6 +1198,8 @@ class Mod extends shapez.Mod {
             ok: true,
             op: "step",
             ticks_run: out.ticks_run,
+            ticks_requested: out.ticks_requested,
+            ticks_advanced_seconds: out.ticks_advanced_seconds,
             wall_ms: out.wall_ms,
             tick: root.time.now(),
         };
@@ -1205,13 +1224,15 @@ class Mod extends shapez.Mod {
             throw this.rpcError(2001, "invalid_action", "chunk must be int in [1, " + MAX_STEP_TICKS + "]");
         }
         const baseline = this.awaitBaseline(root, until);
-        let ticksRun = 0;
+        let ticksRun = 0; // 请求量（预算视角）
+        let actualTicks = 0; // 真实推进的 tick 数（stepTicks 回报）
         let met = false;
         const t0 = performance.now();
         while (ticksRun < timeout) {
             const n = Math.min(chunk, timeout - ticksRun);
-            this.stepTicks(root, n);
+            const stepOut = this.stepTicks(root, n);
             ticksRun += n;
+            actualTicks += stepOut.ticks_run || 0;
             if (this.awaitCheck(root, until, baseline)) {
                 met = true;
                 break;
@@ -1223,7 +1244,8 @@ class Mod extends shapez.Mod {
             until,
             met,
             timeout: !met,
-            ticks_run: ticksRun,
+            ticks_run: actualTicks,
+            ticks_requested: ticksRun,
             wall_ms: Math.round(performance.now() - t0),
             tick: root.time.now(),
         };
