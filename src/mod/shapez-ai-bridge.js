@@ -38,7 +38,37 @@ const METADATA = {
 
 const BRIDGE_PROTOCOL = 1;
 const BRIDGE_MOD_VERSION = "0.1.0";
-const GAME_VERSION = "1.5.6";
+// Fallback only. The real version is read at runtime from shapez.BUILD_OPTIONS
+// (the game's own build metadata, bundled as BUILD_VERSION / BUILD_COMMIT_HASH).
+// A mod that hard-codes the version can never notice a game update — the red
+// team flagged exactly that (the 1002/2006 checks would silently never fire).
+const GAME_VERSION_FALLBACK = "1.5.6";
+const MINIMUM_GAME_VERSION = "1.5.6";
+
+/** The running game's true version, read from the game itself when available. */
+function detectGameVersion() {
+    try {
+        const shapez = /** @type {any} */ (window).shapez;
+        if (shapez && shapez.BUILD_OPTIONS && typeof shapez.BUILD_OPTIONS.BUILD_VERSION === "string") {
+            return shapez.BUILD_OPTIONS.BUILD_VERSION;
+        }
+    } catch (e) {
+        /* fall through */
+    }
+    return GAME_VERSION_FALLBACK;
+}
+
+function detectBuildHash() {
+    try {
+        const shapez = /** @type {any} */ (window).shapez;
+        if (shapez && shapez.BUILD_OPTIONS && typeof shapez.BUILD_OPTIONS.BUILD_COMMIT_HASH === "string") {
+            return shapez.BUILD_OPTIONS.BUILD_COMMIT_HASH;
+        }
+    } catch (e) {
+        /* fall through */
+    }
+    return null;
+}
 
 // 重连参数（协议 §8）
 const RECONNECT_MIN_MS = 3000;
@@ -78,9 +108,33 @@ class Mod extends shapez.Mod {
     }
 
     init() {
-        this.log("mod initialized; bridge url =", this.settings.ws_url);
+        this.log("mod initialized; bridge url =", this.settings.ws_url, "; game version:", this.gameVersion());
         this.hookGameLifecycle();
         this.connect();
+    }
+
+    /** 运行中游戏的真实版本（读游戏的构建元数据，只解析一次）。 */
+    gameVersion() {
+        if (!this._gameVersion) {
+            this._gameVersion = detectGameVersion();
+            const hash = detectBuildHash();
+            if (hash) this.log("detected game build:", this._gameVersion, "@", hash);
+            if (this._gameVersion !== MINIMUM_GAME_VERSION) {
+                // 硬失败路径的另一半：让桥接（按 compat.json）拒绝路由。
+                // mod 侧不主动拒绝——版本兼容策略由桥接统一裁决。
+                this.warn(
+                    "game version", this._gameVersion, "differs from the tested baseline", MINIMUM_GAME_VERSION,
+                    "- the bridge will reject routing unless compat.json lists this version"
+                );
+            }
+        }
+        return this._gameVersion || GAME_VERSION_FALLBACK;
+    }
+
+    /** 当前游戏的构建哈希（用于诊断；拿不到时为 null）。 */
+    buildHash() {
+        if (this._buildHash === undefined) this._buildHash = detectBuildHash();
+        return this._buildHash;
     }
 
     // ─────────────────────────── 日志 ───────────────────────────
@@ -201,7 +255,7 @@ class Mod extends shapez.Mod {
             params: {
                 protocol: BRIDGE_PROTOCOL,
                 mod_version: BRIDGE_MOD_VERSION,
-                game_version: GAME_VERSION,
+                game_version: this.gameVersion(),
                 features: [
                     "observe",
                     "act",
@@ -332,7 +386,7 @@ class Mod extends shapez.Mod {
         const out = {
             protocol: BRIDGE_PROTOCOL,
             mod_version: BRIDGE_MOD_VERSION,
-            game_version: GAME_VERSION,
+            game_version: this.gameVersion(),
             in_game: !!root,
             features: ["observe", "act", "batch", "step", "await", "blueprint", "screenshot", "save", "new_game"],
             allow_write: !!this.settings.allow_write,
@@ -461,7 +515,7 @@ class Mod extends shapez.Mod {
         const out = {
             protocol: BRIDGE_PROTOCOL,
             mod_version: BRIDGE_MOD_VERSION,
-            game_version: GAME_VERSION,
+            game_version: this.gameVersion(),
             in_game: true,
             tick: root.time.now(),
             paused: root.time.getIsPaused(),
@@ -1329,7 +1383,7 @@ class Mod extends shapez.Mod {
         for (const p of picks) {
             flat.push(p.code, p.x - minX, p.y - minY, p.rot);
         }
-        const payload = { v: 1, gv: GAME_VERSION, w: [minX, minY], e: flat };
+        const payload = { v: 1, gv: this.gameVersion(), w: [minX, minY], e: flat };
         const json = JSON.stringify(payload);
         const shapez = /** @type {any} */ (window).shapez;
         const text = "SZBP1." + shapez.compressX64(json);
@@ -1366,11 +1420,11 @@ class Mod extends shapez.Mod {
         if (!payload || payload.v !== 1 || !Array.isArray(payload.e) || payload.e.length % 4 !== 0) {
             throw this.rpcError(2001, "invalid_action", "blueprint payload malformed (expect v1 e[code,dx,dy,rot,...])");
         }
-        if (payload.gv !== GAME_VERSION) {
+        if (payload.gv !== this.gameVersion()) {
             throw this.rpcError(
                 2006,
                 "blueprint_incompatible",
-                "blueprint was exported from game version " + payload.gv + ", current is " + GAME_VERSION,
+                "blueprint was exported from game version " + payload.gv + ", current is " + this.gameVersion(),
                 "Re-export the blueprint with this game version"
             );
         }
