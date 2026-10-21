@@ -384,6 +384,49 @@ try {
             fsx.rmSync(tmpSnap, { recursive: true, force: true });
         }
     });
+    await check("SECURITY: snapshot name traversal is rejected", async () => {
+        // Locks the fix for the red-team finding: `..\` / slashes / absolute
+        // paths / drive letters must never resolve outside the snapshot dir.
+        const attempts = ["..\\..\\evil", "../../etc/passwd", "C:\\Windows\\evil", "a/../b", "a\\b", "..", "x:stream"];
+        for (const name of attempts) {
+            const r = await rpcHttp("snapshot_load", { name });
+            assert(r.error && r.error.code === 2001, `traversal "${name}" must be 2001, got ${JSON.stringify(r.error || r.result)}`);
+        }
+        // A legitimate name is not rejected by the sanitizer (it fails later, at 1005/2003, not 2001)
+        const ok = await rpcHttp("snapshot_load", { name: "my snapshot-01" });
+        assert(ok.error && ok.error.code !== 2001, "legit name must pass the sanitizer");
+    });
+
+    await check("SECURITY: browser origins are rejected, file:// is not", async () => {
+        // Raw WebSocket handshake so we control the Origin header exactly.
+        const net = await import("node:net");
+        const handshake = origin =>
+            new Promise(resolve => {
+                const s = net.connect(PORT, "127.0.0.1", () => {
+                    s.write(
+                        "GET /mod HTTP/1.1\r\nHost: 127.0.0.1:" + PORT + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n" +
+                            (origin ? "Origin: " + origin + "\r\n" : "") +
+                            "\r\n"
+                    );
+                });
+                let buf = "";
+                s.on("data", d => (buf += d));
+                s.on("close", () => resolve(buf.split("\r\n")[0]));
+                setTimeout(() => {
+                    s.destroy();
+                    resolve(buf.split("\r\n")[0] || "timeout");
+                }, 800);
+            });
+        const evil = await handshake("http://evil.example.com");
+        assert(evil.includes("403"), "browser origin must be 403, got: " + evil);
+        const https = await handshake("https://attacker.test");
+        assert(https.includes("403"), "https origin must be 403, got: " + https);
+        const file = await handshake("file://");
+        assert(file.includes("101"), "file:// (the game mod) must pass, got: " + file);
+        const none = await handshake(null);
+        assert(none.includes("101"), "no-Origin (local scripts) must pass, got: " + none);
+    });
 } finally {
     try {
         if (typeof modWs !== "undefined" && modWs) modWs.close();
