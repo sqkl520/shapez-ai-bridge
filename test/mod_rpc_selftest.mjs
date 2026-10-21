@@ -92,6 +92,9 @@ const stubShapez = {
     decompressX64: s => String(s).replace(/^C:/, ""),
     gMetaBuildingRegistry: { getEntries: () => [] },
     gBuildingVariants: {},
+    // The game exposes its real build metadata; the mod must read version from
+    // here rather than trusting a hard-coded constant (red-team finding).
+    BUILD_OPTIONS: { BUILD_VERSION: "1.5.6", BUILD_COMMIT_HASH: "ee2279d5" },
 };
 
 const timers = [];
@@ -178,6 +181,20 @@ await (async () => {
         assert(hello.params.features.includes("blueprint"), "blueprint feature advertised");
     }
     check("hello handshake", () => {}); // 已在上块内断言过（保持计数器简单）
+
+    // 1b. version is read from the game's own build metadata, not a constant
+    {
+        const m = newMod();
+        assert(m.gameVersion() === "1.5.6", "reads BUILD_OPTIONS.BUILD_VERSION");
+        assert(m.buildHash() === "ee2279d5", "reads BUILD_OPTIONS.BUILD_COMMIT_HASH");
+        // And when the game reports a different version, the mod reports that.
+        const orig = sandbox.shapez.BUILD_OPTIONS.BUILD_VERSION;
+        sandbox.shapez.BUILD_OPTIONS.BUILD_VERSION = "9.9.9";
+        const m2 = newMod();
+        assert(m2.gameVersion() === "9.9.9", "follows the game when it changes (got " + m2.gameVersion() + ")");
+        sandbox.shapez.BUILD_OPTIONS.BUILD_VERSION = orig;
+        check("game version detected from BUILD_OPTIONS", () => {});
+    }
 
     // 2. status RPC（无游戏世界）
     {
