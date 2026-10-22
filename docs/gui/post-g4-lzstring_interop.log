@@ -1,0 +1,8 @@
+len=   11 identical=true game<-vendored=true vendored<-game=true
+len=   64 identical=true game<-vendored=true vendored<-game=true
+len=   37 identical=true game<-vendored=true vendored<-game=true
+len= 1000 identical=true game<-vendored=true vendored<-game=true
+len=  842 identical=true game<-vendored=true vendored<-game=true
+len=   45 identical=true game<-vendored=true vendored<-game=true
+null/empty parity: true
+INTEROP OK — blueprint format is cross-implementation safe

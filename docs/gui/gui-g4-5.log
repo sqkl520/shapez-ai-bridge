@@ -1,0 +1,21 @@
+PASS health without mod
+PASS rpc without mod -> 1005
+PASS mod hello accepted
+PASS rpc round trip
+PASS concurrent out-of-order responses map correctly
+PASS mod error is passed through
+PASS event broadcast to /client on mod hello
+PASS protocol mismatch -> hard fail (1001)
+PASS game version mismatch -> 1002
+PASS read_only: obs passes
+PASS read_only: act(place) -> 1004
+PASS read_only: act(noop) passes
+PASS read_only: snapshot_save -> 1004
+PASS token: no token -> 401
+PASS token: bearer accepted
+PASS large payload (2MB) crosses mod -> client intact
+PASS snapshot_save writes sidecar
+PASS SECURITY: snapshot name traversal is rejected
+PASS SECURITY: browser origins are rejected, file:// is not
+
+ALL 19 CHECKS PASSED

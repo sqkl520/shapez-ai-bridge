@@ -1,0 +1,333 @@
+/* ==========================================================================
+   wizard.css — the wizard (W1–W6) + section shapes ①②③④⑤ + M1/M2 moments.
+   Section shapes in this file:
+     ① hero band (左对齐大标题 + 右对齐预览)  — .wz-w1
+     ② signal chain (游戏→Mod→桥接→AI)        — .chain (boot + reused)
+     ③ asymmetric split 左5/右7              — .wz-w1 grid
+     ④ wizard rail: 竖排大号数字步骤轨        — .wz-rail
+     ⑤ danger band: 左竖线 inset 警示带      — .w1-achievement / .wz-warnbanner
+   ========================================================================== */
+
+/* ── shell: rail + panel ────────────────────────────────────────────────── */
+.wizard-shell {
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr);
+  gap: var(--sp-8);
+  align-items: start;
+}
+
+/* ④ step rail — big index numerals, vertical */
+.wz-rail {
+  position: sticky;
+  top: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 1px solid var(--line);
+  padding-left: var(--sp-4);
+  margin-left: var(--sp-1);
+}
+.wz-steptab {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 40px 1fr 20px;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  padding: 2px 6px 2px 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r);
+  color: var(--text-muted);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
+}
+@media (hover: hover) { .wz-steptab:hover:not(:disabled) { color: var(--text); } }
+.wz-steptab:disabled { cursor: default; opacity: 0.55; }
+.wz-steptab.is-current { color: var(--text); }
+.wz-steptab.is-current .wz-stepnum { color: var(--accent); }
+.wz-stepnum {
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--surface-3);
+  transition: color var(--t-standard) var(--ease);
+}
+.wz-stepnum::before { content: attr(data-n); }
+.wz-steplabel { font-size: 13.5px; font-weight: 600; }
+.wz-stepmark { color: var(--ok); display: flex; }
+.wz-stepmark .ico { width: 14px; height: 14px; }
+
+/* M2: step transition — direction aware, 450ms */
+.wz-anim { animation: step-in var(--t-medium) var(--ease) both; }
+.wz-anim-back { animation-name: step-in-back; }
+@keyframes step-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes step-in-back { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
+
+.wz-content .wz-step { max-width: 800px; }
+.wz-h { font-size: 30px; font-weight: 600; margin-bottom: var(--sp-2); }
+.wz-sub { color: var(--text-muted); font-size: 14px; max-width: 62ch; margin-bottom: var(--sp-6); }
+.wz-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-6); }
+
+/* ── ⑤ warning band (inset, left rule — NOT a card) ─────────────────────── */
+.wz-warnbanner {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-4);
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  color: var(--warn);
+  font-size: 13.5px;
+}
+.wz-warnbanner span { flex: 0 1 auto; color: var(--text); }
+.wz-banner-slot { margin-bottom: var(--sp-2); }
+
+/* ── W1 · hero band + asymmetric split (①③) ─────────────────────────────── */
+.wz-w1 {
+  display: grid;
+  grid-template-columns: 5fr 7fr;
+  gap: clamp(32px, 6vw, 72px);
+  align-items: start;
+  max-width: none !important;
+}
+.w1-title {
+  /* floor 58 (not 56): keeps display/body ratio at 4.14 even at narrow viewports
+     where 5vw < 58px, so the A2 probe (≥4×) has margin */
+  font-size: clamp(58px, 5vw, 72px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.04;
+  margin-bottom: var(--sp-4);
+}
+.w1-sub { color: var(--text-muted); font-size: 15.5px; max-width: 46ch; margin-bottom: var(--sp-6); }
+
+.w1-right { display: flex; flex-direction: column; gap: var(--sp-2); padding-top: var(--sp-4); }
+.w1-preview-row {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: var(--sp-3);
+  align-items: baseline;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line);
+}
+.w1-preview-row:first-child { border-top: 1px solid var(--line); }
+.w1-preview-num {
+  font-size: 40px; font-weight: 600; letter-spacing: -0.02em; line-height: 1;
+  color: var(--surface-3);
+}
+.w1-preview-body { display: flex; flex-direction: column; gap: 2px; }
+.w1-preview-body strong { font-size: 15px; }
+.w1-preview-body span { color: var(--text-muted); font-size: 13px; }
+
+/* achievement warning — ⑤ band, prominent, before any button */
+.w1-achievement {
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-6);
+  border-radius: 0 var(--r) var(--r) 0;
+}
+.w1-achievement-head { display: flex; align-items: baseline; gap: var(--sp-2); color: var(--warn); margin-bottom: var(--sp-1); }
+.w1-achievement-head strong { color: var(--text); font-size: 14.5px; }
+.w1-achievement p { color: var(--text-muted); font-size: 13px; margin: 0 0 var(--sp-2); }
+.w1-achievement-flash { animation: achievement-flash 1.6s var(--ease); }
+@keyframes achievement-flash {
+  0%, 100% { outline: 0 solid transparent; }
+  25% { outline: 2px solid var(--warn); outline-offset: 3px; }
+}
+.w1-files { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+.w1-files li { color: var(--text-muted); }
+.w1-files li::before { content: "· "; color: var(--warn); }
+.w1-achievement.is-compact { margin-bottom: var(--sp-4); padding: var(--sp-2) var(--sp-4); }
+.w1-achievement.is-compact p { display: none; }
+
+.w1-actions { display: flex; gap: var(--sp-3); align-items: center; }
+
+/* M1: hero entrance — once, per-element stagger 80ms, ease-out-expo 700ms */
+.wz-w1.m1 .w1-left > *, .wz-w1.m1 .w1-preview-row { animation: hero-in var(--t-slow) var(--ease) both; }
+.wz-w1.m1 .w1-left > *:nth-child(2) { animation-delay: 80ms; }
+.wz-w1.m1 .w1-left > *:nth-child(3) { animation-delay: 160ms; }
+.wz-w1.m1 .w1-left > *:nth-child(4) { animation-delay: 240ms; }
+.wz-w1.m1 .w1-preview-row:nth-child(1) { animation-delay: 160ms; }
+.wz-w1.m1 .w1-preview-row:nth-child(2) { animation-delay: 240ms; }
+.wz-w1.m1 .w1-preview-row:nth-child(3) { animation-delay: 320ms; }
+@keyframes hero-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+/* ── ② signal chain (boot view, reused) ─────────────────────────────────── */
+.boot-inner { display: flex; flex-direction: column; gap: var(--sp-8); padding-top: 8vh; align-items: flex-start; }
+.chain { display: flex; align-items: center; gap: var(--sp-3); }
+.chain-node { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); }
+.chain-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--surface-3); }
+.chain-node:nth-child(1) .chain-dot { animation: breathe 1.43s ease-in-out infinite; }
+.chain-node:nth-child(3) .chain-dot { animation: breathe 1.11s ease-in-out infinite 0.15s; }
+.chain-node:nth-child(5) .chain-dot { animation: breathe 0.91s ease-in-out infinite 0.3s; }
+.chain-node:nth-child(7) .chain-dot { animation: breathe 1.11s ease-in-out infinite 0.45s; }
+.chain-dot.d2, .chain-dot.d3 { background: var(--accent); }
+.chain-dot.d0, .chain-dot.d1 { background: var(--ok); }
+.chain-link { width: 64px; height: 1px; background: var(--line); transform: translateY(-11px); }
+.chain-label { font-size: 12.5px; color: var(--text-muted); }
+.boot-note { color: var(--text-muted); }
+
+/* ── W2 · env check table ───────────────────────────────────────────────── */
+.w2-table { border-top: 1px solid var(--line); margin-bottom: var(--sp-2); }
+.w2-row {
+  display: grid;
+  grid-template-columns: 24px 190px minmax(0, 1fr) auto;
+  gap: var(--sp-3);
+  align-items: center;
+  min-height: 52px;
+  padding: var(--sp-2) var(--sp-2);
+  border-bottom: 1px solid var(--line);
+  transition: background-color var(--t-fast) var(--ease);
+}
+@media (hover: hover) { .w2-row:hover { background: var(--surface); } }
+.w2-label { font-weight: 600; font-size: 13.5px; }
+.w2-detail { color: var(--text-muted); overflow-wrap: anywhere; }
+.w2-action { display: flex; gap: var(--sp-2); }
+.w2-ico { display: inline-flex; color: var(--text-muted); }
+.w2-row.is-pass .w2-ico { color: var(--ok); }
+.w2-row.is-fail .w2-ico { color: var(--danger); }
+.w2-row.is-fail .w2-detail { color: var(--danger); }
+.w2-row.is-running .w2-ico { color: var(--accent); }
+.w2-row.is-pending .w2-detail { color: var(--text-muted); }
+
+.w2-manual {
+  margin: var(--sp-4) 0;
+  padding: var(--sp-3) var(--sp-4);
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  border-radius: 0 var(--r) var(--r) 0;
+}
+.w2-manual-row { display: flex; gap: var(--sp-2); align-items: center; }
+.w2-manual-row .input { flex: 1; }
+
+/* ── W3 · install ───────────────────────────────────────────────────────── */
+.w3-status { margin-top: var(--sp-4); }
+.w3-donecard {
+  border-left: 3px solid var(--ok);
+  background: color-mix(in srgb, var(--ok) 7%, var(--surface));
+  border-radius: 0 var(--r) var(--r) 0;
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+.w3-done-head { display: flex; align-items: center; gap: var(--sp-2); color: var(--ok); margin-bottom: var(--sp-3); font-size: 15px; }
+.w3-done-head strong { color: var(--text); }
+.w3-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--sp-1) var(--sp-4);
+  margin: 0 0 var(--sp-2);
+}
+.w3-kv dt { color: var(--text-muted); font-size: 13px; }
+.w3-kv dd { margin: 0; overflow-wrap: anywhere; }
+.w3-logbox { margin: var(--sp-3) 0; }
+
+/* ── W4 · config form ───────────────────────────────────────────────────── */
+.w4-form { max-width: 620px; }
+.w4-toggle-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-6);
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--sp-4);
+}
+.w4-toggle-text .field-label { margin-bottom: 2px; }
+.w4-advanced { margin: var(--sp-4) 0; border: 1px solid var(--line); border-radius: var(--r); padding: var(--sp-2) var(--sp-3); }
+.w4-advanced summary { cursor: pointer; color: var(--text-muted); font-size: 13.5px; padding: var(--sp-1) 0; min-height: 44px; display: flex; align-items: center; }
+@media (hover: hover) { .w4-advanced summary:hover { color: var(--text); } }
+.w4-advanced[open] summary { margin-bottom: var(--sp-2); color: var(--text); }
+
+/* ── W5 · launch ────────────────────────────────────────────────────────── */
+.w5-status { margin: var(--sp-4) 0; }
+.w5-runbadge {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  color: var(--ok);
+  border-left: 3px solid var(--ok);
+  background: color-mix(in srgb, var(--ok) 7%, var(--surface));
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: 0 var(--r) var(--r) 0;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.w5-waitnote {
+  display: flex; align-items: center; gap: var(--sp-2);
+  color: var(--accent);
+  font-size: 13.5px;
+  border-left: 3px solid var(--accent);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border-radius: 0 var(--r) var(--r) 0;
+  margin-bottom: var(--sp-2);
+}
+.w5-waitnote.is-ok { color: var(--ok); border-left-color: var(--ok); }
+
+/* ── W6 · verify checklist ──────────────────────────────────────────────── */
+.w6-checks { border-top: 1px solid var(--line); margin-bottom: var(--sp-2); }
+.w6-row {
+  display: grid;
+  grid-template-columns: 24px minmax(160px, max-content) minmax(0, 1fr);
+  gap: var(--sp-3);
+  align-items: center;
+  min-height: 46px;
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--line);
+}
+.w6-row .w2-ico { color: var(--text-muted); }
+.w6-row.is-pass .w2-ico { color: var(--ok); }
+.w6-row.is-fail .w2-ico { color: var(--danger); }
+.w6-row.is-running .w2-ico { color: var(--accent); }
+.w6-name { font-size: 13.5px; font-weight: 600; }
+.w6-detail { color: var(--text-muted); overflow-wrap: anywhere; }
+.w6-hint { margin: var(--sp-3) 0; }
+.w6-hintline {
+  display: flex; align-items: center; gap: var(--sp-3);
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: 0 var(--r) var(--r) 0;
+  color: var(--text);
+  font-size: 13.5px;
+}
+.w6-hintline .ico-host { color: var(--warn); }
+.w6-success {
+  display: flex; align-items: center; gap: var(--sp-3);
+  border-left: 3px solid var(--ok);
+  background: color-mix(in srgb, var(--ok) 8%, var(--surface));
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: 0 var(--r) var(--r) 0;
+  font-size: 15px;
+}
+.w6-success > .ico-host { color: var(--ok); }
+.w6-success .btn { margin-left: auto; }
+.w6-raw {
+  font-family: var(--font-mono); font-size: var(--fs-mono);
+  background: color-mix(in srgb, var(--ground) 70%, black);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: var(--sp-3);
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin-bottom: var(--sp-3);
+}
+
+/* ── responsive fallback (narrow windows; app targets 1280+, keep usable) ── */
+@media (max-width: 900px) {
+  .wizard-shell { grid-template-columns: 1fr; gap: var(--sp-4); }
+  .wz-rail { position: static; flex-direction: row; flex-wrap: wrap; border-left: 0; padding-left: 0; }
+  .wz-steptab { grid-template-columns: auto auto; gap: var(--sp-1); }
+  .wz-stepnum { font-size: 20px; }
+  .wz-stepmark { display: none; }
+  .wz-w1 { grid-template-columns: 1fr; gap: var(--sp-6); }
+  .w2-row { grid-template-columns: 24px 1fr; grid-auto-rows: auto; }
+  .w2-detail, .w2-action { grid-column: 2; }
+}
+
+/* ── reduced motion: M1/M2 collapse; static frame is the page (B8) ──────── */
+@media (prefers-reduced-motion: reduce) {
+  .chain-dot, .chain-dot.d0, .chain-dot.d1, .chain-dot.d2, .chain-dot.d3 { animation: none !important; }
+}
+}

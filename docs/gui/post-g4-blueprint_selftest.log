@@ -1,0 +1,9 @@
+PASS round trip basic
+PASS empty blueprint round trips
+PASS prefix enforced
+PASS corrupted body -> 2001
+PASS malformed payload -> 2001
+PASS cost formula matches game for common n
+PASS summarize gives counts and bounds
+
+ALL 7 CHECKS PASSED

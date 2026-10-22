@@ -1,0 +1,51 @@
+shapez-ai-bridge MCP selftest
+──────────────────────────────
+PASS  initialize: response id is echoed (1)
+PASS  initialize: protocolVersion echoed (2025-06-18)
+PASS  initialize: capabilities.tools.listChanged === false
+PASS  initialize: serverInfo name/version
+PASS  initialize: 2024-11-05 echoed
+PASS  initialize: unsupported version → highest supported (2025-06-18)
+PASS  notifications/initialized: no stdout output within 300ms
+PASS  tools/list: exactly 8 tools with expected names
+PASS  tools/list: every tool has an object inputSchema
+PASS  ping: empty object result
+PASS  shapez_status: no isError
+PASS  shapez_status: bridge health included (ok, mod_connected)
+PASS  shapez_status: status payload from bridge /status
+PASS  shapez_observe: Observation returned
+PASS  shapez_observe: region/max_entities/include_hub forwarded
+PASS  shapez_action: ActionResult returned
+PASS  shapez_action: op and args forwarded verbatim
+PASS  shapez_action delete: isError true
+PASS  error text carries code 2002
+PASS  error text carries code_name and hint
+PASS  shapez_batch: results array of 2
+PASS  shapez_screenshot: image content with png_base64 + mimeType
+PASS  shapez_screenshot: returned image is a valid PNG
+PASS  shapez_screenshot: caption text mentions dimensions
+PASS  shapez_screenshot: scale forwarded
+PASS  shapez_blueprint export: returns the blueprint string as text
+PASS  shapez_blueprint export: act export_blueprint {region} forwarded
+PASS  shapez_blueprint paste: ActionResult ok
+PASS  shapez_blueprint paste: text/x/y/charge forwarded
+PASS  shapez_blueprint invalid mode: -32602 protocol error
+PASS  shapez_save: snapshot result, name forwarded
+PASS  shapez_load: ok, name forwarded
+PASS  unknown tool: -32601
+PASS  unknown method: -32601
+PASS  malformed line: -32700 with id null
+PASS  stderr received log output
+PASS  string id echoed verbatim
+PASS  unknown notification: no stdout output within 300ms
+PASS  shapez_observe {}: forwards empty params, returns Observation
+PASS  --token: Authorization Bearer header sent to bridge
+PASS  all 21 stdout lines are valid JSON
+PASS  no stray responses observed
+PASS  stdin EOF → exit code 0
+PASS  bridge-down server: initialize still answers
+PASS  bridge down: shapez_status isError true
+PASS  bridge down: text explains how to start the bridge
+PASS  bridge-down server: EOF → exit 0
+──────────────────────────────
+summary: 47 PASS, 0 FAIL (47 total)
