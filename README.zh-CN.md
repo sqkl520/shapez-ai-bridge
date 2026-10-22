@@ -25,6 +25,22 @@
 
 为什么要有独立的桥接进程？shapez.io 的渲染进程是沙箱化的（`nodeIntegration:false`、`sandbox:true`），游戏内 mod 拿不到文件或网络 API——但浏览器原生 `WebSocket` 客户端始终可用。于是 mod 主动连向你机器上的一个小 Node 进程；HTTP API、MCP 服务器和快照文件都归这个进程管。
 
+## 不想碰命令行？用图形界面
+
+本地网页界面覆盖全部安装流程，一条命令都不用记：双击 `gui/start.cmd`（Windows），
+向导会带你走完环境检查 → 安装 mod → 配置 → 启动桥接 → 验证，全程有实时日志，
+缺什么会直接给出修复按钮。**不需要手改任何配置文件。**
+
+```bash
+node gui/server.mjs          # 或 Windows 下直接双击 gui/start.cmd
+```
+
+它会打开一个无地址栏的应用窗口（`http://127.0.0.1:7801/`）。与项目其余部分同样的
+零依赖原则：只需要 Node 和浏览器——走到这一步的你已经都有了。
+详细走查见 [gui/README.md](gui/README.md)。
+
+下面全部是命令行路径——GUI 驱动的就是同一批脚本，两者完全等价。
+
 ## 30 秒快速开始
 
 前置条件：**Node.js ≥ 20**、**shapez.io 桌面版 1.5.6**（Steam 版）和一份本仓库检出。
