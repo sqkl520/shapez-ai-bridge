@@ -1,0 +1,14 @@
+PASS hello handshake
+PASS game version detected from BUILD_OPTIONS
+PASS status rpc in menu
+PASS unknown method -> -32601
+PASS obs without world -> 1003
+PASS noop works in menu
+PASS reconnect after drop
+PASS reconnect backoff
+PASS obs after gameStarted
+PASS root dropped on state exit
+PASS batch mixed results
+PASS batch aborts on 1003
+
+ALL 12 CHECKS PASSED

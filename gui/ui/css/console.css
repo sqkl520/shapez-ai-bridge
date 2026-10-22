@@ -1,0 +1,1051 @@
+/* ============================================================================
+ * console.css — 控制台视图 + 设置视图 + 日志面板（T4 独占）
+ *
+ * 只定义本节区段类（.con-* / .logp-* / .set-*），不定义任何 T3 的 CSS 变量
+ * （--ground/--surface/--accent/... 由 base.css 提供；本文件只消费它们）。
+ * 颜色/字号/圆角/动效 token 全部来自 gui/DESIGN-TOKENS.md。
+ * ========================================================================= */
+
+/* ─────────────────────────── 信号链带（② 独有形制） ─────────────────────────── */
+
+.con-main {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 24px 32px 32px;
+    max-width: 1440px;
+    margin: 0 auto;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* ① hero 带：左对齐巨大状态数字 + 右对齐主动作（非居中） */
+.con-hero {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 20px;
+}
+
+.con-hero-left {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.con-hero-kicker {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.con-hero-state {
+    font-size: 56px;
+    line-height: 1;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text);
+}
+
+.con-hero-state.is-ok   { color: var(--ok); }
+.con-hero-state.is-warn { color: var(--warn); }
+.con-hero-state.is-idle { color: var(--text-muted); }
+
+.con-hero-sub {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+.con-hero-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    flex-shrink: 0;
+}
+
+/* 信号链带 */
+.con-chain {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 18px 24px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+}
+
+.con-chain-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 6px 4px;
+    text-align: center;
+}
+
+.con-chain-dot-wrap {
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    position: relative;
+}
+
+.con-chain-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--surface-3);
+    border: 1px solid var(--line);
+    box-sizing: border-box;
+}
+
+/* M5：活体呼吸（scale 1±0.06；每节点不同频 0.7 / 0.9 / 1.1Hz）。
+   只有"活"的节点（绿色）呼吸——呼吸本身就是"活着"的声明。 */
+.con-chain-node.is-live .con-chain-dot {
+    background: var(--ok);
+    border-color: var(--ok);
+    animation: con-breathe var(--con-breath-dur, 1s) ease-in-out infinite;
+}
+
+.con-chain-node.is-warnstate .con-chain-dot { background: var(--warn); border-color: var(--warn); }
+.con-chain-node.is-off .con-chain-dot      { background: var(--surface-3); border-color: var(--line); }
+
+.con-chain-node[data-freq="07"] .con-chain-dot { --con-breath-dur: 1.43s; } /* 0.7Hz */
+.con-chain-node[data-freq="09"] .con-chain-dot { --con-breath-dur: 1.11s; } /* 0.9Hz */
+.con-chain-node[data-freq="11"] .con-chain-dot { --con-breath-dur: 0.91s; } /* 1.1Hz */
+
+.con-chain-label {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.con-chain-state {
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.con-chain-node.is-off .con-chain-state { color: var(--text-muted); }
+.con-chain-node.is-warnstate .con-chain-state { color: var(--warn); }
+.con-chain-node.is-live .con-chain-state { color: var(--ok); }
+
+/* 节点之间的连接线（SVG 式横线用伪元素做） */
+.con-chain-link {
+    flex: 0 0 auto;
+    align-self: center;
+    width: clamp(24px, 6vw, 72px);
+    height: 2px;
+    background: var(--line);
+    position: relative;
+    margin: 0 2px;
+}
+
+.con-chain-link::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    top: 50%;
+    width: 6px;
+    height: 6px;
+    border-right: 2px solid var(--line);
+    border-top: 2px solid var(--line);
+    transform: translateY(-50%) rotate(45deg);
+}
+
+.con-chain-link.is-hot { background: var(--ok); }
+.con-chain-link.is-hot::after { border-color: var(--ok); }
+
+/* 呼吸 + 对勾 spring 的 keyframes 定义在本文件底部（§ 动效） */
+
+/* ─────────────────────────── ③ 非对称分栏（左 5 / 右 7） ─────────────────────────── */
+
+.con-split {
+    display: grid;
+    grid-template-columns: 5fr 7fr;
+    gap: 24px;
+    align-items: start;
+}
+
+@media (max-width: 980px) {
+    .con-split { grid-template-columns: 1fr; }
+}
+
+.con-col-left {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+}
+
+.con-col-right {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* ── 状态卡（左列） ── */
+
+.con-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.con-card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.con-card-title {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.con-card-badge {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.con-card-badge.is-ok   { color: var(--ok); }
+.con-card-badge.is-warn { color: var(--warn); }
+.con-card-badge.is-err  { color: var(--danger); }
+
+/* 大号数字（56–72px）——桥接 uptime / hub_level 共用 */
+.con-big {
+    font-size: 60px;
+    line-height: 1;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.con-big .con-big-unit {
+    font-size: 18px;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-left: 6px;
+    letter-spacing: 0;
+}
+
+.con-big.is-idle { color: var(--text-muted); }
+
+.con-card-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+    flex-wrap: wrap;
+}
+
+.con-card-row .con-muted { color: var(--text-muted); }
+
+.con-card-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.con-kv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    font-size: 13px;
+    color: var(--text);
+}
+
+.con-kv dt { color: var(--text-muted); }
+.con-kv dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+/* ── 冒烟 5 项检查视图 ── */
+
+.con-smoke-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 13px;
+}
+
+.con-smoke-row {
+    display: grid;
+    grid-template-columns: 18px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border-radius: var(--r);
+    color: var(--text);
+}
+
+.con-smoke-row .con-smoke-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.con-smoke-row .con-smoke-detail { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.con-smoke-ico {
+    width: 16px;
+    height: 16px;
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--text-muted);
+}
+
+.con-smoke-row[data-state="pass"] .con-smoke-ico { color: var(--ok); }
+.con-smoke-row[data-state="fail"] .con-smoke-ico { color: var(--danger); }
+.con-smoke-row[data-state="running"] .con-smoke-ico { color: var(--accent); animation: con-spin 0.9s linear infinite; }
+.con-smoke-row[data-state="pending"] { color: var(--text-muted); }
+.con-smoke-row[data-state="fail"] .con-smoke-name { color: var(--danger); }
+
+.con-smoke-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text);
+}
+
+.con-smoke-hint {
+    font-size: 12.5px;
+    color: var(--warn);
+    overflow-wrap: anywhere;
+}
+
+/* M7：5/5 成功对勾 spring（全页唯一弹簧）——见动效区 */
+
+/* ─────────────────────────── 右列：日志控制台 ─────────────────────────── */
+
+.con-logtools {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.con-logtools .con-spacer { flex: 1 1 auto; }
+
+/* 日志类别选择（bridge/install/smoke） */
+.con-kindsel {
+    appearance: none;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    font: inherit;
+    font-size: 12.5px;
+    min-height: 44px;
+    padding: 0 30px 0 10px;
+    cursor: pointer;
+}
+
+/* 下拉箭头（伪元素，不用 background-image 渐变） */
+.con-kindsel-wrap { position: relative; display: inline-flex; }
+.con-kindsel-wrap::after {
+    content: "";
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    width: 6px;
+    height: 6px;
+    border-right: 2px solid var(--text-muted);
+    border-bottom: 2px solid var(--text-muted);
+    transform: translateY(-70%) rotate(45deg);
+    pointer-events: none;
+}
+
+.con-kindsel:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* 复制回退面板（clipboard 不可用时的选中文本区） */
+.con-copyfallback {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    background: var(--ground);
+}
+
+.con-copyfallback textarea {
+    width: 100%;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    font-family: var(--font-mono);
+    font-size: var(--fs-mono);
+    padding: 8px;
+    resize: vertical;
+    min-height: 160px;
+}
+
+.con-copyfallback textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* 级别过滤条（segmented） */
+.con-filter {
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    overflow: hidden;
+}
+
+.con-filter button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 12.5px;
+    min-height: 44px;
+    padding: 0 12px;
+    cursor: pointer;
+}
+
+.con-filter button + button { border-left: 1px solid var(--line); }
+
+@media (hover: hover) {
+    .con-filter button:hover { color: var(--text); background: var(--surface-2); }
+}
+
+.con-filter button[aria-pressed="true"] {
+    background: var(--surface-3);
+    color: var(--text);
+}
+
+.con-filter button:focus-visible,
+.con-toggle:focus-visible,
+.con-iconbtn:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+}
+
+/* 跟随开关 */
+.con-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+}
+
+.con-toggle .con-sw {
+    width: 26px;
+    height: 14px;
+    border-radius: 8px;
+    background: var(--surface-3);
+    position: relative;
+    transition: background 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.con-toggle .con-sw::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), background 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.con-toggle[aria-pressed="true"] { color: var(--text); border-color: var(--accent); }
+.con-toggle[aria-pressed="true"] .con-sw { background: var(--accent); }
+.con-toggle[aria-pressed="true"] .con-sw::after { transform: translateX(12px); background: #fff; }
+
+@media (hover: hover) {
+    .con-toggle:hover { border-color: var(--accent); color: var(--text); }
+}
+
+/* 日志容器（配合 T3 createLogView 或内置简版） */
+.con-logpanel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    display: flex;
+    flex-direction: column;
+    min-height: 420px;
+    max-height: 620px;
+    overflow: hidden;
+}
+
+.con-log-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+}
+
+.con-log-title {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-right: 4px;
+}
+
+.con-log-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 8px 4px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* 与 T3 createLogView 嵌套兼容：让它的 scroller 成为唯一滚动区，去掉双重边框 */
+.con-log-body .logview { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.con-log-body .logview-scroller {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+}
+.con-log-body .logview-empty { padding: 8px 12px; }
+/* T3 的行结构在 T4 面板里不需要自带内边距压缩 */
+.con-log-body .logrow { padding: 1px 8px; }
+
+/* log_ref 跳转高亮：base.css 的 .logrow{animation:log-in}（同特异性、靠后）会压掉
+   .logrow-jump 的动画 —— 这里以更高特异性恢复 logjump（keyframes 定义在 base.css，全局可用）。
+   同时叠加 outline 兜底，确保静帧/reduced-motion 下高亮仍可见。 */
+.con-log-body .logrow.logrow-jump {
+    animation: logjump 1.6s var(--ease);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+}
+@media (prefers-reduced-motion: reduce) {
+    .con-log-body .logrow.logrow-jump {
+        animation: none;
+        background: color-mix(in srgb, var(--accent) 25%, transparent);
+    }
+}
+
+/* 日志行（内置简版渲染；若 T3 createLogView 接管，由其自身样式负责其结构） */
+.logp-line {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 8px;
+    padding: 0 8px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--text);
+}
+
+.logp-line .logp-n { color: var(--text-muted); text-align: right; user-select: none; }
+
+.logp-line[data-level="warn"]  { color: var(--warn); }
+.logp-line[data-level="error"] { color: var(--danger); }
+.logp-line[data-level="ok"]    { color: var(--ok); }
+
+/* M6：新行进入 fade + 4px（每批 ≤8 行，stagger 40ms） */
+.logp-line.is-enter { animation: logp-enter 160ms cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: calc(var(--logp-i, 0) * 40ms); }
+
+/* log_ref 跳转高亮（定位到某行） */
+.logp-line.is-target {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+}
+
+/* 清屏后的空态 */
+.logp-empty {
+    color: var(--text-muted);
+    font-size: 12.5px;
+    padding: 8px 12px;
+}
+
+/* ─────────────────────────── 底行快捷 ─────────────────────────── */
+
+.con-quickbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    padding-top: 4px;
+}
+
+.con-quickbar .con-spacer { flex: 1 1 auto; }
+
+/* ─────────────────────────── 设置视图 ─────────────────────────── */
+
+.set-main {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 24px 32px 40px;
+    max-width: 880px; /* 表单视图窄列——与 console 全宽形成形制差异 */
+    margin: 0 auto;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.set-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 20px;
+}
+
+.set-head h2 {
+    margin: 0;
+    font-size: 56px;
+    line-height: 1;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text);
+}
+
+.set-head .set-sub {
+    margin: 6px 0 0;
+    font-size: 13.5px;
+    color: var(--text-muted);
+}
+
+.set-head-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* 分组（非卡片：只用标题 + 间距——避免一切皆卡片） */
+.set-section {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.set-section-title {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+}
+
+.set-grid {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 14px 20px;
+    align-items: start;
+}
+
+@media (max-width: 720px) {
+    .set-grid { grid-template-columns: 1fr; gap: 4px 0; }
+    .set-grid .set-field { margin-bottom: 14px; }
+}
+
+.set-label {
+    font-size: 13.5px;
+    color: var(--text);
+    padding-top: 10px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.set-label .set-default {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.set-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.set-field .input { max-width: 420px; }
+.set-field .input.mono { font-size: var(--fs-mono); }
+
+.set-hint { font-size: 12px; color: var(--text-muted); }
+.set-error { font-size: 12.5px; color: var(--danger); display: none; }
+.set-field.has-error .set-error { display: block; }
+.set-field.has-error .input { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
+/* label 是 .set-field 的前兄弟节点 → 用 :has() 反向高亮 */
+.set-grid .set-label:has(+ .set-field.has-error) { color: var(--danger); }
+.set-field.has-success .input { border-color: var(--ok); }
+
+/* 开关行（复用 base.css 的 .switch 组件；整行 ≥44px，无原生 checkbox —— A6 命中区闸门） */
+.set-switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 44px;
+    font-size: 13.5px;
+    color: var(--text);
+    max-width: 500px;
+}
+
+.set-switch-row .set-switch-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    cursor: pointer;
+}
+
+.set-switch-row .set-switch-text span { font-size: 12px; color: var(--text-muted); }
+
+/* 折叠的 timeouts */
+.set-details {
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 0;
+}
+
+.set-details summary {
+    cursor: pointer;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--text);
+    list-style: none;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.set-details summary::-webkit-details-marker { display: none; }
+
+.set-details summary::before {
+    content: "▸";
+    color: var(--text-muted);
+    transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.set-details[open] summary::before { transform: rotate(90deg); }
+
+.set-details summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+.set-details .set-details-body {
+    padding: 4px 14px 16px;
+    border-top: 1px solid var(--line);
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 12px 20px;
+}
+
+@media (max-width: 720px) {
+    .set-details .set-details-body { grid-template-columns: 1fr; }
+}
+
+/* 文件位置提示行 */
+.set-fileline {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+
+.set-warnbox {
+    border-left: 3px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+    color: var(--warn);
+    font-size: 12.5px;
+    padding: 8px 12px;
+    border-radius: 0 var(--r) var(--r) 0;
+}
+
+.set-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* 危险区确认对话框里的"将删/将留"复选框行（≥44px 行高，label 整行可点） */
+.set-checkline {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.set-checkline input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+
+/* 富内容确认对话框 body（T3 的 .confirm-body 是 muted 纯文本样式） */
+.confirm-body-rich {
+    font-size: 13.5px;
+    margin-bottom: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.confirm-body-rich p { margin: 0; color: var(--text); }
+.confirm-body-rich .set-fileline { font-size: 11.5px; }
+
+/* 含"将删/将留"清单的对话框需要更宽（T3 的 #confirm-dialog 默认 max-width:440px） */
+#confirm-dialog:has(.confirm-body-rich) { max-width: 640px; }
+
+/* ── ⑤ 危险区带（左竖线 inset 警示带 —— 非卡片） ── */
+
+.set-danger {
+    position: relative;
+    padding: 6px 0 6px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.set-danger::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--danger);
+    border-radius: 2px;
+}
+
+.set-danger-title {
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--danger);
+}
+
+.set-danger-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    justify-content: space-between;
+}
+
+.set-danger-row .set-danger-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.set-danger-row .set-danger-txt strong { font-size: 14px; color: var(--text); font-weight: 600; }
+.set-danger-row .set-danger-txt span { font-size: 12.5px; color: var(--text-muted); }
+
+/* 确认对话框内的"将删/将留"清单 */
+.set-confirm-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    text-align: left;
+}
+
+.set-confirm-col h4 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.set-confirm-col.is-del h4 { color: var(--danger); }
+.set-confirm-col.is-keep h4 { color: var(--ok); }
+
+.set-confirm-col ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.set-confirm-col .set-fileline { margin-top: 2px; }
+
+/* ─────────────────────────── 动效（M3/M5/M6/M7/M8） ─────────────────────────── */
+
+@keyframes con-breathe {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.06); }
+}
+
+/* 冒烟 running 转圈 */
+@keyframes con-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* M7：spring-snappy 350/28 —— 对勾以小幅过冲弹入（全页唯一弹簧） */
+@keyframes con-check-spring {
+    0%   { transform: scale(0.4); opacity: 0; }
+    55%  { transform: scale(1.12); opacity: 1; }
+    75%  { transform: scale(0.97); }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.con-smoke-ico.is-spring { animation: con-check-spring 350ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+/* M6：日志行进入 */
+@keyframes logp-enter {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* M8：失败摇动（主操作失败时的注意信号，无剧场感） */
+@keyframes con-shake {
+    0%, 100% { transform: translateX(0); }
+    25%      { transform: translateX(-4px); }
+    50%      { transform: translateX(4px); }
+    75%      { transform: translateX(-4px); }
+}
+
+.con-shake { animation: con-shake 300ms cubic-bezier(0.16, 1, 0.3, 1); }
+
+/* 按钮按压（M3）——作用于 T4 自己渲染的按钮 */
+.con-btn {
+    appearance: none;
+    border: 1px solid transparent;
+    border-radius: var(--r);
+    font: inherit;
+    font-size: 13.5px;
+    min-height: 44px;
+    padding: 0 14px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 160ms cubic-bezier(0.16, 1, 0.3, 1), border-color 160ms cubic-bezier(0.16, 1, 0.3, 1), opacity 160ms cubic-bezier(0.16, 1, 0.3, 1), transform 90ms cubic-bezier(0.16, 1, 0.3, 1);
+    /* 2px 焦点环 offset（状态矩阵） */
+    outline-offset: 3px;
+}
+
+.con-btn:active:not(:disabled) { transform: scale(0.98); }
+.con-btn:focus-visible { outline: 2px solid var(--focus); }
+
+.con-btn.is-primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+@media (hover: hover) {
+    .con-btn.is-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+}
+
+.con-btn.is-secondary {
+    background: transparent;
+    color: var(--text);
+    border-color: var(--line);
+}
+
+@media (hover: hover) {
+    .con-btn.is-secondary:hover:not(:disabled) { border-color: var(--text-muted); }
+}
+
+.con-btn.is-danger {
+    background: transparent;
+    color: var(--danger);
+    border-color: var(--danger);
+}
+
+@media (hover: hover) {
+    .con-btn.is-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+}
+
+.con-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: saturate(0.5);
+}
+
+.con-btn.is-loading { position: relative; color: transparent !important; }
+
+.con-btn.is-loading::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.7);
+    border-top-color: transparent;
+    animation: con-spin 0.7s linear infinite;
+}
+
+.con-btn .con-why {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+/* 图标按钮（日志工具条：清屏 / 下载） */
+.con-iconbtn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 12.5px;
+    min-height: 44px;
+    padding: 0 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+@media (hover: hover) {
+    .con-iconbtn:hover:not(:disabled) { color: var(--text); border-color: var(--text-muted); }
+}
+
+.con-iconbtn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── 窄屏：信号链横滚 ── */
+@media (max-width: 720px) {
+    .con-chain { overflow-x: auto; }
+    .con-chain-node { min-width: 96px; }
+    .con-main, .set-main { padding: 16px; }
+    .con-big { font-size: 48px; }
+    .con-hero-state { font-size: 40px; }
+}
+
+/* ── reduced-motion：呼吸静态、全部坍缩为即时状态（A1/A4/B8；静帧完整可用） ── */
+@media (prefers-reduced-motion: reduce) {
+    .con-chain-node.is-live .con-chain-dot { animation: none; transform: none; background: var(--ok); }
+    .con-smoke-ico.is-spring { animation: none; }
+    .logp-line.is-enter { animation: none; }
+    .con-shake { animation: none; }
+    .con-btn, .con-toggle .con-sw, .con-toggle .con-sw::after {
+        transition: none;
+    }
+    .con-smoke-row[data-state="running"] .con-smoke-ico { animation: none; }
+    .con-btn.is-loading::after { animation: none; }
+}
