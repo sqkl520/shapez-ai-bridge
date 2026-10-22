@@ -30,3 +30,5 @@ Thumbs.db
 # Claude Code local session state (never ship)
 .claude/
 
+docs/gui/logs/
+gui/mcp-config.generated.json

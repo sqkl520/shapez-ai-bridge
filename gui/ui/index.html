@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<!-- T2 (gui/server.mjs) rewrites this content with the per-run token when serving over http:// -->
+<meta name="gui-token" content="">
+<title>shapez.io AI 桥接</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="./css/base.css">
+<link rel="stylesheet" href="./css/wizard.css">
+<!-- T4's console.css also carries the settings-view (.set-*) styles; settings.js
+     has no separate stylesheet. Loaded here because T4 cannot edit index.html. -->
+<link rel="stylesheet" href="./css/console.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="tb-left">
+    <span class="tb-logo" aria-hidden="false">
+      <svg viewBox="0 0 18 18" class="tb-mark" aria-hidden="true"><path d="M9 1.5l6.5 3.75v7.5L9 16.5l-6.5-3.75v-7.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="9" cy="9" r="2.4" fill="currentColor"/></svg>
+      <span class="tb-name">shapez <span class="tb-dim">·</span> <span data-i18n="chain.ai">AI</span></span>
+    </span>
+
+    <div id="signal-pill" class="signal-pill" role="img" aria-label="bridge status">
+      <span class="sp-dot" data-dot="game"></span>
+      <span class="sp-dot" data-dot="mod"></span>
+      <span class="sp-dot" data-dot="bridge"></span>
+      <span class="sp-dot" data-dot="ai"></span>
+    </div>
+
+    <nav class="tb-nav" aria-label="views">
+      <button class="tb-navbtn" type="button" data-nav="wizard" data-i18n="wizard.step1">向导</button>
+      <button class="tb-navbtn" type="button" data-nav="console" data-i18n="console.title">控制台</button>
+      <button class="tb-navbtn" type="button" data-nav="settings" data-i18n="settings.title">设置</button>
+    </nav>
+  </div>
+  <div class="tb-right">
+    <span id="mock-chip" class="pill pill-mock" hidden data-i18n="topbar.mock_chip">演示模式</span>
+    <span id="version-chip" class="mono tb-version">—</span>
+    <button id="lang-toggle" class="btn btn-ghost tb-lang" type="button" aria-label="language">EN</button>
+  </div>
+</header>
+
+<div id="backend-banner" hidden role="alert">
+  <span class="banner-ico" aria-hidden="true">!</span>
+  <span class="banner-text"><strong data-i18n="topbar.backend_lost">后端已断开</strong> — <span data-i18n="topbar.backend_lost.hint"></span></span>
+  <button class="btn btn-secondary btn-sm banner-retry" type="button" data-i18n="topbar.reconnect">重新连接</button>
+</div>
+
+<main id="view-root">
+
+  <!-- boot splash: the signal chain "powering on" (M5 breathing) -->
+  <section id="view-boot" class="view view-boot" aria-busy="true">
+    <div class="boot-inner">
+      <div class="chain" aria-hidden="true">
+        <div class="chain-node">
+          <span class="chain-dot d0"></span>
+          <span class="chain-label" data-i18n="chain.game">游戏</span>
+        </div>
+        <span class="chain-link"></span>
+        <div class="chain-node">
+          <span class="chain-dot d1"></span>
+          <span class="chain-label" data-i18n="chain.mod">Mod</span>
+        </div>
+        <span class="chain-link"></span>
+        <div class="chain-node">
+          <span class="chain-dot d2"></span>
+          <span class="chain-label" data-i18n="chain.bridge">桥接</span>
+        </div>
+        <span class="chain-link"></span>
+        <div class="chain-node">
+          <span class="chain-dot d3"></span>
+          <span class="chain-label" data-i18n="chain.ai">AI</span>
+        </div>
+      </div>
+      <p class="boot-note mono" data-i18n="common.loading">加载中…</p>
+    </div>
+  </section>
+
+  <!-- wizard: T3 owns; steps mount into #wizard-root -->
+  <section id="view-wizard" class="view" hidden>
+    <div id="wizard-root"></div>
+  </section>
+
+  <!-- console: T4 owns; fills #console-root via GUI.mountConsole -->
+  <section id="view-console" class="view" hidden>
+    <div id="console-root"></div>
+    <div id="console-placeholder" class="mount-placeholder" hidden>
+      <p class="mono" data-i18n="console.placeholder">控制台由 T4 提供（GUI.mountConsole）。</p>
+    </div>
+  </section>
+
+  <!-- settings: T4 owns; fills #settings-root via GUI.mountSettings -->
+  <section id="view-settings" class="view" hidden>
+    <div id="settings-root"></div>
+    <div id="settings-placeholder" class="mount-placeholder" hidden>
+      <p class="mono" data-i18n="settings.placeholder">设置视图由 T4 提供（GUI.mountSettings）。</p>
+    </div>
+  </section>
+
+</main>
+
+<div id="toast-host" aria-live="polite"></div>
+
+<dialog id="confirm-dialog" aria-labelledby="confirm-title">
+  <form method="dialog" class="confirm-form">
+    <h2 id="confirm-title" class="confirm-title">确认操作</h2>
+    <p id="confirm-body" class="confirm-body"></p>
+    <div class="confirm-actions">
+      <button id="confirm-cancel" class="btn btn-secondary" type="button" data-i18n="common.cancel">取消</button>
+      <button id="confirm-ok" class="btn btn-primary" type="button" data-i18n="common.confirm">确认</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="./js/boot.js"></script>
+</body>
+</html>

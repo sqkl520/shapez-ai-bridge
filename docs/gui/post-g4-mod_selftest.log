@@ -1,0 +1,17 @@
+PASS mod source loads without syntax error
+PASS METADATA has required fields
+PASS Mod can be instantiated
+PASS normalizeRotation works
+PASS validateAction rejects unknown op
+PASS validateAction rejects unknown field
+PASS validateAction accepts valid ops
+PASS read_only gate blocks writes
+PASS requireRoot gives 1003 when no root
+PASS observe request validation
+PASS resolveBuilding finds known + rejects unknown
+PASS stepTicks rejects out-of-range
+PASS blueprint export/import round trip shape
+PASS blueprint version mismatch -> 2006
+PASS place_path rejects diagonal
+
+ALL 15 CHECKS PASSED
