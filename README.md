@@ -25,6 +25,26 @@
 
 Why a separate bridge process? shapez.io's renderer is sandboxed (`nodeIntegration:false`, `sandbox:true`), so an in-game mod has no file or socket APIs — but the browser's native `WebSocket` client is always available. The mod dials out to a small Node process on your machine; that process owns the HTTP API, the MCP server and the snapshot files.
 
+## Prefer a GUI?
+
+A local web interface covers the whole setup without any commands: double-click
+`gui/start.cmd` (Windows), and a wizard walks through environment check, mod
+install, configuration, bridge start and verification — with live logs and
+explicit fixes when something is missing. No configuration file is ever edited
+by hand.
+
+```bash
+node gui/server.mjs          # or double-click gui/start.cmd on Windows
+```
+
+It opens a chromeless app window on `http://127.0.0.1:7801/`. Same zero-dependency
+rules as the rest of the project: it needs only Node and a browser, both of which
+you already have by the time you get here. See [gui/README.md](gui/README.md)
+(中文) for the walkthrough.
+
+Everything below is the command-line path — the GUI drives exactly the same
+scripts, so the two are interchangeable.
+
 ## 30-second quick start
 
 Prerequisites: **Node.js ≥ 20**, **shapez.io desktop 1.5.6** (Steam build), and a checkout of this repository.
