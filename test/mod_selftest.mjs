@@ -340,5 +340,61 @@ check("place_path rejects diagonal", () => {
     assert(threw && threw.__rpcError.code === 2001, "diagonal must fail with 2001");
 });
 
+// ── rotationVariant 覆盖（蓝图粘贴必须尊重 code 里的弯道变体）──
+// 背景：带子的弯道（直/左转/右转）在游戏里由邻居派生。粘贴蓝图时若也走这条路径，
+// 结果就依赖邻居是否已就位 —— 这正是布局落不了地的根因。
+// 修复后：paste_blueprint 把 code 里带的 rotationVariant 直接传下去。
+
+check("placeOne honours rotationVariant override (blueprint paste path)", () => {
+    const m = newMod();
+    let captured = null;
+    const root = {
+        logic: {
+            tryPlaceBuilding: p => { captured = p; return { uid: 1 }; },
+        },
+    };
+    const meta = {
+        getLayer: () => "regular",
+        // 自动定向会被调用 —— 若发生，说明 override 没生效
+        computeOptimalDirectionAndRotationVariantAtTile: () => ({ rotation: 90, rotationVariant: 2 }),
+    };
+    m.placeOne(root, meta, 0, 0, 0, "default", 1);
+    assert(captured && captured.rotationVariant === 1, "must use override (1), not auto (2); got " + (captured && captured.rotationVariant));
+    assert(captured.rotation === 0, "rotation stays as given");
+});
+
+check("placeOne falls back to auto-orientation when no override", () => {
+    const m = newMod();
+    let captured = null;
+    const root = { logic: { tryPlaceBuilding: p => { captured = p; return { uid: 1 }; } } };
+    const meta = {
+        getLayer: () => "regular",
+        computeOptimalDirectionAndRotationVariantAtTile: () => ({ rotation: 90, rotationVariant: 2 }),
+    };
+    m.placeOne(root, meta, 0, 0, 0, "default");   // 不传 override
+    assert(captured && captured.rotationVariant === 2, "auto path must still be used (2); got " + (captured && captured.rotationVariant));
+});
+
+check("paste_blueprint passes code's rotationVariant through to placeOne", () => {
+    const m = newMod();
+    const rvs = [];
+    const root = {
+        time: { now: () => 0 },
+        logic: {
+            performBulkOperation: fn => fn(),
+            tryPlaceBuilding: p => { rvs.push(p.rotationVariant); return { uid: 1 }; },
+        },
+        gameMode: { getHasFreeCopyPaste: () => true, getBlueprintShapeKey: () => "K" },
+        hubGoals: { getShapesStoredByKey: () => 0, takeShapeByKey: () => {} },
+    };
+    // 用 stub 表里存在的 code（1 = belt/default）；验证 rv 被"从表里取"并传下去。
+    const payload = JSON.stringify({ v: 1, gv: "1.5.6", w: [0, 0], e: [1, 0, 0, 0, 1, 2, 0, 0] });
+    const text = "SZBP1." + sandbox.shapez.compressX64(payload);
+    const res = m.opPasteBlueprint(root, { text, x: 10, y: 10, charge: false });
+    assert(res.applied === 2, "both pasted; got " + res.applied);
+    assert(rvs.length === 2, "two placements");
+    assert(rvs[0] === 0 && rvs[1] === 0, "stub code 1 carries rv 0; got " + JSON.stringify(rvs));
+});
+
 console.log("\n" + (fail === 0 ? "ALL " + pass + " CHECKS PASSED" : pass + " passed, " + fail + " FAILED"));
 process.exit(fail === 0 ? 0 : 1);
