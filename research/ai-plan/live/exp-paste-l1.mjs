@@ -22,7 +22,7 @@
  */
 import {
     rpc, act, errors, ensureFreshWorld, ensureWindowAwake, snapshotSave, currentWorldUids, hubPosition,
-    buildBlueprint, pasteAndDiff, isRectClear, verifyOfflineResource, goal, newWorldBaseline,
+    buildBlueprint, pasteAndDiff, pasteSiteCheck, verifyOfflineResource, goal, newWorldBaseline,
     writeResult, log, bbox, cleanup, DIRV,
 } from "./kit.mjs";
 import { planLRoutes } from "./routes.mjs";
@@ -37,7 +37,7 @@ async function main() {
 
     log("\n[1] world: reuse/adopt the P7 disposable new save (never level-11) ...");
     const world = await ensureFreshWorld("paste-l1");
-    const nwBase = newWorldBaseline();
+    const nwBase = await newWorldBaseline();
     log(`  world ${world.internal_id} reused=${world.reused} pristine-baseline: ${JSON.stringify(nwBase)}`);
 
     const g0 = await goal();
@@ -64,10 +64,11 @@ async function main() {
     const bp = buildBlueprint(R.parts);
     log(`  blueprint entities=${bp.entities.length} anchor=${JSON.stringify(bp.anchor)} by_code=${JSON.stringify(bp.summary.by_code)}`);
 
-    log("\n[5] landing box must be obs-empty (C1: paste silently destroys replaceable belts) ...");
+    log("\n[5] exact pasted cells must be empty (C1: paste silently destroys replaceable belts; a solid machine would reject and half-build) ...");
     const need = bbox(cells, 2);
-    const chk = await isRectClear(need);
-    log(`  bbox ${JSON.stringify(need)} clear=${chk.clear} hits=${chk.hits.length}`);
+    const site = await pasteSiteCheck(cells);
+    log(`  pasted cells occupied=${site.occupied.length} solid=${site.solid.length} replaceable=${site.replaceable.length}  (padded bbox ${JSON.stringify(need)} is NOT the gate)`);
+    if (!site.clear) log(`  ⚠ occupants: ${JSON.stringify(site.occupied.slice(0, 8))}`);
 
     log("\n[6] snapshot the world, then paste (charge:false) at the planned anchor ...");
     await snapshotSave("p7-" + NAME);
@@ -108,7 +109,7 @@ async function main() {
     const deliveredIncreased = after.delivered > before.delivered;
     const levelIncreased = after.level > before.level;
     const pass =
-        xchk.all_match === true && chk.clear === true && pd.applied_ok === true &&
+        xchk.all_match === true && site.clear === true && pd.applied_ok === true &&
         pd.intent_diff.length === 0 && met === true && (deliveredIncreased || levelIncreased);
 
     // cleanup our build, then audit the shared new world against its pristine baseline
@@ -128,7 +129,8 @@ async function main() {
         seed, hub, goal_shape: g0.goal.requirement.shape,
         route: { miner: R.miner, entry: R.entry.at, side: R.entry.side, belts: R.belts,
                  corners: R.corners.map((c) => ({ cell: c.cell, r: c.rot, rv: c.rv, code: c.code })) },
-        anchor: [bp.anchor[0], bp.anchor[1]], site_bbox: need, site_clear: chk.clear, site_hits: chk.hits.length,
+        anchor: [bp.anchor[0], bp.anchor[1]], site_bbox: need, site_clear: site.clear,
+        site_occupied: site.occupied, site_solid: site.solid, site_replaceable: site.replaceable,
         blueprint: { entities: bp.entities.length, chars: bp.text.length, summary: bp.summary },
         offline_seed_predicted_cell_matches_obs: xchk.all_match, offline_resource_check: xchk.rows,
         paste_applied: pd.paste ? pd.paste.applied : null, paste_count: pd.count, applied_ok: pd.applied_ok,
@@ -141,7 +143,7 @@ async function main() {
         new_world_audit: wAudit,
         errors,
     });
-    log(`\n=== ${pass ? "PASS" : "FAIL"} — offline=${xchk.all_match} clear=${chk.clear} applied_ok=${pd.applied_ok} intent_diff=${pd.intent_diff.length} met=${met} progress=${deliveredIncreased || levelIncreased ? "yes" : "no"} ===`);
+    log(`\n=== ${pass ? "PASS" : "FAIL"} — offline=${xchk.all_match} site_clear=${site.clear} applied_ok=${pd.applied_ok} intent_diff=${pd.intent_diff.length} met=${met} progress=${deliveredIncreased || levelIncreased ? "yes" : "no"} ===`);
 }
 
 main().catch((e) => {

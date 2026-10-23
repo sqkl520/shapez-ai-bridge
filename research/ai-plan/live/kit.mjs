@@ -263,6 +263,30 @@ export async function isRectClear(rect) {
     return { clear: hits.length === 0, hits, region: rect };
 }
 
+/**
+ * The REAL C1 pre-paste check: are the exact cells we are about to paste onto empty?
+ * A padded bbox may sweep the hub/machines the route legitimately sits next to, so we test
+ * the pasted cells themselves, and separately classify any occupant as solid (abort) vs
+ * replaceable belt (would be silently destroyed — also abort for v1).
+ * @returns {{clear:boolean, occupied:Array, solid:Array, replaceable:Array}}
+ */
+export async function pasteSiteCheck(cells) {
+    const region = bbox(cells, 4);
+    const occ = await obsOccupied(region);
+    const occupied = [];
+    for (const [x, y] of cells) {
+        const e = occ.get(cellKey(x, y));
+        if (e) occupied.push({ cell: [x, y], type: e.type, code: e.code });
+    }
+    const REPLACEABLE = new Set(["belt", "wire"]);
+    return {
+        clear: occupied.length === 0,
+        occupied,
+        solid: occupied.filter((o) => !REPLACEABLE.has(o.type)),
+        replaceable: occupied.filter((o) => REPLACEABLE.has(o.type)),
+    };
+}
+
 export function cellKey(x, y) {
     return `${x},${y}`;
 }
@@ -443,6 +467,13 @@ export function dirToRot(dir) {
 
 export function trashPart(cell) {
     return { kind: "trash", cell, rot: 0, rv: 0, code: CODE.trash, inDir: null, outDir: null };
+}
+
+/** generic machine part at r=0 rv=0 (v1 never rotates machines, decision D1). */
+export function machinePart(kind, cell) {
+    const code = CODE[kind];
+    if (code === undefined) throw new Error(`machinePart: no code for ${kind}`);
+    return { kind, cell, rot: 0, rv: 0, code, inDir: null, outDir: null };
 }
 
 // ─────────────────────────── paste + intent diff ───────────────────────────

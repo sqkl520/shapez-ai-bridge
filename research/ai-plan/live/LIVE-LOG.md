@@ -18,12 +18,51 @@ Every experiment: one status line here + a pointer to its `results/*.json`.
 | id | experiment | state | result |
 |----|------------|-------|--------|
 | kit | `kit.mjs` + `routes.mjs` | complete, live-smoke-tested | route planner 15/15 seeds, 0 chain defects |
-| preflight | `exp-00-preflight.mjs` | ✅ PASS — level-11 world audited | `results/preflight.json` |
-| T1 | `exp-paste-l1.mjs` | BLOCKED — see "world wedge" below | `results/paste-l1.json` (pass:false, fatal=new_game never landed) |
-| T2 | `exp-paste-corner.mjs` | not started (waiting on world) | — |
-| T3 | `exp-paste-machine.mjs` | not started (waiting on world) | — |
-| F1 | `exp-belt-silent-overwrite.mjs` | not started (waiting on world) | — |
-| F2 | `exp-orig-flip.mjs` | not started (waiting on world) | — |
+| preflight | `exp-00-preflight.mjs` | ✅ PASS — level-11 audited, seed 43391, 3/3 offline=obs | `results/preflight.json` |
+| T1 | `exp-paste-l1.mjs` | ✅ **PASS** — paste delivers end-to-end | `results/paste-l1.json` |
+| T2 | `exp-paste-corner.mjs` | ✅ **PASS** — corner survives a contradicting neighbour at paste time | `results/paste-corner.json` |
+| T3 | `exp-paste-machine.mjs` | ✅ **PASS** — machine-neighbour belts land exact; stacker delivered 35 | `results/paste-machine.json` |
+| F1 | `exp-belt-silent-overwrite.mjs` | ✅ **PASS** — silent belt-destroy CONFIRMED (R3) | `results/belt-silent-overwrite.json` |
+| F2 | `exp-orig-flip.mjs` | ✅ **RUN CLEAN** — R2 ACTIVE: PULL flips all 3 corners | `results/orig-flip.json` |
+| final | `exp-99-final-restore.mjs` | ✅ PASS — level-11 restored, uid audit exact | `results/final-restore.json` |
+
+## F1 cleanup mechanism (change log)
+- v1 of F1 used `snapshot_load` to undo the destructive paste. The falsification is captured
+  before that step, so it was safe — but `snapshot_load` triggers a full `load_save` state
+  transition, which is exactly what wedged the session (see "World wedge").
+- v2 (coordinator-directed, current) uses **targeted `delete`** on each cell the experiment
+  touched, then `bulk_delete{region, dry_run:true}` as the audit that proves the region came
+  down to zero, then the shared `newWorldBaseline()` uid audit. Re-run confirmed:
+  `would_delete=0` post-delete and `extra=0 missing=0 pass=true` for the new-world baseline.
+
+## Findings (three live foundations the compiler stands on)
+- **R1 (belt-rules / solveTurn is game-aligned) — CONFIRMED.** Offline `solveTurn`-derived
+  (r,rv,code) landed **byte-exact** in every experiment's intent_diff=0, including the corner that
+  has a STACKER as a direct neighbour (T3 `machine_neighbors_count=3`, corner (-9,1) r0/rv2/code3
+  with stacker at (-9,2) directly below). The "82.5% drift" the validate script saw was for
+  INCREMENTAL place, not full-block paste.
+- **R2 (originalRotation gap) — CONFIRMED ACTIVE, but only for post-paste neighbours.** Paste itself
+  is shielded (T2). F2 matrix: adding ONE belt next to an already-pasted corner rewrote it from
+  rv2/rv1→rv0 (straight) in every `PULL` cell (r=0, r=270, r=180 corners alike), while `EJECT` and
+  `NONE` left it. ⇒ compiler discipline C2 (whole-block paste, never place adjacent to a pasted
+  corner) is load-bearing; `V3` fixed-point or stride=5 would relax it.
+- **R3 (silent belt destroy) — CONFIRMED.** F1: pasting over 2 existing belts returned `ok:true
+  applied:3 failed:[]`, no warnings, and the 2 old uids were gone — the mod reports NOTHING.
+
+## World wedge — ROOT CAUSE FOUND + recovered (00:43 → 01:14)
+- `new_game`/`load_save` returned ok but `in_game` stayed false; every world call → 1003.
+- Diagnosis: `status` in_game is just `mod.root` truthiness (bridge:390), and `root` is set only
+  by `MOD_SIGNALS.gameStarted` (bridge:158) — which shapez fires from the render loop.
+- Measured: game main-window process **0 CPU over 6s**, window `IsIconic=True` (minimized).
+  Minimized → no requestAnimationFrame → the InGameState transition never runs → root stays null.
+- Recovery (reversible, in-scope: P7 owns this process exclusively): `ShowWindow(SW_RESTORE)`
+  → CPU resumed (2.9s/4s) → `in_game=true` → the earlier `new_game` (save 9ac66b0b, lv1) landed.
+- **No data lost.** Re-decoded the on-disk level-11 save offline: 2805 uids, extra 0, missing 0,
+  identical to `ai-research-base`. No paste ever touched the level-11 world.
+- kit now calls `ensureWindowAwake()` before world ops, and `ensureFreshWorld()` REUSES one
+  isolated new save instead of churning slots.
+- MOD-GAP: `bulk_delete dry_run` lists the hub in `would_delete`, but the real op protects it
+  (uid audit after cleanup: missing 0). dry_run over-reports the singleton.
 
 ## Preflight (passed before any mutation)
 - bridge: mod 0.1.0 / game 1.5.6, `allow_write=true`, `allow_step=true` (**not** read-only → package may run)
@@ -49,6 +88,10 @@ Every experiment: one status line here + a pointer to its `results/*.json`.
 - 00:58+ background watcher (`results/watch.log`) polls every 30s; experiments resume the
   moment `in_game=true`.
 
-## Wrap-up line (must be filled)
-- [x] level-11 save verified intact offline: count=2805 extra=0 missing=0 (uid-by-uid vs ai-research-base)
-- [ ] restored to level-11 after experiments: ___ (blocked by the wedge above)
+## Wrap-up line
+- [x] restored to level-11: `load_save 5c9670…` → uid audit **count=2805 / want=2805 / extra=0 / missing=0 / pass=true**
+      (`results/final-restore.json`; re-verified by `results/preflight.json` on the same world)
+- [x] all experiments ran in the isolated P7 new save `9ac66b0b…` (level 1); level-11 world was never pasted into
+- [x] disposable new save left at its pristine baseline (1 uid = hub), each experiment self-cleaned dry_run→delete→audit
+- Note: 3 extra orphan level-1 saves exist (`ab4ded04…`, `9ac66b0b…` = the active p7 world, plus earlier L3/L4
+      session saves). These are new saves, not the level-11 save; harmless. p7 did not delete others' save slots.

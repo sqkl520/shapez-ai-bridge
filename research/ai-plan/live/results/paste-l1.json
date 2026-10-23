@@ -1,7 +1,287 @@
 {
  "test": "paste-l1",
- "pass": false,
- "fatal": "never entered the game within 360s",
- "rpc": null,
+ "kind": "T1 — paste channel end-to-end delivery (redteam #5 L1 / needs_live_test #4)",
+ "pass": true,
+ "channel": "paste_blueprint(charge:false)",
+ "world": "9ac66b0bfb8feb9a95d2a489541b5d5b47814712",
+ "seed": 50876,
+ "hub": {
+  "x": -2,
+  "y": -2,
+  "uid": 10000
+ },
+ "goal_shape": "CuCuCuCu",
+ "route": {
+  "miner": [
+   -7,
+   5
+  ],
+  "entry": [
+   -3,
+   1
+  ],
+  "side": "left",
+  "belts": 8,
+  "corners": [
+   {
+    "cell": [
+     -7,
+     1
+    ],
+    "r": 0,
+    "rv": 2,
+    "code": 3
+   }
+  ]
+ },
+ "anchor": [
+  -7,
+  1
+ ],
+ "site_bbox": [
+  -9,
+  -1,
+  -1,
+  7
+ ],
+ "site_clear": true,
+ "site_occupied": [],
+ "site_solid": [],
+ "site_replaceable": [],
+ "blueprint": {
+  "entities": 9,
+  "chars": 100,
+  "summary": {
+   "format_version": 1,
+   "exported_from": "1.5.6",
+   "anchor": [
+    -7,
+    1
+   ],
+   "count": 9,
+   "bounds": [
+    5,
+    5
+   ],
+   "by_code": {
+    "1": 7,
+    "3": 1,
+    "7": 1
+   },
+   "text_length": 100
+  }
+ },
+ "offline_seed_predicted_cell_matches_obs": true,
+ "offline_resource_check": [
+  {
+   "cell": [
+    -7,
+    5
+   ],
+   "offline": "CuCuCuCu",
+   "live": "CuCuCuCu",
+   "match": true
+  }
+ ],
+ "paste_applied": 9,
+ "paste_count": 9,
+ "applied_ok": true,
+ "failed": [],
+ "intent_diff": [],
+ "readback": [
+  {
+   "cell": [
+    -7,
+    5
+   ],
+   "kind": "miner",
+   "want": {
+    "r": 0,
+    "rv": 0,
+    "code": 7
+   },
+   "got": {
+    "r": 0,
+    "rv": 0,
+    "code": 7,
+    "type": "miner",
+    "uid": 10010
+   }
+  },
+  {
+   "cell": [
+    -7,
+    4
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 0,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 0,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10011
+   }
+  },
+  {
+   "cell": [
+    -7,
+    3
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 0,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 0,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10012
+   }
+  },
+  {
+   "cell": [
+    -7,
+    2
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 0,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 0,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10013
+   }
+  },
+  {
+   "cell": [
+    -7,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 0,
+    "rv": 2,
+    "code": 3
+   },
+   "got": {
+    "r": 0,
+    "rv": 2,
+    "code": 3,
+    "type": "belt",
+    "uid": 10014
+   }
+  },
+  {
+   "cell": [
+    -6,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 90,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 90,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10015
+   }
+  },
+  {
+   "cell": [
+    -5,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 90,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 90,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10016
+   }
+  },
+  {
+   "cell": [
+    -4,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 90,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 90,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10017
+   }
+  },
+  {
+   "cell": [
+    -3,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 90,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 90,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10018
+   }
+  }
+ ],
+ "delivered_before": 1,
+ "delivered_after": 2,
+ "required_before": 30,
+ "required_after": 30,
+ "level_before": 1,
+ "level_after": 1,
+ "progress_form": "delivered-increased",
+ "hub_stored_delta": 1,
+ "met": true,
+ "ticks_run": 840,
+ "await_error": null,
+ "await_step_fallback": null,
+ "new_world_audit": {
+  "created": false,
+  "count": 1,
+  "want": 1,
+  "extra": 0,
+  "missing": 0,
+  "extra_uids": [],
+  "missing_uids": [],
+  "pass": true
+ },
  "errors": []
 }

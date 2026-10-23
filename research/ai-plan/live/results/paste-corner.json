@@ -1,0 +1,63 @@
+{
+ "test": "paste-corner",
+ "kind": "T2 — one corner vs a contradicting neighbour (redteam #2 belt-half / #1 / RV-FIX method)",
+ "pass": true,
+ "corner_intent": {
+  "in": "bottom",
+  "out": "right",
+  "r": 0,
+  "rv": 2,
+  "code": 3
+ },
+ "world": "9ac66b0bfb8feb9a95d2a489541b5d5b47814712",
+ "clean": {
+  "anchor": [
+   172,
+   0
+  ],
+  "corner_land": {
+   "r": 0,
+   "rv": 2,
+   "code": 3,
+   "type": "belt",
+   "uid": 10020
+  },
+  "corner_preserved": true,
+  "intent_diff": [],
+  "applied_ok": true,
+  "site_clear_before": true
+ },
+ "disturb": {
+  "anchor": [
+   166,
+   45
+  ],
+  "disturb_cell": [
+   165,
+   45
+  ],
+  "corner_land": {
+   "r": 0,
+   "rv": 2,
+   "code": 3,
+   "type": "belt",
+   "uid": 10024
+  },
+  "corner_preserved": true,
+  "intent_diff": [],
+  "applied_ok": true,
+  "site_clear_before": true
+ },
+ "new_world_audit": {
+  "created": false,
+  "count": 1,
+  "want": 1,
+  "extra": 0,
+  "missing": 0,
+  "extra_uids": [],
+  "missing_uids": [],
+  "pass": true
+ },
+ "conclusion": "immutable paste wrapper shields the corner from a contradicting belt neighbour in both arms (redteam #2 belt-half CONFIRMED).",
+ "errors": []
+}
