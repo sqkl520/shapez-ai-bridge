@@ -396,5 +396,58 @@ check("paste_blueprint passes code's rotationVariant through to placeOne", () =>
     assert(rvs[0] === 0 && rvs[1] === 0, "stub code 1 carries rv 0; got " + JSON.stringify(rvs));
 });
 
+// ── bulk_delete 的 dry_run（防误删真实工厂）──
+// 背景：研究期间 4 次因区域边界算错而残留或误删，dry_run 让调用方先核对清单。
+
+check("bulk_delete dry_run reports without deleting", () => {
+    const m = newMod();
+    const ents = [
+        { uid: 1, components: { StaticMapEntity: { origin: { x: 5, y: 5 }, rotation: 0, code: 1 } } },
+        { uid: 2, components: { StaticMapEntity: { origin: { x: 6, y: 5 }, rotation: 90, code: 1 } } },
+        { uid: 3, components: { StaticMapEntity: { origin: { x: 99, y: 99 }, rotation: 0, code: 7 } } },   // 区域外
+    ];
+    let deleted = 0;
+    const root = {
+        entityMgr: { entities: ents },
+        time: { now: () => 7 },
+        logic: {
+            performBulkOperation: fn => fn(),
+            tryDeleteBuilding: () => { deleted++; return true; },
+        },
+    };
+    const res = m.opBulkDelete(root, { region: [0, 0, 10, 10], dry_run: true });
+    assert(res.dry_run === true, "must be flagged dry_run");
+    assert(res.would_delete === 2, "must report 2 in-region entities; got " + res.would_delete);
+    assert(deleted === 0, "must NOT delete anything; deleted=" + deleted);
+    assert(Array.isArray(res.items) && res.items.length === 2, "must list items");
+    assert(res.items.every(i => i.uid && i.type !== undefined && i.x !== undefined), "items carry uid/type/x");
+    assert(res.by_type && res.by_type.belt === 2, "by_type summary; got " + JSON.stringify(res.by_type));
+});
+
+check("bulk_delete without dry_run still deletes", () => {
+    const m = newMod();
+    const ents = [
+        { uid: 1, components: { StaticMapEntity: { origin: { x: 5, y: 5 }, rotation: 0, code: 1 } } },
+    ];
+    let deleted = 0;
+    const root = {
+        entityMgr: { entities: ents },
+        time: { now: () => 7 },
+        logic: {
+            performBulkOperation: fn => fn(),
+            tryDeleteBuilding: () => { deleted++; return true; },
+        },
+    };
+    const res = m.opBulkDelete(root, { region: [0, 0, 10, 10] });
+    assert(res.applied === 1, "applied=1");
+    assert(deleted === 1, "did delete");
+    assert(res.dry_run === undefined, "no dry_run flag on a real delete");
+});
+
+check("bulk_delete accepts dry_run as a known field", () => {
+    const m = newMod();
+    m.validateAction({ op: "bulk_delete", region: [0, 0, 1, 1], dry_run: true });   // 不应抛错
+});
+
 console.log("\n" + (fail === 0 ? "ALL " + pass + " CHECKS PASSED" : pass + " passed, " + fail + " FAILED"));
 process.exit(fail === 0 ? 0 : 1);
