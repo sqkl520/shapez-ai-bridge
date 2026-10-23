@@ -119,7 +119,7 @@
           "autoroute": "belt.js:161-251（形状由邻居派生，belt-rules.mjs 已对 1906 条带离线核验）",
           "source": {
             "file": "buildings/belt.js",
-            "lines": "25-42 (combos); components/belt.js:9-36 (fake 槽); 147-149 (方向)"
+            "lines": "25-42 (combos); 141-148 (updateVariants→Belt.direction); components/belt.js:9-36 (FAKE 槽); components/belt.js:79/88/92 (fake getter)"
           }
         }
       },
@@ -1168,51 +1168,6 @@
             "lines": "34-56; 59-71; 202-227 (merger)"
           }
         },
-        "mergerInverse": {
-          "verifiedBy": "source-only",
-          "liveEvidence": null,
-          "internalId": 6,
-          "size": [
-            1,
-            1
-          ],
-          "acceptors": [
-            {
-              "tile": [
-                0,
-                0
-              ],
-              "dir": "bottom",
-              "filter": null
-            },
-            {
-              "tile": [
-                0,
-                0
-              ],
-              "dir": "left",
-              "filter": null
-            }
-          ],
-          "ejectors": [
-            {
-              "tile": [
-                0,
-                0
-              ],
-              "dir": "top"
-            }
-          ],
-          "pins": [],
-          "hasRotationVariants": [
-            0
-          ],
-          "processor": "balancer",
-          "source": {
-            "file": "buildings/balancer.js",
-            "lines": "34-56; 202-227"
-          }
-        },
         "splitter": {
           "verifiedBy": "source-only",
           "liveEvidence": null,
@@ -1257,7 +1212,52 @@
             "lines": "34-56; 228-256 (splitter)"
           }
         },
-        "splitterInverse": {
+        "merger-inverse": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 6,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "filter": null
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "balancer",
+          "source": {
+            "file": "buildings/balancer.js",
+            "lines": "34-56; 202-227"
+          }
+        },
+        "splitter-inverse": {
           "verifiedBy": "source-only",
           "liveEvidence": null,
           "internalId": 48,
@@ -2424,7 +2424,7 @@
     {
       "code": 6,
       "building": "balancer",
-      "variant": "mergerInverse",
+      "variant": "merger-inverse",
       "rotationVariant": 0,
       "internalId": 6
     },
@@ -2711,7 +2711,7 @@
     {
       "code": 48,
       "building": "balancer",
-      "variant": "splitterInverse",
+      "variant": "splitter-inverse",
       "rotationVariant": 0,
       "internalId": 48
     },
@@ -2878,7 +2878,8 @@
       "trash": "unbounded (1e30)",
       "hub": "unbounded (1e30)",
       "goal": "unbounded (1e30)",
-      "storage": "缓冲容器，无处理速率（吞吐受下游带限制）"
+      "storage": "缓冲容器，无处理速率（吞吐受下游带限制）",
+      "note": "filter/reader/underground_belt/balancer 走 belt 组；cutter/rotater/stacker(+virtual 变体) 走 processors；painter/mixer 走 painting；miner 走 miner。trash/hub/goal 返回 1e30（不限量）。storage 无 ItemProcessor，无速率。"
     },
     "formulas": {
       "belt": "config.js:81 beltSpeedItemsPerSecond=2 × beltMult (hub_goals.js:487-492)",
@@ -2888,13 +2889,13 @@
       "rotater": "beltSpeed × processorsMult × 1/1",
       "stacker": "beltSpeed × processorsMult × 1/8 → 0.25（最慢，工厂瓶颈）",
       "painter": "beltSpeed × paintingMult × 1/6 → 0.333",
-      "painterDouble": "× 1/8 → 0.25/次 但一次出 2 件 → 有效 0.5/s",
-      "painterQuad": "× 1/2 → 1.0/次（一次上 4 色）",
+      "painterDouble": "beltSpeed × paintingMult × 1/8 → 0.25 charges/s；每 charge 吃 3 件出 2 件（process_PAINTER_DOUBLE systems/item_processor.js:527-551）→ 输出 0.5 件/s @mult1",
+      "painterQuad": "beltSpeed × paintingMult × 1/2 → 1.0 charges/s；一次上 4 色 (config.js:101-113 + hub_goals.js:536-548)",
       "mixer": "beltSpeed × paintingMult × 1/5 → 0.4",
       "balancer_default": "beltSpeed × beltMult × 2 = 4（balancer.js:(base/2)*mult, mult=2）；两输出各 ≈带速 2",
       "balancer_splitter_merger": "(base/2)*1 = 2（1×1 变体，mult=1，balancer.js:98-109）",
       "reader": "beltSpeed × beltMult = 2（直通，hub_goals.js:533-534）",
-      "filter": "无 ItemProcessor；吞吐≈带速（getBeltBaseSpeed, filter.js:55）",
+      "filter": "无 ItemProcessor（filter.js 只有 FilterComponent）；UI 速度取 getBeltBaseSpeed (filter.js:55) → 吞吐随带速",
       "trash_hub_goal": "process_* 无产出或 1e30（不限量）"
     },
     "upgradeLadder": {
@@ -2909,7 +2910,9 @@
         7,
         8
       ],
-      "liveWorldLevels": "world-full.json 实测 {belt:3,miner:3,processors:2,painting:1} → beltMult=2.5, minerMult=2.5, processorsMult=2, paintingMult=1.5"
+      "liveWorldLevels": "world-full.json 实测 upgradeLevels {belt:3,miner:3,processors:2,painting:1} → mult=1+ΣfixedImprovements[0..level-1] → beltMult=3, minerMult=3, processorsMult=2, paintingMult=1.5",
+      "formula": "upgradeImprovements[id] = 1 + Σ_{i<level} fixedImprovements[i] (hub_goals.js:58-62 初始化, :358 每次购买累加; modes/regular.js:80 数组, :248 tier.improvement)",
+      "correctionNote": "修正：level=3 → 1+0.5+0.5+1=3（不是 2.5）；level=2 → 2；level=1 → 1.5。旧记录把 belt/miner 写成 2.5（=少算一档），与其自身 afterTiers 自相矛盾。"
     }
   },
   "codeTableSummary": {

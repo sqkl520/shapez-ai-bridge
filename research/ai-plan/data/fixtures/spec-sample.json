@@ -58,6 +58,13 @@
   "ratePerSec": 0.5
  },
  {
+  "id": "painter|double",
+  "building": "painter",
+  "variant": "double",
+  "code": 18,
+  "ratePerSec": 0.25
+ },
+ {
   "id": "weird|default",
   "building": "weird",
   "code": 42

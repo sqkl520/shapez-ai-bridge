@@ -67,44 +67,56 @@ const ev = (cell, nodeId, expected, actual, note) => ({ cell, nodeId, expected, 
 
 /* ══════════════════════════════ 1. plan-l1.json ══════════════════════════════════
  * 最小 ok:true 计划：全新址、单层、**零拐角、全竖直线**（plan §2.7 / GRID-LAYOUT:41-62 第一原则）。
- * 目标 ----CuCu（level-2，只需 miner + hub；plan §6 R4 说这条验收在两种口径下都成立）。
+ * 目标 ----CuCu（左两象限 = CuCu 竖条）⇒ 采 CuCuCuCu 后用 cutter 取左列，右列接 trash
+ * （陷阱表 #7：废弃输出必须有去向，否则堵死整机）。
  *
- *   dy=0  ^   带子 —— 落 hub 底排入口格（世界 (hub.x+1, hub.y+4)，流向 top）
- *   dy=1  ^
- *   dy=2  ^
- *   dy=3  ^
- *   dy=4  M   矿机（出 top，吃 "----CuCu" 矿格）
+ * 蓝图内坐标（世界 = site.anchor + [dx,dy]；y 向下，物流向上 = dy 递减）：
+ *   dy=-4..-1  hub 4×4（**既有世界**，只进 layout.occupancy，不进 entities）
+ *   dy=0   ^     带子：落 hub 底排入口格 (hub.x+0, hub.y+4)，dir=0 向上喷进 hub（exp-e2e:93-102）
+ *   dy=1   ^
+ *   dy=2   ^  T  ← 右列的带子 (1,3) 喂 trash (1,2)
+ *   dy=3   ^  ^
+ *   dy=4   S  S  cutter 2×1：左格 (0,4) 出 CuCu→上行、右格 (1,4) 出 ----→接 trash
+ *   dy=5   M     矿机（出 top，吃 CuCuCuCu 矿格）
  *
  * ⚠️ 为什么进 hub 走**底排**而不是「侧口」：矿机与所有加工机恒「下进上出」（GEOMETRY 表3 规则 1/2），
  *   竖直上行流只能从底排（dir=0 向上）进 hub；要走左/右侧口必须先拐弯（≥1 个拐角）。
- *   plan §1.7 的三级实验正是这么排的：exp-paste-l1 = 顶/底口直带，exp-paste-corner = 先横移再进侧口。
- *   ⇒ 见 CONTEST.md 第 4 条（P1 任务书写的是「hub 侧口」，与「零拐角」互斥）。
+ *   plan §1.7 的三级实验正是这么排的：exp-paste-l1 = 直带进顶/底口，exp-paste-corner = 先横移再进侧口。
+ *   ⇒ 见 CONTEST.md 第 4 条（P1 任务书写的「矿机→直带→hub 侧口」与「零拐角」互斥）。
  */
-const HUB = [1200, -1400];                       // hub 4×4 的左上角（obs 回报）
-const BP_ANCHOR = [HUB[0] + 1, HUB[1] + 4];      // = hub 底排第 2 列入口格 → 蓝图 (0,0)
-const MINER_DY = 4;
+const HUB = [1200, -1400];                       // hub 4×4 的左上角（obs 回报的坐标）
+const BP_ANCHOR = [HUB[0], HUB[1] + 4];          // 蓝图 (0,0) = hub 底排第 0 列入口格
+const MINER_DY = 5, CUTTER_DY = 4;
 
-const l1Tiles = assertChain([
-    { dx: 0, dy: MINER_DY - 1, rot: 0, rv: 0 },  // 3
-    { dx: 0, dy: MINER_DY - 2, rot: 0, rv: 0 },  // 2
-    { dx: 0, dy: MINER_DY - 3, rot: 0, rv: 0 },  // 1
-    { dx: 0, dy: 0, rot: 0, rv: 0 },              // 0：贴 hub 底排
-].sort((a, b) => b.dy - a.dy));                   // 自下而上（与施工顺序一致）
+// 左列（cutter 左格 → hub）与右列（cutter 右格 → trash），全部直带、零拐角
+const l1LeftLeg = assertChain([3, 2, 1, 0].map(dy => ({ dx: 0, dy, rot: 0, rv: 0 })));
+const l1RightLeg = assertChain([{ dx: 1, dy: 3, rot: 0, rv: 0 }]);
+const l1Tiles = [...l1LeftLeg, ...l1RightLeg];
 
 // entities 顺序 = 机器(P3) → 直线带(P4) → 拐角带（§2.1 硬规定 + 陷阱表 #6）
 const l1Entities = [
     { code: 7, dx: 0, dy: MINER_DY, rot: 0, nodeId: "n0", instanceIdx: 0, kind: "miner", rotationVariant: 0, inDir: null, outDir: "top" },
+    { code: 9, dx: 0, dy: CUTTER_DY, rot: 0, nodeId: "n1", instanceIdx: 0, kind: "cutter", rotationVariant: 0, inDir: "bottom", outDir: "top" },
+    { code: 20, dx: 1, dy: 2, rot: 0, nodeId: "d1", instanceIdx: 0, kind: "trash", rotationVariant: 0, inDir: "bottom", outDir: null },
     ...l1Tiles.map(t => beltEnt(t)),
 ];
 const spanOf = ents => {
     const xs = ents.map(e => e.dx), ys = ents.map(e => e.dy);
     return [Math.max(...xs) - Math.min(...xs) + 1, Math.max(...ys) - Math.min(...ys) + 1];
 };
-const l1Bbox = spanOf(l1Entities);               // [1, 5]
-const l1Grid = [...Array(l1Bbox[1]).keys()].map(dy => l1Entities.some(e => e.dy === dy && e.kind === "miner") ? "M" : "^").join("\n");
-// hub 自身的 4×4 是**既有世界**（不在 entities 里），相对 BP_ANCHOR = (hub.x+1, hub.y+4) 落在 dx -1..2 / dy -4..-1
+const l1Bbox = spanOf(l1Entities);               // [2, 6]
+// 字符网格（plan §2.3「逐字节可 diff」）：只画 entities 区（hub 在 dy<0，另见 occupancy）
+const l1Grid = [...Array(l1Bbox[1]).keys()].map(dy => {
+    const row = [];
+    for (let dx = 0; dx < l1Bbox[0]; dx++) {
+        const e = l1Entities.find(x => x.dx === dx && x.dy === dy);
+        row.push(!e ? "." : e.kind === "miner" ? "M" : e.kind === "cutter" ? "C" : e.kind === "trash" ? "T" : "^");
+    }
+    return row.join("");
+}).join("\n");
+// hub 自身的 4×4 是既有世界（不在 entities 里）：相对 BP_ANCHOR = (hub.x, hub.y+4) → dx 0..3 / dy -4..-1
 const hubOccupancy = [];
-for (let dy = -4; dy <= -1; dy++) for (let dx = -1; dx <= 2; dx++) hubOccupancy.push({ cell: [dx, dy], state: "solid", who: "hub", kind: "hub" });
+for (let dy = -4; dy <= -1; dy++) for (let dx = 0; dx <= 3; dx++) hubOccupancy.push({ cell: [dx, dy], state: "solid", who: "hub", kind: "hub" });
 
 const planL1 = {
     ok: true,
@@ -117,13 +129,27 @@ const planL1 = {
     entities: l1Entities,
     layout: {
         grid: l1Grid,
-        rows: [{ level: 0, y: MINER_DY, nodeIds: ["n0"] }],
-        placements: [{ nodeId: "n0", op: "mine", kind: "miner", cell: [0, MINER_DY], rot: 0, footprint: [1, 1] }],
-        channels: [{
-            from: { nodeId: "n0", cell: [0, MINER_DY], slot: "top", outDir: "top" },
-            to: { nodeId: "hub", cell: [0, -1], slot: "bottom", inDir: "bottom" },
-            lane: null, payload: "----CuCu", slotRole: null, ordinal: null,
-        }],
+        rows: [
+            { level: 0, y: MINER_DY, nodeIds: ["n0"] },
+            { level: 1, y: CUTTER_DY, nodeIds: ["n1"] },
+            { level: 2, y: 2, nodeIds: ["d1"] },
+        ],
+        placements: [
+            { nodeId: "n0", op: "mine", kind: "miner", cell: [0, MINER_DY], rot: 0, footprint: [1, 1] },
+            { nodeId: "n1", op: "cut", kind: "cutter", cell: [0, CUTTER_DY], rot: 0, footprint: [2, 1] },
+            { nodeId: "d1", op: "trash", kind: "trash", cell: [1, 2], rot: 0, footprint: [1, 1] },
+        ],
+        channels: [
+            { from: { nodeId: "n0", cell: [0, MINER_DY], slot: "top", outDir: "top" },
+              to: { nodeId: "n1", cell: [0, CUTTER_DY], slot: "bottom", inDir: "bottom" },
+              lane: null, payload: "CuCuCuCu", slotRole: "primary", ordinal: 0 },
+            { from: { nodeId: "n1", cell: [0, CUTTER_DY], slot: "top", outDir: "top" },
+              to: { nodeId: "hub", cell: [0, -1], slot: "bottom", inDir: "bottom" },
+              lane: null, payload: "----CuCu", slotRole: "out", ordinal: 0 },
+            { from: { nodeId: "n1", cell: [1, CUTTER_DY], slot: "top", outDir: "top" },
+              to: { nodeId: "d1", cell: [1, 2], slot: "bottom", inDir: "bottom" },
+              lane: null, payload: "CuCu----", slotRole: "discard", ordinal: 1 },
+        ],
         lanes: [],
         hubConnection: { entry: [0, 0], side: "bottom", dir: 0 },
         bbox: l1Bbox,
@@ -134,30 +160,33 @@ const planL1 = {
     validation: {
         pass: true,
         checks: [
-            { id: "V1-occupancy", status: "pass", evidence: ev([0, MINER_DY], "n0", "落点矩形全空", "1×1 空格 ×5", "矿机 + 4 条带子互不重叠，且不压 hub 4×4（hub 在 dy<0）") },
+            { id: "V1-occupancy", status: "pass", evidence: ev([0, CUTTER_DY], "n1", "落点矩形全空（2×1 用 r=0 包围盒）", "cutter 2 格 + 5 带子 + 矿机 + trash 全空", "决策 D1：机器恒 r=0 → 无需旋转包围盒；也不压 hub 4×4（hub 在 dy<0）") },
             { id: "V2-no-overwrite-existing-belt", status: "pass", evidence: ev(null, null, "规划区 ∩ replaceableBeltCells = ∅", "0 格重叠", "C1 最高危闸：paste 落既有可替换带 = 静默销毁旧带、applied/failed 不报告（曾毁 6 条真实带）") },
-            { id: "V3-belt-fixed-point", status: "pass", evidence: ev([0, 0], l1Entities[4].nodeId, "computeBelt(含机器邻居) 不动点 = (r=0,rv=0)", "不动点", "末格北邻是 hub acceptor：上行直带正是它该有的形态") },
-            { id: "V4-slot-alignment", status: "pass", evidence: ev([0, 3], "belt@0,3", "exit(top) 落在下游 entry(bottom)", "逐格对齐", "矿机 ejector top → entry bottom 链 → 末格 exit top → hub 底排 acceptor") },
-            { id: "V5-degree", status: "pass", evidence: ev(null, "n0", "入度 ≤ 槽位数", "fanIn=1", "单输入，无需二叉化") },
-            { id: "V6-crossing", status: "pass", evidence: ev(null, null, "两股流不穿格", "0 处穿格", "一条竖直线，无交叉 → 不需要隧道（v1 无隧道）") },
-            { id: "V7-throughput", status: "not-applicable", evidence: ev(null, null, "demandPerSec", "0", "v1 口径：0 = 只要能跑通，不做吞吐判定（§0 demandPerSec 参数）") },
-            { id: "V8-scope", status: "pass", evidence: ev(null, null, "单层/无 wire/无隧道/机器 r=0/入度≤2/全新址", "6 项全满足", "scope 是契约的一部分（§2.1）；超出者必须 ok:false") },
-            { id: "V9-unused-outlet", status: "pass", evidence: ev(null, "n0", "未接走的输出槽必须接 trash", "唯一输出已被接走", "矿机只有 top 一个 ejector（GEOMETRY 表1）") },
-            { id: "V10-unlock-report", status: "pass", evidence: ev(null, "n0", "miner/belt 解锁等级 = 1", "level-2 目标可用", "god-mode 口径见 stats.chargeMode（§6 R4）") },
-            { id: "S1-shape-replay", status: "pass", evidence: ev(null, "n0", "----CuCu", "----CuCu", "矿机直接产出目标形状，无需加工 → shape-ops 重放 hash 相等（DESIGN:93 Level-1）") },
+            { id: "V3-belt-fixed-point", status: "pass", evidence: ev([0, 0], "belt@0,0", "computeBelt(含机器邻居) 不动点 = (r=0,rv=0)", "不动点", "末格北邻是 hub 底排 acceptor（dir=0 向上）：上行直带正是它该有的形态") },
+            { id: "V4-slot-alignment", status: "pass", evidence: ev([0, 3], "belt@0,3", "exit(top) 落在下游 entry(bottom)", "逐格对齐", "矿机 ejector top → cutter 左格 bottom；cutter 左格 top → belt@0,3 entry bottom → … → hub 底排") },
+            { id: "V5-degree", status: "pass", evidence: ev(null, "n1", "入度 ≤ 输入槽数（cutter=1）", "fanIn=1", "单输入，无需二叉化（stacker/mixer=2 才要）") },
+            { id: "V6-crossing", status: "pass", evidence: ev(null, null, "两股流不穿格", "0 处穿格", "左列上行与右列下行不同列 → 无交叉 → 不需要隧道（v1 无隧道）") },
+            { id: "V7-throughput", status: "not-applicable", evidence: ev(null, "n1", "demandPerSec", "0", "v1 口径：0 = 只要能跑通，不做吞吐判定（§0 demandPerSec 参数）") },
+            { id: "V8-scope", status: "pass", evidence: ev(null, null, "单层/无 wire/无隧道/机器 r=0/入度≤2/全新址", "6 项全满足", "scope 是契约的一部分（§2.1）；超出者必须 ok:false，不许静默近似") },
+            { id: "V9-unused-outlet", status: "pass", evidence: ev([1, CUTTER_DY], "n1", "每个未接走的输出槽必须有 trash", "右列 ---- → belt@1,3 → trash(1,2)", "陷阱表 #7：cutter 另一半不接走会堵死整机（开发期 B3 的坑）") },
+            { id: "V10-unlock-report", status: "pass", evidence: ev(null, "n1", "miner/cutter/belt/trash 解锁等级 = 1", "level-2 目标全部可用", "§6 R4：L3 用 level-2 目标 → 忠实玩家与 god-mode 两种口径都成立") },
+            { id: "S1-shape-replay", status: "pass", evidence: ev(null, "n1", "CuCuCuCu 切左列 = ----CuCu", "hash 相等", "shape-ops 重放每个节点，hash 必须相等（DESIGN:93 Level-1）") },
         ],
         errors: [],
         beltSim: { tilesChecked: l1Tiles.length, fixedPoints: l1Tiles.length, drift: [], includesMachineNeighbors: true },
-        shapeReplay: [{ nodeId: "n0", expectedHash: "----CuCu", actualHash: "----CuCu", equal: true }],
+        shapeReplay: [
+            { nodeId: "n0", expectedHash: "CuCuCuCu", actualHash: "CuCuCuCu", equal: true },
+            { nodeId: "n1", expectedHash: "----CuCu", actualHash: "----CuCu", equal: true },
+        ],
         throughput: { demandPerSec: 0, bottleneck: { nodeId: "n0", ratePerSec: 0.4 }, rowsRequired: 1, rowsPlanned: 1 },
     },
     stats: {
-        machines: { miner: 1 },
+        machines: { miner: 1, cutter: 1, trash: 1 },
         beltTiles: l1Tiles.length,
-        trash: 0,
+        trash: 1,
         bbox: l1Bbox,
         corners: 0,
-        estThroughputPerSec: 0.4,                 // 瓶颈 = 矿机 0.4/s（GEOMETRY 表2）
+        estThroughputPerSec: 0.4,                 // 瓶颈 = 矿机 0.4/s（GEOMETRY 表2；cutter 0.5/s 更快）
         bottleneck: "miner@0.4",
         blueprintCost: 0,                         // 下面现算 blueprintCost(n)
         chargeMode: "false",
@@ -217,7 +246,7 @@ const mergeEntities = [
     { code: 7, dx: 0, dy: 9, rot: 0, nodeId: "mA", instanceIdx: 0, kind: "miner", rotationVariant: 0, inDir: null, outDir: "top" },
     { code: 7, dx: 10, dy: 9, rot: 0, nodeId: "mB", instanceIdx: 0, kind: "miner", rotationVariant: 0, inDir: null, outDir: "top" },
     { code: 14, dx: 0, dy: 1, rot: 0, nodeId: "st", instanceIdx: 0, kind: "stacker", rotationVariant: 0, inDir: "bottom", outDir: "top" },
-    { code: 20, dx: 0, dy: -1, rot: 0, nodeId: "out", instanceIdx: 0, kind: "trash", rotationVariant: 0, inDir: "top", outDir: null },
+    { code: 20, dx: 0, dy: -1, rot: 0, nodeId: "out", instanceIdx: 0, kind: "trash", rotationVariant: 0, inDir: "bottom", outDir: null },
     ...straightTiles.map(t => beltEnt(t)),      // ② 直线带
     ...cornerTiles.map(t => beltEnt(t)),        // ③ 拐角最后放（陷阱表 #6）
 ];
@@ -270,6 +299,19 @@ const reportLayout = {
     cornerCount: cornerTiles.length,
 };
 
+/** 汇合形态的 beltIntent（P4/P7 对拍用的凭据；plan §2.3 的 LayoutReport 本身不含实体表，
+ *  故另落一份**包私有**文件 research/ai-plan/contract/merge-belt-intent.json，
+ *  共享 fixtures/ 只保持 plan §2.7 规定的三个文件，不给下游制造意外）。 */
+const mergeBeltIntent = {
+    "_": "report-layout.json 的 belt 逐格意图表（LayoutReport 不带 entities，此文件补齐几何可审计性）。生成：node research/ai-plan/contract/make-fixtures.mjs",
+    "coordinate": "蓝图内坐标：dx = 世界x - 137，dy = 世界y - 90（相对 M4-SUCCESS 实机布局）",
+    "live_expectations": [
+        { cell: [10, 3], world: [147, 93], rot: 0, rotationVariant: 1, code: 2, source: "MILESTONE-M4-SUCCESS.md:18-21" },
+        { cell: [1, 3], world: [138, 93], rot: 270, rotationVariant: 2, code: 3, source: "MILESTONE-M4-SUCCESS.md:18-21" },
+    ],
+    entities: mergeEntities,
+};
+
 /* ══════════════════════════════ 3. report-validator.json ══════════════════════════════
  * 一张**故意错**的 plan 的 ValidatorReport（plan §2.7：P5 的变异测试以它为 golden，
  * P8 的分诊表以它的 check 名对齐 §2.5）。三个错：
@@ -317,6 +359,9 @@ for (const [name, obj] of [["plan-l1.json", planL1], ["report-layout.json", repo
     fs.writeFileSync(path.join(FIX, name), JSON.stringify(obj, null, 2) + "\n", "utf8");
     console.log(`✓ 写出 research/ai-plan/fixtures/${name}`);
 }
+// beltIntent 附表落 P1 自己的目录：共享 fixtures/ 只保持 plan §2.7 规定的三个文件
+fs.writeFileSync(path.join(HERE, "merge-belt-intent.json"), JSON.stringify(mergeBeltIntent, null, 2) + "\n", "utf8");
+console.log(`✓ 写出 research/ai-plan/contract/merge-belt-intent.json（${mergeEntities.length} 实体）`);
 console.log(`✓ plan-l1：${planL1.entities.length} 实体 bbox=${JSON.stringify(l1Bbox)} cost=${planL1.stats.blueprintCost} 蓝图长度=${planL1.blueprint.length}`);
 console.log(`✓ report-layout：${mergeEntities.length} 实体，拐角 ${cornerTiles.length}（r/rv 与 M4-SUCCESS 实机值一致），车道 row=${laneRow}`);
 console.log(`✓ report-validator：${reportValidator.errors.length} 条 fatal（V2/V3/V9）`);
