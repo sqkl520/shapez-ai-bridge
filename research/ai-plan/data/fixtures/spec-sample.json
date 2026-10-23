@@ -1,0 +1,65 @@
+[
+ {
+  "id": "cutter|default",
+  "building": "cutter",
+  "variant": "default",
+  "code": 999,
+  "unlockLevel": 1,
+  "ratePerSec": 0.5,
+  "inputs": [
+   {
+    "cell": [
+     0,
+     0
+    ],
+    "dir": "bottom"
+   }
+  ],
+  "outputs": [
+   {
+    "cell": [
+     0,
+     0
+    ],
+    "dir": "top"
+   },
+   {
+    "cell": [
+     1,
+     0
+    ],
+    "dir": "top"
+   },
+   {
+    "cell": [
+     2,
+     0
+    ],
+    "dir": "top"
+   }
+  ]
+ },
+ {
+  "id": "belt|default",
+  "building": "belt",
+  "variant": "default",
+  "code": 777
+ },
+ {
+  "id": "stacker|default",
+  "building": "stacker",
+  "variant": "default",
+  "code": 14,
+  "unlockLevel": 12,
+  "footprint": [
+   2,
+   1
+  ],
+  "ratePerSec": 0.5
+ },
+ {
+  "id": "weird|default",
+  "building": "weird",
+  "code": 42
+ }
+]
