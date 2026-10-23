@@ -1,0 +1,196 @@
+{
+  "passed": 171,
+  "failed": 0,
+  "matrix": [
+    {
+      "injected": "P1-rv-derived",
+      "caught_by": "V3-belt-fixed-point",
+      "clean": true,
+      "na": [
+        "V4-slot-alignment",
+        "V6-crossing",
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "P2-diagonal-gap",
+      "caught_by": "V4-slot-alignment",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "P3-degenerate-segment",
+      "caught_by": "V5-degree",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "P4-output-input-column-conflict",
+      "caught_by": "V6-crossing",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "P5-lanes-same-row",
+      "caught_by": "V6-crossing",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "P6-place-order",
+      "caught_by": "V3-belt-fixed-point",
+      "clean": true,
+      "na": [
+        "V4-slot-alignment",
+        "V6-crossing",
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "P7-stranded-outlet",
+      "caught_by": "V9-unused-outlet",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "C1-rect-not-empty",
+      "caught_by": "V1-occupancy",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "C2-not-fixed-point",
+      "caught_by": "V3-belt-fixed-point",
+      "clean": true,
+      "na": [
+        "V4-slot-alignment",
+        "V6-crossing",
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "C3-fanin-gt-slots",
+      "caught_by": "V5-degree",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "C4-crossing-needs-tunnel",
+      "caught_by": "V6-crossing",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "C5-flow-axis-heterogeneity",
+      "caught_by": "V4-slot-alignment",
+      "clean": true,
+      "na": [
+        "V7-throughput",
+        "S1-shape-replay"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "C6-color-lane-missing",
+      "caught_by": "V4-slot-alignment",
+      "clean": true,
+      "na": [
+        "V7-throughput",
+        "S1-shape-replay"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "C7-throughput",
+      "caught_by": "V7-throughput",
+      "clean": true,
+      "na": [],
+      "note": ""
+    },
+    {
+      "injected": "C8-multilayer",
+      "caught_by": "V8-scope",
+      "clean": true,
+      "na": [
+        "V3-belt-fixed-point",
+        "V4-slot-alignment",
+        "V5-degree",
+        "V6-crossing",
+        "V7-throughput",
+        "V9-unused-outlet",
+        "S1-shape-replay"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "X1-overwrite-existing-belt",
+      "caught_by": "V2-no-overwrite-existing-belt",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "X2-rotated-machine",
+      "caught_by": "V8-scope",
+      "clean": true,
+      "na": [
+        "V3-belt-fixed-point",
+        "V4-slot-alignment",
+        "V5-degree",
+        "V6-crossing",
+        "V7-throughput",
+        "V9-unused-outlet",
+        "S1-shape-replay"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "X10-unlock-report",
+      "caught_by": "(report-only)",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    },
+    {
+      "injected": "XS1-shape-mismatch",
+      "caught_by": "S1-shape-replay",
+      "clean": true,
+      "na": [
+        "V7-throughput"
+      ],
+      "note": ""
+    }
+  ],
+  "at": "2026-10-23T22:11:50.883Z"
+}
