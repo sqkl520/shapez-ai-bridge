@@ -204,7 +204,8 @@ P0-redteam / P0-verify / P0-prior：只读输入，判据分别注入 P5 / P4·P
 **硬规定**
 - `ok:true` ⟺ `validation.errors.length === 0` **且** `blueprint !== null`。任何 error 都必须让 `ok:false` 且 `blueprint:null`（**绝不产出会堵死的蓝图**，redteam:158）。
 - `entities[]` 顺序 = 蓝图内顺序 = **P3 先机器 → P4 再直线 → 最后拐角**（陷阱表 #6，`MILESTONE-M4-partial-and-pitfalls.md:66`；`proto/layout-merge.mjs:96-127` 已按此分层）。`place_path` 降级路径必须沿用这个顺序，`entities` 顺序即执行顺序。
-- `entities[i].dx/dy` 相对 `blueprint` 的锚点 `w=[minx,miny]`（`src/shared/blueprint.mjs:64`），世界坐标 = `site.anchor + [dx,dy]`，P7 拿 `anchor` 作 `paste_blueprint{x,y}`。
+- `entities[i].dx/dy` 相对**落点 `site.anchor`**：世界坐标 = `site.anchor + [dx,dy]`（主线程裁决 C-1：P7 的 kit/pasteAndDiff、mod 的 `opExportBlueprint` 都是这个口径）。发射时 `w` 归一为世界 min corner（`blueprint.mjs:64`）——`w` 是元数据锚点，`dx/dy` 仍以 anchor 为准，二者可不同、实体集相同（P6 已实现并测平移不变性）。P7 拿 `anchor` 作 `paste_blueprint{x,y}`。
+<!-- 勘误 C-1（06:19 主线程，P6 CONTEST + P8 裁决）：原句同时写了"相对 w"与"世界=anchor+[dx,dy]"两口径，仅当 anchor===w 时兼容。现统一为 anchor 口径，w 归一 min corner。 -->
 - `scope` 是**契约的一部分**：v1 只承诺单层/无 wire/无隧道/不旋转机器/入度≤2（redteam:160-164）。超出必须 `ok:false`，不许静默近似。
 - `stats.chargeMode` 必须显式写出（当前用 `charge:false`，属 god-mode 口径，§6 R4）。
 
@@ -252,6 +253,9 @@ P2 是**唯一**读 `src/ai/machine-spec.json` 字段名的地方。归一后的
  *                    payload:string}>,   // 该通道承载的 shape shortKey（吞吐/形状验证用）
  *   lanes: Array<{row:number, channelIds:string[]}>,           // 同列通道冲突检测的凭据
  *   hubConnection: {entry:[number,number], side:"top"|"right"|"bottom"|"left", dir:0|90|180|270}|null,
+   // ↑ 裁决（P5 CONTEST F2，主线程 06:19）：entry = **带子末格**（hub 外的送带最后格，
+   //   即 hubEntriesWorld().cell），side = 贴的 hub 边（face），dir = 带子流向角。
+   //   与 P3 N-1③ / P7 kit 三方合流。hub 槽格 = add(entry, ANGLE_DIR[dir])。
  *   bbox: [number, number],
  *   occupancy: Array<{cell:[number,number], state:"solid"|"replaceable"}>,  // 来自 obs 的既有世界（§2.6）
  *   conflicts: Array<{kind:"cell-occupied"|"lane-column"|"crossing"|"no-turn"|"hub-contention",
