@@ -146,6 +146,81 @@ eq(g4?.reason, "out-of-scope:multilayer", "G4 D reason=out-of-scope:multilayer")
 eq(g4?.failingNode?.check, "V8-scope", "G4 D failingNode.check=V8-scope");
 ok(/多层|嵌套堆叠|scope|v1\.1/.test(g4?.hint || ""), "G4 D hint 点名多层/v1.1 归口（供 P8/LLM 分诊）");
 
+/* ══════════════════════ ①d 世界系 hub 的坐标一致性（P5 揪出的 bug，先红后绿）══════════════════════ */
+// 根因：place() 把 input.hub 当**世界坐标**直接用（连 hub 入口、占位、bbox 都按世界铺），
+// 但 assignRows 只把机器排在**局部** (0,…) → 连接带从局部机器一路铺到世界 hub，bbox/beltCells/grid 爆炸到千格。
+// 修复口径（NOTES 记，选 (b)）：LayoutReport = **site 相对局部系** —— 与 P1 plan-l1.json 逐格一致：
+//   site.anchor=[1200,-1396]（世界）而 layout.occupancy[0].cell=[0,-4]（= hub 世界 [1200,-1400] − anchor）。
+//   place() 以 site 为原点把世界 hub/occupancy/资源格**摄入时换算**成局部；机器本就排局部 → 同框、紧凑。
+//   site 缺省时自动锚定到 hub（hub 顶在布局上方 HUB_SIZE+1 行）。金网格（无 hub）逐字节不变。
+console.log("\n── ①d 世界系 hub 坐标一致性（P5 bug 回归锁）──");
+{
+	const maxAbs = rep => {
+		let m = 0;
+		const scan = c => { if (c) m = Math.max(m, Math.abs(c[0]), Math.abs(c[1])); };
+		rep.placements.forEach(p => scan(p.cell));
+		rep.channels.forEach(c => { scan(c.from.cell); scan(c.to.cell); });
+		if (rep.hubConnection) scan(rep.hubConnection.entry);
+		(rep.conflicts || []).forEach(c => c.cells.forEach(scan));
+		(rep.occupancy || []).forEach(o => scan(o.cell));
+		return m;
+	};
+	const CUT = [{ op: "cut", hash: "CuCu----", inputs: ["CuCuCuCu"], depth: 1 }];
+
+	// T1 = P5 的复现输入：只给世界系 hub（无 site）
+	const W = { x: 1200, y: -1400 };
+	const rep = place.place({ steps: CUT, hub: W });
+	ok(rep.ok !== false, `T1 世界系 hub（无 site）作图不被误拒（实得 ${rep.ok === false ? rep.reason : "ok"}）`);
+	if (rep.ok !== false) {
+		ok(rep.bbox[0] < 60 && rep.bbox[1] < 60, `T1 bbox 尺寸 < 60（实得 ${JSON.stringify(rep.bbox)}）`);
+		ok(rep.meta.beltTiles < 60, `T1 beltCells 合理 < 60（实得 ${rep.meta.beltTiles}）`);
+		const lines = rep.grid.split("\n");
+		ok(lines.length < 60 && lines.every(l => l.length < 60), `T1 grid 无跨千格带（行 ${lines.length} × 列 ${lines[0].length}）`);
+		ok(maxAbs(rep) < 60, `T1 全部输出坐标在局部系（幅度 < 60，绝无世界 1200 泄漏；实得 maxAbs=${maxAbs(rep)}）`);
+		ok(rep.hubConnection && Math.abs(rep.hubConnection.entry[0]) < 60 && Math.abs(rep.hubConnection.entry[1]) < 60,
+			`T1 hubConnection.entry 在局部系（实得 ${JSON.stringify(rep.hubConnection && rep.hubConnection.entry)}）`);
+		ok(rep.conflicts.length === 0, `T1 无冲突（实得 ${JSON.stringify(rep.conflicts)}）`);
+	}
+
+	// T2 = (b) 的平移不变性：同一布局在世界平移后，报告逐字节等价（site/hub 一起挪）
+	const a = place.place({ steps: CUT, site: { x: 0, y: 0 }, hub: { x: 6, y: -26 } });
+	const b = place.place({ steps: CUT, site: { x: 1200, y: -1400 }, hub: { x: 1206, y: -1426 } });
+	ok(a.ok !== false && b.ok !== false, "T2 两个锚点都作图成功");
+	if (a.ok !== false && b.ok !== false) {
+		eq(b.grid, a.grid, "T2 grid 逐字节等价（世界平移不改局部报告 = site-relative 的证明）");
+		eq(b.bbox, a.bbox, "T2 bbox 等价");
+		eq(JSON.stringify(b.channels), JSON.stringify(a.channels), "T2 channels 等价");
+		eq(JSON.stringify(b.hubConnection), JSON.stringify(a.hubConnection), "T2 hubConnection 等价");
+	}
+
+	// T3 = plan-l1 口径：site=世界锚点、hub=世界，occupancy 必须是局部小值（fixture 同款 [0,-4]）
+	const p = place.place({ steps: CUT, site: { x: 1200, y: -1396 }, hub: { x: 1200, y: -1400 } });
+	ok(p.ok !== false || p.reason !== "belt-turn-unsolvable", "T3 显式 site+hub（plan-l1 锚距）走通或结构化拒绝");
+	if (p.ok !== false) {
+		ok(maxAbs(p) < 60, `T3 输出全在局部系（maxAbs=${maxAbs(p)}）`);
+		ok(p.conflicts.length === 0, "T3 无冲突");
+	}
+
+	// T4 = 无 hub 无 site：金网格路径完全不受影响（逐字节对照 GOLD.G1）
+	const g1n = place.place({ steps: G1_STEPS, ...noHub });
+	eq(g1n.grid, GOLD.G1, "T4 无 hub：G1 金网格逐字节不变（修复未扰动无 hub 路径）");
+
+	// T5 = 资源格（seed）也走同一局部系：meta.minerCells 不得泄漏世界坐标（与 P5 揪出的混框同类）
+	{
+		const { DEFAULT_SEED } = await imp(path.join(ROOT, "src", "ai", "world.mjs"));
+		const s = { x: 100, y: 100 };                          // 远离原点的世界锚点
+		const r = place.place({ steps: [{ op: "cut", hash: "CuCu----", inputs: ["CuCuCuCu"], depth: 1 }], seed: DEFAULT_SEED, site: s, hub: s });
+		ok(r.ok !== false, `T5 带 seed 的偏移锚点作图成功（实得 ${r.ok === false ? r.reason : "ok"}）`);
+		if (r.ok !== false && r.meta.minerCells) {
+			const mc = Object.values(r.meta.minerCells);
+			ok(mc.every(v => Math.abs(v[0]) < 200 && Math.abs(v[1]) < 200),
+				`T5 meta.minerCells 已换算到局部系（世界 site=[100,100] 不泄漏；实得 ${JSON.stringify(r.meta.minerCells)}）`);
+		} else {
+			say(!r.meta.minerCells, "T5 若 seed 路径被结构化拒绝则无 minerCells（可接受，非泄漏）");
+		}
+	}
+}
+
 /* ══════════════════════ 逐字节稳定（跑两次恒等，无随机）══════════════════════ */
 console.log("\n── ①b 确定性：同输入逐字节同输出 ──");
 const r2a = place.place({ steps: G2_STEPS, ...noHub });
