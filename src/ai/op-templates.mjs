@@ -46,7 +46,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // 唯一方向函数来源 —— 本文件内**不得**再写任何方向旋转逻辑
 import { rotateLocal, beltCode, ORDER, OPP, DIRV, norm360, angleToDir, EXIT_LOCAL } from "./belt-rules.mjs";
@@ -1162,5 +1162,9 @@ function runTests() {
     process.exitCode = failed ? 1 : 0;
 }
 
-if (process.argv.slice(2).includes("--test")) runTests();
-if (process.argv.slice(2).includes("--gaps")) console.log(specGapReport().join("\n"));
+// 直接运行才跑自测：被别的包 import 时（哪怕对方 argv 带 --test）绝不运行、绝不写 process.exitCode。
+// 否则 runTests() 末尾的 process.exitCode=failed?1:0 会把调用方的红灯洗成绿灯（P6 探针实测 red→green）。
+// 判据同 research/ai-plan/contract/lint-imports.mjs:98。
+const invokedDirectly = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+if (invokedDirectly && process.argv.slice(2).includes("--test")) runTests();
+if (invokedDirectly && process.argv.slice(2).includes("--gaps")) console.log(specGapReport().join("\n"));
