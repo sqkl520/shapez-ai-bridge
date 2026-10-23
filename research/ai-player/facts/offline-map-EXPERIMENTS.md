@@ -130,7 +130,7 @@ AI 的工作方式可以是：**离线求解 → 生成蓝图 → 在最优位�
 - 长链**跨越极长距离**（>5000 格）或**超大规模**（数百格）时的性能与边界。
 - 未生成区域的**复杂机器交互**（cutter/stacker/painter 的输入输出）是否完全正常
   （H5b 验证了 miner→belt；H6 建出了实体但未验证其生产功能）。
-- 蓝图**粘贴后与外部物流的连接**（接口对齐）——见 `facts/blueprint-format.md`。
+- 蓝图**粘贴后与外部物流的连接**（接口对齐）——见 `designs/tool-gaps-DESIGN.md` §4.6（originalRotation 缺口）与 `facts/building-code-table.md`。
 - 游戏窗口最小化/无渲染时的行为。
 
 ## 🆕 附带发现：`obs` 是一个"侦察/生成"原语

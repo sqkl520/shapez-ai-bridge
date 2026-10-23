@@ -85,7 +85,8 @@ CuCuCuCu --paint green--> CgCgCgCg --cutHalf[1]--> CgCg---- --rotateCCW--> Cg---
   **空的一半会被跳过**（`isEntirelyEmpty()` → 该槽 `lastItem = null`，不占用）——
   意味着切 `RuRu----`（左列全空）时**只有槽 1 有东西**。
 - **mixer**：2×1，`inputsPerCharge: 2`，输入槽 `(0,0)` bottom + `(1,0)` bottom（filter: "color"），输出 `(0,0)` top。
-- 其余建筑详见 agent 产出的 `building-io.md`。
+- 其余建筑的**槽位几何已在本文 §5–§10 逐个核证**（cutter/mixer/rotater/stacker/painter/trash/hub）；
+  实机验证状态见 §9 速查表与 `facts/GEOMETRY-TABLE.md`。
 
 ## 6. 对 AI 玩家的直接含义
 
@@ -158,11 +159,11 @@ CuCuCuCu --paint green--> CgCgCgCg --cutHalf[1]--> CgCg---- --rotateCCW--> Cg---
 | **cutter quad** | 4×1 | bottom | — | top ×4（`(0..3,0)` 四象限） |
 | **painter** | 2×1 | **left** `(0,0)` | **top** `(1,0)` | **right** `(1,0)` |
 | **mixer** | 2×1 | color bottom `(0,0)` | color bottom `(1,0)` | top `(0,0)` |
-| **rotater** | 1×1 | (见 building-io.md) | — | — |
-| **stacker** | (见 building-io.md) | — | — | — |
+| **rotater** | 1×1 | bottom `(0,0)` | top `(0,0)` | ✅ 源码 §9（实机未单独测，几何最简） |
+| **stacker** | 2×1 | bottom `(0,0)`+`(1,0)` | top `(0,0)` | ✅ M3 实机 | — |
 
 ⚠️ **stacker / rotater / balancer / tunnel 的精确槽位未由主 Agent 核证** —— 见 agent 产出的
-`research/ai-player/facts/building-io.md`（如果没有，则需补验）。
+已在 §5–§10 逐个核证（见上）。
 
 ---
 
@@ -205,7 +206,7 @@ CuCuCuCu --paint green--> CgCgCgCg --cutHalf[1]--> CgCg---- --rotateCCW--> Cg---
 | **painter** | 2×1 | shape←left `(0,0)` / color←top `(1,0)` | right `(1,0)` | 0.33/s |
 | **mixer** | 2×1 | color←bottom `(0,0)`+`(1,0)` | top `(0,0)` | 0.4/s |
 | **trash** | 1×1 | 四边全收（top/right/bottom/left） | — | — |
-| **hub** | 4×4 | 见 `building-io.md`（四边） | 见 `building-io.md` | — |
+| **hub** | 4×4 | 四边共 16 格（§10） | WiredPins 信号出 `(0,2)` left | ⬜ 未接 hub 做过机器实验（端到端交付见 exp-e2e） |
 
 **速率来源**：`config.js:81,101-111` + `hub_goals.js:487-532`（人类策略调研 agent 已核，见 `human-strategies.md §2.4`）。
 
