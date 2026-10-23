@@ -1,0 +1,27 @@
+{
+ "test": "final-restore",
+ "pass": true,
+ "hub": {
+  "x": -2,
+  "y": -2,
+  "uid": 10000
+ },
+ "audit": {
+  "pass": true,
+  "count": 2805,
+  "want": 2805,
+  "extra": 0,
+  "missing": 0,
+  "extra_uids": [],
+  "missing_uids": [],
+  "seed": 43391,
+  "internal_id": "5c96706563c0b74c4d2ce4c7f8bf7a244392de89"
+ },
+ "snapshot": {
+  "ok": true,
+  "name": "p7-final-level11",
+  "path": "D:\\Projects\\rea\\Project work\\shapez\\snapshots\\p7-final-level11.bin",
+  "internal_id": "5c96706563c0b74c4d2ce4c7f8bf7a244392de89",
+  "level": 11
+ }
+}

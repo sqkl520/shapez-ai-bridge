@@ -1,0 +1,377 @@
+{
+ "test": "paste-machine",
+ "kind": "T3 — layout with a stacker machine + machine-adjacent corners (redteam #4 check2 / R1 / needs_live_test #2)",
+ "pass": true,
+ "paste_fidelity_gate": true,
+ "delivery_gate": true,
+ "world": "9ac66b0bfb8feb9a95d2a489541b5d5b47814712",
+ "seed": 50876,
+ "hub": {
+  "x": -2,
+  "y": -2,
+  "uid": 10000
+ },
+ "stacker_origin": [
+  -9,
+  2
+ ],
+ "stacker_cells": [
+  [
+   -9,
+   2
+  ],
+  [
+   -8,
+   2
+  ]
+ ],
+ "corner_cell": [
+  -9,
+  1
+ ],
+ "hub_entry": [
+  -3,
+  1
+ ],
+ "product_shape": "CuCuCuCu:CuCuCuCu",
+ "offline_resource_check": [
+  {
+   "cell": [
+    -9,
+    4
+   ],
+   "offline": "CuCuCuCu",
+   "live": "CuCuCuCu",
+   "match": true
+  },
+  {
+   "cell": [
+    -8,
+    4
+   ],
+   "offline": "CuCuCuCu",
+   "live": "CuCuCuCu",
+   "match": true
+  }
+ ],
+ "paste_site_clear": true,
+ "blueprint": {
+  "entities": 12,
+  "summary": {
+   "format_version": 1,
+   "exported_from": "1.5.6",
+   "anchor": [
+    -9,
+    1
+   ],
+   "count": 12,
+   "bounds": [
+    7,
+    4
+   ],
+   "by_code": {
+    "1": 8,
+    "3": 1,
+    "7": 2,
+    "14": 1
+   },
+   "text_length": 116
+  }
+ },
+ "paste_applied": 12,
+ "applied_ok": true,
+ "failed": [],
+ "intent_diff": [],
+ "readback": [
+  {
+   "cell": [
+    -9,
+    4
+   ],
+   "kind": "miner",
+   "want": {
+    "r": 0,
+    "rv": 0,
+    "code": 7
+   },
+   "got": {
+    "r": 0,
+    "rv": 0,
+    "code": 7,
+    "type": "miner",
+    "uid": 10038
+   }
+  },
+  {
+   "cell": [
+    -9,
+    3
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 0,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 0,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10039
+   }
+  },
+  {
+   "cell": [
+    -8,
+    4
+   ],
+   "kind": "miner",
+   "want": {
+    "r": 0,
+    "rv": 0,
+    "code": 7
+   },
+   "got": {
+    "r": 0,
+    "rv": 0,
+    "code": 7,
+    "type": "miner",
+    "uid": 10040
+   }
+  },
+  {
+   "cell": [
+    -8,
+    3
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 0,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 0,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10041
+   }
+  },
+  {
+   "cell": [
+    -9,
+    2
+   ],
+   "kind": "stacker",
+   "want": {
+    "r": 0,
+    "rv": 0,
+    "code": 14
+   },
+   "got": {
+    "r": 0,
+    "rv": 0,
+    "code": 14,
+    "type": "stacker",
+    "uid": 10042
+   }
+  },
+  {
+   "cell": [
+    -9,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 0,
+    "rv": 2,
+    "code": 3
+   },
+   "got": {
+    "r": 0,
+    "rv": 2,
+    "code": 3,
+    "type": "belt",
+    "uid": 10043
+   }
+  },
+  {
+   "cell": [
+    -8,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 90,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 90,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10044
+   }
+  },
+  {
+   "cell": [
+    -7,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 90,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 90,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10045
+   }
+  },
+  {
+   "cell": [
+    -6,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 90,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 90,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10046
+   }
+  },
+  {
+   "cell": [
+    -5,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 90,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 90,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10047
+   }
+  },
+  {
+   "cell": [
+    -4,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 90,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 90,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10048
+   }
+  },
+  {
+   "cell": [
+    -3,
+    1
+   ],
+   "kind": "belt",
+   "want": {
+    "r": 90,
+    "rv": 0,
+    "code": 1
+   },
+   "got": {
+    "r": 90,
+    "rv": 0,
+    "code": 1,
+    "type": "belt",
+    "uid": 10049
+   }
+  }
+ ],
+ "corner_land": {
+  "r": 0,
+  "rv": 2,
+  "code": 3,
+  "type": "belt",
+  "uid": 10043
+ },
+ "machine_neighbors_count": 3,
+ "machine_neighbor_detail": [
+  {
+   "belt": [
+    -9,
+    3
+   ],
+   "code": 1,
+   "machine_neighbors": [
+    "-9,2",
+    "-9,4"
+   ]
+  },
+  {
+   "belt": [
+    -8,
+    3
+   ],
+   "code": 1,
+   "machine_neighbors": [
+    "-8,4"
+   ]
+  },
+  {
+   "belt": [
+    -9,
+    1
+   ],
+   "code": 3,
+   "machine_neighbors": [
+    "-9,2"
+   ]
+  }
+ ],
+ "belt_count": 9,
+ "product_before": 35,
+ "product_after": 70,
+ "product_delta": 35,
+ "all_shape_deltas": {
+  "CuCuCuCu:CuCuCuCu": 35
+ },
+ "ticks_run": 18000,
+ "step_error": null,
+ "new_world_audit": {
+  "created": false,
+  "count": 1,
+  "want": 1,
+  "extra": 0,
+  "missing": 0,
+  "extra_uids": [],
+  "missing_uids": [],
+  "pass": true
+ },
+ "conclusion": "belts whose neighbours include a machine land at the designed (r,rv,code) — immutable paste + explicit rv defeats the computeBelt-from-machine-neighbour rewrite (R1 held for full-block paste; the validate script's drift was for INCREMENTAL place). Delivery: a shape increased by {\"CuCuCuCu:CuCuCuCu\":35}",
+ "errors": []
+}
