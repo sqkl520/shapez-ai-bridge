@@ -1,0 +1,18 @@
+{
+ "test": "rv-falsification",
+ "T1": {
+  "corner_src": {
+   "x": -26,
+   "y": -187,
+   "r": 0,
+   "rv": 2,
+   "code": 3
+  }
+ },
+ "T2": {
+  "ok": false
+ },
+ "T3": {},
+ "base": 2805,
+ "after_total": 2807
+}

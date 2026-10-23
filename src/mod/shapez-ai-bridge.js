@@ -1542,7 +1542,14 @@ class Mod extends shapez.Mod {
 
         const failed = [];
         let applied = 0;
-        root.logic.performBulkOperation(() => {
+        // 双层包裹，与游戏原生粘贴（blueprint.js:159）对齐：
+        //   performBulkOperation   —— 批量语义（一次 undo、统一扣费）
+        //   performImmutableOperation —— 关键：屏蔽 belt 系统的 updateSurroundingBeltPlacement
+        //     （systems/belt.js:63 把它挂在 entityAdded 上；每放一格都会把**周围一圈**的带子按
+        //      邻居重算 rv 并覆写 —— 唯一豁免是 immutableOperationRunning，belt.js:169）。
+        //     没有它，蓝图里显式携带的 rotationVariant 会被"邻居派生"结果覆盖，
+        //     粘贴结果依赖放置顺序 —— 这正是对抗审查定位的根因（review/ADVERSARIAL-REVIEW.md F1）。
+        const placeAll = () => {
             for (let i = 0; i < count; ++i) {
                 const code = payload.e[i * 4];
                 const dx = payload.e[i * 4 + 1];
@@ -1565,7 +1572,12 @@ class Mod extends shapez.Mod {
                 if (entity) applied++;
                 else failed.push({ dx, dy, reason: "game_rejected", code });
             }
-        });
+        };
+        if (root.logic.performImmutableOperation) {
+            root.logic.performBulkOperation(() => root.logic.performImmutableOperation(placeAll));
+        } else {
+            root.logic.performBulkOperation(placeAll);   // 兼容旧版签名（理论上 1002 已挡）
+        }
 
         // 只在有建筑真正落地时才扣费（与游戏一致：tryPlace 成功后 takeShapeByKey）
         if (shouldCharge && applied > 0) {

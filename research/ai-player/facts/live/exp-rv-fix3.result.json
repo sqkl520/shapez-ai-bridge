@@ -1,0 +1,14 @@
+{
+ "test": "rv-falsification-v3",
+ "cornerCode": 3,
+ "cornerRv": 2,
+ "clean": {
+  "hasCorner": true
+ },
+ "disturb": {
+  "hasCorner": true
+ },
+ "pass": true,
+ "base": 2806,
+ "after_total": 2807
+}
