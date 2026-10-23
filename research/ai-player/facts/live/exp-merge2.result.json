@@ -1,0 +1,49 @@
+{
+ "pass": true,
+ "pair": {
+  "a": [
+   137,
+   100,
+   "CuCuSuSu"
+  ],
+  "b": [
+   147,
+   100,
+   "RuRuCuCu"
+  ]
+ },
+ "corners": [
+  {
+   "uid": 22044,
+   "type": "belt",
+   "x": 147,
+   "y": 93,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 1,
+   "code": 2,
+   "layer": "regular"
+  },
+  {
+   "uid": 22045,
+   "type": "belt",
+   "x": 138,
+   "y": 93,
+   "r": 270,
+   "variant": "default",
+   "rotation_variant": 2,
+   "code": 3,
+   "layer": "regular"
+  }
+ ],
+ "all": [
+  "CuCuSuSu:RuRuCuCu",
+  "CuCuSuSu",
+  "RuRuCuCu"
+ ],
+ "stacked": [
+  "CuCuSuSu:RuRuCuCu"
+ ],
+ "baseline": 2805,
+ "after_total": 2805
+}
