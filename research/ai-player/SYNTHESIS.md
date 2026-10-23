@@ -159,10 +159,10 @@
 | # | 问题 | 证据 | 建议 |
 |---|---|---|---|
 | **4.0** | **`placeOne` 丢弃调用方指定的 `rotationVariant`** —— 传送带的弯道变体**永远**由游戏的自动定向重算，蓝图里存的 rv 不被使用。这是"布局落不了地"的**根本原因** | `src/mod/shapez-ai-bridge.js:782`（签名无 rv 参数）+ `:866`（`place` 只收 `{building,x,y,r,variant}`）；M4 连续 5 次失败均由拐角 rv 不可控导致（`facts/ROOT-CAUSE-rotationVariant-override.md`） | 给 `placeOne` 加可选 `rotationVariant`；`paste_blueprint` 从 code 反推并传入（**约 10 行**） |
-| 4.1 | **`bulk_delete` 会静默删掉真实工厂** | 主 Agent 实验时误删 **42 个真实实体**（`facts/INCIDENT-bulk-delete.md`）；后续又发生 2 次"边界差 1~2 格"的残留 | 加 `dry_run:true`（返回将删清单）或 `only_uids:[...]` 白名单 |
+| 4.1 | **`bulk_delete` 会静默删掉真实工厂** | 主 Agent 实验时误删 **42 个真实实体**（`facts/INCIDENT-bulk-delete.md`）；后续又发生 3 次"边界差 1~2 格"的残留 | ✅ **已修**：加 `dry_run:true`（返回 `{would_delete, by_type, items[]}` 不执行），实机验证通过（`beba23a`） |
 | 4.2 | **`place_path` 只返回 `first_uid`** | 无法精确回滚（AI 建错了只能靠大范围删除，危险） | 返回全部 uid，或加 `return_uids:true` |
 | 4.3 | **`obs` 看不到传送带上的物品** | 带内物品是诊断堵塞的唯一直接证据，当前只能靠存档解码（可行但绕） | 加 `include_belt_items`；或把 §2.4 的存档路径封装成工具 |
-| 4.4 | **`place_path` 的退化段（from==to）报 2001** | 每次布局实验都会踩（本次踩了 3 次） | 要么允许（=place 一格），要么在文档里显著标注 |
+| 4.4 | **`place_path` 的退化段（from==to）报 2001** | 每次布局实验都会踩（本次踩了 4 次） | 要么允许（=place 一格），要么在文档里显著标注 |
 
 **另附两条观察（不是缺陷，但需文档化）**：
 - `obs` 的 region 查询会**触发 chunk 生成**（副作用，已实测）。对 AI 是**有用**的（可当侦察用），但文档里应说明。
