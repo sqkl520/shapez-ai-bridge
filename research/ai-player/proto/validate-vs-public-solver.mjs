@@ -33,13 +33,15 @@ function codeToShapeTopology(code) {
     const q = [0, 1, 2, 3].map(i => (layer & (1 << i)) ? "Ru" : "--");
     return so.parse(q.join(""));
 }
-/** 我们的形状 → 拓扑 code（仅 layer0） */
+/** 我们的形状 → **全 16 位 code**（每层一个 nibble：bit i = 象限 i 非空） */
 function shapeToCode(shape) {
-    if (shape.layers.length === 0) return 0;
-    const l0 = shape.layers[0];
-    let b = 0;
-    for (let i = 0; i < 4; i++) if (l0[i]) b |= 1 << i;
-    return b;
+    let code = 0;
+    for (let l = 0; l < Math.min(4, shape.layers.length); l++) {
+        let b = 0;
+        for (let i = 0; i < 4; i++) if (shape.layers[l][i]) b |= 1 << i;
+        code |= b << (l * 4);
+    }
+    return code;
 }
 
 const memo = new Map();
@@ -69,7 +71,9 @@ for (let code = 0; code < 65536; code++) {
         const built = build(code);
         if (!built) { err++; failures.push({ code, why: "build returned null", op: r.op }); continue; }
         const got = shapeToCode(built);
-        const want = code & 15;   // 单层拓扑
+        // 全码比对（4 层 nibble）—— 对抗审查 C4：只比 layer0 是弱验证。
+        // 表里 48,417/48,433 条是多层码，必须全部核对。
+        const want = code;
         if (got === want) ok++;
         else { bad++; if (failures.length < 12) failures.push({ code, want, got, op: r.op }); }
     } catch (e) {
