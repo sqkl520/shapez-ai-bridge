@@ -1,0 +1,211 @@
+{
+  "pass": false,
+  "checks": [
+    {
+      "id": "V1-occupancy",
+      "status": "pass",
+      "evidence": {
+        "cell": [
+          0,
+          0
+        ],
+        "nodeId": "n1",
+        "expected": "落点矩形全空（r=0 的 2×1）",
+        "actual": "2 格全空",
+        "note": "决策 D1：机器恒 r=0 → 无需旋转包围盒"
+      }
+    },
+    {
+      "id": "V2-no-overwrite-existing-belt",
+      "status": "fail",
+      "evidence": {
+        "cell": [
+          5,
+          0
+        ],
+        "nodeId": "belt@5,0",
+        "expected": "规划区 ∩ replaceableBeltCells = ∅",
+        "actual": "1 格重叠：(5,0) 既有带 uid 4113",
+        "note": "C1 最高危：paste 静默销毁可替换带，applied/failed 不报告被删了什么 → 整单 abort"
+      }
+    },
+    {
+      "id": "V3-belt-fixed-point",
+      "status": "fail",
+      "evidence": {
+        "cell": [
+          6,
+          0
+        ],
+        "nodeId": "belt@6,0",
+        "expected": "(r=0,rv=0) 是 computeBelt 不动点",
+        "actual": "rv 漂到 2",
+        "note": "§2.4：V3 是唯一能防住 rv 漂移的闸；漂移全在邻居含机器的角落（belt-rules.mjs:8-10）"
+      }
+    },
+    {
+      "id": "V4-slot-alignment",
+      "status": "pass",
+      "evidence": {
+        "cell": [
+          1,
+          0
+        ],
+        "nodeId": "n1",
+        "expected": "被接走的输出 = cutter 右格 top（→ 左列）",
+        "actual": "exit/entry 对齐",
+        "note": "只校验被接走的那条输出；另一条见 V9"
+      }
+    },
+    {
+      "id": "V5-degree",
+      "status": "pass",
+      "evidence": {
+        "cell": null,
+        "nodeId": "n1",
+        "expected": "cutter 入度 1 ≤ 输入槽 1",
+        "actual": "fanIn=1",
+        "note": "无 N>2 汇合（stacker/mixer 只有 2 个 bottom）"
+      }
+    },
+    {
+      "id": "V6-crossing",
+      "status": "pass",
+      "evidence": {
+        "cell": null,
+        "nodeId": null,
+        "expected": "两股流不穿格",
+        "actual": "0 处",
+        "note": "两条通道不同行 → 不需要隧道"
+      }
+    },
+    {
+      "id": "V7-throughput",
+      "status": "pass",
+      "evidence": {
+        "cell": null,
+        "nodeId": "n1",
+        "expected": "需求 0.2/s",
+        "actual": "瓶颈 0.5/s（cutter）",
+        "note": "无 stacker 0.25/s 瓶颈（GEOMETRY 表2）"
+      }
+    },
+    {
+      "id": "V8-scope",
+      "status": "pass",
+      "evidence": {
+        "cell": null,
+        "nodeId": null,
+        "expected": "单层/无 wire/无隧道/机器 r=0/入度≤2",
+        "actual": "满足",
+        "note": "越界应直接 ok:false + reason=out-of-scope:*（§2.5）"
+      }
+    },
+    {
+      "id": "V9-unused-outlet",
+      "status": "fail",
+      "evidence": {
+        "cell": [
+          0,
+          0
+        ],
+        "nodeId": "n1",
+        "expected": "每个未接走的输出槽必须有 trash",
+        "actual": "cutter 左格 (0,0) top 输出无去向",
+        "note": "陷阱表 #7：废弃输出不接走 → 堵死整机（开发期 B3 卡住的根因）"
+      }
+    },
+    {
+      "id": "V10-unlock-report",
+      "status": "pass",
+      "evidence": {
+        "cell": null,
+        "nodeId": "n1",
+        "expected": "cutter 解锁等级 1",
+        "actual": "level-2 目标可用",
+        "note": "§6 R4：L3 用 level-2 目标，两种口径都成立"
+      }
+    },
+    {
+      "id": "S1-shape-replay",
+      "status": "pass",
+      "evidence": {
+        "cell": null,
+        "nodeId": "n1",
+        "expected": "----CuCu → 右列 CuCu",
+        "actual": "hash 相等",
+        "note": "shape-ops 重放：被接走的右列产物与目标一致"
+      }
+    }
+  ],
+  "errors": [
+    {
+      "check": "V2-no-overwrite-existing-belt",
+      "severity": "fatal",
+      "nodeId": "belt@5,0",
+      "cell": [
+        5,
+        0
+      ],
+      "message": "规划区 (5,0) 压住既有可替换带（uid 4113）：paste 会静默销毁它且不报告 → 整单 abort（C1）"
+    },
+    {
+      "check": "V3-belt-fixed-point",
+      "severity": "fatal",
+      "nodeId": "belt@6,0",
+      "cell": [
+        6,
+        0
+      ],
+      "message": "(6,0) 的 (r,rv)=(0,0) 在含机器邻居下不是 computeBelt 不动点（期望 rv=2）：贴上去物流会在第一个拐角死掉"
+    },
+    {
+      "check": "V9-unused-outlet",
+      "severity": "fatal",
+      "nodeId": "n1",
+      "cell": [
+        0,
+        0
+      ],
+      "message": "cutter 左格 top 输出槽未接走且无 trash → 整机堵死；对策：自动补 trash（陷阱表 #7 / layout-grid.mjs:90-92）"
+    }
+  ],
+  "beltSim": {
+    "tilesChecked": 4,
+    "fixedPoints": 3,
+    "drift": [
+      {
+        "cell": [
+          6,
+          0
+        ],
+        "wantRv": 2,
+        "gotRv": 0
+      }
+    ],
+    "includesMachineNeighbors": true
+  },
+  "shapeReplay": [
+    {
+      "nodeId": "n0",
+      "expectedHash": "----CuCu",
+      "actualHash": "----CuCu",
+      "equal": true
+    },
+    {
+      "nodeId": "n1",
+      "expectedHash": "CuCu----",
+      "actualHash": "CuCu----",
+      "equal": true
+    }
+  ],
+  "throughput": {
+    "demandPerSec": 0.2,
+    "bottleneck": {
+      "nodeId": "n1",
+      "ratePerSec": 0.5
+    },
+    "rowsRequired": 1,
+    "rowsPlanned": 1
+  }
+}
