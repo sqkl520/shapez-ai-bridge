@@ -36,10 +36,10 @@ G3：machine-spec 无 unlockLevel → V10 用 UNLOCK_LEVEL_FALLBACK（已通知 
 ## 在跑的包
 | 包 | Agent | 状态 |
 |---|---|---|
-| **P3 placer** | `accfae61` | 第二波（DAG→网格；行式主干+M4 汇合模式+零拐角原则） |
+| **P3 placer** | `accfae61`→**死在中途写入**（place.mjs 881 行语法不完整、无测试目录）；重跑 `a95cb396`（首笔=整体替换残骸为语法合法实现） | 第二波（DAG→网格；行式主干+M4 汇合+零拐角） |
 | **P4 router** | `ac78c98b` | 第二波（left-edge 车道 + 带朝向 Dijkstra；solveTurn 显式定向；M4 陷阱回归锁） |
-| **P5 validator** | `a467fa4a` | 第二波（V1-V10+S1；belt-sim 独立实现含机器邻居不动点；变异测试+与 belt-rules.test 双实现对拍） |
-| **P6 emitter** | `a308d900` | 第二波（emit+roundtrip=L1 门；顺序锁机器→直线→拐角；NOTES 写 stride=5 方案） |
+| **P5 validator** | `a467fa4a` | 第二波（V1-V10+S1；belt-sim 含机器邻居不动点；变异测试+双实现对拍）——盘上仍薄（25+39 行），落后其他包，继续观察 |
+| **P6 emitter** | `a308d900` | 第二波（emit+roundtrip=L1 门；顺序锁；stride=5 NOTES） |
 | P0-spec / P0-prior | 完成 | 校验已入库 `8d6ffaf`；prior §8 选型被 P4 采纳 |
 | P1 / P2 | **完成并入库** | L0 主线程复跑全绿（P1 46+ / P2 383+51+变异 7 组）→ `e27ac98` `5e4d46a` |
 | **P7 live** | `af5b67cf` | **完成**（详见下节）——桥接/游戏已解放 |
@@ -78,16 +78,18 @@ NONE/EJECT 扰动不翻。⇒ V3 生成时不动点**覆盖不了未来的合法
 **活资源**：P7 独占游戏/桥接直至其报告结束。其他包 100% 离线。主线程**不碰桥接**。
 
 ## 编排纪律（本网络的现实）
-- Agent 静默断流/假完成（39 次调用没写文件）已发生 1 次 → **所有包 prompt 都带「第一笔必须 Write 骨架」**协议。
-- 任何包失败 = **全量重跑**（同提示词，不缩水、不接回主线程做）。
+- **断流累计 6 次**（全部已全量重跑，零缩水、零接回主线程）：求解器×2（600s 超时）、规划①（39 调用没落盘）、prior①（129 调用）、spec①（161 调用，但核心 JSON 已落盘→我入库+重跑只做镜像）、**P3①（新形态：死在中途写入，留下 881 行语法不完整文件——重跑提示词首笔=修复文件，且加了"每段 Edit 后 node --check"纪律）**。
+  教训演进：write-first 协议解决了"零产出"，没解决"半截写坏文件"——P3 重跑已补上语法门禁这条。
+- 任何包失败 = **全量重跑**（同提示词 + 现场事实更新），不降级。
 - 各包**不 git commit**；主线程统一提交。
-- 包间冲突：只有 P1 能进共享工具；发现别人有 bug → 写自己 NOTES.md 点名，不改对方文件。
-- result JSON 是判据真源；**文档写 ✅ 而 result pass:false = 违规**（RV-FIX 教训，已进 plan §5）。
+- 包间冲突：只有 P1 能进共享工具；发现别人 bug → NOTES.md 点名，不改对方文件。
+- result JSON 是判据真源；**文档写 ✅ 而 result pass:false = 违规**。
 
 ## 下一步队列（当前波次回来后）
-1. 收 P1 → 立刻发 P3+P4+P5（三条并行）
-2. 收 P2 → 校对 `machine-spec.json` 与内嵌表的差异（P2 的 NOTES.md 是真值仲裁材料）
-3. 收 P7 → 据 F2 结果决定是否上 stride=5；据 F1 结果把 `paste dry_run` 列入第一批 mod 修复
-4. 收 P0-spec/P0-prior → 喂 P2 校验与 P4 选型
-5. P6/P8 → L1/L1.5 门 → L3 端到端（新档 `----CuCu`，goal→hub 计数上升，无人工坐标）
-6. 全绿后：把 compiler 提交 + 更新 README/docs（面向使用者的"AI 自动建厂"说明）
+1. ~~收 P1 → 发 P3+P4+P5~~ ✅（第二波已发；P3 重跑中）
+2. ~~收 P2 → 校对 machine-spec 差异~~ ✅（`5e4d46a`，G1/G7/G10 已裁决）
+3. ~~收 P7 → 据 F1/F2 定 dry_run 与 stride=5~~ ✅（`cead281`，双批准+时序锁）
+4. ~~收 P0-spec/P0-prior~~ ✅（`8d6ffaf`；G1 证伪其 rv×4 外推，注册表为权威）
+5. 收 P3/P4/P5/P6 → 主线程复跑 L0/L1 → 入库 → 发 P8（离线回放口径）
+6. P8 + L1.5 全绿后：做 **paste dry_run**（可先行）→ L3 端到端（新档 `----CuCu`，无人工坐标）→ **stride=5**（最后做，改 blueprint.mjs+mod，重跑全套回归）
+7. 全绿后：compiler 文档化（README 段 + PROTOCOL v:2/dry_run 条款）+ 孤儿存档清理 + 批次总结
