@@ -1,0 +1,86 @@
+{
+ "r": {
+  "miner": {
+   "ok": true,
+   "op": "place",
+   "entity_uid": 21188,
+   "type": "miner",
+   "applied": 1,
+   "failed": [],
+   "tick": 112167.12423297715
+  },
+  "belt": {
+   "ok": true,
+   "op": "place_path",
+   "applied": 2,
+   "failed": [],
+   "first_uid": 21189,
+   "tick": 112167.12423297715
+  },
+  "cutter": {
+   "ok": true,
+   "op": "place",
+   "entity_uid": 21191,
+   "type": "cutter",
+   "applied": 1,
+   "failed": [],
+   "tick": 112167.14089964381
+  },
+  "o0": {
+   "ok": true,
+   "op": "place_path",
+   "applied": 8,
+   "failed": [],
+   "first_uid": 21192,
+   "tick": 112167.14923297714
+  },
+  "o1": {
+   "ok": true,
+   "op": "place_path",
+   "applied": 8,
+   "failed": [],
+   "first_uid": 21200,
+   "tick": 112167.14923297714
+  }
+ },
+ "out": [
+  {
+   "x": -28,
+   "y": -127,
+   "items": [
+    "----SuSu",
+    "----SuSu",
+    "----SuSu",
+    "----SuSu",
+    "----SuSu",
+    "----SuSu",
+    "----SuSu",
+    "----SuSu",
+    "----SuSu",
+    "----SuSu",
+    "----SuSu",
+    "----SuSu",
+    "----SuSu"
+   ]
+  },
+  {
+   "x": -27,
+   "y": -127,
+   "items": [
+    "SuSu----",
+    "SuSu----",
+    "SuSu----",
+    "SuSu----",
+    "SuSu----",
+    "SuSu----",
+    "SuSu----",
+    "SuSu----",
+    "SuSu----",
+    "SuSu----",
+    "SuSu----",
+    "SuSu----",
+    "SuSu----"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,59 @@
+{
+ "milestone": "M2a",
+ "pass": true,
+ "site": {
+  "SHAPE": [
+   -23,
+   -189
+  ],
+  "SHAPE_KIND": "RuRuRuRu",
+  "COLOR": [
+   -27,
+   -188
+  ],
+  "COLOR_KIND": "blue"
+ },
+ "rows": [
+  {
+   "x": -27,
+   "y": -189,
+   "items": [
+    "blue",
+    "blue",
+    "blue",
+    "blue",
+    "blue",
+    "blue",
+    "blue",
+    "blue",
+    "blue",
+    "blue",
+    "blue",
+    "blue",
+    "blue",
+    "blue"
+   ]
+  },
+  {
+   "x": -23,
+   "y": -190,
+   "items": [
+    "RuRuRuRu",
+    "RuRuRuRu",
+    "RuRuRuRu",
+    "RuRuRuRu",
+    "RuRuRuRu",
+    "RuRuRuRu"
+   ]
+  },
+  {
+   "x": -19,
+   "y": -192,
+   "items": [
+    "RbRbRbRb"
+   ]
+  }
+ ],
+ "baseline": 2805,
+ "after_total": 2806
+}

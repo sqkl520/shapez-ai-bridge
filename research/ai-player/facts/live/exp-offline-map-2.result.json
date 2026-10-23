@@ -1,0 +1,11 @@
+{
+ "hypothesis": "H2",
+ "verdict": "SUPPORTED_AND_VERIFIED",
+ "tile": [
+  651,
+  834
+ ],
+ "predicted": "green",
+ "seen_before": true,
+ "error": null
+}

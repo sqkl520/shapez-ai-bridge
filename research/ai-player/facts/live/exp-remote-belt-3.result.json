@@ -1,0 +1,26 @@
+{
+ "hypothesis": "H5b",
+ "verdict": "SUPPORTED",
+ "remote": {
+  "paths": 1,
+  "withItems": 1,
+  "totalItems": 20,
+  "sample": {
+   "path_len": 24,
+   "items": 20,
+   "item0": "[3.1499,{\"$\":\"color\",\"data\":\"blue\"}]"
+  }
+ },
+ "control": {
+  "paths": 1,
+  "withItems": 0,
+  "totalItems": 0,
+  "sample": null
+ },
+ "tile": [
+  -958,
+  2690
+ ],
+ "predicted": "blue",
+ "keep": false
+}

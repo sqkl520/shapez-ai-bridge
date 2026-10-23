@@ -1,0 +1,31 @@
+{
+ "hypothesis": "H3",
+ "verdict": "SUPPORTED_VERIFIED",
+ "tile": [
+  -1518,
+  1450
+ ],
+ "predicted": "RuRuRuSu",
+ "latency_ms": 26,
+ "after": {
+  "resource_now": [
+   [
+    -1518,
+    1450,
+    "RuRuRuSu"
+   ]
+  ],
+  "miner": {
+   "uid": 21125,
+   "type": "miner",
+   "x": -1518,
+   "y": 1450,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 7,
+   "layer": "regular"
+  }
+ },
+ "error": null
+}

@@ -1,0 +1,66 @@
+{
+ "milestone": "M3-stacker",
+ "pass": true,
+ "pair": {
+  "a": [
+   138,
+   100,
+   "CuCuSuSu"
+  ],
+  "b": [
+   147,
+   100,
+   "RuRuCuCu"
+  ],
+  "d": 9
+ },
+ "rows": [
+  {
+   "x": 138,
+   "y": 99,
+   "items": [
+    "CuCuSuSu",
+    "CuCuSuSu",
+    "CuCuSuSu",
+    "CuCuSuSu",
+    "CuCuSuSu"
+   ]
+  },
+  {
+   "x": 147,
+   "y": 99,
+   "items": [
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu"
+   ]
+  },
+  {
+   "x": 138,
+   "y": 95,
+   "items": [
+    "CuCuSuSu:RuRuCuCu"
+   ]
+  }
+ ],
+ "all": [
+  "CuCuSuSu",
+  "RuRuCuCu",
+  "CuCuSuSu:RuRuCuCu"
+ ],
+ "baseline": 2805,
+ "after_total": 2805
+}
