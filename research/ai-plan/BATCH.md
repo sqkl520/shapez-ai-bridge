@@ -23,16 +23,19 @@
   不让并行包碰（plan §2.2.5/§3 禁改清单）。P7 的 F2 实验给这个决策提供证据。
 - **v1 范围**：单层 / 无 wire / 无隧道 / 机器 rot 恒 0 / 入度≤2 / 只做全新址。超出 → `ok:false`，不静默降级。
 
-## 在跑的包（更新 00:20）
-| 包 | Agent | 拥有文件 | 状态 |
-|---|---|---|---|
-| P0-spec 规格 | `ad2e3d82`→**假完成**；重跑 `a06f97d7` | machine-spec 的 .md 镜像 | JSON 已落盘+主线程校验 60/60 → 提交 `325e436`；重跑者被要求**校验而非重生成** |
-| P0-prior 检索 | `a7cc385e`→**假完成**；重跑 `a715a3f8`（带协议） | routing-prior-art.md | 重跑中 |
-| **P1 contract** | `acf57408` | types(1153 行,0 TODO)/grid(666)/errors(288) | 接近完成（fixture 测试收尾中） |
-| **P2 data** | `afd89ce8` | op-templates(903)/world(561) | 接近完成 |
-| **P7 live**（独占游戏+桥接） | `af5b67cf` | live/** | **preflight 失败**：new_game 90s 未进世界 → `pass:false, fatal`（诚实记录，未硬绕）。疑似游戏重启/弹窗问题，48m 龄仍在处理 |
+## 在跑的包（更新 01:06）
+| 包 | Agent | 状态 |
+|---|---|---|
+| **P3 placer** | `accfae61` | 第二波（DAG→网格；行式主干+M4 汇合模式+零拐角原则） |
+| **P4 router** | `ac78c98b` | 第二波（left-edge 车道 + 带朝向 Dijkstra；solveTurn 显式定向；M4 陷阱回归锁） |
+| **P5 validator** | `a467fa4a` | 第二波（V1-V10+S1；belt-sim 独立实现含机器邻居不动点；变异测试+与 belt-rules.test 双实现对拍） |
+| **P6 emitter** | `a308d900` | 第二波（emit+roundtrip=L1 门；顺序锁机器→直线→拐角；NOTES 写 stride=5 方案） |
+| **P7 live**（独占游戏） | `af5b67cf` | 仍在处置 preflight 失败（new_game 90s 未进世界） |
+| P0-spec / P0-prior | 完成 | 校验已入库 `8d6ffaf`；prior §8 选型被 P4 采纳 |
+| P1 / P2 | **完成并入库** | L0 主线程复跑全绿（P1 46+ / P2 383+51）→ `e27ac98` |
 
-**假完成（读完才动笔型）已累计 4 次**：规划①、prior①、spec① —— 全部死于协议引入前；带协议的包（P1/P2/P7）均在增量落盘。
+**待派**：P8 harness（等 P3-P6 落地；L0/L1 用录制 obs 回放，实机只留 results 适配器）。
+**主线程挂账**：①stride=5 决策等 P6 NOTES + P7 F2 证据；②`paste dry_run` 等 P7 F1；③CONTEST 裁决：P1 的 merge-belt-intent.json、P3 金样例④与 scope 的张力（已授权 P3 做成拒绝样例）；④ecosystem.md 回填"退火不可复现、改抄 channel routing"修正。
 
 ## 活资源警示
 P7 的 preflight 失败发生在 `new_game` 之后 —— **收尾行尚未填**（是否回到 level-11 / 2805 未确认）。
