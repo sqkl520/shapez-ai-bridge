@@ -59,7 +59,33 @@ planChannel 逐形态 + 负例 + 契约 + 裁决落地 G1/G7/G10/K1 + import lin
   `hubEntriesWorld` 的 `dir`（脏 → 结构化抛错）。**刻意不量化不截断**：belt-rules 的 rotateLocal 是截断、
   angleToDir 是量化，语义不同（NOTES G7 的由来）；gold ④ 的 `args.angle:45` 被拒是这条的锁。
 
-## 六、别人包的现场（只点名，不动）
+## 六、坐标系口径：为什么选 (b)（P5 揪出的世界系 hub 混框 bug）
+
+**Bug（P5 复跑真 P3/P4 时发现，我的 test 之前全程 `connectHub:false` 零覆盖）**：
+`place({steps, hub:{x:1200,y:-1400}})` 时机器排**局部** (0,…)、hub 按**世界**连，两者混框 →
+收集带从局部机器铺到世界 hub，实测 `bbox=[1204,1414]`、`beltCells=2609`。
+
+**决定：(b) LayoutReport 输出 site 相对局部系。** 依据不是拍脑袋，是 **P1 已入库的 `plan-l1.json`**：
+它的 `site.anchor=[1200,-1396]`（世界）而 `layout.occupancy[0].cell=[0,-4]` —— 而 `[1200,-1400]−[1200,-1396]=[0,-4]`
+= hub 世界坐标减 anchor。这坐实了契约：**site 是世界锚点，layout 内的每个坐标都是「世界 − site」的局部值**。
+选 (a)（报告输出世界系）会**违反 plan §2.3 / P1 fixture**，逼着改 fixture；(b) 才是"照 plan 实现"。
+
+**实现**（place.mjs `place()` 开头 + `buildReport`）：
+- `origin = input.site || input.hub || {0,0}`；世界 hub、既有 occupancy、资源格（meta.minerCells）一律
+  减 origin 摄入成局部；`hubEntries(hubLocal)` 用局部原点。
+- 有 hub 时把机器簇整体平移到「hub 正下方」（顶行 = hub 底缘下 1 行、minX = hub 左列），落在 hub 底部 4 口之一上方；
+  簇内相对几何不变，故**收集带只跨 1 段**（≈HUB 底到机器顶 + 机器内部高度），bbox 回到几十格。
+- 无 hub：origin 缺省 (0,0)、跳过平移 → **金网格逐字节不变**（test T4 锁死；G1/G2/G3/G4 未动、fixture 未动）。
+
+**给 P8 的用法（回答协调者的"要回答 P8"）**：
+- `place()` 的 LayoutReport 是**局部系**，原点 = `input.site`（你传什么 site 就以它为原点；不传 site 只传 hub → 以 hub 为原点）。
+- **P8 的"输出整体平移"绕行：可以作废。** place() 已把坐标统一到局部，P8 只需在拼装 CompiledPlan 时
+  把局部坐标 + `site.anchor` 还原成世界（P6 发射 `dx/dy` 时 `世界 = site.anchor + 局部`，与 plan-l1.json 同口径）。
+  若 P8 仍想拿世界系坐标，直接传 `input.site = 世界锚点`，本包报告原点即该锚点、机器簇就在它附近。
+- 平移不变性有锁（test T2：site/hub 同步世界平移 → grid/bbox/channels/hubConnection 逐字节等价），
+  证明"局部系"是真的、没有世界坐标泄漏（T3/T5 进一步锁 placement 与 meta.minerCells 都在局部幅度内）。
+
+## 七、别人包的现场（只点名，不动）
 
 - **op-templates `--test` 夹带（主线程 f7f7a2d 已修，本包从 P3 侧复证）**：本包静态 import op-templates.mjs，
   实测**零夹带输出**；且用探针注入一个红灯后 `process.exitCode=1` 不被洗绿。→ 本包**没有**为夹带写过任何
