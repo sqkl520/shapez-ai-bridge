@@ -33,13 +33,19 @@
 812 断言 + 7 组变异测试（证明断言非空转）+ `--validate` 0 差异。核心已随 `e27ac98` 入库；P2 留下的 NOTES/测试刷新**待主线程提交**（no-commit 规则）。
 G3：machine-spec 无 unlockLevel → V10 用 UNLOCK_LEVEL_FALLBACK（已通知 P5）。
 
+## 主线程裁决记录（第二批：P6 交来的 CONTEST，02:4x）
+- **C-1 批准（发射器口径）**：§2.1 的 dx/dy 双定义互斥，认「**世界 = site.anchor + [dx,dy]**、`w` 归一为世界 min corner」——实机与 P7/mod 都按这个口径；plan §2.1 的"拆两行写死/或 anchor≡w"作为 plan 勘误留批次总结做（改 plan 文档 ≠ 改契约）。
+- **C-2 批准**：beltIntent 独立成表、解码↔表比对（同字段自比=同义反复）；plan §5 第 1 条按此读。
+- **C-5 主线程处理**：hub kind（code 26）被 P1 契约 7..20 区间拒——**批次收敛时统一修**（P1 入库文件，在途包不许改；选项=去 hub 或改「OP_TEMPLATES 存在的 code」判据）。P6 的 L1-10 记录现状即可。
+- **C-3/C-4 知悉**：排序职责 P6 默认 strict 拒、逃生口 `entityOrder:'reorder'` 产字节等价——P3/P4 验收本就有产出顺序要求，一致。**G-P2-argv-guard：主线程亲修 @f7f7a2d**（独立复现 red→green：caller 判红后装载 P2，终态 exit=0）。修复=invokedDirectly 守卫（P1 现成模式）；probe 转 12 条回归锁（含"判红路径零夹带"补强与兄弟模块同标准）；全套回归 106+17+637+289 绿后入库。**教训**：兄弟包交来的缺陷报告，主线程复现后才修——P6 自己没越界改 P2，铁律运转正常。
+
 ## 在跑的包
 | 包 | Agent | 状态 |
 |---|---|---|
 | **P3 placer** | `a95cb396`（重跑） | ✅ 首笔已履行：place.mjs 语法残骸已修复（02:2x `node --check` 绿），实现中 |
 | **P4 router** | `ac78c98b`→**死在最后一公里**（128 断言全绿在盘、缺 ⑬ 报告契约测试节）；重跑 `a7c4e8e5`——要求把前任绿测试当草稿：逐断言变异检查揪永绿 + 补 ⑬ | 第二波 |
 | **P5 validator** | `a467fa4a` | 第二波（belt-sim 已 39→514 行，在长；validate 仍薄）——继续观察 |
-| **P6 emitter** | `a308d900` | 第二波（emit+roundtrip=L1 门；顺序锁；stride=5 NOTES） |
+| **P6 emitter** | ✅ **完成**（主线程复跑验证）：L1 门 85/85、run-all 289 断言全绿；顺序锁/永不 throw/锚点归一/平移不变全过。stride=5 报告见其 NOTES：★实测 v:1 原地加列会在 n%4==0 时**绕过 %4 闸静默错位**（8 格被解成 10 实体）→ 方案=**平行数组 o + 升 v:2**；容量增幅 11-27% |
 | P0-spec / P0-prior | 完成 | 校验已入库 `8d6ffaf`；prior §8 选型被 P4 采纳 |
 | P1 / P2 | **完成并入库** | L0 主线程复跑全绿（P1 46+ / P2 383+51+变异 7 组）→ `e27ac98` `5e4d46a` |
 | **P7 live** | `af5b67cf` | **完成**（详见下节）——桥接/游戏已解放 |
