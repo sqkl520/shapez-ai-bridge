@@ -129,6 +129,7 @@ ObsRequest：
 | `bulk_delete` | `region:[x0,y0,x1,y1], layer?` | 区域删除（走 `performBulkOperation`） | — |
 | `bulk_delete`（`dry_run:true`） | `region, layer?, dry_run:true` | **只报告将删对象，不执行**。返回 `{dry_run:true, would_delete, by_type, items:[{uid,x,y,type,rotation}]}` | — |
 | `paste_blueprint` | `text, x, y, charge?="auto"` | 粘贴蓝图（§6）。`charge`:`"auto"`=按游戏规则扣费；`false`=免费（沙盒） | 2001 格式错；2006 蓝图版本不符；2002 位置非法/材料不足 |
+| `paste_blueprint`（`dry_run:true`） | `text, x, y, dry_run:true` | **只预检不落地**。返回 `{would_apply, would_delete, destroys:[{uid,cell,type}], blocked:[{cell,occupant,reason,duplicateInPlan}], unknown_code, bbox, charge_preview, count}`。**必用的理由**：真粘贴落在既有 belt/wire 上=静默销毁替换（旧 uid 消失、`failed:[]`、零报告——实机取证 `live/results/belt-silent-overwrite.json`）；落在既有机器上=逐条目拒但其它照放（半建线）。**先 dry_run 核对，再真贴**。局限：plan 内重复只查条目 origin 格（`duplicateInPlan`），多格机器在 plan 内互叠由编译器 V1 保证（蓝图自洽性在发射前，mod 不兜底） | 2001/2006 同左（解码与版本校验在预检之前） |
 | `export_blueprint` | `region:[x0,y0,x1,y1]` | 导出该区域为蓝图字符串 | 2001 区域为空 |
 | `set_speed` | `speed:"paused"\|"regular"\|"fast_forward"` | 设置游戏速度 | 2001 |
 | `step` | `ticks:int(1..20000), collect?:bool` | **无渲染同步快进 N 逻辑 tick**（实现：复刻 puzzle 校验循环 `time.performTicks`）。`collect:true` 返回末尾观测 | 2003 引擎拒绝 |

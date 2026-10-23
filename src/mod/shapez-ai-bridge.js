@@ -877,7 +877,7 @@ class Mod extends shapez.Mod {
             place_path: { fields: new Set(["building", "from", "to", "r", "variant"]) },
             delete: { fields: new Set(["x", "y", "layer"]) },
             bulk_delete: { fields: new Set(["region", "layer", "dry_run"]) },
-            paste_blueprint: { fields: new Set(["text", "x", "y", "charge"]) },
+            paste_blueprint: { fields: new Set(["text", "x", "y", "charge", "dry_run"]) },
             export_blueprint: { fields: new Set(["region"]) },
             set_speed: { fields: new Set(["speed"]) },
             step: { fields: new Set(["ticks", "collect"]) },
@@ -1521,6 +1521,101 @@ class Mod extends shapez.Mod {
         }
         const table = this.ensureBuildingTables();
         const count = payload.e.length / 4;
+
+        // 解析条目一次（真粘贴与 dry_run 共用）
+        const items = [];
+        for (let i = 0; i < count; ++i) {
+            items.push({
+                code: payload.e[i * 4],
+                dx: payload.e[i * 4 + 1],
+                dy: payload.e[i * 4 + 2],
+                rot: payload.e[i * 4 + 3],
+            });
+        }
+
+        // dry_run：只预检不落地。存在的理由（实机取证 facts/... → live/results/belt-silent-overwrite.json）：
+        // 真粘贴落在既有 belt/wire 上会「静默替换」——旧 uid 消失、响应 failed:[]、零报告；
+        // 落在既有机器上则整条目失败（碰撞拒）但其它条目照常。调用方必须先 dry_run 核对。
+        if (a.dry_run === true) {
+            const blocked = [];
+            const destroys = [];
+            const unknownCode = [];
+            const wouldApplyCells = [];
+            const seen = new Set();
+            const bbox = { x0: null, y0: null, x1: null, y1: null };
+            for (const it of items) {
+                const wx = a.x + it.dx, wy = a.y + it.dy;
+                const info = table.byCode[it.code];
+                const key = wx + "," + wy;
+                const dup = seen.has(key);
+                seen.add(key);
+                const kind = info ? info.buildingId : "code_" + it.code;
+                if (!info) unknownCode.push({ code: it.code, cell: [wx, wy], dx: it.dx, dy: it.dy });
+                if (bbox.x0 === null) { bbox.x0 = bbox.x1 = wx; bbox.y0 = bbox.y1 = wy; }
+                else {
+                    if (wx < bbox.x0) bbox.x0 = wx; else if (wx > bbox.x1) bbox.x1 = wx;
+                    if (wy < bbox.y0) bbox.y0 = wy; else if (wy > bbox.y1) bbox.y1 = wy;
+                }
+                // 占用检查逐格（非 belt 建筑占 origin+1 区格 —— getTileSpaceBounds 语义）
+                const cells = [[wx, wy]];
+                if (info && info.metaInstance && info.metaInstance.getDimensions) {
+                    try {
+                        const dim = info.metaInstance.getDimensions(info.variant);
+                        const w = it.rot === 90 || it.rot === 270 ? dim.y : dim.x;
+                        const h = it.rot === 90 || it.rot === 270 ? dim.x : dim.y;
+                        for (let cx = 0; cx < w; cx++) for (let cy = 0; cy < h; cy++) {
+                            if (!(cx === 0 && cy === 0)) cells.push([wx + cx, wy + cy]);
+                        }
+                    } catch (e) { /* 尺寸拿不到则只查 origin */ }
+                }
+                let rejectedHere = null;
+                for (const [cx, cy] of cells) {
+                    const ent = root.map.getLayerContentXY(cx, cy, "regular");
+                    if (!ent) continue;
+                    const sme = ent.components.StaticMapEntity;
+                    const einfo = sme ? table.byCode[sme.code] : null;
+                    const etype = einfo ? einfo.buildingId : "code_" + (sme ? sme.code : "?");
+                    const replaceable = einfo && einfo.metaInstance && einfo.metaInstance.getIsReplaceable
+                        ? einfo.metaInstance.getIsReplaceable(einfo.variant, einfo.rotationVariant)
+                        : false;
+                    if (replaceable) {
+                        // belt/wire：真粘贴会销毁旧带替换 —— 如实报告，不阻断
+                        destroys.push({ uid: ent.uid, cell: [cx, cy], type: etype });
+                    } else {
+                        rejectedHere = { cell: [cx, cy], occupant: { uid: ent.uid, type: etype }, reason: "solid collision" };
+                        break;
+                    }
+                }
+                if (rejectedHere) blocked.push({ dx: it.dx, dy: it.dy, cell: [wx, wy], kind, duplicateInPlan: dup, ...rejectedHere });
+                else if (dup) blocked.push({ dx: it.dx, dy: it.dy, cell: [wx, wy], kind, duplicateInPlan: true, reason: "same cell twice in plan" });
+                else wouldApplyCells.push({ cell: [wx, wy], kind });
+            }
+            const wouldDeleteUids = new Set(destroys.map(d => d.uid));
+            // 成本也如实预演（不抛 2002 —— 预检的职责是报告，不是拒绝）
+            const free0 = root.gameMode.getHasFreeCopyPaste();
+            const charging0 = charge === true || (charge === "auto" && !free0);
+            let cost0 = 0, have0 = null;
+            if (charging0) {
+                cost0 = this.blueprintCost(count);
+                have0 = root.hubGoals.getShapesStoredByKey(root.gameMode.getBlueprintShapeKey());
+            }
+            return {
+                ok: true,
+                op: "paste_blueprint",
+                dry_run: true,
+                would_apply: wouldApplyCells.length,
+                would_delete: wouldDeleteUids.size,
+                destroys,
+                blocked,
+                unknown_code: unknownCode,
+                count,
+                bbox: [bbox.x0, bbox.y0, bbox.x1, bbox.y1],
+                charge_preview: charging0
+                    ? { cost: cost0, have: have0, affordable: have0 >= cost0 }
+                    : { cost: 0, have: null, affordable: true },
+                tick: root.time.now(),
+            };
+        }
 
         // 扣费预检（协议 §6）：先查材料，不足直接拒绝（不放置），与游戏「canAfford → tryPlace」顺序一致
         let cost = 0;
