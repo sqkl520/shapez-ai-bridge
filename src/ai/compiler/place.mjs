@@ -710,8 +710,20 @@ export function hubEntries(hubOrigin) {
  * @returns {LayoutReport | {ok:false,reason:string,failingNode:object,hint:string}}
  */
 export function place(input = {}) {
+	/* (b) 坐标系口径：LayoutReport = **site 相对局部系**（与 P1 plan-l1.json 逐格一致：
+	   site.anchor 是世界、layout.occupancy[].cell = 世界 − anchor = 局部小值）。
+	   ⇒ 一切进报告的坐标都必须在**同一个局部系**里。机器本就排局部；bug 是 hub/occupancy 被当世界系裸用，
+	   与机器混框 → 收集带从局部机器铺到世界 hub。修法：世界 hub / occupancy 在摄入时按 origin 换算成局部，
+	   并把机器簇整体对齐到 hub 正下方（收集带只跨一次"机器顶到 hub 底"的间距，绝不跨千格）。 */
 	const w = validateWorld(input.world);
 	if (w.ok === false) return w;
+
+	// 局部原点：site 优先；只给世界 hub（无 site）时以 hub 为原点（⇒ 局部 hub≈(0,0)，机器排在其下方）
+	const isPt = p => p && Number.isInteger(p.x) && Number.isInteger(p.y);
+	const origin = isPt(input.site) ? input.site : (isPt(input.hub) ? input.hub : { x: 0, y: 0 });
+	// 世界 → 局部：hub 与既有占用一律换算（world 实体在 v1 只可能是 hub，occupancy 为空/仅 hub 铺格）
+	const hubLocal = isPt(input.hub) ? [input.hub.x - origin.x, input.hub.y - origin.y] : null;
+	const occupancyLocal = (w.occupancy || []).map(o => ({ ...o, cell: [o.cell[0] - origin.x, o.cell[1] - origin.y] }));
 
 	let dag;
 	try { dag = buildDag(input.steps, { allowMultiTerminal: input.allowMultiTerminal === true }); }
@@ -726,6 +738,20 @@ export function place(input = {}) {
 	/* 分层 → 层内 barycenter（父子保序）→ 行式坐标 */
 	const levels = layerAndOrder(nodes);
 	const { rows } = assignRows(levels, { rowGap: input.rowGap, colGap: input.colGap });
+
+	/* (b) 有 hub：把机器簇对齐到 hub 正下方（局部系），消除混框导致的千格收集带。
+	   顶行 → hub 底缘下一行；minX → hub 左列（hub 底部 4 个 entry 覆盖 localHub.x..x+3，机器靠左对齐即落在其中一列上方）。
+	   无 hub：完全跳过 → 金网格（site/hub 皆缺省）逐字节不变。 */
+	if (hubLocal) {
+		let minX = Infinity, minY = Infinity;
+		for (const n of nodes) { if (n.x < minX) minX = n.x; if (n.y < minY) minY = n.y; }
+		const dx = hubLocal[0] - minX;
+		const dy = (hubLocal[1] + HUB_SIZE + 1) - minY;   // 机器簇顶行落在 hub 底缘下方一行
+		if (dx !== 0 || dy !== 0) {
+			for (const n of nodes) { n.x += dx; n.y += dy; n.row += dy; }
+			for (const r of rows) r.y += dy;
+		}
+	}
 
 	/* 落子（同格 → cell already occupied → 结构化拒因）*/
 	const grid = new Grid({ name: "place" });
@@ -743,9 +769,9 @@ export function place(input = {}) {
 		const fp = n.template.footprint;
 		for (let dy = 0; dy < fp[1]; dy++) for (let dx = 0; dx < fp[0]; dx++) occupied.add(cellKey(n.x + dx, n.y + dy));
 	}
-	if (input.hub) {
+	if (hubLocal) {
 		for (let dy = 0; dy < HUB_SIZE; dy++) for (let dx = 0; dx < HUB_SIZE; dx++) {
-			occupied.add(cellKey(input.hub.x + dx, input.hub.y + dy));
+			occupied.add(cellKey(hubLocal[0] + dx, hubLocal[1] + dy));
 		}
 	}
 
@@ -818,12 +844,12 @@ export function place(input = {}) {
 	 *      顺序颠倒会让同一输出口被 route 两次 —— 一次进 hub 一次进 trash，重复消费。
 	 *      不连 hub（无 hub / connectHub:false）时，顶层输出口留给 8.3 的 trash 兜底。）*/
 	let hubConnection = null;
-	if (terminals.length && input.connectHub !== false && input.hub && input.hub.x !== undefined) {
+	if (terminals.length && input.connectHub !== false && hubLocal) {
 		const term = terminals[0];
 		const outs = outSlotsOf(term);
 		const out = outs.find(o => !term.usedOut.has(o.role)) || null;
 		if (out) {
-			const entries = hubEntries([input.hub.x, input.hub.y]);
+			const entries = hubEntries(hubLocal);          // (b) 局部系的 hub 原点 → 入口/占位全在同一框
 			const first = beltSide(slotCell(term, out), out.dir);
 			const ranked = entries
 				.map(e => ({ e, d: Math.abs(e.slotCell[0] - first[0]) + Math.abs(e.slotCell[1] - first[1]) }))
@@ -896,16 +922,22 @@ export function place(input = {}) {
 		}
 	}
 
-	/* 8.4 资源格（给 seed 才校验；结果记进 meta.minerCells，供 P8/人读选址）*/
+	/* 8.4 资源格（给 seed 才校验；结果记进 meta.minerCells，供 P8/人读选址）。
+	   ⚠️ 资源搜索是世界系的（world.mjs 按真实地图 seed 找矿），但 (b) 口径下报告整体是局部系 ——
+	   meta.minerCells 一律减去 origin 换算成局部，绝不在局部报告里泄漏世界坐标（与 P5 揪出的 bug 同类）。*/
 	let resourceTable = null;
 	if (input.seed !== undefined && input.seed !== null) {
 		const rr = pickResourceCells(nodes, input);
 		if (rr.ok === false) return rr;
-		resourceTable = rr.table;
+		if (rr.table) {
+			const local = new Map();
+			for (const [k, v] of rr.table) local.set(k, [v[0] - origin.x, v[1] - origin.y]);
+			resourceTable = local;
+		}
 	}
 
 	const rep = buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubConnection,
-		occupancy: w.occupancy, input, waste, resourceTable });
+		occupancy: occupancyLocal, hubLocal, input, waste, resourceTable });
 	assertLayoutReport(rep, "layout");
 	return rep;
 }
@@ -916,7 +948,15 @@ export function place(input = {}) {
  * LayoutReport（§2.3 逐字段）。坐标不平移；cornerCount 与渲染**同源**（同一批 beltCells 的臂对判定），
  * 并交叉断言"grid 里 7/9/L/J 的个数 === cornerCount"（不一致 = 本包 bug，抛契约错，不许静默）。
  */
-function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubConnection, occupancy, input, waste, resourceTable }) {
+/**
+ * LayoutReport（§2.3 逐字段）。**(b) site 相对局部系**：坐标原点 = place() 定下的 origin（site ?? hub ?? 0），
+ * 机器 / hub（已换算成 hubLocal）/ 既有占用（已减 origin）都在同一框内，bbox 因此紧凑、不会跨千格。
+ * 世界坐标 = origin + 局部（P6 发射时用 site.anchor 复原 —— 与 P1 plan-l1.json 的
+ * `site.anchor=[1200,-1396]` 而 `layout.occupancy[0].cell=[0,-4]` 完全同一口径）。
+ * cornerCount 与渲染**同源**（同一批 beltCells 的臂对判定），并交叉断言
+ * "grid 里 7/9/L/J 的个数 === cornerCount"（不一致 = 本包 bug，抛契约错，不许静默）。
+ */
+function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubConnection, occupancy, input, waste, resourceTable, hubLocal }) {
 	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 	const touch = c => {
 		if (!c) return;
@@ -933,7 +973,7 @@ function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubCo
 	for (const ch of channels) { touch(ch.from.cell); touch(ch.to.cell); }
 	if (hubConnection) {
 		touch(hubConnection.entry);
-		if (input.hub) { touch([input.hub.x, input.hub.y]); touch([input.hub.x + HUB_SIZE - 1, input.hub.y + HUB_SIZE - 1]); }
+		if (hubLocal) { touch(hubLocal); touch([hubLocal[0] + HUB_SIZE - 1, hubLocal[1] + HUB_SIZE - 1]); }
 	}
 	if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = -1; maxY = -1; }
 	const w = Math.max(0, maxX - minX + 1), h = Math.max(0, maxY - minY + 1);
@@ -949,8 +989,8 @@ function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubCo
 		for (let dy = 0; dy < fp[1]; dy++) for (let dx = 0; dx < fp[0]; dx++) put([n.x + dx, n.y + dy], GRID_CHARS.empty);
 		put([n.x, n.y], glyphFor(n.template.kind || n.op, n.op));
 	}
-	if (hubConnection && input.hub) {
-		for (let dy = 0; dy < HUB_SIZE; dy++) for (let dx = 0; dx < HUB_SIZE; dx++) put([input.hub.x + dx, input.hub.y + dy], GRID_CHARS.hub);
+	if (hubConnection && hubLocal) {
+		for (let dy = 0; dy < HUB_SIZE; dy++) for (let dx = 0; dx < HUB_SIZE; dx++) put([hubLocal[0] + dx, hubLocal[1] + dy], GRID_CHARS.hub);
 	}
 	const grid = paint.map(r => r.join("")).join("\n");
 

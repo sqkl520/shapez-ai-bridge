@@ -102,7 +102,7 @@ V6 的三个子判据由 P4/P5/C4 三条注入**分别**命中（test.mjs 的 `s
 | # | 位置 | 现象 | 建议归属 |
 |---|---|---|---|
 | F1 | `research/ai-player/plan-compiler.md` §5 的 L1.5 命令 | `node src/ai/compiler/validate.mjs --plan research/ai-plan/harness/out/*.validator.json` 喂的是 **ValidatorReport**（P5 的产物），不是 plan/layout。第一版 CLI 直接 throw。 | 文档命令与 P8 交接格式要对齐；我已让 CLI 三种输入都接（CompiledPlan / LayoutReport / ValidatorReport），报告走"自洽审计"。 |
-| F2 | 同上 §2.3 `hubConnection` 的语义 | fixture 里 `{entry:[0,0], side:"bottom"}` —— `entry` 是**带子末格**还是 **hub 的入口格**？plan-l1 读作前者（`hubConnection.entry == 带子的最后一格`），字面读 `entry` 又像后者。我按前者实现（与 `hubEntriesWorld` 自证一致），并把反推写成 **side 分支 + 自证**，猜不出就返回 null 让 V4 显式 fail。 | 建议 P1 在 §2.3 给 `entry` 加一句定义；否则 P3/P4/P5 三家会各自猜。（K1-K9 现在锁住我的读法） |
+| F2 | 同上 §2.3 `hubConnection` 的语义 | **已裁决（主线程）**：`entry` = **带子末格**。我的读法与之相同（反推 anchor = entry 按 side 偏移），并**用 P3 真产物复核过**：`place({hub:[1200,-1400]})` 输出 `hubConnection={entry:[1200,-1396],side:"bottom",dir:0}` ⇒ anchor = entry+[0,-4] = [1200,-1400] = hub 锚点，与 `hubEntriesWorld` 的 bottom 面逐字一致。三方（P3 `hubEntriesWorld.cell` / P5 K 组 / 裁决）合流，无冲突。 | 批次收敛时主线程把定义回写进 plan §2.3。我的 K1-K9 已锁住该读法。 |
 | F3 | `src/ai/compiler/route.mjs` 的 `CORNER_COST_TILES = CURVED_BELT_LENGTH` | 我按 `CORNER_COST_TILES = <数字>` 做正则对拍，取不到值（P4 还在写，可能又变）。改成两级解析（直接数字 / 别名再解一次），A3/A4 现在绿。 | P4 若把该常量改名或改结构，A3 会**先红**（这正是想要的耦合报警）。 |
 | F4 | `research/ai-plan/fixtures/report-validator.json` 的场景是**示意**的 | 它的 `V2 的 nodeId="belt@5,0"` 与 `beltSim.tilesChecked=4`（规划区有 (5,0) 又有 (6,0)）需要一张我这边不存在的图。我用一张等价的小图重放，复现了它的全部三条 fail id、三条 failingNode 格、以及**逐字段相同**的 drift（`{cell:[6,0],wantRv:2,gotRv:0}`）（D11-D17）。 | 无冲突，只是记录：golden 的"场景"不可直接喂给我，能复现的是它的**结论**。 |
 | F5 | `world-full.json` 的拍平层（见 §1.1） | 不是 bug，但是**会咬人的数据形状**：任何用这份快照做逐格归属的代码都必须定义同格优先级。 | 建议在主线程的快照口径里写一句"带子优先"。 |
@@ -117,7 +117,26 @@ V6 的三个子判据由 P4/P5/C4 三条注入**分别**命中（test.mjs 的 `s
 
 1. **`op` → `kind` 无映射函数**。P2 的 `TEMPLATES` 以 op 为键（`mine/cut/stack/…`），`LayoutReport.placements[].kind` 是 `miner/cutter/stacker`，两套名字不同且 P2 没导出 op→kind。我在 `resolveNode` 里做 `TEMPLATES[p.op] || templateByBuildingVariant(p.kind,"default")` 兜底（H3/`resolveNode` 注释）。⇒ 建议 P2 补一个 `kindOf(op)` 导出，P3/P4/P5/P6 都会需要（P6 的 code→kind 反查是同一件事的另一半）。
 2. **`LayoutReport` 不带 `entities`（带子意图表）**，而 V3/V4/V6 必须知道每根带子的 `(r,rv)`。plan §2.3 只在 `CompiledPlan.entities` 里放它。⇒ P8 走"plan 整体"没问题；**单独**跑 `--plan report-layout.json` 必须 `--intent`，否则我给它 **UNDECIDABLE + 退出码 2**（G6/G7），而不是放行。P1 已在 `contract/merge-belt-intent.json` 放了这份附表，我按只读用。
+   **【已裁决并落地】**主线程裁定「P8 交接必须永远带 intent 文件」⇒ 已写进 P8 任务书。我的 UNDECIDABLE/exit-2 行为正是这条裁决的**离线兜底**：即便 P8 漏传，闸也只会拒判、绝不会把"没有带子可判"误报成绿灯。G6/G7 就是锁这条的。
+
 3. **`hub` 的 16 入口只有 `acceptor`，没有 ejector**（`hub.js:73-91`）⇒ hub 不能作为带子的上游邻居。V4 的槽位对齐因此对 hub 只查"带子出口落进入口槽"这一侧，符合语义，但值得在 §2.3 显式写一句。
+
+4. **【新发现，非本包文件】世界系 `hub` + 局部系 `placements` ⇒ 一条 ~2600 格的离谱带子。**
+   用**真 P3/P4** 跑 `place({steps:[cut], hub:{x:1200,y:-1400}})`（世界系 hub）+ `routeAll` 复现：
+   `bbox=[1204,1409]`、`beltCells=2604`、带格跨 `x 0..1200`、`hubConnection={entry:[1200,-1396],side:"bottom"}`。
+   根因：`place()` 只在 `pickResourceCells` 里把 `input.site/hub` 当**资源搜索中心**（place.mjs:627），
+   机器 `placements` 仍从局部 (0,…) 起排；而 hub 占地位在世界系 (1200,-1400) ⇒ 连接带要从局部一路铺到世界系 hub。
+   P3 自己的 test 全程 `connectHub:false`、从不传 `hub:`（test.mjs:86，逐行核过），所以这条路径没被走到过。
+   - **闸的实测行为（不是我推测的）**：`validate()` 判 **pass:false / fails=["V3-belt-fixed-point"]**
+     （"第 1402 项 belt/rv=0 排在 belt/rv=2 之前" ⇒ 陷阱表 #6 的分层序判据先命中），
+     并按 BLOCKED_BY 把 V4/V6 记为 not-applicable；V1 因两侧不重叠而 pass。
+     ⇒ **方向对（一定不放行），但归因是"施工顺序错"而不是"坐标系不一致"** —— 人读 note 会被引偏。
+   - **归属**：P3⇄P8 的坐标系约定，不在 P5 范围。两个选项交主线程：
+     (a) P3 内部把 placements 平移到 site 系（但 P3 NOTES §1 明说"坐标不平移"是有意的）；
+     (b) P8 在调 place 前自己把 hub 换成局部系、并在 emit 时换回世界系（plan §2.1 的 `site.anchor+[dx,dy]` 本来就是这套）。
+     我倾向 (b)：契约里 `entities[].dx/dy` 已经定义成"相对锚点"，(a) 会与 §2.1 冲突。
+   - 若要闸直接点名，可加一条"bbox 尺寸 ≫ 通道数×上界"的 sanity；但那会用一个几何启发式去伪装坐标系问题，
+     不如把归因留给 P8 的装配步骤（它才知道 hub 是哪个系）。**P5 不擅自加**。
 
 ## 6. 我改了主意/修过的自己的 bug（诚实记录）
 
