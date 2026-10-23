@@ -1,0 +1,542 @@
+[
+ {
+  "building": "belt",
+  "variant": "default",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 1,
+  "x": 600,
+  "y": 600
+ },
+ {
+  "building": "belt",
+  "variant": "default",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 1,
+  "x": 606,
+  "y": 600
+ },
+ {
+  "building": "belt",
+  "variant": "default",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 1,
+  "x": 612,
+  "y": 600
+ },
+ {
+  "building": "belt",
+  "variant": "default",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 1,
+  "x": 618,
+  "y": 600
+ },
+ {
+  "building": "miner",
+  "variant": "default",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 7,
+  "x": 624,
+  "y": 600
+ },
+ {
+  "building": "miner",
+  "variant": "default",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 7,
+  "x": 630,
+  "y": 600
+ },
+ {
+  "building": "miner",
+  "variant": "default",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 7,
+  "x": 636,
+  "y": 600
+ },
+ {
+  "building": "miner",
+  "variant": "default",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 7,
+  "x": 600,
+  "y": 606
+ },
+ {
+  "building": "miner",
+  "variant": "chainable",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 8,
+  "x": 606,
+  "y": 606
+ },
+ {
+  "building": "miner",
+  "variant": "chainable",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 8,
+  "x": 612,
+  "y": 606
+ },
+ {
+  "building": "miner",
+  "variant": "chainable",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 8,
+  "x": 618,
+  "y": 606
+ },
+ {
+  "building": "miner",
+  "variant": "chainable",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 8,
+  "x": 624,
+  "y": 606
+ },
+ {
+  "building": "cutter",
+  "variant": "default",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 9,
+  "x": 630,
+  "y": 606
+ },
+ {
+  "building": "cutter",
+  "variant": "default",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 9,
+  "x": 636,
+  "y": 606
+ },
+ {
+  "building": "cutter",
+  "variant": "default",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 9,
+  "x": 600,
+  "y": 612
+ },
+ {
+  "building": "cutter",
+  "variant": "default",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 9,
+  "x": 606,
+  "y": 612
+ },
+ {
+  "building": "cutter",
+  "variant": "quad",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 10,
+  "x": 612,
+  "y": 612
+ },
+ {
+  "building": "cutter",
+  "variant": "quad",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 10,
+  "x": 618,
+  "y": 612
+ },
+ {
+  "building": "cutter",
+  "variant": "quad",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 10,
+  "x": 624,
+  "y": 612
+ },
+ {
+  "building": "cutter",
+  "variant": "quad",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 10,
+  "x": 630,
+  "y": 612
+ },
+ {
+  "building": "rotater",
+  "variant": "default",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 11,
+  "x": 636,
+  "y": 612
+ },
+ {
+  "building": "rotater",
+  "variant": "default",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 11,
+  "x": 600,
+  "y": 618
+ },
+ {
+  "building": "rotater",
+  "variant": "default",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 11,
+  "x": 606,
+  "y": 618
+ },
+ {
+  "building": "rotater",
+  "variant": "default",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 11,
+  "x": 612,
+  "y": 618
+ },
+ {
+  "building": "rotater",
+  "variant": "ccw",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 12,
+  "x": 618,
+  "y": 618
+ },
+ {
+  "building": "rotater",
+  "variant": "ccw",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 12,
+  "x": 624,
+  "y": 618
+ },
+ {
+  "building": "rotater",
+  "variant": "ccw",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 12,
+  "x": 630,
+  "y": 618
+ },
+ {
+  "building": "rotater",
+  "variant": "ccw",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 12,
+  "x": 636,
+  "y": 618
+ },
+ {
+  "building": "rotater",
+  "variant": "rotate180",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 13,
+  "x": 600,
+  "y": 624
+ },
+ {
+  "building": "rotater",
+  "variant": "rotate180",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 13,
+  "x": 606,
+  "y": 624
+ },
+ {
+  "building": "rotater",
+  "variant": "rotate180",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 13,
+  "x": 612,
+  "y": 624
+ },
+ {
+  "building": "rotater",
+  "variant": "rotate180",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 13,
+  "x": 618,
+  "y": 624
+ },
+ {
+  "building": "stacker",
+  "variant": "default",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 14,
+  "x": 624,
+  "y": 624
+ },
+ {
+  "building": "stacker",
+  "variant": "default",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 14,
+  "x": 630,
+  "y": 624
+ },
+ {
+  "building": "stacker",
+  "variant": "default",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 14,
+  "x": 636,
+  "y": 624
+ },
+ {
+  "building": "stacker",
+  "variant": "default",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 14,
+  "x": 600,
+  "y": 630
+ },
+ {
+  "building": "painter",
+  "variant": "default",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 16,
+  "x": 606,
+  "y": 630
+ },
+ {
+  "building": "painter",
+  "variant": "default",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 16,
+  "x": 612,
+  "y": 630
+ },
+ {
+  "building": "painter",
+  "variant": "default",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 16,
+  "x": 618,
+  "y": 630
+ },
+ {
+  "building": "painter",
+  "variant": "default",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 16,
+  "x": 624,
+  "y": 630
+ },
+ {
+  "building": "painter",
+  "variant": "mirrored",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 17,
+  "x": 630,
+  "y": 630
+ },
+ {
+  "building": "painter",
+  "variant": "mirrored",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 17,
+  "x": 636,
+  "y": 630
+ },
+ {
+  "building": "painter",
+  "variant": "mirrored",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 17,
+  "x": 600,
+  "y": 636
+ },
+ {
+  "building": "painter",
+  "variant": "mirrored",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 17,
+  "x": 606,
+  "y": 636
+ },
+ {
+  "building": "painter",
+  "variant": "double",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 18,
+  "x": 612,
+  "y": 636
+ },
+ {
+  "building": "painter",
+  "variant": "double",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 18,
+  "x": 618,
+  "y": 636
+ },
+ {
+  "building": "painter",
+  "variant": "double",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 18,
+  "x": 624,
+  "y": 636
+ },
+ {
+  "building": "painter",
+  "variant": "double",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 18,
+  "x": 630,
+  "y": 636
+ },
+ {
+  "building": "painter",
+  "variant": "quad",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 19,
+  "x": 636,
+  "y": 636
+ },
+ {
+  "building": "painter",
+  "variant": "quad",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 19,
+  "x": 600,
+  "y": 642
+ },
+ {
+  "building": "painter",
+  "variant": "quad",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 19,
+  "x": 606,
+  "y": 642
+ },
+ {
+  "building": "painter",
+  "variant": "quad",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 19,
+  "x": 612,
+  "y": 642
+ },
+ {
+  "building": "mixer",
+  "variant": "default",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 15,
+  "x": 618,
+  "y": 642
+ },
+ {
+  "building": "mixer",
+  "variant": "default",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 15,
+  "x": 624,
+  "y": 642
+ },
+ {
+  "building": "mixer",
+  "variant": "default",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 15,
+  "x": 630,
+  "y": 642
+ },
+ {
+  "building": "mixer",
+  "variant": "default",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 15,
+  "x": 636,
+  "y": 642
+ },
+ {
+  "building": "trash",
+  "variant": "default",
+  "rotation": 0,
+  "rotation_variant": 0,
+  "code": 20,
+  "x": 600,
+  "y": 648
+ },
+ {
+  "building": "trash",
+  "variant": "default",
+  "rotation": 90,
+  "rotation_variant": 0,
+  "code": 20,
+  "x": 606,
+  "y": 648
+ },
+ {
+  "building": "trash",
+  "variant": "default",
+  "rotation": 180,
+  "rotation_variant": 0,
+  "code": 20,
+  "x": 612,
+  "y": 648
+ },
+ {
+  "building": "trash",
+  "variant": "default",
+  "rotation": 270,
+  "rotation_variant": 0,
+  "code": 20,
+  "x": 618,
+  "y": 648
+ }
+]

@@ -1,0 +1,23 @@
+{
+ "approach": "grid-merge",
+ "pass": false,
+ "pair": {
+  "a": [
+   154,
+   104
+  ],
+  "b": [
+   165,
+   116
+  ],
+  "as": "RuRuCuCu",
+  "bs": "CuCuRuRu"
+ },
+ "stacked": [],
+ "all": [
+  "RuRuCuCu",
+  "CuCuRuRu"
+ ],
+ "baseline": 2805,
+ "after_total": 2805
+}

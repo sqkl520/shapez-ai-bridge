@@ -778,24 +778,34 @@ class Mod extends shapez.Mod {
      * 参照游戏自身 HUDBuildingPlacerLogic.tryPlaceCurrentBuildingAt 的调用形态：
      *   computeOptimalDirectionAndRotationVariantAtTile({root, tile, rotation, variant, layer})
      *   logic.tryPlaceBuilding({origin, rotation, rotationVariant, originalRotation, building, variant})
+     *
+     * rotationVariantOverride：蓝图粘贴专用。带子的弯道变体（直/左转/右转）在游戏里由
+     * 邻居派生（belt.js computeOptimalDirectionAndRotationVariantAtTile），这使粘贴结果
+     * 依赖邻居是否已就位。蓝图里的 code 已经带了正确的 rotationVariant，粘贴时应当直接采用。
+     * 传 null（默认）→ 保持原有"自动定向"行为；传数字 → 强制使用该值。
      */
-    placeOne(root, meta, x, y, rotation, variant) {
+    placeOne(root, meta, x, y, rotation, variant, rotationVariantOverride = null) {
         const Vector = this.VectorCtor(root);
         const origin = new Vector(x, y);
         const rot = this.normalizeRotation(rotation);
-        let optimal = { rotation: rot, rotationVariant: 0 };
-        try {
-            if (meta.computeOptimalDirectionAndRotationVariantAtTile) {
-                optimal = meta.computeOptimalDirectionAndRotationVariantAtTile({
-                    root,
-                    tile: origin,
-                    rotation: rot,
-                    variant,
-                    layer: meta.getLayer(),
-                });
+        let optimal;
+        if (rotationVariantOverride !== null) {
+            optimal = { rotation: rot, rotationVariant: rotationVariantOverride };
+        } else {
+            optimal = { rotation: rot, rotationVariant: 0 };
+            try {
+                if (meta.computeOptimalDirectionAndRotationVariantAtTile) {
+                    optimal = meta.computeOptimalDirectionAndRotationVariantAtTile({
+                        root,
+                        tile: origin,
+                        rotation: rot,
+                        variant,
+                        layer: meta.getLayer(),
+                    });
+                }
+            } catch (e) {
+                /* 保住默认值 */
             }
-        } catch (e) {
-            /* 保住默认值 */
         }
         const entity = root.logic.tryPlaceBuilding({
             origin,
@@ -1513,7 +1523,15 @@ class Mod extends shapez.Mod {
                     failed.push({ dx, dy, reason: "unknown_code", code });
                     continue;
                 }
-                const entity = this.placeOne(root, info.metaInstance, a.x + dx, a.y + dy, rot, info.variant);
+                const entity = this.placeOne(
+                    root,
+                    info.metaInstance,
+                    a.x + dx,
+                    a.y + dy,
+                    rot,
+                    info.variant,
+                    info.rotationVariant !== undefined ? info.rotationVariant : null
+                );
                 if (entity) applied++;
                 else failed.push({ dx, dy, reason: "game_rejected", code });
             }
