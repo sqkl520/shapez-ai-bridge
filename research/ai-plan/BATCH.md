@@ -70,7 +70,8 @@ NONE/EJECT 扰动不翻。⇒ V3 生成时不动点**覆盖不了未来的合法
 3. 孤儿 level-1 存档（3 个，含 p7 用的 9ac66b0b）：暂留，批次结束后一并清理（非 level-11 档，无害）。
 
 **待派**：P8 harness（等 P3-P6 落地；L0/L1 用录制 obs 回放，实机只留 results 适配器）。
-**主线程挂账更新**：~~①stride=5 等 P7 F2~~ ✅已裁决批准（等 P3-P6 入库后做）；~~②paste dry_run 等 P7 F1~~ ✅实锤批准（可先行，与 mod_selftest 一起改）；③CONTEST 裁决：P1 的 merge-belt-intent.json、P3 金样例④与 scope 的张力（已授权 P3 做成拒绝样例）、P2 的 K1-K6；④ecosystem 退火修正 ✅ 已回填（`9bd6b3e`）；⑤孤儿存档清理。
+**✅ `paste dry_run` 已做完并实机验证（`97e6637`，03:15）**：mod+协议+4 自测（25 条全绿）；实机对照——同弹药贴工厂密集区报 3 apply/3 destroy/5 block（真 uid），贴空地报 8/8 干净，**dry_run 后世界 2805 零改动**。L3 的 P8/P7 脚本从此必须先 dry_run 核对再真贴（PROTOCOL §5 已写明；其局限：plan 内多格机器互叠归 V1，mod 不兜底）。
+**主线程挂账更新**：~~②paste dry_run~~ ✅完成；③CONTEST 裁决增量：C-1/C-2/C-5（hub kind 7..20 区间）已裁决（C-5 批次收敛时统一修 P1 判据）；P6 报的 `op-templates argv 洗灯`缺陷 ✅亲修+回归锁（`f7f7a2d`）；⑤孤儿存档清理待批次尾。
 
 ## 待派（按依赖顺序）
 | 包 | 何时发 | 依赖 |
