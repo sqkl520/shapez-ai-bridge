@@ -48,9 +48,11 @@ mixer `buildings/mixer.js:72-86`；trash `buildings/trash.js:78-91`；hub `build
 5. **stacker 的两条输入带都必须朝上**，且**必须避开输出带** → 需要"抬高一行绕行"（M3 验证过这个模式）。
 6. **颜料是独立物流**：painter 的 color 从 **top** 进 → 必须为颜料留垂直通道。
    **青（cyan）不是矿** —— 必须 mixer 混绿+蓝。
-7. **传送带形状由邻居派生**（`belt.js:161`）→ **逐格 `place_path` 时顺序重要**；
-   而**蓝图粘贴不走这条路**（显式携带 r 与 rotationVariant，H7 实测完全保真）→
-   **布局编译器应该生成蓝图，而不是一串 place_path**。
+7. **传送带形状由邻居派生**（`belt.js:161`）→ **逐格 `place_path` 时顺序重要**。
+   ⚠️ **修正**：早期实验（H7）曾以为"蓝图粘贴不走这条路"，后来发现 `placeOne` 把 rv 交给自动定向重算
+   （见 `facts/ROOT-CAUSE-rotationVariant-override.md`），**H7 的结论一度是错的**。
+   **修复后**（`placeOne` 支持 rv 覆盖）蓝图才真正确定 —— 见 `facts/RV-FIX-verified.md`。
+   **现状**：蓝图可用且确定；`place_path` 仍依赖顺序（拐角格应**最后放**）。
 8. **hub 四边共 16 个入口** → 不必把产线都挤向一边。
 
 ## 表 4：本仓库已实测的"能/不能"
