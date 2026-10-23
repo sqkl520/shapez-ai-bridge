@@ -1,0 +1,108 @@
+{
+ "milestone": "M4",
+ "pass": false,
+ "pair": {
+  "a": [
+   135,
+   101,
+   "CuCuSuSu"
+  ],
+  "b": [
+   147,
+   101,
+   "RuRuCuCu"
+  ],
+  "d": 12
+ },
+ "all": [
+  "CuCuSuSu",
+  "CuCu----",
+  "RuRuCuCu",
+  "RuRu----",
+  "--CuCu--",
+  "--RuRu--"
+ ],
+ "stacked": [],
+ "rows": [
+  {
+   "x": 135,
+   "y": 100,
+   "items": [
+    "CuCuSuSu",
+    "CuCuSuSu",
+    "CuCuSuSu",
+    "CuCuSuSu",
+    "CuCuSuSu"
+   ]
+  },
+  {
+   "x": 136,
+   "y": 96,
+   "items": [
+    "CuCu----",
+    "CuCu----",
+    "CuCu----",
+    "CuCu----"
+   ]
+  },
+  {
+   "x": 147,
+   "y": 100,
+   "items": [
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu",
+    "RuRuCuCu"
+   ]
+  },
+  {
+   "x": 148,
+   "y": 96,
+   "items": [
+    "RuRu----",
+    "RuRu----",
+    "RuRu----",
+    "RuRu----"
+   ]
+  },
+  {
+   "x": 136,
+   "y": 93,
+   "items": [
+    "--CuCu--",
+    "--CuCu--",
+    "--CuCu--",
+    "--CuCu--",
+    "--CuCu--"
+   ]
+  },
+  {
+   "x": 148,
+   "y": 93,
+   "items": [
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--",
+    "--RuRu--"
+   ]
+  }
+ ],
+ "baseline": 2805,
+ "after_total": 2805
+}
