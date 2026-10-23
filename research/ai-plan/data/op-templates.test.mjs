@@ -16,9 +16,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-    OP_TEMPLATES, AUX_TEMPLATES, ALL_TEMPLATES, MACHINE_CODES, RATES, UNLOCK_LEVEL_FALLBACK,
+    OP_TEMPLATES, AUX_TEMPLATES, ALL_TEMPLATES, MACHINE_CODES, SAVE_CODES, RATES, UNLOCK_LEVEL_FALLBACK,
+    RV_ALLOWED, ROTATABLE, OUT_OF_SCOPE_BUILDINGS_WITH_RV,
     codeFor, rotateSlot, rotateLocal, beltCode, worldSlots, machineWorldBounds, assertV1Rotation,
-    opByName, templateForBuildingCode, loadMachineSpec, specGapReport, bottleneckOf, SpecError,
+    opByName, templateForBuildingCode, templateByBuildingVariant, loadMachineSpec, specGapReport,
+    bottleneckOf, crossCheckCodes, isRotatable, isV1Emittable, allowedRvariants, v1ScopeReason,
+    hubEntriesWorld, SpecError,
 } from "../../../src/ai/op-templates.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -159,7 +162,11 @@ for (const b of ["cutter", "stacker", "painter", "mixer", "rotater", "miner"]) {
     ok(`v1 加工机器 ${b} rot=0 放行`, assertV1Rotation(b, 0) === 0);
 }
 ok("belt rot=270 放行（带子本来就要转向）", assertV1Rotation("belt", 270) === 270);
-ok("trash rot=180 放行（四边全收，朝向无意义）", assertV1Rotation("trash", 180) === 180);
+// trash/hub：上游 getIsRotateable()=false ⇒ **恒 r=0**（游戏不让转，存档 10 台 trash + 1 台 hub 全 r=0）
+for (const b of ["trash", "hub"]) {
+    throwsSpec(`${b} rot=180 → 抛（getIsRotateable=false ⇒ 恒 r=0）`, () => assertV1Rotation(b, 180), "getIsRotateable");
+    ok(`${b} rot=0 放行`, assertV1Rotation(b, 0) === 0);
+}
 throwsSpec("assertV1Rotation 也拒绝非象限角", () => assertV1Rotation("belt", 45), "0|90|180|270");
 
 /* ══════════════════════════ 5. 世界槽位 = rotateLocal（复用 belt-rules，无二次实现） ══════════════════════════ */
@@ -209,7 +216,8 @@ for (const op of Object.keys(OP_TEMPLATES)) {
 }
 eq("op 枚举覆盖 plan §2.2", Object.keys(OP_TEMPLATES).sort(),
     ["cut", "cutQuad", "mix", "mine", "paint", "paintMirrored", "rotate", "rotate180", "rotateCCW", "stack"].sort());
-eq("AUX 覆盖非 op 但必须的实体", Object.keys(AUX_TEMPLATES).sort(), ["belt", "mineChainable", "paintDouble", "paintQuad", "trash"]);
+eq("AUX 覆盖非 op 但必须的实体（含 hub：P6 反查 code→kind 要覆盖 hub）", Object.keys(AUX_TEMPLATES).sort(),
+    ["belt", "hub", "mineChainable", "paintDouble", "paintQuad", "trash"]);
 eq("code 全局唯一（反查不歧义）",
     new Set(Object.values(ALL_TEMPLATES).map(t => t.code)).size, Object.values(ALL_TEMPLATES).length);
 for (const c of [1, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) {
@@ -238,6 +246,7 @@ fs.writeFileSync(sample, JSON.stringify([
       outputs: [{ cell: [0, 0], dir: "top" }, { cell: [1, 0], dir: "top" }, { cell: [2, 0], dir: "top" }] },
     { id: "belt|default", building: "belt", variant: "default", code: 777 },
     { id: "stacker|default", building: "stacker", variant: "default", code: 14, unlockLevel: 12, footprint: [2, 1], ratePerSec: 0.5 },
+    { id: "painter|double", building: "painter", variant: "double", code: 18, ratePerSec: 0.25 },
     { id: "weird|default", building: "weird", code: 42 },
 ], null, 1) + "\n");
 ok(`本包私有 fixture 就位 research/ai-plan/data/fixtures/spec-sample.json`, fs.existsSync(sample));
@@ -246,8 +255,12 @@ eq("合成 spec recognized", s1.recognized, true);
 eq("belt code 冲突：以 belt-rules 为准（kept=1，spec=777 被驳回）",
     s1.diffs.filter(d => d.op === "belt").map(d => [d.embedded, d.spec, d.kept]), [[1, 777, 1]]);
 eq("非 belt code 分歧：实机值保留", s1.diffs.filter(d => d.op === "cut" && d.field === "code").map(d => d.kept), [9]);
-eq("spec 覆盖生效（unlockLevel / ratePerSec）",
-    [s1.templates.stack.unlockLevel, s1.templates.stack.ratePerSec], [12, 0.5]);
+eq("spec 覆盖生效（unlockLevel —— 表2 不管这个字段）", s1.templates.stack.unlockLevel, 12);
+// 速率权威：**表2 覆盖到的 op（10 个）保留表2**，表2 没给的变体才允许 spec 补
+eq("表2 覆盖的 op → ratePerSec 保留表2（spec 的 0.5 只登记不覆盖）", s1.templates.stack.ratePerSec, 0.25);
+ok("但该差异仍登记在案（谁对谁错写明白）",
+    s1.diffs.some(d => d.op === "stack" && d.field === "ratePerSec" && d.embedded === 0.25 && d.spec === 0.5 && d.kept === 0.25));
+eq("表2 未覆盖的变体 → spec 补值", s1.templates.paintDouble.ratePerSec, 0.25);
 eq("GEOMETRY 槽位数权威不被 spec 改写（差异登记、值保留）",
     [s1.templates.cut.inputs.length, s1.templates.cut.outputs.length], [1, 2]);
 ok("未知 building|variant 进 gaps 而不是崩", s1.gaps.some(g => g.includes("weird")));
@@ -275,5 +288,179 @@ ok("不 import P3-P8 任何文件", !/compiler\/(place|route|lane|validate|belt-
 ok("不 import P1（保持自包含，见文件头 TODO）", !/compiler\/(types|grid|errors)/.test(importLines));
 ok("无网络/RPC 调用", !/fetch\(|WebSocket|127\.0\.0\.1:7777/.test(src));
 
+/* ══════════════════════════ 9. 第二份实机凭据：level-11 存档（world-full.json）══════════════════════════
+ * 这节把 code 表钉在**独立于提取实验**的数据上：存档里 2805 个实体的 code/type/variant/r/rv 都是实机直读。
+ * 只读已落盘文件，零游戏（plan §4 允许的输入 (b)）。 */
+console.log("\n[9] 存档实机 code 交叉校验（facts/live/world-full.json）");
+const SAVE_DUMP = path.join(REPO, "research", "ai-player", "facts", "live", "world-full.json");
+if (fs.existsSync(SAVE_DUMP)) {
+    const dump = JSON.parse(fs.readFileSync(SAVE_DUMP, "utf8"));
+    const ents = dump.entities || [];
+    eq("存档实体数 = 2805（M4 系列基线口径）", ents.length, 2805);
+    // 观测：每个 (type|variant) 的 code 集、rv 集、rot 集
+    const obs = {};
+    for (const e of ents) {
+        const k = `${e.type}|${e.variant}`;
+        (obs[k] ??= { codes: new Set(), rvs: new Set(), rots: new Set(), n: 0 }).n++;
+        obs[k].codes.add(e.code); obs[k].rvs.add(e.rotation_variant); obs[k].rots.add(e.r);
+    }
+    // SAVE_CODES 必须与存档观测**逐键相等**（不多不少）
+    const sortedObj = o => JSON.stringify(Object.fromEntries(Object.entries(o).sort((a, b) => (a[0] < b[0] ? -1 : 1))));
+    const observedCodes = {};
+    for (const [k, v] of Object.entries(obs)) {
+        // belt 的 code 有 1/2/3（rv 位），SAVE_CODES 只记 base=1；其余建筑存档里 code 唯一
+        const cs = [...v.codes].sort((a, b) => a - b);
+        observedCodes[k] = k === "belt|default" ? cs[0] : (cs.length === 1 ? cs[0] : cs);
+    }
+    const observedFlat = Object.fromEntries(Object.entries(observedCodes).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]));
+    eq("SAVE_CODES == 存档观测（逐键、值相等）", sortedObj(SAVE_CODES), sortedObj(observedFlat));
+    // 关键：存档里非 belt/隧道/wire **没有任何 rv≠0** → 这是 H2 的实机凭据（不是"没测到"，是"测了 2805 个实体全无"）
+    const typesWithNonzeroRv = [...new Set(ents.filter(e => e.rotation_variant !== 0).map(e => e.type))].sort();
+    eq("存档里出现 rv≠0 的类型只有 belt / underground_belt", typesWithNonzeroRv, ["belt", "underground_belt"]);
+    eq("非 belt 系建筑的 rv 恒 0（143 台矿机、16 台切割机、44 台上色器、24 台调色器、10 台垃圾站、4 台旋转器、1 台 hub）",
+        [...new Set(ents.filter(e => e.type !== "belt" && e.type !== "underground_belt").map(e => e.rotation_variant))], [0]);
+    // belt 的 rv→code 在真实工厂里成立（1906 条带，另一条独立凭据链）
+    eq("belt：code - 1 === rv（真实存档逐条成立）",
+        ents.filter(e => e.type === "belt").every(e => e.code - 1 === e.rotation_variant), true);
+    // rotatable 的实机印证：trash/hub 全 r=0，加工机有非 0 朝向
+    eq("trash 存档里恒 r=0（上游 getIsRotateable=false）",
+        [...new Set(ents.filter(e => e.type === "trash").map(e => e.r))], [0]);
+    eq("hub 存档里恒 r=0", [...new Set(ents.filter(e => e.type === "hub").map(e => e.r))], [0]);
+    eq("painter/cutter/mixer/rotater/miner 存档里出现过非 0 朝向（ROTATABLE=true 的实机印证）",
+        ["painter", "cutter", "mixer", "rotater", "miner"].every(t =>
+            ents.some(e => e.type === t && e.r !== 0)), true);
+    eq("isRotatable 与存档观测一致",
+        ["trash", "hub", "painter", "cutter", "mixer", "rotater", "miner", "belt"].map(b => isRotatable(b)),
+        [false, false, true, true, true, true, true, true]);
+    // 两份独立实机数据不得冲突
+    eq("两份实机凭据零冲突", crossCheckCodes().conflicts, []);
+    eq("交叉校验覆盖 7 个共有键", crossCheckCodes().overlap.sort(),
+        ["cutter|default", "miner|default", "mixer|default", "painter|default", "painter|mirrored", "rotater|default", "trash|default"]);
+    // 存档独有（不在 15 条提取表）：hub/balancer/underground_belt
+    eq("存档独有的 code 也都能被 codeFor 解码（P7 读盘对拍要）",
+        crossCheckCodes().onlyInSave.map(k => { const [b, v] = k.split("|"); return codeFor(b, v, 0, 0); }),
+        [4, 26, 22]);
+    // stacker 只在提取表里（存档 0 台）—— 凭据面要说清楚
+    eq("stacker 不在存档里（只有提取实验一份凭据）",
+        [ents.some(e => e.type === "stacker"), MACHINE_CODES["stacker|default"], codeFor("stacker", "default", 0, 0)],
+        [false, 14, 14]);
+    // v1 emit 权限：可解码 ≠ 可产出
+    eq("balancer 可解码但 v1 禁止 emit（isV1Emittable=false）",
+        [codeFor("balancer", "default", 0, 0) === 4, isV1Emittable("balancer")], [true, false]);
+    // 范围外建筑：隧道 rv=0 **可解码**（存档里有 182 条），但 v1 不可 emit；wire 在存档里不存在 → 无 code 凭据
+    eq("隧道：rv=0 可解码=22、rv=1 拒绝且 reason=out-of-scope:tunnel、不可 emit",
+        (() => { let rv1 = "ok"; try { codeFor("underground_belt", "default", 0, 1); } catch (e) { rv1 = e.reason; }
+                 return [codeFor("underground_belt", "default", 0, 0), rv1, isV1Emittable("underground_belt")]; })(),
+        [22, "out-of-scope:tunnel", false]);
+    eq("wire：level-11 存档里没有 wire ⇒ 本包**无 code 凭据** → codeFor 拒绝（不瞎猜 code）",
+        (() => { try { codeFor("wire", "default", 0, 0); return "ok"; } catch (e) { return e.reason; } })(),
+        "emit:mismatch");
+    eq("wire 仍被标为范围外（分诊给 out-of-scope:wire）", v1ScopeReason("wire"), "out-of-scope:wire");
+} else console.log("  · 跳过（无 facts/live/world-full.json）");
+
+/* ══════════════════════════ 10. RV_ALLOWED / 注册表证据面 ══════════════════════════ */
+console.log("\n[10] rv 许可集（注册表证据）");
+eq("belt 是唯一有 rv 位的 v1 建筑", RV_ALLOWED.belt, [0, 1, 2]);
+for (const b of ["miner", "cutter", "rotater", "stacker", "mixer", "painter", "trash", "hub"])
+    eq(`${b} 只允许 rv=0`, allowedRvariants(b), [0]);
+eq("未列出的建筑默认 rv=[0]（注册表里没 rv≠0 的组合）", allowedRvariants("balancer"), [0]);
+eq("隧道/wire：allowedRvariants 只承认 rv=0（其 rv 语义无凭据），但**解码**用得到 code",
+    [allowedRvariants("underground_belt"), allowedRvariants("wire")], [[0], [0]]);
+eq("隧道 code 仍可解码（P7 读盘对拍要解 182 条隧道）",
+    [codeFor("underground_belt", "default", 0, 0), SAVE_CODES["underground_belt|default"]], [22, 22]);
+throwsSpec("隧道 rv=1 → 拒（语义无凭据，且 v1 范围外）", () => codeFor("underground_belt", "default", 0, 1), "out-of-scope");
+eq("v1ScopeReason 给 §2.5 的分诊串", [v1ScopeReason("underground_belt"), v1ScopeReason("wire"), v1ScopeReason("cutter")],
+    ["out-of-scope:tunnel", "out-of-scope:wire", null]);
+// cutQuad 在 v1Blocked 名单里（C6 第 3 条：quad 4 路输出 v1 需汇合方案）→ 不在可 emit 集合
+eq("v1 可 emit 集合 = op 枚举(减 cutQuad) + trash/belt/hub",
+    Object.keys(ALL_TEMPLATES).filter(o => isV1Emittable(ALL_TEMPLATES[o].building, ALL_TEMPLATES[o].variant)).sort(),
+    [...Object.keys(OP_TEMPLATES).filter(o => !OP_TEMPLATES[o].v1Blocked), "belt", "trash", "hub"].sort());
+eq("cutQuad 是唯一被 v1Blocked 的 op 枚举成员",
+    Object.keys(OP_TEMPLATES).filter(o => OP_TEMPLATES[o].v1Blocked), ["cutQuad"]);
+
+/* ══════════════════════════ 11. hub 16 入口 vs exp-e2e.mjs 的实机版（第二来源） ══════════════════════════
+ * P3 被要求"把 exp-e2e.mjs:93-102 的 hubEntries 搬进自己文件"。本包把它作为**归一供给**，
+ * 这里独立核对两者给的是同一张表 —— 若哪天上游 hub.js 改了，本包一处改、其余包不漂移。 */
+console.log("\n[11] hub 入口表与 exp-e2e.mjs 逐格核对");
+{
+    const expSrc = fs.readFileSync(path.join(REPO, "research", "ai-player", "exp-e2e.mjs"), "utf8");
+    const m = expSrc.match(/function hubEntries\(hub\)\s*\{([\s\S]*?)\n\}/);
+    ok("exp-e2e.mjs 里找到 hubEntries()", !!m);
+    if (m) {
+        // 解析四行 push 的相对偏移（形如 `hx + i` / `hy - 1` / `hx + 4`），i 取 0..3。
+        // 循环体是 for i { 顶; 底; 左; 右 } ⇒ 顺序与 hubEntriesWorld 完全一致。
+        const pushes = [...m[1].matchAll(/out\.push\(\{\s*at:\s*\[([^\]]+)\],\s*dir:\s*(\d+)/g)]
+            .map(x => ({ terms: x[1].split(",").map(t => t.trim()), dir: Number(x[2]) }));
+        eq("实验脚本里有 4 条 push 模板（循环内各展开 4 次 = 16 格）", pushes.length, 4);
+        const offset = (term, i) => {
+            // "hx + i" → i；"hy - 1" → -1；"hx + 4" → 4
+            const mm = term.match(/^(?:hx|hy)\s*([+-])\s*(i|\d+)$/);
+            if (!mm) throw new Error("无法解析的偏移表达式: " + term);
+            const v = mm[2] === "i" ? i : Number(mm[2]);
+            return mm[1] === "-" ? -v : v;
+        };
+        const expCells = [];
+        for (let i = 0; i < 4; i++)
+            for (const p of pushes) expCells.push(`${100 + offset(p.terms[0], i)},${200 + offset(p.terms[1], i)}:${p.dir}`);
+        const hub = [100, 200];
+        const mineCells = hubEntriesWorld(hub).map(e => `${e.cell.join(",")}:${e.dir}`);
+        eq("本包 16 入口", mineCells.length, 16);
+        eq("入口格 + 流向 与 exp-e2e 逐条一致（同序）", mineCells, expCells);
+        eq("集合一致（顺序无关，防交错写法误读）", [...mineCells].sort(), [...expCells].sort());
+        eq("dir 与 face 自洽（顶排向下喷 180 / 底排向上 0 / 左列向右 90 / 右列向左 270）",
+            hubEntriesWorld(hub).every(e => (e.face === "top" && e.dir === 180) || (e.face === "bottom" && e.dir === 0)
+                || (e.face === "left" && e.dir === 90) || (e.face === "right" && e.dir === 270)), true);
+        // 上游源码行号引用必须在（可追溯性）
+        ok("hubEntriesWorld 注释引了上游 hub.js:73-91",
+            fs.readFileSync(path.join(REPO, "src", "ai", "op-templates.mjs"), "utf8").includes("hub.js:73-91"));
+    }
+}
+
+/* ══════════════════════════ 7b. 对 P0-spec 真实落地的 machine-spec.json 跑适配 ══════════════════════════
+ * 合成样本只证明"映射表能覆盖字段"，这一节证明**真数据**能被识别、且槽位几何与内嵌表互相印证。 */
+console.log("\n[7b] 真 machine-spec.json 适配（P0-spec 已落地）");
+{
+    const real = path.join(REPO, "src", "ai", "machine-spec.json");
+    if (fs.existsSync(real)) {
+        const r = loadMachineSpec(real);
+        eq("真 spec 被识别（SPEC_FIELD_ALIASES + variants 展平生效）", r.recognized, true);
+        ok("内嵌表槽位几何与 spec 逐格一致（0 处槽位差异）",
+            r.diffs.filter(d => /\.length$|\.geometry$/.test(d.field)).length === 0,
+            JSON.stringify(r.diffs.filter(d => /\.length$|\.geometry$/.test(d.field))));
+        // 速率权威：表2 覆盖的 10 个 op 保留表2；表2 没给的（paintDouble/quad）由 spec 补
+        for (const op of ["mine", "cut", "cutQuad", "rotate", "rotateCCW", "rotate180", "paint", "paintMirrored", "mix", "stack"])
+            eq(`${op}.ratePerSec 保留 GEOMETRY 表2 值`, r.templates[op].ratePerSec, OP_TEMPLATES[op].ratePerSec);
+        eq("paintDouble 由 spec 补值（表2 未列）", r.templates.paintDouble.ratePerSec, 0.25);
+        // ⚠️ 单位口径：spec 的 0.25 是 charges/s（painterDouble 每 charge 出 2 件 → 0.5 件/s）
+        //   本包只登记不换算；V7 若按件/s 判吞吐需换算（NOTES G10）
+        ok("paintDouble 的 spec 补值带单位口径说明",
+            r.diffs.some(d => d.op === "paintDouble" && /charges\/s|件\/s|换算/.test(d.why)), true);
+        // belt 的 code 仍走 belt-rules，spec 的 beltVariants 与 EXIT_LOCAL 同表 → 零差异
+        eq("belt code 权威未被 spec 撼动", [codeFor("belt", "default", 0, 0), codeFor("belt", "default", 0, 2)], [1, 3]);
+        ok("belt 无 code 差异（spec 的 internalId=1 与 beltCode(0) 吻合）",
+            !r.diffs.some(d => d.op === "belt" && d.field === "code"), JSON.stringify(r.diffs.filter(d => d.op === "belt")));
+        // 模块单例不能被 spec 就地污染（loadMachineSpec 走的是深拷贝）
+        //   —— RATES.painter 是 0.33、OP_TEMPLATES.paint.ratePerSec 同源，故 [OP_TEMPLATES.paint.rate, RATES.painter] 恒等 0.33
+        eq("OP_TEMPLATES 未被 loadMachineSpec 就地改写", OP_TEMPLATES.paint.ratePerSec, 0.33);
+        eq("RATES 常量不受 spec 影响", RATES.painter, 0.33);
+        ok("未知建筑家族汇总成一条 gap（不把报告刷成 33 行）",
+            r.gaps.length <= 8, JSON.stringify(r.gaps));
+        // P0-spec 的 hasRotationVariants 独立印证本包 RV_ALLOWED：只有 belt 有 rv≠0
+        {
+            const spec = JSON.parse(fs.readFileSync(real, "utf8"));
+            const rvBuilders = [];
+            for (const [b, v] of Object.entries(spec.buildings || {}))
+                for (const [vn, rec] of Object.entries(v.variants || {}))
+                    if (Array.isArray(rec.hasRotationVariants) && rec.hasRotationVariants.some(x => x !== 0)) rvBuilders.push(`${b}|${vn}`);
+            const v1families = ["belt", "miner", "cutter", "rotater", "stacker", "mixer", "painter", "trash", "hub"];
+            eq("spec 里 v1 家族中只有 belt 注册了 rv≠0（独立印证 RV_ALLOWED / NOTES G1）",
+                rvBuilders.filter(k => v1families.includes(k.split("|")[0])), ["belt|default"]);
+            // 非 v1 家族有 rv 的（隧道/wire）本包一律不产出
+            ok("隧道/wire 确有 rv≠0 但本包 isV1Emittable=false",
+                rvBuilders.includes("underground_belt|default") && rvBuilders.includes("wire|default")
+                && !isV1Emittable("underground_belt") && !isV1Emittable("wire"), rvBuilders.join(","));
+        }
+    } else console.log("  · 跳过（无 src/ai/machine-spec.json）");
+}
+
 console.log(`\n${failed ? "✗" : "✓"} op-templates.test：${passed} 通过 / ${failed} 失败`);
-process.exitCode = failed ? 1 : 0;

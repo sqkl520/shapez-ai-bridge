@@ -1,0 +1,190 @@
+{
+  "grid": "T..........\n^..........\nS..........\n^^.........\n^9<<<<<<<<7\n^.........^\n^.........^\n^.........^\n^.........^\n^.........^\nM.........M",
+  "rows": [
+    {
+      "level": 0,
+      "y": 9,
+      "nodeIds": [
+        "mA",
+        "mB"
+      ]
+    },
+    {
+      "level": 1,
+      "y": 1,
+      "nodeIds": [
+        "st"
+      ]
+    },
+    {
+      "level": 2,
+      "y": -1,
+      "nodeIds": [
+        "out"
+      ]
+    }
+  ],
+  "placements": [
+    {
+      "nodeId": "mA",
+      "op": "mine",
+      "kind": "miner",
+      "cell": [
+        0,
+        9
+      ],
+      "rot": 0,
+      "footprint": [
+        1,
+        1
+      ]
+    },
+    {
+      "nodeId": "mB",
+      "op": "mine",
+      "kind": "miner",
+      "cell": [
+        10,
+        9
+      ],
+      "rot": 0,
+      "footprint": [
+        1,
+        1
+      ]
+    },
+    {
+      "nodeId": "st",
+      "op": "stack",
+      "kind": "stacker",
+      "cell": [
+        0,
+        1
+      ],
+      "rot": 0,
+      "footprint": [
+        2,
+        1
+      ]
+    },
+    {
+      "nodeId": "out",
+      "op": "trash",
+      "kind": "trash",
+      "cell": [
+        0,
+        -1
+      ],
+      "rot": 0,
+      "footprint": [
+        1,
+        1
+      ]
+    }
+  ],
+  "channels": [
+    {
+      "from": {
+        "nodeId": "mA",
+        "cell": [
+          0,
+          9
+        ],
+        "slot": "top",
+        "outDir": "top"
+      },
+      "to": {
+        "nodeId": "st",
+        "cell": [
+          0,
+          1
+        ],
+        "slot": "bottom",
+        "inDir": "bottom"
+      },
+      "lane": null,
+      "payload": "CuCuSuSu",
+      "slotRole": "lower",
+      "ordinal": 0
+    },
+    {
+      "from": {
+        "nodeId": "mB",
+        "cell": [
+          10,
+          9
+        ],
+        "slot": "top",
+        "outDir": "top"
+      },
+      "to": {
+        "nodeId": "st",
+        "cell": [
+          1,
+          1
+        ],
+        "slot": "bottom",
+        "inDir": "bottom"
+      },
+      "lane": 3,
+      "payload": "RuRuCuCu",
+      "slotRole": "upper",
+      "ordinal": 1
+    },
+    {
+      "from": {
+        "nodeId": "st",
+        "cell": [
+          0,
+          1
+        ],
+        "slot": "top",
+        "outDir": "top"
+      },
+      "to": {
+        "nodeId": "out",
+        "cell": [
+          0,
+          -1
+        ],
+        "slot": "bottom",
+        "inDir": "bottom"
+      },
+      "lane": null,
+      "payload": "CuCuSuSu:RuRuCuCu",
+      "slotRole": "out",
+      "ordinal": null
+    }
+  ],
+  "lanes": [
+    {
+      "row": 3,
+      "channelIds": [
+        "chB"
+      ]
+    }
+  ],
+  "hubConnection": null,
+  "bbox": [
+    11,
+    11
+  ],
+  "occupancy": [],
+  "conflicts": [
+    {
+      "kind": "lane-column",
+      "cells": [
+        [
+          0,
+          3
+        ]
+      ],
+      "nodeIds": [
+        "chA",
+        "chB"
+      ],
+      "resolvedBy": "只让分支 B 拐弯（M4-SUCCESS 关键 1：分支 A 竖直直入 stacker 左格 → 车道行 3 与 col 0 不冲突）"
+    }
+  ],
+  "cornerCount": 2
+}
