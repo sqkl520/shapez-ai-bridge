@@ -1,0 +1,88 @@
+{
+ "test": "belt-silent-overwrite",
+ "kind": "F1 — paste silently destroys replaceable belts, reports nothing (redteam #3b / R3 / needs_live_test #5)",
+ "pass": true,
+ "falsified_report_damages": true,
+ "world": "9ac66b0bfb8feb9a95d2a489541b5d5b47814712",
+ "site": [
+  212,
+  0
+ ],
+ "line_cells": [
+  [
+   212,
+   0
+  ],
+  [
+   213,
+   0
+  ],
+  [
+   214,
+   0
+  ],
+  [
+   215,
+   0
+  ],
+  [
+   216,
+   0
+  ]
+ ],
+ "original_belt_uids": [
+  10116,
+  10117,
+  10118,
+  10119,
+  10120
+ ],
+ "paste": {
+  "ok": true,
+  "applied": 3,
+  "count": 3,
+  "failed": [],
+  "raw_keys": [
+   "ok",
+   "op",
+   "applied",
+   "failed",
+   "count",
+   "cost",
+   "charged",
+   "tick"
+  ]
+ },
+ "overlap_cells": [
+  [
+   214,
+   0
+  ],
+  [
+   215,
+   0
+  ]
+ ],
+ "new_uid_at_overlap": [
+  10122,
+  10123
+ ],
+ "old_belts_replaced": [
+  true,
+  true
+ ],
+ "failed_mentions_overlap": false,
+ "response_mentions_destroy": false,
+ "new_world_audit": {
+  "created": false,
+  "count": 1,
+  "want": 1,
+  "extra": 0,
+  "missing": 0,
+  "extra_uids": [],
+  "missing_uids": [],
+  "pass": true
+ },
+ "mod_gap": "paste_blueprint has no dry_run and does not report destroyed/replaced entities (MOD-GAPS).",
+ "errors": []
+}

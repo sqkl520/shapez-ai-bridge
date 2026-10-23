@@ -1,0 +1,477 @@
+{
+ "test": "orig-flip",
+ "kind": "F2 — originalRotation dropped by SZBP1, matrix sweep (redteam #3a / R2 / needs_live_test #1)",
+ "pass": true,
+ "ran_clean": true,
+ "world": "9ac66b0bfb8feb9a95d2a489541b5d5b47814712",
+ "matrix": [
+  {
+   "tag": "C00-bottom->right/NONE",
+   "inDir": "bottom",
+   "outDir": "right",
+   "want": {
+    "r": 0,
+    "rv": 2,
+    "code": 3
+   },
+   "anchor": [
+    232,
+    0
+   ],
+   "corner_cell": [
+    232,
+    0
+   ],
+   "paste_intent_diff": [],
+   "paste_applied": 3,
+   "corner_before": {
+    "r": 0,
+    "rv": 2,
+    "code": 3,
+    "uid": 10084
+   },
+   "corner_after": {
+    "r": 0,
+    "rv": 2,
+    "code": 3,
+    "uid": 10084
+   },
+   "saved_original_rotation": 0,
+   "perturbation": null,
+   "outcome": "unchanged",
+   "same": true,
+   "region": [
+    229,
+    -3,
+    236,
+    4
+   ]
+  },
+  {
+   "tag": "C00-bottom->right/EJECT",
+   "inDir": "bottom",
+   "outDir": "right",
+   "want": {
+    "r": 0,
+    "rv": 2,
+    "code": 3
+   },
+   "anchor": [
+    232,
+    0
+   ],
+   "corner_cell": [
+    232,
+    0
+   ],
+   "paste_intent_diff": [],
+   "paste_applied": 3,
+   "corner_before": {
+    "r": 0,
+    "rv": 2,
+    "code": 3,
+    "uid": 10087
+   },
+   "corner_after": {
+    "r": 0,
+    "rv": 2,
+    "code": 3,
+    "uid": 10087
+   },
+   "saved_original_rotation": 0,
+   "perturbation": {
+    "cell": [
+     231,
+     0
+    ],
+    "side": "left",
+    "r": 90,
+    "mode": "EJECT",
+    "uid": 10089
+   },
+   "outcome": "unchanged",
+   "same": true,
+   "region": [
+    228,
+    -3,
+    236,
+    4
+   ]
+  },
+  {
+   "tag": "C00-bottom->right/PULL",
+   "inDir": "bottom",
+   "outDir": "right",
+   "want": {
+    "r": 0,
+    "rv": 2,
+    "code": 3
+   },
+   "anchor": [
+    232,
+    0
+   ],
+   "corner_cell": [
+    232,
+    0
+   ],
+   "paste_intent_diff": [],
+   "paste_applied": 3,
+   "corner_before": {
+    "r": 0,
+    "rv": 2,
+    "code": 3,
+    "uid": 10091
+   },
+   "corner_after": {
+    "r": 0,
+    "rv": 0,
+    "code": 1,
+    "uid": 10091
+   },
+   "saved_original_rotation": 0,
+   "perturbation": {
+    "cell": [
+     231,
+     0
+    ],
+    "side": "left",
+    "r": 270,
+    "mode": "PULL",
+    "uid": 10093
+   },
+   "outcome": "flipped",
+   "same": false,
+   "region": [
+    228,
+    -3,
+    236,
+    4
+   ]
+  },
+  {
+   "tag": "C270-right->bottom/NONE",
+   "inDir": "right",
+   "outDir": "bottom",
+   "want": {
+    "r": 270,
+    "rv": 1,
+    "code": 2
+   },
+   "anchor": [
+    232,
+    0
+   ],
+   "corner_cell": [
+    232,
+    0
+   ],
+   "paste_intent_diff": [],
+   "paste_applied": 3,
+   "corner_before": {
+    "r": 270,
+    "rv": 1,
+    "code": 2,
+    "uid": 10095
+   },
+   "corner_after": {
+    "r": 270,
+    "rv": 1,
+    "code": 2,
+    "uid": 10095
+   },
+   "saved_original_rotation": 270,
+   "perturbation": null,
+   "outcome": "unchanged",
+   "same": true,
+   "region": [
+    229,
+    -3,
+    236,
+    4
+   ]
+  },
+  {
+   "tag": "C270-right->bottom/EJECT",
+   "inDir": "right",
+   "outDir": "bottom",
+   "want": {
+    "r": 270,
+    "rv": 1,
+    "code": 2
+   },
+   "anchor": [
+    232,
+    0
+   ],
+   "corner_cell": [
+    232,
+    0
+   ],
+   "paste_intent_diff": [],
+   "paste_applied": 3,
+   "corner_before": {
+    "r": 270,
+    "rv": 1,
+    "code": 2,
+    "uid": 10098
+   },
+   "corner_after": {
+    "r": 270,
+    "rv": 1,
+    "code": 2,
+    "uid": 10098
+   },
+   "saved_original_rotation": 270,
+   "perturbation": {
+    "cell": [
+     231,
+     0
+    ],
+    "side": "left",
+    "r": 90,
+    "mode": "EJECT",
+    "uid": 10100
+   },
+   "outcome": "unchanged",
+   "same": true,
+   "region": [
+    228,
+    -3,
+    236,
+    4
+   ]
+  },
+  {
+   "tag": "C270-right->bottom/PULL",
+   "inDir": "right",
+   "outDir": "bottom",
+   "want": {
+    "r": 270,
+    "rv": 1,
+    "code": 2
+   },
+   "anchor": [
+    232,
+    0
+   ],
+   "corner_cell": [
+    232,
+    0
+   ],
+   "paste_intent_diff": [],
+   "paste_applied": 3,
+   "corner_before": {
+    "r": 270,
+    "rv": 1,
+    "code": 2,
+    "uid": 10102
+   },
+   "corner_after": {
+    "r": 270,
+    "rv": 0,
+    "code": 1,
+    "uid": 10102
+   },
+   "saved_original_rotation": 270,
+   "perturbation": {
+    "cell": [
+     231,
+     0
+    ],
+    "side": "left",
+    "r": 270,
+    "mode": "PULL",
+    "uid": 10104
+   },
+   "outcome": "flipped",
+   "same": false,
+   "region": [
+    228,
+    -3,
+    236,
+    4
+   ]
+  },
+  {
+   "tag": "C180-top->left/NONE",
+   "inDir": "top",
+   "outDir": "left",
+   "want": {
+    "r": 180,
+    "rv": 2,
+    "code": 3
+   },
+   "anchor": [
+    232,
+    0
+   ],
+   "corner_cell": [
+    233,
+    1
+   ],
+   "paste_intent_diff": [],
+   "paste_applied": 3,
+   "corner_before": {
+    "r": 180,
+    "rv": 2,
+    "code": 3,
+    "uid": 10106
+   },
+   "corner_after": {
+    "r": 180,
+    "rv": 2,
+    "code": 3,
+    "uid": 10106
+   },
+   "saved_original_rotation": 180,
+   "perturbation": null,
+   "outcome": "unchanged",
+   "same": true,
+   "region": [
+    229,
+    -3,
+    236,
+    4
+   ]
+  },
+  {
+   "tag": "C180-top->left/EJECT",
+   "inDir": "top",
+   "outDir": "left",
+   "want": {
+    "r": 180,
+    "rv": 2,
+    "code": 3
+   },
+   "anchor": [
+    232,
+    0
+   ],
+   "corner_cell": [
+    233,
+    1
+   ],
+   "paste_intent_diff": [],
+   "paste_applied": 3,
+   "corner_before": {
+    "r": 180,
+    "rv": 2,
+    "code": 3,
+    "uid": 10109
+   },
+   "corner_after": {
+    "r": 180,
+    "rv": 2,
+    "code": 3,
+    "uid": 10109
+   },
+   "saved_original_rotation": 180,
+   "perturbation": {
+    "cell": [
+     233,
+     2
+    ],
+    "side": "bottom",
+    "r": 0,
+    "mode": "EJECT",
+    "uid": 10111
+   },
+   "outcome": "unchanged",
+   "same": true,
+   "region": [
+    229,
+    -3,
+    236,
+    5
+   ]
+  },
+  {
+   "tag": "C180-top->left/PULL",
+   "inDir": "top",
+   "outDir": "left",
+   "want": {
+    "r": 180,
+    "rv": 2,
+    "code": 3
+   },
+   "anchor": [
+    232,
+    0
+   ],
+   "corner_cell": [
+    233,
+    1
+   ],
+   "paste_intent_diff": [],
+   "paste_applied": 3,
+   "corner_before": {
+    "r": 180,
+    "rv": 2,
+    "code": 3,
+    "uid": 10113
+   },
+   "corner_after": {
+    "r": 180,
+    "rv": 0,
+    "code": 1,
+    "uid": 10113
+   },
+   "saved_original_rotation": 180,
+   "perturbation": {
+    "cell": [
+     233,
+     2
+    ],
+    "side": "bottom",
+    "r": 180,
+    "mode": "PULL",
+    "uid": 10115
+   },
+   "outcome": "flipped",
+   "same": false,
+   "region": [
+    229,
+    -3,
+    236,
+    5
+   ]
+  }
+ ],
+ "summary": {
+  "cells": 9,
+  "unchanged": [
+   "C00-bottom->right/NONE",
+   "C00-bottom->right/EJECT",
+   "C270-right->bottom/NONE",
+   "C270-right->bottom/EJECT",
+   "C180-top->left/NONE",
+   "C180-top->left/EJECT"
+  ],
+  "flipped": [
+   "C00-bottom->right/PULL",
+   "C270-right->bottom/PULL",
+   "C180-top->left/PULL"
+  ],
+  "control_unchanged": [
+   {
+    "tag": "C00-bottom->right/NONE",
+    "outcome": "unchanged",
+    "orig": 0
+   },
+   {
+    "tag": "C270-right->bottom/NONE",
+    "outcome": "unchanged",
+    "orig": 270
+   },
+   {
+    "tag": "C180-top->left/NONE",
+    "outcome": "unchanged",
+    "orig": 180
+   }
+  ]
+ },
+ "compiler_reliance": "At least one corner FLIPPED on post-paste perturbation: [\"C00-bottom->right/PULL\",\"C270-right->bottom/PULL\",\"C180-top->left/PULL\"]. R2 is ACTIVE for incremental work: the compiler must paste whole blocks only (C2) and never add a neighbour to a pasted corner, or stride=5 must be adopted.",
+ "mod_gap": "SZBP1 stride=4 does not store originalRotation; mod sets originalRotation=rotation on paste (bridge:814).",
+ "errors": []
+}

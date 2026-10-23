@@ -40,16 +40,31 @@ G3：machine-spec 无 unlockLevel → V10 用 UNLOCK_LEVEL_FALLBACK（已通知 
 | **P4 router** | `ac78c98b` | 第二波（left-edge 车道 + 带朝向 Dijkstra；solveTurn 显式定向；M4 陷阱回归锁） |
 | **P5 validator** | `a467fa4a` | 第二波（V1-V10+S1；belt-sim 独立实现含机器邻居不动点；变异测试+与 belt-rules.test 双实现对拍） |
 | **P6 emitter** | `a308d900` | 第二波（emit+roundtrip=L1 门；顺序锁机器→直线→拐角；NOTES 写 stride=5 方案） |
-| **P7 live**（独占游戏） | `af5b67cf` | 仍在处置 preflight 失败（new_game 90s 未进世界） |
 | P0-spec / P0-prior | 完成 | 校验已入库 `8d6ffaf`；prior §8 选型被 P4 采纳 |
-| P1 / P2 | **完成并入库** | L0 主线程复跑全绿（P1 46+ / P2 383+51）→ `e27ac98` |
+| P1 / P2 | **完成并入库** | L0 主线程复跑全绿（P1 46+ / P2 383+51+变异 7 组）→ `e27ac98` `5e4d46a` |
+| **P7 live** | `af5b67cf` | **完成**（详见下节）——桥接/游戏已解放 |
+
+## P7 完成（01:44 报告 → 主线程独立核验：8 个 result JSON + LIVE-LOG 收尾 + 只读 obs 实测 2805/L11 ✅）
+**桥接与游戏已解放**，世界留在 level-11（uid 审计 extra0/missing0）。T1-T3 + F1/F2 全 pass，全部在新档 `9ac66b0b` 做，旧档从未被贴。
+
+### F1 = mod 缺陷实锤（写入第一批修复）
+`belt-silent-overwrite.json`：5 格旧带，paste 覆盖 2 格 → 旧 uid 消失、新 uid 顶上、响应 `failed:[]`、
+`raw_keys` 无任何销毁字段 —— **静默毁带零报告**，redteam #3b/R3 预测精确成立。
+
+### F2 = R2 是"活的"（stride=5 由"建议"升级为"增量扩张必需"）
+9 形态矩阵扫描：paste 本身 0 drift（immutable 包裹坐实）；但**粘贴后在其输出侧接带（PULL 扰动）时 3 种拐角全部翻向**，
+NONE/EJECT 扰动不翻。⇒ V3 生成时不动点**覆盖不了未来的合法扩张**；
+而 P0-verify 早已证明全部 419 条实机拐角满足 `rot−orig ∈ {0,+90(rv1),+270(rv2)}` —— **存了 orig 的游戏终态本就不翻**。
+
+### 主线程决策（两条，我的车道，含时序约束）
+1. **`paste dry_run:true`**：批准。mod 端逐格预检返回 `{would_apply, destroys:[{uid,cell}], blocked:[...]}`。
+2. **SZBP1 v:2（stride=5，payload.v 字段区分版本，**不用长度猜**——len 20 会 /4 /5 双解歧义）**：批准。
+   export 写 `sme.originalRotation`；paste 用它 + 现有 rv 覆盖；v:2 遇旧 mod → 2006 硬拒（既有 gv 闸同型）。
+   **时序红线：P6 在途，其 round-trip 断言 `e.length/4` —— `blueprint.mjs` 的改动必须等 P3-P6 全部收敛入库后再做**，mod 端 dry_run 可先行（无包 import mod 源，只需守 mod_selftest 常绿）。
+3. 孤儿 level-1 存档（3 个，含 p7 用的 9ac66b0b）：暂留，批次结束后一并清理（非 level-11 档，无害）。
 
 **待派**：P8 harness（等 P3-P6 落地；L0/L1 用录制 obs 回放，实机只留 results 适配器）。
-**主线程挂账**：①stride=5 决策等 P6 NOTES + P7 F2 证据；②`paste dry_run` 等 P7 F1；③CONTEST 裁决：P1 的 merge-belt-intent.json、P3 金样例④与 scope 的张力（已授权 P3 做成拒绝样例）；④ecosystem.md 回填"退火不可复现、改抄 channel routing"修正。
-
-## 活资源警示
-P7 的 preflight 失败发生在 `new_game` 之后 —— **收尾行尚未填**（是否回到 level-11 / 2805 未确认）。
-P7 仍持有桥接；若它死亡未收尾，由主线程做恢复检查（`save_now` + 离线解码 vs `snapshots/ai-research-base` 逐 uid）。
+**主线程挂账更新**：~~①stride=5 等 P7 F2~~ ✅已裁决批准（等 P3-P6 入库后做）；~~②paste dry_run 等 P7 F1~~ ✅实锤批准（可先行，与 mod_selftest 一起改）；③CONTEST 裁决：P1 的 merge-belt-intent.json、P3 金样例④与 scope 的张力（已授权 P3 做成拒绝样例）、P2 的 K1-K6；④ecosystem 退火修正 ✅ 已回填（`9bd6b3e`）；⑤孤儿存档清理。
 
 ## 待派（按依赖顺序）
 | 包 | 何时发 | 依赖 |
