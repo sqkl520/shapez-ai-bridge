@@ -876,7 +876,7 @@ class Mod extends shapez.Mod {
             place: { fields: new Set(["building", "x", "y", "r", "variant"]) },
             place_path: { fields: new Set(["building", "from", "to", "r", "variant"]) },
             delete: { fields: new Set(["x", "y", "layer"]) },
-            bulk_delete: { fields: new Set(["region", "layer"]) },
+            bulk_delete: { fields: new Set(["region", "layer", "dry_run"]) },
             paste_blueprint: { fields: new Set(["text", "x", "y", "charge"]) },
             export_blueprint: { fields: new Set(["region"]) },
             set_speed: { fields: new Set(["speed"]) },
@@ -1171,6 +1171,36 @@ class Mod extends shapez.Mod {
                 toDelete.push(e);
             }
         }
+
+        // dry_run：只报告将被删除的对象，不执行。
+        // 存在的理由：区域边界算错一格就会误删真实工厂（实测发生过 4 次），
+        // 调用方应当先 dry_run 核对清单，再真正删除。
+        if (a.dry_run === true) {
+            const table = this.ensureBuildingTables();
+            const items = toDelete.map(e => {
+                const sme = e.components.StaticMapEntity;
+                const info = table.byCode[sme.code];
+                return {
+                    uid: e.uid,
+                    x: sme.origin.x,
+                    y: sme.origin.y,
+                    type: info ? info.buildingId : "code_" + sme.code,
+                    rotation: sme.rotation,
+                };
+            });
+            const byType = {};
+            for (const it of items) byType[it.type] = (byType[it.type] || 0) + 1;
+            return {
+                ok: true,
+                op: "bulk_delete",
+                dry_run: true,
+                would_delete: items.length,
+                by_type: byType,
+                items,
+                tick: root.time.now(),
+            };
+        }
+
         let removed = 0;
         const failed = [];
         root.logic.performBulkOperation(() => {

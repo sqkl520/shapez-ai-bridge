@@ -116,6 +116,10 @@ ObsRequest：
 
 所有动作是 JSON 对象，`op` 必填。**未知字段 / 未知 op 一律报 `2001`，不静默忽略。**
 
+**删除前先核对**：`bulk_delete` 的 `region` 是**含边界的包围盒**，边界算错一格就会牵连区域外的建筑。
+实测中这件事发生过多次（一次误删 42 个真实工厂实体）。**建议：任何非常规删除都先
+`{"op":"bulk_delete","region":[...],"dry_run":true}` 拿到 `items` 清单核对，再去掉 `dry_run` 执行。**
+
 | op | 参数 | 语义 | 主要错误 |
 |---|---|---|---|
 | `noop` | — | 空操作（心跳/对齐用） | — |
@@ -123,6 +127,7 @@ ObsRequest：
 | `place_path` | `building, from:[x,y], to:[x,y], r?` | 轴对齐直线铺满（含端点）；`building="belt"` 时自动按路径方向定旋转 | 同上 + 2001 非轴对齐 |
 | `delete` | `x, y, layer?="regular"` | 删一个 | 2002 该位置无建筑 |
 | `bulk_delete` | `region:[x0,y0,x1,y1], layer?` | 区域删除（走 `performBulkOperation`） | — |
+| `bulk_delete`（`dry_run:true`） | `region, layer?, dry_run:true` | **只报告将删对象，不执行**。返回 `{dry_run:true, would_delete, by_type, items:[{uid,x,y,type,rotation}]}` | — |
 | `paste_blueprint` | `text, x, y, charge?="auto"` | 粘贴蓝图（§6）。`charge`:`"auto"`=按游戏规则扣费；`false`=免费（沙盒） | 2001 格式错；2006 蓝图版本不符；2002 位置非法/材料不足 |
 | `export_blueprint` | `region:[x0,y0,x1,y1]` | 导出该区域为蓝图字符串 | 2001 区域为空 |
 | `set_speed` | `speed:"paused"\|"regular"\|"fast_forward"` | 设置游戏速度 | 2001 |
