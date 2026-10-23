@@ -23,7 +23,17 @@
   不让并行包碰（plan §2.2.5/§3 禁改清单）。P7 的 F2 实验给这个决策提供证据。
 - **v1 范围**：单层 / 无 wire / 无隧道 / 机器 rot 恒 0 / 入度≤2 / 只做全新址。超出 → `ok:false`，不静默降级。
 
-## 在跑的包（更新 01:06）
+## 主线程裁决记录（01:1x，三条已独立核实 + 广播四包）
+- **G7 ✅**（复跑证据：`rotateLocal(top,44/46)`→top/top 截断，`angleToDir(44/46)`→top/right 量化）。**belt-rules 不动**（避免移动靶+波及 1906/1906 验证）；各包入口加象限断言（P2 `assertQuadrantAngle` 模式）。
+- **G10 ✅**（spec.rates 对 double/quad 是 charges/s，painterDouble 0.25 实为 0.5 件/s）。**V7 只用表2 items/s 口径**；v1 十 op 恰好同值，换算规则必须写死在注释里。
+- **G1 裁决：注册表为权威** —— P0-spec 的"非 belt code=internalId+rv×4（quad painter=22/23/24）"**被证伪**（gBuildingVariants painter 仅 16-19；实机 15 建筑全 rv=0）。v1 硬约束"非 belt 只出 rv=0"维持；belt 是注册表唯一多 rv 家族（1/2/3）。
+- **K1 采纳**：hubEntries 归一在 `op-templates.hubEntriesWorld`，P3/P6 不得再抄。
+
+## P2 完成（`afd89ce8`→我验收）
+812 断言 + 7 组变异测试（证明断言非空转）+ `--validate` 0 差异。核心已随 `e27ac98` 入库；P2 留下的 NOTES/测试刷新**待主线程提交**（no-commit 规则）。
+G3：machine-spec 无 unlockLevel → V10 用 UNLOCK_LEVEL_FALLBACK（已通知 P5）。
+
+## 在跑的包
 | 包 | Agent | 状态 |
 |---|---|---|
 | **P3 placer** | `accfae61` | 第二波（DAG→网格；行式主干+M4 汇合模式+零拐角原则） |

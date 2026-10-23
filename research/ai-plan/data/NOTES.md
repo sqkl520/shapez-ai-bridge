@@ -10,15 +10,24 @@
 
 ## 一、执行摘要（验收对照）
 
+**一条命令跑全部**：`node research/ai-plan/data/run-all.mjs` → **812 条断言全绿**（含 --validate 与 lint）。
+
 | 验收项 | 结果 |
 |---|---|
 | 1. 15 条实机 code 逐条 `codeFor(...,r=0,rv=0)` 相等 | ✅ 包测试第 [1] 节，60 条实机记录逐条 + 去重集合 == `[1,7,8,…,20]` |
 | 2. 每模板槽位数 == GEOMETRY 表1；`trash`=20；stacker 左=下层/右=上层；painter shape←left/color←top/出→right | ✅ 第 [2] 节（期望值手抄自表1，与内嵌表相互独立） |
 | 3. 速率导出含 `stacker:0.25` | ✅ `RATES` + `OP_TEMPLATES.stack.ratePerSec` + `bottleneckOf()` |
-| 4. `node src/ai/world.mjs --validate` 与 gen-resources CLI 0 差异 | ✅ seed 43391，实机 resources.json 包围盒（340 chunk / 3284 格）**diff = 0** |
-| 5. grep lint：两文件无 `proto/belt-rules` | ✅ 见第 [8]/[7] 节代码级断言 + 手工 grep |
+| 4. `node src/ai/world.mjs --validate` 与 gen-resources CLI 0 差异 | ✅ seed 43391，实机 resources.json 包围盒（340 chunk / 3284 格）**diff = 0**；另 5 个小区域分区对拍全 0 |
+| 5. grep lint：两文件无 `proto/belt-rules` | ✅ 第 [8]/[7] 节代码级断言 + run-all 的 grep 步骤（无命中） |
 
-**额外**：与 level-11 存档实机数据（`facts/live/world-full.json`，2805 实体）做了第二份实机凭据交叉校验，零冲突（第 [9] 节）。
+**超出验收的三项产出**：
+1. **P0-spec 落地即适配**（迁移路径 2 走完）：`loadMachineSpec()` 识别真 `machine-spec.json`
+   （二级 `variants` 展平 + 字段别名），并交叉验证出**内嵌表槽位几何 vs P0-spec 源码值 0 差异**
+   （NOTES 二·补 / G2 / [7b] 节）。变异测试证明这 0 差异是"真比过"不是"没比"。
+2. **第二份实机凭据交叉校验**：与 level-11 存档 `world-full.json`（2805 实体）逐键比 code/rv/rot，零冲突（[9] 节）。
+   顺带补齐 hub=26（P6 反查 code→kind 要它），并导出 `isV1Emittable`/`crossCheckCodes`。
+3. **H2 的证据从"无证据"升级为"注册表证明不存在"**（G1）：三层凭据（实机提取表 + 存档 + 上游
+   `getAllVariantCombinations` 源码），P0-spec 的 `hasRotationVariants` 又独立印证了一遍。
 
 ---
 
