@@ -1,0 +1,7 @@
+{
+ "test": "paste-l1",
+ "pass": false,
+ "fatal": "never entered the game within 360s",
+ "rpc": null,
+ "errors": []
+}
