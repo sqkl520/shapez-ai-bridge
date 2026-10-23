@@ -23,14 +23,20 @@
   不让并行包碰（plan §2.2.5/§3 禁改清单）。P7 的 F2 实验给这个决策提供证据。
 - **v1 范围**：单层 / 无 wire / 无隧道 / 机器 rot 恒 0 / 入度≤2 / 只做全新址。超出 → `ok:false`，不静默降级。
 
-## 在跑的包（12:30 起）
+## 在跑的包（更新 00:20）
 | 包 | Agent | 拥有文件 | 状态 |
 |---|---|---|---|
-| P0-spec 规格 | `ad2e3d82` | `src/ai/machine-spec.{json,md}` | 运行中（34m+） |
-| P0-prior 检索 | `a7cc385e` | `research/ai-player/routing-prior-art.md` | 运行中（32m+） |
-| **P1 contract** | `acf57408` | `src/ai/compiler/{types,grid,errors}.mjs` + `research/ai-plan/fixtures/**` | 运行中 |
-| **P2 data** | `afd89ce8` | `src/ai/{op-templates,world}.mjs` + `research/ai-plan/data/**` | 运行中（不等 P1：测试自包含，留 TODO 换 assert） |
-| **P7 live**（独占游戏+桥接） | `af5b67cf` | `research/ai-plan/live/**` | 运行中；先跑 paste 三级 + 两个取证实验（不依赖编译器代码） |
+| P0-spec 规格 | `ad2e3d82`→**假完成**；重跑 `a06f97d7` | machine-spec 的 .md 镜像 | JSON 已落盘+主线程校验 60/60 → 提交 `325e436`；重跑者被要求**校验而非重生成** |
+| P0-prior 检索 | `a7cc385e`→**假完成**；重跑 `a715a3f8`（带协议） | routing-prior-art.md | 重跑中 |
+| **P1 contract** | `acf57408` | types(1153 行,0 TODO)/grid(666)/errors(288) | 接近完成（fixture 测试收尾中） |
+| **P2 data** | `afd89ce8` | op-templates(903)/world(561) | 接近完成 |
+| **P7 live**（独占游戏+桥接） | `af5b67cf` | live/** | **preflight 失败**：new_game 90s 未进世界 → `pass:false, fatal`（诚实记录，未硬绕）。疑似游戏重启/弹窗问题，48m 龄仍在处理 |
+
+**假完成（读完才动笔型）已累计 4 次**：规划①、prior①、spec① —— 全部死于协议引入前；带协议的包（P1/P2/P7）均在增量落盘。
+
+## 活资源警示
+P7 的 preflight 失败发生在 `new_game` 之后 —— **收尾行尚未填**（是否回到 level-11 / 2805 未确认）。
+P7 仍持有桥接；若它死亡未收尾，由主线程做恢复检查（`save_now` + 离线解码 vs `snapshots/ai-research-base` 逐 uid）。
 
 ## 待派（按依赖顺序）
 | 包 | 何时发 | 依赖 |
