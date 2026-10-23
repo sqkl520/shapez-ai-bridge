@@ -74,8 +74,9 @@ const stubShapez = {
         ],
     },
     gBuildingVariants: {
-        1: { metaInstance: { getId: () => "belt" }, variant: "default", rotationVariant: 0 },
-        7: { metaInstance: { getId: () => "miner" }, variant: "default", rotationVariant: 0 },
+        1: { metaInstance: { getId: () => "belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => true }, variant: "default", rotationVariant: 0 },
+        7: { metaInstance: { getId: () => "miner", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 0 },
+        9: { metaInstance: { getId: () => "cutter", getDimensions: () => ({ x: 2, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 0 },
     },
 };
 
@@ -447,6 +448,89 @@ check("bulk_delete without dry_run still deletes", () => {
 check("bulk_delete accepts dry_run as a known field", () => {
     const m = newMod();
     m.validateAction({ op: "bulk_delete", region: [0, 0, 1, 1], dry_run: true });   // 不应抛错
+});
+
+// ── paste dry_run：三态预检（F1 实机取证的缺陷：真粘贴静默毁带、零报告）──
+
+function pasteStubRoot(beltAt, machineAt) {
+    // 真实世界每条带子的 uid 不同 —— 用格序号造 uid，避免"去重按 uid"把两条带折成一条
+    const cellOf = (x, y) => {
+        const bi = beltAt.findIndex(c => c[0] === x && c[1] === y);
+        if (bi >= 0) return { uid: 501 + bi, components: { StaticMapEntity: { origin: { x, y }, rotation: 0, code: 1 } } };
+        const mi = machineAt.findIndex(c => c[0] === x && c[1] === y);
+        if (mi >= 0) return { uid: 601 + mi, components: { StaticMapEntity: { origin: { x, y }, rotation: 0, code: 7 } } };
+        return null;
+    };
+    return {
+        entityMgr: { entities: [] },
+        map: { getLayerContentXY: (x, y) => cellOf(x, y) },
+        time: { now: () => 9 },
+        logic: {
+            performBulkOperation: fn => fn(),
+            tryPlaceBuilding: () => ({ uid: 600 }),
+        },
+        gameMode: { getHasFreeCopyPaste: () => true, getBlueprintShapeKey: () => "K" },
+        hubGoals: { getShapesStoredByKey: () => 0, takeShapeByKey: () => {} },
+        signals: { entityManuallyPlaced: { dispatch() {} } },
+    };
+}
+function beltLineText(count) {
+    const e = [];
+    for (let i = 0; i < count; i++) e.push(1, i, 0, 0);
+    const payload = JSON.stringify({ v: 1, gv: "1.5.6", w: [0, 0], e });
+    return "SZBP1." + sandbox.shapez.compressX64(payload);
+}
+
+check("paste dry_run 不落地：干净落点全量 would_apply、零销毁零阻断、bbox 正确", () => {
+    const m = newMod();
+    const root = pasteStubRoot([], []);
+    let placed = 0;
+    root.logic.tryPlaceBuilding = () => { placed++; return { uid: 600 + placed }; };
+    const res = m.opPasteBlueprint(root, { text: beltLineText(5), x: 100, y: 200, charge: false, dry_run: true });
+    assert(res.dry_run === true, "dry_run 标志");
+    assert(res.would_apply === 5, "would_apply=5, got " + res.would_apply);
+    assert(res.would_delete === 0 && res.destroys.length === 0, "零销毁");
+    assert(res.blocked.length === 0, "零阻断");
+    assert(res.bbox.join(",") === "100,200,104,200", "bbox 世界坐标, got " + res.bbox.join(","));
+    assert(res.charge_preview && res.charge_preview.affordable === true, "成本预演在场");
+    assert(placed === 0, "绝不落地（tryPlaceBuilding 调用数=" + placed + "）");
+});
+
+check("paste dry_run：压既有带子 → destroys 如实上报（真粘贴会静默销毁）", () => {
+    const m = newMod();
+    const root = pasteStubRoot([[102, 200], [103, 200]], []);
+    const res = m.opPasteBlueprint(root, { text: beltLineText(5), x: 100, y: 200, charge: false, dry_run: true });
+    assert(res.would_apply === 5, "带子可替换 → 5 格仍全会放，got " + res.would_apply);
+    assert(res.would_delete === 2, "would_delete=2, got " + res.would_delete);
+    assert(res.destroys.some(d => d.cell.join(",") === "102,200") &&
+           res.destroys.some(d => d.cell.join(",") === "103,200") &&
+           new Set(res.destroys.map(d => d.uid)).size === 2, "两条旧带都在清单且 uid 不同");
+});
+
+check("paste dry_run：压既有机器 → 该条目 blocked、其余照放；同格重复也报", () => {
+    const m = newMod();
+    const root = pasteStubRoot([], [[104, 200]]);
+    const res = m.opPasteBlueprint(root, { text: beltLineText(5), x: 100, y: 200, charge: false, dry_run: true });
+    assert(res.blocked.length === 1, "blocked=1, got " + res.blocked.length + " " + JSON.stringify(res.blocked));
+    assert(res.blocked[0].cell.join(",") === "104,200", "blocked 指对格");
+    assert(res.blocked[0].occupant.type === "miner" && res.blocked[0].occupant.uid === 601, "占用者信息");
+    assert(res.would_apply === 4, "其余 4 格照放, got " + res.would_apply);
+    const dupPayload = JSON.stringify({ v: 1, gv: "1.5.6", w: [0, 0], e: [1, 0, 0, 0, 1, 0, 0, 0] });
+    const dupText = "SZBP1." + sandbox.shapez.compressX64(dupPayload);
+    const res2 = m.opPasteBlueprint(pasteStubRoot([], []), { text: dupText, x: 0, y: 0, charge: false, dry_run: true });
+    assert(res2.blocked.length === 1 && res2.blocked[0].duplicateInPlan === true,
+        "同格两次 → blocked(duplicateInPlan), got " + JSON.stringify(res2.blocked));
+});
+
+check("paste dry_run 是已知字段；真粘贴路径不受影响", () => {
+    const m = newMod();
+    m.validateAction({ op: "paste_blueprint", text: "SZBP1.x", x: 0, y: 0, dry_run: true });
+    const root = pasteStubRoot([], []);
+    let placed = 0;
+    root.logic.tryPlaceBuilding = () => { placed++; return { uid: 600 + placed }; };
+    const real = m.opPasteBlueprint(root, { text: beltLineText(3), x: 100, y: 200, charge: false });
+    assert(real.applied === 3 && placed === 3, "真粘贴 3 格落地, got applied=" + real.applied + " placed=" + placed);
+    assert(real.dry_run === undefined, "真粘贴不带 dry_run 标志");
 });
 
 console.log("\n" + (fail === 0 ? "ALL " + pass + " CHECKS PASSED" : pass + " passed, " + fail + " FAILED"));
