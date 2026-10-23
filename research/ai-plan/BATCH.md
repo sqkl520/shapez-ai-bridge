@@ -42,13 +42,11 @@ G3：machine-spec 无 unlockLevel → V10 用 UNLOCK_LEVEL_FALLBACK（已通知 
 ## 在跑的包
 | 包 | Agent | 状态 |
 |---|---|---|
-| **P3 placer** | `a95cb396`（重跑） | ✅ 首笔已履行：place.mjs 语法残骸已修复（02:2x `node --check` 绿），实现中 |
-| **P4 router** | `ac78c98b`→**死在最后一公里**（128 断言全绿在盘、缺 ⑬ 报告契约测试节）；重跑 `a7c4e8e5`——要求把前任绿测试当草稿：逐断言变异检查揪永绿 + 补 ⑬ | 第二波 |
-| **P5 validator** | `a467fa4a` | 第二波（belt-sim 已 39→514 行，在长；validate 仍薄）——继续观察 |
+| **P3 placer** | ✅ **完成**（主线程复跑验收 `ccb5242`）：78 断言绿、四张金网格逐字节、G1/G7/G10/K1 裁决全落地、ordinal 撞号三连锁（闭合 P4 的 null-reason 路径）| 第二波 |
+| **P4 router** | ✅ **完成**（主线程复跑验收 `06d4b7b`）：L0 **184 全绿** + **变异 19/19 全抓 0 存活**；揪修 3 真 bug（reason 可 null / 陈旧 lane 破互逆 / localeCompare 破坏跨机确定性）+ 识别 1 等价变异陷阱 + 语义声明转可证伪锁 | 第二波 |
+| **P5 validator** | ✅ **完成**（主线程复跑验收 a76eb17）：171 断言绿、变异 19/19 全抓、双实现对拍 0 差异（belt-sim 槽位法 vs 验证者 OPP 回指法，同一存档 1267/1268+69/69）。**includesMachineNeighbors 恒真**——proto 脚本 82.5% 是欠算（2×2 对照：92.5/86.3、95.8/83.8）。CONTEST 裁决：①hubConnection.entry=**带子末格**（与 P3/P7/mod 三方合流，批次尾回写 plan §2.3 勘误）；②`--plan` 无 intent = **UNDECIDABLE（exit 2 不是绿灯）**→ P8 交接永远带 intent 文件；③kindOf(op) 归 P2 补（P5 有本地 fallback 不阻塞）；④0.78 是弧长不是容量因子，V7 仅在带限时折算（prior-art §7 口径）|
 | **P6 emitter** | ✅ **完成**（主线程复跑验证）：L1 门 85/85、run-all 289 断言全绿；顺序锁/永不 throw/锚点归一/平移不变全过。stride=5 报告见其 NOTES：★实测 v:1 原地加列会在 n%4==0 时**绕过 %4 闸静默错位**（8 格被解成 10 实体）→ 方案=**平行数组 o + 升 v:2**；容量增幅 11-27% |
-| P0-spec / P0-prior | 完成 | 校验已入库 `8d6ffaf`；prior §8 选型被 P4 采纳 |
-| P1 / P2 | **完成并入库** | L0 主线程复跑全绿（P1 46+ / P2 383+51+变异 7 组）→ `e27ac98` `5e4d46a` |
-| **P7 live** | `af5b67cf` | **完成**（详见下节）——桥接/游戏已解放 |
+| **P8 harness** | `a59b6c74` | **在跑**（最后一包）：compile.mjs 管线 solver(spawn)→place→route→validate(带 intent)→emit + CLI + 录制回放 L0 + out/ 交接三件套。solver.mjs 零导出→spawn --json 消费；cutQuad 按等级门控 |
 
 ## P7 完成（01:44 报告 → 主线程独立核验：8 个 result JSON + LIVE-LOG 收尾 + 只读 obs 实测 2805/L11 ✅）
 **桥接与游戏已解放**，世界留在 level-11（uid 审计 extra0/missing0）。T1-T3 + F1/F2 全 pass，全部在新档 `9ac66b0b` 做，旧档从未被贴。
@@ -69,7 +67,7 @@ NONE/EJECT 扰动不翻。⇒ V3 生成时不动点**覆盖不了未来的合法
    **时序红线：P6 在途，其 round-trip 断言 `e.length/4` —— `blueprint.mjs` 的改动必须等 P3-P6 全部收敛入库后再做**，mod 端 dry_run 可先行（无包 import mod 源，只需守 mod_selftest 常绿）。
 3. 孤儿 level-1 存档（3 个，含 p7 用的 9ac66b0b）：暂留，批次结束后一并清理（非 level-11 档，无害）。
 
-**待派**：P8 harness（等 P3-P6 落地；L0/L1 用录制 obs 回放，实机只留 results 适配器）。
+**待派**：无——P8 是最后一包（在跑）。P8 入库后 → 主线程做收尾三件：**L3 实机端到端**（P7 复活：out/ 交接件 → paste → await，plan §5 L3 判据）→ **stride=5 的 v:2 格式**（P6 设计已批准，最后做+全回归）→ **plan 勘误回写**（entry=带子末格、UNDECIDABLE 交接纪律、退火已在 `9bd6b3e` 修）。
 **✅ `paste dry_run` 已做完并实机验证（`97e6637`，03:15）**：mod+协议+4 自测（25 条全绿）；实机对照——同弹药贴工厂密集区报 3 apply/3 destroy/5 block（真 uid），贴空地报 8/8 干净，**dry_run 后世界 2805 零改动**。L3 的 P8/P7 脚本从此必须先 dry_run 核对再真贴（PROTOCOL §5 已写明；其局限：plan 内多格机器互叠归 V1，mod 不兜底）。
 **主线程挂账更新**：~~②paste dry_run~~ ✅完成；③CONTEST 裁决增量：C-1/C-2/C-5（hub kind 7..20 区间）已裁决（C-5 批次收敛时统一修 P1 判据）；P6 报的 `op-templates argv 洗灯`缺陷 ✅亲修+回归锁（`f7f7a2d`）；⑤孤儿存档清理待批次尾。
 
