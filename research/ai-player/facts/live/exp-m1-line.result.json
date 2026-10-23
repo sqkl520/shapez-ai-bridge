@@ -1,0 +1,91 @@
+{
+ "milestone": "M1",
+ "pass": true,
+ "site": [
+  172,
+  -40
+ ],
+ "actions": {
+  "miner": {
+   "ok": true,
+   "op": "place",
+   "entity_uid": 21222,
+   "type": "miner",
+   "applied": 1,
+   "failed": [],
+   "tick": 117792.95756500062
+  },
+  "feed": {
+   "ok": true,
+   "op": "place_path",
+   "applied": 2,
+   "failed": [],
+   "first_uid": 21223,
+   "tick": 117792.97423166728
+  },
+  "cutter": {
+   "ok": true,
+   "op": "place",
+   "entity_uid": 21225,
+   "type": "cutter",
+   "applied": 1,
+   "failed": [],
+   "tick": 117793.0075650006
+  },
+  "outA": {
+   "ok": true,
+   "op": "place_path",
+   "applied": 2,
+   "failed": [],
+   "first_uid": 21226,
+   "tick": 117793.02423166727
+  },
+  "outB": {
+   "ok": true,
+   "op": "place_path",
+   "applied": 2,
+   "failed": [],
+   "first_uid": 21228,
+   "tick": 117793.0325650006
+  },
+  "trashA": {
+   "ok": true,
+   "op": "place",
+   "entity_uid": 21230,
+   "type": "trash",
+   "applied": 1,
+   "failed": [],
+   "tick": 117793.0325650006
+  },
+  "trashB": {
+   "ok": true,
+   "op": "place",
+   "entity_uid": 21231,
+   "type": "trash",
+   "applied": 1,
+   "failed": [],
+   "tick": 117793.04923166726
+  }
+ },
+ "belts": [
+  {
+   "x": 172,
+   "y": -41,
+   "items": [
+    "RuRuRuRu"
+   ]
+  },
+  {
+   "x": 172,
+   "y": -44,
+   "items": []
+  },
+  {
+   "x": 173,
+   "y": -44,
+   "items": []
+  }
+ ],
+ "baseline": 2805,
+ "after_total": 2805
+}

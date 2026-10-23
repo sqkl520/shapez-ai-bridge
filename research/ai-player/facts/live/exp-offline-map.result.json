@@ -1,0 +1,11 @@
+{
+ "when": "2026-10-22T22:27:13.208Z",
+ "hypothesis": "H1",
+ "verdict": "SUPPORTED",
+ "tile": [
+  231,
+  171
+ ],
+ "predicted": "SuRuRuSu",
+ "observed": "SuRuRuSu"
+}

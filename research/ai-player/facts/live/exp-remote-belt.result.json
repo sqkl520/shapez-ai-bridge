@@ -1,0 +1,17 @@
+{
+ "hypothesis": "H4",
+ "verdict": "PARTIAL_PASS",
+ "tile": [
+  -2558,
+  -1310
+ ],
+ "predicted": "RuRuRuCu",
+ "belt_applied": 40,
+ "belts_after": 40,
+ "notes": [
+  "41 格带子全部建成（跨越多个未生成 chunk）",
+  "⚠️ 物品流动无法用当前 obs 直接验证（obs 只列建筑，不列带上物品）",
+  "→ 需要 mod 增加 'belt contents' 观测，或把带子接到 hub 看交付"
+ ],
+ "keep": false
+}

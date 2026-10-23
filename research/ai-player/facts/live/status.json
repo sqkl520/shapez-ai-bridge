@@ -1,0 +1,23 @@
+{
+ "protocol": 1,
+ "mod_version": "0.1.0",
+ "game_version": "1.5.6",
+ "in_game": true,
+ "features": [
+  "observe",
+  "act",
+  "batch",
+  "step",
+  "await",
+  "blueprint",
+  "screenshot",
+  "save",
+  "new_game"
+ ],
+ "allow_write": true,
+ "allow_step": true,
+ "tick": 99636.02426666659,
+ "paused": false,
+ "speed": "regular",
+ "hub_level": 11
+}

@@ -1,0 +1,60 @@
+{
+ "results": {
+  "miner": {
+   "ok": true,
+   "op": "place",
+   "entity_uid": 21172,
+   "type": "miner",
+   "applied": 1,
+   "failed": [],
+   "tick": 112103.54923299195
+  },
+  "belt": {
+   "ok": true,
+   "op": "place_path",
+   "applied": 2,
+   "failed": [],
+   "first_uid": 21173,
+   "tick": 112103.56589965861
+  },
+  "cutter": {
+   "ok": true,
+   "op": "place",
+   "entity_uid": 21175,
+   "type": "cutter",
+   "applied": 1,
+   "failed": [],
+   "tick": 112103.58256632528
+  },
+  "out0": {
+   "ok": true,
+   "op": "place_path",
+   "applied": 6,
+   "failed": [],
+   "first_uid": 21176,
+   "tick": 112103.58256632528
+  },
+  "out1": {
+   "ok": true,
+   "op": "place_path",
+   "applied": 6,
+   "failed": [],
+   "first_uid": 21182,
+   "tick": 112103.59923299194
+  }
+ },
+ "report": [
+  {
+   "x": 394,
+   "y": 397,
+   "n": 0,
+   "items": []
+  },
+  {
+   "x": 395,
+   "y": 397,
+   "n": 0,
+   "items": []
+  }
+ ]
+}
