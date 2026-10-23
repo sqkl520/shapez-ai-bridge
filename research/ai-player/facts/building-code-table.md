@@ -72,7 +72,7 @@ function beltCode(rotationVariant) { return 1 + rotationVariant; }   // 1=直, 2
 // 1) 离线算出布局里每一格的 (building, rotation, rotationVariant)
 // 2) 用 code 表映射成 code
 // 3) 打包成 SZBP1 蓝图 → paste_blueprint 一次性落地
-//    （H7 已实测：蓝图显式携带 rot，粘贴时不经自动定向 → 拐角 100% 可控）
+//    ⚠️ 前提：先修 placeOne 的 rv 覆盖（H7 曾误以为蓝图天然保真，后推翻；修复已验证）
 
 // 例：A 分支的拐角（竖直进、向右出）
 //   进度方向 = 北（rotation 0），要右转 → rotationVariant 2 → code = 1 + 2 = 3
