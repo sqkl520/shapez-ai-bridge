@@ -1,0 +1,2943 @@
+{
+  "version": "1.5.6",
+  "game_commit": "ee2279d",
+  "generatedFrom": {
+    "authoritative": "recon/upstream-full/src/js/game/buildings/*.js + meta_building_registry.js + components/* + systems/*",
+    "crossCheck": "recon/bundle.pretty.js（逐 internalId 比对，59 码全部吻合）"
+  },
+  "buildings": {
+    "miner": {
+      "variants": {
+        "default": {
+          "verifiedBy": "M1b",
+          "liveEvidence": "exp-cutter2/M1b/M3/e2e 矿机出料实测；code=7 见 building-codes-live.json 与 world-full.json(143 台)",
+          "internalId": 7,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/miner.js",
+            "lines": "24-34 (combos); 81-86 (ejector)"
+          }
+        },
+        "chainable": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "code=8 见 building-codes-live.json；链式行为未做流动实机验证（source-only 几何）",
+          "internalId": 8,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "chainable": true,
+          "source": {
+            "file": "buildings/miner.js",
+            "lines": "24-34 (combos); 81-86; 94-96 (chainable flag)"
+          }
+        }
+      },
+      "note": "矿机不吃 ItemAcceptor，开采所在格下方资源 (systems/miner.js:52-63)。输出恒 top (rotation=0)。"
+    },
+    "belt": {
+      "variants": {
+        "default": {
+          "verifiedBy": "M1b",
+          "liveEvidence": "M1b/exp-rv-fix3(反例:code=3 rv=2 保留)/exp-belt-order/e2e；world-full.json rv1=code2(223)、rv2=code3(196)、rv0=code1(1487)",
+          "internalId": 1,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0,
+            1,
+            2
+          ],
+          "beltVariants": {
+            "0": {
+              "exitLocal": "top",
+              "code": 1
+            },
+            "1": {
+              "exitLocal": "left",
+              "code": 2
+            },
+            "2": {
+              "exitLocal": "right",
+              "code": 3
+            }
+          },
+          "codeRule": "code = 1 + rotationVariant (belt.js:25-42 internalId 1/2/3)",
+          "autoroute": "belt.js:161-251（形状由邻居派生，belt-rules.mjs 已对 1906 条带离线核验）",
+          "source": {
+            "file": "buildings/belt.js",
+            "lines": "25-42 (combos); components/belt.js:9-36 (fake 槽); 147-149 (方向)"
+          }
+        }
+      },
+      "note": "belt 无真实 ItemAcceptor/ItemEjector，用 FAKE 槽 (components/belt.js:9-36)：入口恒 local bottom，出口=Belt.direction(top/left/right 随 rv)。可自动定向。"
+    },
+    "cutter": {
+      "variants": {
+        "default": {
+          "verifiedBy": "M1b",
+          "liveEvidence": "exp-cutter2/exp-grid-line：槽0=----RuRu 槽1=RuRu---- 逐字符一致；code=9 building-codes-live",
+          "internalId": 9,
+          "size": [
+            2,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "slotRole": "槽0=(0,0)→左列(quads2,3)；槽1=(1,0)→右列(quads0,1) [item_processor.js:367-390]",
+          "processor": "cutter (inputsPerCharge 1)",
+          "source": {
+            "file": "buildings/cutter.js",
+            "lines": "20-30 (combos); 37-46 (dims); 94-104 (acceptor); 116-121 (ejector)"
+          }
+        },
+        "quad": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "code=10 见 building-codes-live；四切槽象限映射未实机跑（GEOMETRY 表1 亦标 ⬜）",
+          "internalId": 10,
+          "size": [
+            4,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "top"
+            },
+            {
+              "tile": [
+                2,
+                0
+              ],
+              "dir": "top"
+            },
+            {
+              "tile": [
+                3,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "slotRole": "4 槽 = cutQuad 的 [TR,BR,BL,TL] 四单象限 (item_processor.js:393-417)",
+          "processor": "cutterQuad",
+          "source": {
+            "file": "buildings/cutter.js",
+            "lines": "20-30; 37-46; 123-131 (ejector quad)"
+          }
+        }
+      }
+    },
+    "rotater": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "world-full.json 含 4 台 rotater code=11（真实工厂存在）；building-codes-live code=11。旋转语义在 shape-ops 离线核验，未在实机产线单独跟踪。",
+          "internalId": 11,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "rotater (CW, inputsPerCharge 1)",
+          "source": {
+            "file": "buildings/rotater.js",
+            "lines": "26-40 (combos); 121-136 (ejector/acceptor); 145-162 (type)"
+          }
+        },
+        "ccw": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "code=12 building-codes-live；几何同 default",
+          "internalId": 12,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "rotaterCCW",
+          "source": {
+            "file": "buildings/rotater.js",
+            "lines": "26-40; 121-136; 145-162"
+          }
+        },
+        "rotate180": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "code=13 building-codes-live；几何同 default",
+          "internalId": 13,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "rotater180",
+          "source": {
+            "file": "buildings/rotater.js",
+            "lines": "26-40; 121-136; 145-162"
+          }
+        }
+      },
+      "note": "三变体只换运算、不换几何（bottom 进 top 出）→ 可直串在竖直带上。"
+    },
+    "stacker": {
+      "variants": {
+        "default": {
+          "verifiedBy": "M3",
+          "liveEvidence": "exp-m3-stacker/exp-m4-fullchain：左格下层+右格上层→CuCuSuSu:RuRuCuCu；code=14 building-codes-live",
+          "internalId": 14,
+          "size": [
+            2,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "slotRole": "槽0=(0,0)=下层 first input；槽1=(1,0)=上层 second input（process_STACKER items.get(0)=lower, get(1)=upper）",
+          "processor": "stacker (inputsPerCharge 2)",
+          "source": {
+            "file": "buildings/stacker.js",
+            "lines": "17-23 (combos); 30-32 (dims); 66-86 (ejector/acceptor)"
+          }
+        }
+      }
+    },
+    "mixer": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "world-full.json 含 24 台 mixer code=15（真实工厂存在）；building-codes-live code=15。GEOMETRY 表1 标 ⬜ 未单独跑流动。",
+          "internalId": 15,
+          "size": [
+            2,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "color"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "color"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "mixer (inputsPerCharge 2) 两色按位或 (colors.js:58-74)",
+          "source": {
+            "file": "buildings/mixer.js",
+            "lines": "17-23 (combos); 26-28 (dims); 66-86 (ejector/acceptor)"
+          }
+        }
+      }
+    },
+    "painter": {
+      "variants": {
+        "default": {
+          "verifiedBy": "M2a",
+          "liveEvidence": "exp-m2a：RuRuRuRu + blue(top进) → RbRbRbRb(right出)；code=16 building-codes-live",
+          "internalId": 16,
+          "size": [
+            2,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "top",
+              "filter": "color"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "right"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "painter (inputsPerCharge 2)",
+          "source": {
+            "file": "buildings/painter.js",
+            "lines": "25-43 (combos); 46-58 (dims); 160-182 (default/mirrored slots)"
+          }
+        },
+        "mirrored": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "world-full.json 含 15 台 painter/mirrored code=17（真实使用）；building-codes-live code=17。仅颜料入口 top→bottom。",
+          "internalId": 17,
+          "size": [
+            2,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "color"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "right"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "painter (同 default 类型)",
+          "source": {
+            "file": "buildings/painter.js",
+            "lines": "25-43; 46-58; 160-182 (mirrored 用 bottom)"
+          }
+        },
+        "double": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "code=18 building-codes-live；双联几何未实机跑",
+          "internalId": 18,
+          "size": [
+            2,
+            2
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                0,
+                1
+              ],
+              "dir": "left",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "top",
+              "filter": "color"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "right"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "painterDouble (inputsPerCharge 3, 一次出 2 件)",
+          "source": {
+            "file": "buildings/painter.js",
+            "lines": "25-43; 46-58; 185-217 (double)"
+          }
+        },
+        "quad": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "code=19 building-codes-live；四色（电线）未实机",
+          "internalId": 19,
+          "size": [
+            4,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "color"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "color"
+            },
+            {
+              "tile": [
+                2,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "color"
+            },
+            {
+              "tile": [
+                3,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "color"
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            },
+            {
+              "tile": [
+                2,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            },
+            {
+              "tile": [
+                3,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "painterQuad (inputsPerCharge 5, 电线使能四象限)",
+          "source": {
+            "file": "buildings/painter.js",
+            "lines": "25-43; 46-58; 220-287 (pins 227-248, acceptor 250-276, ejector 278-280)"
+          }
+        }
+      },
+      "note": "quad 有 4 个逻辑受体引脚(bottom)，与 4 个 color 输入槽一一对应：引脚 i 使能槽 i 颜料 (item_processor.js:198-213)。color 槽0与形状同格 (0,0)。"
+    },
+    "trash": {
+      "variants": {
+        "default": {
+          "verifiedBy": "M1b",
+          "liveEvidence": "M1b/M2a/M3 均用 trash；code=20 building-codes-live；world-full 含 10 台",
+          "internalId": 20,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "filter": null
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "filter": null
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "filter": null
+            }
+          ],
+          "ejectors": [],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "isRotateable": false,
+          "processor": "trash (inputsPerCharge 1)",
+          "source": {
+            "file": "buildings/trash.js",
+            "lines": "18-24 (combos); 27-29 (不可旋转); 35-37; 73-95 (四边收)"
+          }
+        }
+      },
+      "note": "四边全收、无过滤、无输出、吞掉一切 (process_TRASH 空)。几何对称，rotation 无意义。"
+    },
+    "hub": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "world-full.json 含 1 台 hub code=26（原点 (-2,-2)）；exp-e2e 走 hub 交付（计数器 1/30，met=true@960tick）。16 入口几何经 exp-e2e hubEntries() 使用未反证。",
+          "internalId": 26,
+          "size": [
+            4,
+            4
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "top",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                2,
+                0
+              ],
+              "dir": "top",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                3,
+                0
+              ],
+              "dir": "top",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                0,
+                3
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                1,
+                3
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                2,
+                3
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                3,
+                3
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                0,
+                1
+              ],
+              "dir": "left",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                0,
+                2
+              ],
+              "dir": "left",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                0,
+                3
+              ],
+              "dir": "left",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                3,
+                0
+              ],
+              "dir": "right",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                3,
+                1
+              ],
+              "dir": "right",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                3,
+                2
+              ],
+              "dir": "right",
+              "filter": "shape"
+            },
+            {
+              "tile": [
+                3,
+                3
+              ],
+              "dir": "right",
+              "filter": "shape"
+            }
+          ],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                2
+              ],
+              "dir": "left",
+              "type": "out"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "isRotateable": false,
+          "isRemovable": false,
+          "processor": "hub (inputsPerCharge 1, 交付即计数)",
+          "source": {
+            "file": "buildings/hub.js",
+            "lines": "14-20 (combos); 23-25 (4x4); 31-33; 61-71 (信号出 pin); 76-90 (16 入口)"
+          }
+        }
+      },
+      "note": "16 入口全 filter=shape（颜料不能直接进 hub）。pin(0,2)left 是目标形状信号输出 (systems/hub.js:37-40)——工具链未暴露给 AI【缺口】。喂带须从入口外侧朝 hub 内流。"
+    },
+    "goal_acceptor": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "仅编辑器/关卡目标实体；12 件填满交付 (config goalAcceptorItemsRequired:12)",
+          "internalId": 63,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": "shape"
+            }
+          ],
+          "ejectors": [],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "isRemovable": "editor-only",
+          "processor": "goal",
+          "source": {
+            "file": "buildings/goal_acceptor.js",
+            "lines": "16-22 (combos); 43-53 (acceptor); 55-61 (processor+goal)"
+          }
+        }
+      }
+    },
+    "underground_belt": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "world-full.json: code=22 sender ×91, code=23 receiver ×91；离线配对核验 91/91 sender↔receiver 同向、跨度均≤5(T1)",
+          "internalId": 22,
+          "tier": 0,
+          "size": [
+            1,
+            1
+          ],
+          "hasRotationVariants": [
+            0,
+            1
+          ],
+          "range": 5,
+          "rotationVariantRoles": {
+            "0": "sender",
+            "1": "receiver"
+          },
+          "rotationVariantSlots": {
+            "0": {
+              "mode": "sender",
+              "acceptors": [
+                {
+                  "tile": [
+                    0,
+                    0
+                  ],
+                  "dir": "bottom",
+                  "filter": null
+                }
+              ],
+              "ejectors": []
+            },
+            "1": {
+              "mode": "receiver",
+              "acceptors": [],
+              "ejectors": [
+                {
+                  "tile": [
+                    0,
+                    0
+                  ],
+                  "dir": "top"
+                }
+              ]
+            }
+          },
+          "pins": [],
+          "processor": null,
+          "source": {
+            "file": "buildings/underground_belt.js",
+            "lines": "43-65 (combos); 273-284 (sender); 285-295 (receiver); config.js:90 [5,9]"
+          }
+        },
+        "tier2": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "world-full 无 T2（未解锁 reward_underground_belt_tier_2）；仅源码",
+          "internalId": 24,
+          "tier": 1,
+          "size": [
+            1,
+            1
+          ],
+          "hasRotationVariants": [
+            0,
+            1
+          ],
+          "range": 9,
+          "rotationVariantRoles": {
+            "0": "sender",
+            "1": "receiver"
+          },
+          "rotationVariantSlots": {
+            "0": {
+              "mode": "sender",
+              "acceptors": [
+                {
+                  "tile": [
+                    0,
+                    0
+                  ],
+                  "dir": "bottom",
+                  "filter": null
+                }
+              ],
+              "ejectors": []
+            },
+            "1": {
+              "mode": "receiver",
+              "acceptors": [],
+              "ejectors": [
+                {
+                  "tile": [
+                    0,
+                    0
+                  ],
+                  "dir": "top"
+                }
+              ]
+            }
+          },
+          "pins": [],
+          "processor": null,
+          "source": {
+            "file": "buildings/underground_belt.js",
+            "lines": "43-65; 273-295; config.js:90"
+          }
+        }
+      },
+      "note": "隧道按 (variant,rotationVariant) 分 code：default(rv0 sender=22, rv1 receiver=23)，tier2(rv0=24, rv1=25)。入口 bottom 收、出口 top 喷，同 rotation 配对；跨度 [5,9] (config.js:90)。getFlipOrientationAfterPlacement=true：放置时朝向翻到对面。tier 相同、方向相反才成对 (underground_belt.js:212-262)。因两个 rotationVariant 各有不同槽位，编译器用 rotationVariantSlots 按 rv 取。"
+    },
+    "balancer": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "world-full.json 含 475 台 balancer/default code=4（真实大量使用）。nextOutputSlot++ 轮转 item_processor.js:357",
+          "internalId": 4,
+          "size": [
+            2,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "balancer (round-robin nextOutputSlot, item_processor.js:342-363)",
+          "source": {
+            "file": "buildings/balancer.js",
+            "lines": "34-56 (combos); 59-71 (dims); 178-201 (default)"
+          }
+        },
+        "merger": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "building-codes-live 未含（level≤11 未解锁 reward_merger），仅源码",
+          "internalId": 5,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "filter": null
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "balancer",
+          "source": {
+            "file": "buildings/balancer.js",
+            "lines": "34-56; 59-71; 202-227 (merger)"
+          }
+        },
+        "mergerInverse": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 6,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "filter": null
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "balancer",
+          "source": {
+            "file": "buildings/balancer.js",
+            "lines": "34-56; 202-227"
+          }
+        },
+        "splitter": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 47,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "balancer",
+          "source": {
+            "file": "buildings/balancer.js",
+            "lines": "34-56; 228-256 (splitter)"
+          }
+        },
+        "splitterInverse": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 48,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "balancer",
+          "source": {
+            "file": "buildings/balancer.js",
+            "lines": "34-56; 228-256"
+          }
+        }
+      },
+      "note": "balancer 家族共用 type=balancer（无过滤）。default 2×1 双进双出，merger/splitter 1×1。splitter 输出轮转 top↔right(left)；merger 由 bottom+侧 汇 top。deterministic 模式下 default/merger 不可用 (balancer.js:119-132)。"
+    },
+    "storage": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "未实机；pin0=(1,1)right 当前物品信号，pin1=(0,1)left 满仓布尔 (systems/storage.js:50-52)",
+          "internalId": 21,
+          "size": [
+            2,
+            2
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                1
+              ],
+              "dir": "bottom",
+              "filter": null
+            },
+            {
+              "tile": [
+                1,
+                1
+              ],
+              "dir": "bottom",
+              "filter": null
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [
+            {
+              "tile": [
+                1,
+                1
+              ],
+              "dir": "right",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                1
+              ],
+              "dir": "left",
+              "type": "out"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "maxStorage": 5000,
+          "source": {
+            "file": "buildings/storage.js",
+            "lines": "20-26 (combos); 13 (cap); 40-42 (dims); 57-85; 93-108 (pins)"
+          }
+        }
+      },
+      "note": "缓冲 5000，同类型同 hash 才可混存 (components/storage.js:51-84)。两输出槽由 storage system 取 first free 出料。"
+    },
+    "reader": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "未实机；belt_reader 采样 (config readerAnalyzeIntervalSeconds)",
+          "internalId": 49,
+          "size": [
+            1,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "type": "out"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "processor": "reader (inputsPerCharge 1, 直通)",
+          "source": {
+            "file": "buildings/reader.js",
+            "lines": "21-27 (combos); 41-43; 66-79 (pins); 82-102 (accept/eject)"
+          }
+        }
+      },
+      "note": "像带一样直通 bottom→top，吞吐布尔(slot0=right)与最近物品(slot1=left)输出到电线 (systems/belt_reader.js:26-27)。"
+    },
+    "filter": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "需电线，未实机；引脚值==物品 或 true→放行(top)，否则→剔除(right) (systems/filter.js:52-72)",
+          "internalId": 37,
+          "size": [
+            2,
+            1
+          ],
+          "acceptors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "filter": null
+            }
+          ],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            },
+            {
+              "tile": [
+                1,
+                0
+              ],
+              "dir": "right"
+            }
+          ],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/filter.js",
+            "lines": "18-24 (combos); 38-40; 64-100 (pins/accept/eject)"
+          }
+        }
+      },
+      "note": "槽0=(0,0)top=放行(matched/true)，槽1=(1,0)right=剔除。逻辑受体 pin (0,0)left：无信号则全走剔除。非 ItemProcessor（无 processing）。"
+    },
+    "display": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "仅显示电线值，不搬物品；未实机",
+          "internalId": 40,
+          "size": [
+            1,
+            1
+          ],
+          "layer": "regular",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/display.js",
+            "lines": "14-20 (combos); 34-36; 47-58 (pin)"
+          }
+        }
+      },
+      "note": "把连入的信号渲染成形状/颜色/布尔 (systems/display.js:78-84)。"
+    },
+    "wire": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "world-full 只 dump regular 层，未含 wires",
+          "internalId": 27,
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [],
+          "hasRotationVariants": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "wireTypes": {
+            "0": "forward",
+            "1": "turn",
+            "2": "split",
+            "3": "cross"
+          },
+          "codeRule": "default 线 rv0..3 → code 27/28/29/30（=27+rv）",
+          "source": {
+            "file": "buildings/wire.js",
+            "lines": "40-82 (combos); 97-99 (dims); 114-116 (layer); 11 type 数组"
+          }
+        },
+        "second": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 52,
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [],
+          "hasRotationVariants": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "codeRule": "second 线（variant 间互不相连）→ code 52/53/54/55（=52+rv）",
+          "source": {
+            "file": "buildings/wire.js",
+            "lines": "40-82"
+          }
+        }
+      },
+      "note": "wire 无物品槽、无 WiredPins（本身即导电边）；rv 0..3 = forward/turn/split/cross；两 variant 间不导通 (components/wire.js:13-16)。"
+    },
+    "constant_signal": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "编辑器/信号源，未实机",
+          "internalId": 31,
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/constant_signal.js",
+            "lines": "17-23 (combos); 38-40 (layer); 58-69 (pin)"
+          }
+        }
+      }
+    },
+    "logic_gate": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 32,
+          "gate": "and",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "type": "in"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/logic_gate.js",
+            "lines": "44-62 (combos); 108-157 (pins)"
+          }
+        },
+        "not": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 34,
+          "gate": "not",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/logic_gate.js",
+            "lines": "44-62; 138-152 (not pins)"
+          }
+        },
+        "xor": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 35,
+          "gate": "xor",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "type": "in"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/logic_gate.js",
+            "lines": "44-62; 114-135 (and/xor/or)"
+          }
+        },
+        "or": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 36,
+          "gate": "or",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "type": "in"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/logic_gate.js",
+            "lines": "44-62; 114-135"
+          }
+        }
+      },
+      "note": "逻辑门无物品槽（纯信号）。AND/XOR/OR：top 出、left+right 入；NOT：top 出、bottom 入。"
+    },
+    "lever": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 33,
+          "size": [
+            1,
+            1
+          ],
+          "layer": "regular",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/lever.js",
+            "lines": "14-20 (combos); 35-37; 51-65 (pin)"
+          }
+        }
+      },
+      "note": "手动布尔开关，向电线输出 true/false。无物品槽。无 getLayer 覆写→regular（带 wires 预览）。"
+    },
+    "transistor": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 38,
+          "gate": "transistor",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "type": "in"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/transistor.js",
+            "lines": "25-35 (combos); 76-79 (mirror); 85-106 (pins)"
+          }
+        },
+        "mirrored": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 60,
+          "gate": "transistor",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "in"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/transistor.js",
+            "lines": "25-35; 76-79 (slot1 left→right)"
+          }
+        }
+      },
+      "note": "晶体管=门控（bottom 使能、left/right 受控输入、top 输出）。mirrored 仅把 slot1 方向 left→right。"
+    },
+    "analyzer": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 43,
+          "gate": "analyzer",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/analyzer.js",
+            "lines": "17-23 (combos); 38-40 (layer); 59-80 (pins)"
+          }
+        }
+      },
+      "note": "把进入形状拆成两路信号（左=形状码、右=颜色码）。bottom 为受体引脚，非 ItemAcceptor。"
+    },
+    "comparator": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 46,
+          "gate": "compare",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "type": "in"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/comparator.js",
+            "lines": "14-20 (combos); 35-37; 52-73 (pins)"
+          }
+        }
+      }
+    },
+    "virtual_processor": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 42,
+          "gate": "cutter",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/virtual_processor.js",
+            "lines": "43-65 (combos); 108-172 (pins)"
+          }
+        },
+        "rotater": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 44,
+          "gate": "rotater",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/virtual_processor.js",
+            "lines": "43-65; 134-148 (rotater)"
+          }
+        },
+        "unstacker": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 45,
+          "gate": "unstacker",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "left",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/virtual_processor.js",
+            "lines": "43-65; 113-133 (cutter/unstacker)"
+          }
+        },
+        "stacker": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 50,
+          "gate": "stacker",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/virtual_processor.js",
+            "lines": "43-65; 149-169 (stacker/painter)"
+          }
+        },
+        "painter": {
+          "verifiedBy": "source-only",
+          "liveEvidence": null,
+          "internalId": 51,
+          "gate": "painter",
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top",
+              "type": "out"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            },
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "right",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/virtual_processor.js",
+            "lines": "43-65; 149-169"
+          }
+        }
+      },
+      "note": "虚拟处理器：在电线域做形状运算（cutter/rotater/unstacker/stacker/painter），无物品槽。引脚方向随运算而变。"
+    },
+    "wire_tunnel": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "逻辑隧道（同点跨层连通两网），未实机；无 pin/物品槽，配对在 systems/wire.js",
+          "internalId": 39,
+          "size": [
+            1,
+            1
+          ],
+          "layer": "wires",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "isRotateable": false,
+          "source": {
+            "file": "buildings/wire_tunnel.js",
+            "lines": "16-22 (combos); 47-49 (不可旋转); 51-58"
+          }
+        }
+      }
+    },
+    "item_producer": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "编辑器/测试用；按 pin 信号产出物品",
+          "internalId": 61,
+          "size": [
+            1,
+            1
+          ],
+          "layer": "regular",
+          "acceptors": [],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "bottom",
+              "type": "in"
+            }
+          ],
+          "hasRotationVariants": [
+            0
+          ],
+          "source": {
+            "file": "buildings/item_producer.js",
+            "lines": "13-19 (combos); 34-51 (ejector+pin)"
+          }
+        }
+      }
+    },
+    "constant_producer": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "编辑器/测试：恒喷固定物品",
+          "internalId": 62,
+          "size": [
+            1,
+            1
+          ],
+          "layer": "regular",
+          "acceptors": [],
+          "ejectors": [
+            {
+              "tile": [
+                0,
+                0
+              ],
+              "dir": "top"
+            }
+          ],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "isRemovable": "editor-only",
+          "source": {
+            "file": "buildings/constant_producer.js",
+            "lines": "16-22 (combos); 42-50 (ejector)"
+          }
+        }
+      }
+    },
+    "block": {
+      "variants": {
+        "default": {
+          "verifiedBy": "source-only",
+          "liveEvidence": "纯障碍，无任何组件；未实机",
+          "internalId": 64,
+          "size": [
+            1,
+            1
+          ],
+          "layer": "regular",
+          "acceptors": [],
+          "ejectors": [],
+          "pins": [],
+          "hasRotationVariants": [
+            0
+          ],
+          "isRemovable": "editor-only",
+          "source": {
+            "file": "buildings/block.js",
+            "lines": "12-18 (combos); 38 (空 setupEntityComponents)"
+          }
+        }
+      }
+    }
+  },
+  "codes": [
+    {
+      "code": 1,
+      "building": "belt",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 1
+    },
+    {
+      "code": 2,
+      "building": "belt",
+      "variant": "default",
+      "rotationVariant": 1,
+      "internalId": 2
+    },
+    {
+      "code": 3,
+      "building": "belt",
+      "variant": "default",
+      "rotationVariant": 2,
+      "internalId": 3
+    },
+    {
+      "code": 4,
+      "building": "balancer",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 4
+    },
+    {
+      "code": 5,
+      "building": "balancer",
+      "variant": "merger",
+      "rotationVariant": 0,
+      "internalId": 5
+    },
+    {
+      "code": 6,
+      "building": "balancer",
+      "variant": "mergerInverse",
+      "rotationVariant": 0,
+      "internalId": 6
+    },
+    {
+      "code": 7,
+      "building": "miner",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 7
+    },
+    {
+      "code": 8,
+      "building": "miner",
+      "variant": "chainable",
+      "rotationVariant": 0,
+      "internalId": 8
+    },
+    {
+      "code": 9,
+      "building": "cutter",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 9
+    },
+    {
+      "code": 10,
+      "building": "cutter",
+      "variant": "quad",
+      "rotationVariant": 0,
+      "internalId": 10
+    },
+    {
+      "code": 11,
+      "building": "rotater",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 11
+    },
+    {
+      "code": 12,
+      "building": "rotater",
+      "variant": "ccw",
+      "rotationVariant": 0,
+      "internalId": 12
+    },
+    {
+      "code": 13,
+      "building": "rotater",
+      "variant": "rotate180",
+      "rotationVariant": 0,
+      "internalId": 13
+    },
+    {
+      "code": 14,
+      "building": "stacker",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 14
+    },
+    {
+      "code": 15,
+      "building": "mixer",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 15
+    },
+    {
+      "code": 16,
+      "building": "painter",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 16
+    },
+    {
+      "code": 17,
+      "building": "painter",
+      "variant": "mirrored",
+      "rotationVariant": 0,
+      "internalId": 17
+    },
+    {
+      "code": 18,
+      "building": "painter",
+      "variant": "double",
+      "rotationVariant": 0,
+      "internalId": 18
+    },
+    {
+      "code": 19,
+      "building": "painter",
+      "variant": "quad",
+      "rotationVariant": 0,
+      "internalId": 19
+    },
+    {
+      "code": 20,
+      "building": "trash",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 20
+    },
+    {
+      "code": 21,
+      "building": "storage",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 21
+    },
+    {
+      "code": 22,
+      "building": "underground_belt",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 22
+    },
+    {
+      "code": 23,
+      "building": "underground_belt",
+      "variant": "default",
+      "rotationVariant": 1,
+      "internalId": 23
+    },
+    {
+      "code": 24,
+      "building": "underground_belt",
+      "variant": "tier2",
+      "rotationVariant": 0,
+      "internalId": 24
+    },
+    {
+      "code": 25,
+      "building": "underground_belt",
+      "variant": "tier2",
+      "rotationVariant": 1,
+      "internalId": 25
+    },
+    {
+      "code": 26,
+      "building": "hub",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 26
+    },
+    {
+      "code": 27,
+      "building": "wire",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 27
+    },
+    {
+      "code": 28,
+      "building": "wire",
+      "variant": "default",
+      "rotationVariant": 1,
+      "internalId": 28
+    },
+    {
+      "code": 29,
+      "building": "wire",
+      "variant": "default",
+      "rotationVariant": 2,
+      "internalId": 29
+    },
+    {
+      "code": 30,
+      "building": "wire",
+      "variant": "default",
+      "rotationVariant": 3,
+      "internalId": 30
+    },
+    {
+      "code": 31,
+      "building": "constant_signal",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 31
+    },
+    {
+      "code": 32,
+      "building": "logic_gate",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 32
+    },
+    {
+      "code": 33,
+      "building": "lever",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 33
+    },
+    {
+      "code": 34,
+      "building": "logic_gate",
+      "variant": "not",
+      "rotationVariant": 0,
+      "internalId": 34
+    },
+    {
+      "code": 35,
+      "building": "logic_gate",
+      "variant": "xor",
+      "rotationVariant": 0,
+      "internalId": 35
+    },
+    {
+      "code": 36,
+      "building": "logic_gate",
+      "variant": "or",
+      "rotationVariant": 0,
+      "internalId": 36
+    },
+    {
+      "code": 37,
+      "building": "filter",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 37
+    },
+    {
+      "code": 38,
+      "building": "transistor",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 38
+    },
+    {
+      "code": 39,
+      "building": "wire_tunnel",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 39
+    },
+    {
+      "code": 40,
+      "building": "display",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 40
+    },
+    {
+      "code": 42,
+      "building": "virtual_processor",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 42
+    },
+    {
+      "code": 43,
+      "building": "analyzer",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 43
+    },
+    {
+      "code": 44,
+      "building": "virtual_processor",
+      "variant": "rotater",
+      "rotationVariant": 0,
+      "internalId": 44
+    },
+    {
+      "code": 45,
+      "building": "virtual_processor",
+      "variant": "unstacker",
+      "rotationVariant": 0,
+      "internalId": 45
+    },
+    {
+      "code": 46,
+      "building": "comparator",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 46
+    },
+    {
+      "code": 47,
+      "building": "balancer",
+      "variant": "splitter",
+      "rotationVariant": 0,
+      "internalId": 47
+    },
+    {
+      "code": 48,
+      "building": "balancer",
+      "variant": "splitterInverse",
+      "rotationVariant": 0,
+      "internalId": 48
+    },
+    {
+      "code": 49,
+      "building": "reader",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 49
+    },
+    {
+      "code": 50,
+      "building": "virtual_processor",
+      "variant": "stacker",
+      "rotationVariant": 0,
+      "internalId": 50
+    },
+    {
+      "code": 51,
+      "building": "virtual_processor",
+      "variant": "painter",
+      "rotationVariant": 0,
+      "internalId": 51
+    },
+    {
+      "code": 52,
+      "building": "wire",
+      "variant": "second",
+      "rotationVariant": 0,
+      "internalId": 52
+    },
+    {
+      "code": 53,
+      "building": "wire",
+      "variant": "second",
+      "rotationVariant": 1,
+      "internalId": 53
+    },
+    {
+      "code": 54,
+      "building": "wire",
+      "variant": "second",
+      "rotationVariant": 2,
+      "internalId": 54
+    },
+    {
+      "code": 55,
+      "building": "wire",
+      "variant": "second",
+      "rotationVariant": 3,
+      "internalId": 55
+    },
+    {
+      "code": 60,
+      "building": "transistor",
+      "variant": "mirrored",
+      "rotationVariant": 0,
+      "internalId": 60
+    },
+    {
+      "code": 61,
+      "building": "item_producer",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 61
+    },
+    {
+      "code": 62,
+      "building": "constant_producer",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 62
+    },
+    {
+      "code": 63,
+      "building": "goal_acceptor",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 63
+    },
+    {
+      "code": 64,
+      "building": "block",
+      "variant": "default",
+      "rotationVariant": 0,
+      "internalId": 64
+    }
+  ],
+  "rates": {
+    "belt": 2,
+    "miner": 0.4,
+    "underground_belt": 2,
+    "cutter": 0.5,
+    "cutterQuad": 0.5,
+    "rotater": 2,
+    "rotaterCCW": 2,
+    "rotater180": 2,
+    "stacker": 0.25,
+    "painter": 0.3333333333333333,
+    "painterDouble": 0.25,
+    "painterQuad": 1,
+    "mixer": 0.4,
+    "balancer_default": 4,
+    "balancer_splitter": 2,
+    "balancer_merger": 2,
+    "reader": 2,
+    "filter": 2,
+    "trash": null,
+    "hub": null,
+    "goal_acceptor": null,
+    "storage": null
+  },
+  "rateMeta": {
+    "units": "items/second at upgrade multiplier = 1.0（即 0 级升级）",
+    "multiplierTargets": {
+      "belt": [
+        "belt"
+      ],
+      "miner": [
+        "miner"
+      ],
+      "underground_belt": [
+        "belt"
+      ],
+      "balancer": [
+        "belt"
+      ],
+      "reader": [
+        "belt"
+      ],
+      "filter": [
+        "belt"
+      ],
+      "cutter": [
+        "processors"
+      ],
+      "cutterQuad": [
+        "processors"
+      ],
+      "rotater": [
+        "processors"
+      ],
+      "rotaterCCW": [
+        "processors"
+      ],
+      "rotater180": [
+        "processors"
+      ],
+      "stacker": [
+        "processors"
+      ],
+      "painter": [
+        "painting"
+      ],
+      "painterDouble": [
+        "painting"
+      ],
+      "painterQuad": [
+        "painting"
+      ],
+      "mixer": [
+        "painting"
+      ],
+      "trash": "unbounded (1e30)",
+      "hub": "unbounded (1e30)",
+      "goal": "unbounded (1e30)",
+      "storage": "缓冲容器，无处理速率（吞吐受下游带限制）"
+    },
+    "formulas": {
+      "belt": "config.js:81 beltSpeedItemsPerSecond=2 × beltMult (hub_goals.js:487-492)",
+      "miner": "beltSpeed/5 (config.js:151) × minerMult (hub_goals.js:508-514)",
+      "underground_belt": "= 带速 × beltMult (hub_goals.js:499-503)",
+      "cutter_quad": "beltSpeed × processorsMult × buildingSpeeds.cutter(1/4) (config.js:101-111 + hub_goals.js:556-565)",
+      "rotater": "beltSpeed × processorsMult × 1/1",
+      "stacker": "beltSpeed × processorsMult × 1/8 → 0.25（最慢，工厂瓶颈）",
+      "painter": "beltSpeed × paintingMult × 1/6 → 0.333",
+      "painterDouble": "× 1/8 → 0.25/次 但一次出 2 件 → 有效 0.5/s",
+      "painterQuad": "× 1/2 → 1.0/次（一次上 4 色）",
+      "mixer": "beltSpeed × paintingMult × 1/5 → 0.4",
+      "balancer_default": "beltSpeed × beltMult × 2 = 4（balancer.js:(base/2)*mult, mult=2）；两输出各 ≈带速 2",
+      "balancer_splitter_merger": "(base/2)*1 = 2（1×1 变体，mult=1，balancer.js:98-109）",
+      "reader": "beltSpeed × beltMult = 2（直通，hub_goals.js:533-534）",
+      "filter": "无 ItemProcessor；吞吐≈带速（getBeltBaseSpeed, filter.js:55）",
+      "trash_hub_goal": "process_* 无产出或 1e30（不限量）"
+    },
+    "upgradeLadder": {
+      "note": "fixedImprovements=[0.5,0.5,1,1,2,1,1] 累积 (modes/regular.js:80)；mult=1+Σ前k项",
+      "afterTiers": [
+        1,
+        1.5,
+        2,
+        3,
+        4,
+        6,
+        7,
+        8
+      ],
+      "liveWorldLevels": "world-full.json 实测 {belt:3,miner:3,processors:2,painting:1} → beltMult=2.5, minerMult=2.5, processorsMult=2, paintingMult=1.5"
+    }
+  },
+  "codeTableSummary": {
+    "registered_buildings": 28,
+    "codes_total": 59,
+    "codeRange": [
+      1,
+      64
+    ],
+    "unusedCodes": [
+      41,
+      56,
+      57,
+      58,
+      59
+    ],
+    "contiguityWarning": "code 非连续、非按建筑顺序；41/56-59 在 1.5.6 无任何 getAllVariantCombinations 赋值（历史/保留）。编译器必须按 code→(building,variant,rv) 查表，禁止假设 code↔下标连续。",
+    "selfCheckGate": "building-codes-live.json 的 15 个 (building/variant)→code 全部命中源码集合（15/15 吻合）"
+  },
+  "notes": [
+    "directionSemantics: acceptor.direction=货从该世界方位进入(rotation=0 局部系)；ejector.direction=货朝该方位喷出。core/vector.js:30-45 enumDirectionToAngle(top=0,right=90,bottom=180,left=270)。匹配时 acceptor 取反 (item_acceptor.js:110-135 enumInvertedDirections)。",
+    "coordinateFrame: 所有 tile 为 rotation=0 局部偏移，相对建筑左上 origin (static_map_entity.js:127-198)。世界系=先按 rotation 旋转 (rotateFastMultipleOf90: 90→(-y,x)) 再加 origin。y 向下为正 (top=(0,-1), enumDirectionToVector core/vector.js:685-690)。",
+    "pins: pins[] 是 WiredPinsComponent 引脚（type: out=logicalEjector 发信号, in=logicalAcceptor 收信号），与物品槽独立。type 为 'in'/'out'。",
+    "layer: layer=wires 的建筑：wire/constant_signal/logic_gate/transistor/analyzer/comparator/virtual_processor/wire_tunnel。其余 regular。lever/display/item_producer/constant_producer/block 无 getLayer 覆写→regular。",
+    "rotationVariantSlots: 对 tunnel（default/tier2）两 rv 槽位不同，用 rotationVariantSlots[rv] 取 acceptor/ejector；对 belt（rv0/1/2）用 beltVariants；其余建筑 hasRotationVariants=[0]（单一 rv），acceptors/ejectors 即 rv0。",
+    "unverified: 除 belt/cutter-default/miner/stacker/painter-default/trash（M1b/M2a/M3 实机流动）与 tunnel/balancer/painter-mirrored/hub/mixer/rotater（world-full.json 真实实例佐证 code 与存在性）外，其余建筑的槽位几何均为【源码级 source-only】，编译器应作“未实机”处理。",
+    "checkGate: 实测：解析 28 个 building 的 getAllVariantCombinations 得 59 码、0 重复、缺号 {41,56,57,58,59}；building-codes-live 15 对 code 全命中源码；world-full.json 14 组 (type,variant,rv,code) 与源码一致（含 belt rv1=2/rv2=3、tunnel 22/23、painter 16/17、hub 26、balancer 4）。",
+    "cutterSlotOrder: cutHalf 返回 [quads(2,3)=左列, quads(0,1)=右列]，requiredSlot=i 直接映射 ejector 槽 i（item_processor.js:367-390）。quad 用 cutQuad=[TR,BR,BL,TL]。空象限不占用槽。",
+    "stackerSlotOrder: process_STACKER items.get(0)=lower/get(1)=upper；belt_path 用匹配到的 acceptor 槽号作 sourceSlot，故 stacker 槽0=(0,0)=下层、槽1=(1,0)=上层（M3 实测左格下层+右格上层）。"
+  ]
+}
