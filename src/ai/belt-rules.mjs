@@ -4,7 +4,9 @@
  * 三条已实机验证的命题（1906 条真实带子，validate-belt-rules.mjs）：
  *   A. belt code = 1 + rotationVariant                （rv0直/rv1左弯/rv2右弯）✅ 1906/1906
  *   B. 局部几何：三种 rv 的入口都在局部 bottom；出口局部 rv0=top, rv1=left, rv2=right；
- *      世界方向 = 局部方向按 rotation 旋转            ✅ 链闭合 1267 对 / 1 错（离群：与地下带重叠）
+ *      世界方向 = 局部方向按 rotation 旋转            ✅ 下游闭合 1267/1268；弯带双侧闭合 69/69。
+ *      （唯一离群 (28,71)→(29,71) 经复核是两条正交独立带子的 T 型交叉，非几何错。
+ *       独立可证伪判据见 src/ai/belt-rules.test.mjs：交换 rv1↔rv2 或取逆手性，双侧闭合都崩到 0。）
  *   C. 游戏最终态是 compute+迭代的不动点，82.5% 可由邻居复现 ——
  *      漂移全在"邻居含机器"的角落（belt.js 扫描含全部建筑的 ejector/acceptor）。
  *      编译器**不需要**复现 C：蓝图路径显式携带 rv（mod 的 immutable 粘贴，提交 a35a481）。
@@ -18,7 +20,8 @@ export const OPP = { top: "bottom", bottom: "top", left: "right", right: "left" 
 export const DIRV = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
 
 export const norm360 = a => ((a % 360) + 360) % 360;
-export const angleToDir = a => ORDER[norm360(a) / 90];
+// 量化到最近象限再索引：非 0/90/180/270 的角度也返回合法方位，不静默给 undefined
+export const angleToDir = a => ORDER[Math.round(norm360(a) / 90) % 4];
 export const dirToAngle = d => ORDER.indexOf(d) * 90;
 
 /** 局部方向 → 世界方向（rotation 角度制） */
