@@ -1,0 +1,6 @@
+{
+ "test": "preflight",
+ "pass": false,
+ "fatal": "never entered the game within 360s",
+ "rpc": null
+}
