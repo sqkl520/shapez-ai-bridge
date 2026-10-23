@@ -91,7 +91,7 @@
 | **0** | **修 `placeOne` 的 rv 覆盖**（§4.0，约 10 行）+ 回归用例 | 无 | 粘贴同一条含拐角的蓝图，**打乱顺序**后仍得到完全一致的 rv；`mod_selftest` 加一条断言 |
 | 1.1 | `src/ai/shape-ops.mjs`（从 `proto/` 提升为正式模块）+ 回归测试 | 无 | `node test/shape_ops_selftest.mjs` 全绿；含与公开配方表的抽查对拍 |
 | 1.2 | `src/ai/world.mjs`（seed → 资源图；从 `proto/gen-resources.mjs` 提升） | 无 | 对 level-11 存档的 seed 复现 **3002/3002** 一致（已有测试可搬） |
-| 1.3 | `src/ai/solver.mjs`（配方求解器，见 `designs/solver-*.md`） | 1.1 | `CgScScCg`、`CrCrCrCr`、`----CuCu`、及一个多层形状全部解出；与公开表一致率 ≥95% |
+| 1.3 | `src/ai/solver.mjs`（配方求解器，原型 `proto/solver.mjs` + `proto/solver-README.md` 已跑通） | 1.1 | `CgScScCg`、`CrCrCrCr`、`----CuCu`、及多层 `SrSrSrSr:CyCyCyCy` 全部解出（**原型已全绿**）；正式化时保持与公开表一致 |
 | 1.4 | `src/ai/verify.mjs`（形状/几何验证器） | 1.1 | 能对任意 SZBP1 蓝图做形状合法性检查；错误结构化 |
 | 1.5 | `docs/AGENT-PROMPT.md` + `play.mjs --llm` 骨架（接口先行，可 mock） | 无 | 定义了 L3 的输入/输出契约与 DSL 语法；用脚本 mock 可端到端跑通 |
 
@@ -106,7 +106,7 @@
 |---|---|---|---|---|
 | 2.1 | **布局编译器** `src/ai/layout.mjs`：配方 DAG → 机器+传送带几何 → SZBP1 | 1.1–1.4 | 能对 `----CuCu` 自动生成蓝图并在实机粘贴成功、`await` 到交付增加 | 🟢 **原型已验证**：M1b/M2a/M3/M4 分别跑通切割线/上色/堆叠/**多分支汇合**（见 `facts/MILESTONE-*.md`） |
 | 2.2 | **一键建线** `play.mjs build <target>`：求解 → 布局 → 粘贴 → 验证 | 2.1 | 全自动完成 level-2 目标（`----CuCu`，40 个） | 🔴 待做（组装，非能力验证） |
-| 2.3 | **战场感知** `obs` 增强：拥堵/死端/供给缺口 | 无（mod 端加字段） | 见 `facts/observation-gaps.md` 的优先级清单；至少实现"传送带是否堵塞" | 🔴 待做 |
+| 2.3 | **战场感知** `obs` 增强：拥堵/死端/供给缺口 | 无（mod 端加字段） | 实现方案见 `designs/tool-gaps-DESIGN.md` §4.3（含堵塞的源码级判据 `spacingToFirstItem >= 0.63`，belt_path.js:126） | 🔴 待做 |
 | 2.4 | **存档物流观测**：`save_now` + 离线解码 `beltPaths` 封装成 `play.mjs traffic` | 无 | 能打印真实工厂的带内物品分布（本已实测可行，只是封装） | 🟢 方法已验证（本次全部实验都用它） |
 
 **关键**：布局编译器所需的一切**几何知识**都已实测确认（`facts/GEOMETRY-TABLE.md`），
@@ -194,7 +194,7 @@
 
 | 项 | 状态 | 怎么验 |
 |---|---|---|
-| **交付进 hub（端到端真通关）** | 🔴 **本研究从未观测** | 所有里程碑的终点是 **trash**（19 个 `exp-*.mjs` 里 `hub_delivered_increased` 出现 0 次）。项目早期 B1/B2 bench 验证过 hub 交付（`LIVE-VERIFICATION.md:40`），但**本次的机器几何/蓝图/未生成区域实验都没接 hub**。⇒ 必须做：`solver→layout→paste 到 hub 旁→await hub_delivered_increased→level_increased` 跑通 level-2。**这是把"能造形状"变成"能过关"的关键一步，也是 §0 主张的最后一环。** |
+| **交付进 hub（端到端真通关）** | ✅ **已打通**（本研究末期） | `exp-e2e.mjs`：新档 → 离线读 seed 预测矿位（与实机 obs 交叉核对一致）→ 两腿先/拐角最后的 L 形 → `await hub_delivered_increased` **met=true @960 ticks，计数器 1/30，hub 库存 CuCuCuCu:1**。⇒ "能造形状"升级为"能过关"。剩下的：交付**非平凡目标**（带切割/上色/堆叠的）到 hub，以及自动升到 level 2+ |
 | **多层形状（`: ` 分隔）的求解与布局** | 求解 ✅ / 布局 🔴 | `solver.mjs` 已解出 L15 多层目标（`SrSrSrSr:CyCyCyCy`，8ms）；但**多层布局完全未做** —— 需要多级 stacker 串联，几何复杂度显著上升 |
 | **布局算法对任意 DAG 的推广** | 【待验】 | M4 只验证了**一种拓扑**（2 分支 1 汇合）。3+ 分支、多级汇合、含 painter 的混合 DAG **未验证** |
 | **颜料线的自动布线** | 【待验】 | M2a 手工验证了颜料注入可行（painter color 从 top 进），但**自动布线**（与形状线交叉时怎么办）未做 |
