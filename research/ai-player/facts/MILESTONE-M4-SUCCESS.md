@@ -1,7 +1,12 @@
 # ★★ M4 双分支汇合：**成功** ★★（研究系列的收尾）
 
-> 手写布局失败 5 次之后，用**修复后的 rv 控制 + M3 验证过的几何模式**，
-> **一次通过**。脚本：`research/ai-player/exp-merge-line2.mjs`
+> 手写布局失败 5 次之后，用 **M3 验证过的几何模式（拐角最后放）** **一次通过**。
+> 脚本：`research/ai-player/exp-merge-line2.mjs`
+>
+> ⚠️ **修正（对抗审查 C6）**：本节初稿说"用修复后的 rv 控制一次通过"——**错了**。
+> `exp-merge-line2.mjs` 全程用 `place`/`place_path`（`grep paste_blueprint` = 0 命中），
+> **根本没走蓝图路径**，所以它验证的是"拐角最后放"这个放置顺序技巧（M3 的模式），
+> **不是 rv 修复**。rv 修复的验证在 `exp-rv-fix3.mjs`（反例实验），见 `RV-FIX-verified.md`。
 
 ## 结果
 
