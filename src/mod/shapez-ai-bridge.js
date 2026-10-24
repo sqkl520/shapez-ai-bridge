@@ -784,7 +784,7 @@ class Mod extends shapez.Mod {
      * 依赖邻居是否已就位。蓝图里的 code 已经带了正确的 rotationVariant，粘贴时应当直接采用。
      * 传 null（默认）→ 保持原有"自动定向"行为；传数字 → 强制使用该值。
      */
-    placeOne(root, meta, x, y, rotation, variant, rotationVariantOverride = null) {
+    placeOne(root, meta, x, y, rotation, variant, rotationVariantOverride = null, originalRotationOverride = null) {
         const Vector = this.VectorCtor(root);
         const origin = new Vector(x, y);
         const rot = this.normalizeRotation(rotation);
@@ -811,7 +811,8 @@ class Mod extends shapez.Mod {
             origin,
             rotation: optimal.rotation,
             rotationVariant: optimal.rotationVariant,
-            originalRotation: rot,
+            // v2 蓝图可给出真实 originalRotation；缺省仍是 rot（历史语义）
+            originalRotation: originalRotationOverride === null ? rot : this.normalizeRotation(originalRotationOverride),
             building: meta,
             variant,
         });
@@ -1455,7 +1456,7 @@ class Mod extends shapez.Mod {
             if (e.queuedForDestroy || e.destroyed) continue;
             const sme = e.components.StaticMapEntity;
             if (this.entityIntersectsRegion(e, region)) {
-                picks.push({ code: sme.code, x: sme.origin.x, y: sme.origin.y, rot: sme.rotation });
+                picks.push({ code: sme.code, x: sme.origin.x, y: sme.origin.y, rot: sme.rotation, orig: sme.originalRotation });
             }
         }
         if (picks.length === 0) {
@@ -1474,7 +1475,10 @@ class Mod extends shapez.Mod {
         for (const p of picks) {
             flat.push(p.code, p.x - minX, p.y - minY, p.rot);
         }
-        const payload = { v: 1, gv: this.gameVersion(), w: [minX, minY], e: flat };
+        // v2：平行数组 o 承载每格的 originalRotation（带子事后重算以它为基准，belt.js:160）。
+        // 缺它时「导出→贴到别处」或「贴完在拐角旁补一格」会让拐角翻向（P7-F2 实机取证）。
+        const origs = picks.map(p => (typeof p.orig === "number" ? p.orig : p.rot));
+        const payload = { v: 2, gv: this.gameVersion(), w: [minX, minY], e: flat, o: origs };
         const json = JSON.stringify(payload);
         const shapez = /** @type {any} */ (window).shapez;
         const text = "SZBP1." + shapez.compressX64(json);
@@ -1508,8 +1512,19 @@ class Mod extends shapez.Mod {
         } catch (e) {
             throw this.rpcError(2001, "invalid_action", "blueprint text is corrupted: " + e);
         }
-        if (!payload || payload.v !== 1 || !Array.isArray(payload.e) || payload.e.length % 4 !== 0) {
-            throw this.rpcError(2001, "invalid_action", "blueprint payload malformed (expect v1 e[code,dx,dy,rot,...])");
+        if (!payload || (payload.v !== 1 && payload.v !== 2) || !Array.isArray(payload.e) || payload.e.length % 4 !== 0) {
+            throw this.rpcError(2001, "invalid_action", "blueprint payload malformed (expect v1|v2 e[code,dx,dy,rot,...])");
+        }
+        // v2：可选的平行数组 o（每格 originalRotation）。长度必须严格对齐 ——
+        // 长度不符宁可拒，也不静默截断/错位（stride=5 的静默错位事故就是这么来的）。
+        if (payload.o !== undefined) {
+            if (!Array.isArray(payload.o) || payload.o.length !== payload.e.length / 4) {
+                throw this.rpcError(
+                    2001,
+                    "invalid_action",
+                    "blueprint payload malformed: o.length must equal entity count"
+                );
+            }
         }
         if (payload.gv !== this.gameVersion()) {
             throw this.rpcError(
@@ -1662,7 +1677,10 @@ class Mod extends shapez.Mod {
                     a.y + dy,
                     rot,
                     info.variant,
-                    info.rotationVariant !== undefined ? info.rotationVariant : null
+                    info.rotationVariant !== undefined ? info.rotationVariant : null,
+                    // v2 的 o[i]：该格的真实 originalRotation。缺省（v1 / null）→ 用 rot，
+                    // 与历史行为一致（bridge 过去把同一个值同时当 rotation 与 originalRotation）。
+                    payload.o && payload.o[i] !== null && payload.o[i] !== undefined ? payload.o[i] : rot
                 );
                 if (entity) applied++;
                 else failed.push({ dx, dy, reason: "game_rejected", code });

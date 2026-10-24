@@ -151,7 +151,7 @@ ActionResult：
 }
 ```
 
-## 6. 蓝图字符串格式 v1（自建——1.5.6 无原生格式【观测】）
+## 6. 蓝图字符串格式 v2（自建——1.5.6 无原生格式【观测】）
 
 ```
 SZBP1.<LZString-URI-safe 压缩体>
@@ -159,18 +159,22 @@ SZBP1.<LZString-URI-safe 压缩体>
 
 压缩前 JSON：
 ```jsonc
-{"v": 1,                 // 蓝图格式版本
+{"v": 1,                 // 格式版本：1（无 o）或 2（可带 o）。解码器两者都接受。
  "gv": "1.5.6",          // 产出时的游戏版本（code 表兼容性凭据）
  "w": [minx, miny],      // 世界锚点（区域内实体最小角）
- "e": [code,dx,dy,rot,  code,dx,dy,rot, ...]}   // 扁平数组，stride=4
+ "e": [code,dx,dy,rot,  code,dx,dy,rot, ...],   // 扁平数组，**恒为 stride=4**
+ "o": [orig, orig, ...]} // v2 可选：平行数组，逐格 originalRotation，长度必须 === e.length/4
 ```
 
 - `code` = 游戏内部建筑码（`getCodeFromBuildingData` 产物，含 variant/rotationVariant 信息）【观测】。
   粘贴时经 `getBuildingDataFromCode(code)` 反查，**code 表只在同一游戏版本内保证有效 → `gv` 不匹配报 `2006`**。
 - `dx,dy` = 相对锚点；`rot` = 0/90/180/270。
-- 粘贴 = 对每个实体 `logic.tryPlaceBuilding({building, origin, rotation, originalRotation, rotationVariant, variant})`，包在 `performBulkOperation` 里。
-- 扣费（`charge:"auto"` 且 `!gameMode.getHasFreeCopyPaste()`）：`cost = findNiceIntegerValue(4 * n^1.1)`【观测】，从 `getBlueprintShapeKey()` 扣；不足 → `2002`。
-- 压缩算法：**LZString URI-safe 变体**（`compressToEncodedURIComponent` 等价），与游戏存档所用完全一致——npm `lz-string` 实测可解游戏自身产物。实现走 `src/shared/lzstring.mjs`（桥接/测试）与 mod 内嵌副本（mod 必须单文件）。
+- **`o[i]` = 该格的真实 `originalRotation`**（游戏按它做邻居重算，`systems/belt.js:160`）。缺省/`null` → 回落到 `rot`（= v1 行为）。
+  **为什么用平行数组而不是 stride=5**：改 stride 时若忘升版本号，`n % 4 == 0` 的蓝图会被旧解码器**静默**读成错位实体（实测 n=4/8/12/16 中招）并照样盖进世界；平行数组则让旧解码器原样可读（多出的键被忽略），且长度不符能显式报 `2001`。代价：容量 +12~27%（实测 2000 格 3899→4950 字符）。
+  **为什么需要它**：`originalRotation` 不可从 `(rotation, rv)` 反推（同一对值命中 `belt.js` 不同分支时 orig 不同）。缺 `o` 时，「导出→贴到别处」或「贴完在拐角旁补一格」都会让拐角**翻向**（实机取证：`research/ai-plan/live/results/orig-flip.json`，9 格矩阵 3 翻 6 不翻，翻的全是 PULL 扰动）。
+- 粘贴 = 对每个实体 `logic.tryPlaceBuilding({building, origin, rotation, originalRotation, rotationVariant, variant})`，包在 `performBulkOperation` + **`performImmutableOperation`** 双层里（后者屏蔽 `systems/belt.js:63` 的邻居重算，否则蓝图里的 rv 会被改写）。
+- 扣费（`charge:"auto"` 且 `!gameMode.getHasFreeCopyPaste()`）：`cost = findNiceIntegerValue(4 * n^1.1)`【观测】，从 `getBlueprintShapeKey()` 扣；不足 → `2002`。`paste_blueprint` 支持 `dry_run:true` 预检（见 §5）。
+- 压缩算法：**LZString URI-safe 变体**（`compressToEncodedURIComponent` 等价），与游戏存档所用完全一致——npm `lz-string` 实测可解游戏自身产物。实现走 `src/shared/lz-string.cjs`（桥接/测试）与 mod 内嵌副本（mod 必须单文件）。
 - 文本仅含 `[A-Za-z0-9+\-$.]` 与 `SZBP1.` 前缀，可安全放进 JSON/剪贴板/对话。
 
 ## 7. 错误码

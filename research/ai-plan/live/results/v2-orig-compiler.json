@@ -1,0 +1,25 @@
+{
+ "test": "v2-orig-compiler",
+ "seed": 68613,
+ "blueprint_v": 2,
+ "orig_diff_cells": 0,
+ "corners": 1,
+ "flipped": 0,
+ "detail": [
+  {
+   "corner": "60,60",
+   "before": {
+    "code": 3,
+    "rv": 2,
+    "r": 0
+   },
+   "after": {
+    "code": 3,
+    "rv": 2,
+    "r": 0
+   },
+   "flipped": false
+  }
+ ],
+ "pass": true
+}

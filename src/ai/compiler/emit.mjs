@@ -48,7 +48,11 @@ import {
 } from "./types.mjs";
 import { ContractViolation, CHECK_IDS, isFailureReason, makeFailure, validateReason } from "./errors.mjs";
 import { beltCode, beltEntry, beltExit } from "../belt-rules.mjs";
+import { computeBelt } from "./belt-sim.mjs";
 import { encodeBlueprint, decodeBlueprint, blueprintCost } from "../../shared/blueprint.mjs";
+
+/** 角度归一（局部工具；belt-rules 的 norm360 未被本文件引入） */
+const norm360 = a => ((a % 360) + 360) % 360;
 
 /* ───────────────────────────── P2 的装载（一处必要的绕行） ─────────────────────────────
  * `src/ai/op-templates.mjs:1165` 的自测判据是 **argv 里有 --test**（`process.argv.slice(2).includes("--test")`），
@@ -403,7 +407,47 @@ export function emitPlan(plan, opts = {}) {
     const gv = opts.gv || GAME_VERSION;
     let blueprint;
     try {
-        blueprint = encodeBlueprint({ gv, w: anchor, entities: emitted.map(e => ({ code: e.code, dx: e.dx, dy: e.dy, rot: e.rot })) });
+        // v2 的 o[]：逐格**解不动点**（不是简单写 orig=rot —— 那是 v1 语义，也是 P7-F2 翻向的原因）。
+        // 邻居编码已用真实工厂样本反解验证：上游把货喷进本格 ⇒ ejector 的 toDirection = 本格入边方向。
+        //   （实测：corner r90/rv2 + orig180 与 toDirection='right' 精确吻合真实存档 23 个同拓扑拐角。）
+        // 若某拐角**无解**（四个 orig 都不落在想要的 (rot,rv) 上），说明该拓扑下这格天生会翻：
+        //   ⇒ 整单拒绝，不产出"贴上去当时对、旁边一放就翻"的蓝图。
+        const opp = { top: "bottom", bottom: "top", left: "right", right: "left" };
+        const unsolvable = [];
+        const origSolved = emitted.map(e => {
+            if (e.kind !== "belt") return null;
+            const ns = [];
+            // 上游：把货喷进本格的是 **ejector**，其 toDirection = 本格的入边方位（'top' = 朝上喷入）。
+            if (e.inDir) ns.push({ toDirection: e.inDir });
+            // 下游：接货的是 **acceptor**，fromDirection = 它面向本格的方向 = outDir 的反向。
+            // ⚠️ 这里不能写成 toDirection（下游是接收方，不是喷口）——写错会让所有拐角判无解。
+            if (e.outDir) ns.push({ fromDirection: opp[e.outDir] });
+            const wantR = norm360(e.rot), wantV = e.rotationVariant || 0;
+            for (const orig of [0, 90, 180, 270]) {
+                const r = computeBelt({ rotation: orig, neighbors: ns });
+                if (r.rotation === wantR && r.rotationVariant === wantV) return orig;
+            }
+            unsolvable.push({ cell: [e.dx, e.dy], kind: e.kind, rot: e.rot, rv: wantV, inDir: e.inDir, outDir: e.outDir });
+            return null;
+        });
+        if (unsolvable.length) {
+            return rejectEmit("validate:V3", {
+                gate: EMIT_GATES.CONTRACT, nodeId: unsolvable[0].cell ? null : null,
+                cell: unsolvable[0].cell,
+                got: unsolvable.slice(0, 4),
+                hint:
+                    "这些带子格在任何 originalRotation 下都不是其在邻居拓扑中的不动点 —— 扰动后必然翻向。" +
+                    "v2 无法用 o 修复它们（不是缺信息，是该拓扑无解）。布局应避免此类拐角，或改走 place_path 通道。",
+                plan: p,
+            });
+        }
+        blueprint = encodeBlueprint({
+            gv, w: anchor,
+            entities: emitted.map((e, i) => ({
+                code: e.code, dx: e.dx, dy: e.dy, rot: e.rot,
+                orig: origSolved[i],
+            })),
+        });
     } catch (err) {
         return rejectEmit("emit:mismatch", {
             gate: EMIT_GATES.CONTRACT, nodeId: null, cell: null, got: String(err && err.message),

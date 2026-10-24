@@ -1,0 +1,45 @@
+{
+ "test": "v2-orig-fix",
+ "cases": [
+  {
+   "label": "v1 蓝图（无 o，复刻 P7-F2 的翻向条件）",
+   "useOrig": false,
+   "formatVersion": 1,
+   "hasO": false,
+   "before": {
+    "code": 3,
+    "rv": 2,
+    "r": 0
+   },
+   "after": {
+    "code": 1,
+    "rv": 0,
+    "r": 0
+   },
+   "flipped": true,
+   "paste_applied": 5
+  },
+  {
+   "label": "v2 蓝图（带 o）",
+   "useOrig": true,
+   "formatVersion": 2,
+   "hasO": true,
+   "before": {
+    "code": 3,
+    "rv": 2,
+    "r": 0
+   },
+   "after": {
+    "code": 1,
+    "rv": 0,
+    "r": 0
+   },
+   "flipped": true,
+   "paste_applied": 5
+  }
+ ],
+ "v1_flipped": true,
+ "v2_flipped": true,
+ "pass": false,
+ "note": "v1 翻向 = 扰动手法有效（复刻 P7-F2）；v2 不翻 = stride=5 修复有效。若 v1 也没翻，说明该拓扑在此 corner 不是 PULL 敏感格，需换角度重试。"
+}

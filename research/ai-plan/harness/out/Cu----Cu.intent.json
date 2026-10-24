@@ -1,7 +1,7 @@
 {
  "goal": "Cu----Cu",
  "schema": "shapez-ai/handoff-intent@1",
- "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoC02sJ0AzALrwCmxA7LAAyzQCcbs370cfoNhUeAJn68ew6AA5p0lpP7llHDAv4AWTR1FroY3dHZq+HHvLVKL7Vbdga1OtUYO7TFuCbY0AvkA",
+ "blueprint": "SZBP1.N4IgbiBcBMA0IHMKRARgHQFZ0DYTwHcoBtAWh1lNQGYBdeAUxIHZYAGWVATndh49Speg3tV7QBfYcIAc0ga0kCKSzpnmcALBpo64q1B1X9OvOasWmOKq7HWrtq-baGqjpoYfb0QAexIAdgCuADYhsMFhEaHhkeHuCbyJyUmpbLQAvkA",
  "anchor": [
   -6,
   -13
@@ -381,7 +381,7 @@
   "beltCodeBad": [],
   "orderBad": [],
   "summary": {
-   "format_version": 1,
+   "format_version": 2,
    "exported_from": "1.5.6",
    "anchor": [
     -6,
@@ -399,7 +399,7 @@
     "11": 1,
     "20": 1
    },
-   "text_length": 146
+   "text_length": 181
   },
   "summaryErr": null
  },

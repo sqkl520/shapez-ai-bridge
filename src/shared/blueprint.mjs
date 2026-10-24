@@ -18,12 +18,20 @@ const require = createRequire(import.meta.url);
 const LZString = require("./lz-string.cjs");
 
 export const BLUEPRINT_PREFIX = "SZBP1.";
-export const BLUEPRINT_FORMAT_VERSION = 1;
+// v2 = 引入可选平行数组 o（originalRotation）；e 仍是 4 列 stride（见 decodeBlueprint 注释）
+export const BLUEPRINT_FORMAT_VERSION = 2;
 
 /**
  * 解析蓝图字符串。
+ *
+ * 版本语义（v2 引入可选的 `o` 平行数组，见 PROTOCOL §6）：
+ *   v:1 → `e` 按 4 列解；`o` 若存在则**照读**（向后兼容：v2 编码器写 v:2，这里是防御）
+ *   v:2 → `e` 仍按 4 列解（**不改成 stride=5** —— 那样 n%4==0 时旧解码器会静默错位），
+ *         另可带 `o:[originalRotation,...]`，长度必须 === e.length/4
+ * 缺 `o` 时 `entities[i].orig = rot`（= 今天的行为），所以 v2 文本能被 v1 解码器读、反之亦然。
+ *
  * @param {string} text
- * @returns {{v:number, gv:string, w:[number,number], entities:Array<{code:number|string,dx:number,dy:number,rot:number}>}}
+ * @returns {{v:number, gv:string, w:[number,number], entities:Array<{code:number|string,dx:number,dy:number,rot:number,orig:number}>}}
  * @throws {Error} 带 .code = "2001" | "2006" 的错误（与协议 §7 对齐）
  */
 export function decodeBlueprint(text) {
@@ -41,29 +49,65 @@ export function decodeBlueprint(text) {
         e.code = "2001";
         throw e;
     }
-    if (!payload || payload.v !== BLUEPRINT_FORMAT_VERSION || !Array.isArray(payload.e) || payload.e.length % 4 !== 0) {
-        const e = new Error("blueprint payload malformed (expect v1, e[code,dx,dy,rot,...])");
+    const okVersion = payload && (payload.v === 1 || payload.v === BLUEPRINT_FORMAT_VERSION);
+    if (!okVersion || !Array.isArray(payload.e) || payload.e.length % 4 !== 0) {
+        const e = new Error(`blueprint payload malformed (expect v1|v${BLUEPRINT_FORMAT_VERSION}, e[code,dx,dy,rot,...])`);
         e.code = "2001";
         throw e;
     }
+    const n = payload.e.length / 4;
+    let orig = null;
+    if (payload.o !== undefined) {
+        if (!Array.isArray(payload.o) || payload.o.length !== n) {
+            // 长度不符必须报，不能静默按短的截断（那正是 stride=5 静默错位的同族风险）
+            const e = new Error(`blueprint payload malformed: o.length (${Array.isArray(payload.o) ? payload.o.length : "not-array"}) !== entity count (${n})`);
+            e.code = "2001";
+            throw e;
+        }
+        orig = payload.o;
+    }
     const entities = [];
-    for (let i = 0; i < payload.e.length; i += 4) {
-        entities.push({ code: payload.e[i], dx: payload.e[i + 1], dy: payload.e[i + 2], rot: payload.e[i + 3] });
+    for (let i = 0; i < n; i++) {
+        const rot = payload.e[i * 4 + 3];
+        entities.push({
+            code: payload.e[i * 4],
+            dx: payload.e[i * 4 + 1],
+            dy: payload.e[i * 4 + 2],
+            rot,
+            // 缺 o（或该位为 null）→ 回落到 rot，与 v1 时代语义一致
+            orig: orig && orig[i] !== null && orig[i] !== undefined ? orig[i] : rot,
+        });
     }
     return { v: payload.v, gv: payload.gv, w: payload.w, entities };
 }
 
 /**
  * 生成蓝图字符串。
- * @param {{gv:string, w:[number,number], entities:Array<{code:number|string,dx:number,dy:number,rot:number}>}} data
+ *
+ * 写法选择（见 `research/ai-plan/emitter/NOTES.md` §一 的实测）：
+ * 用**平行数组** `o` 而不是把 stride 改成 5。官方理由是"兼容性默认方向"：
+ *   · 若改 stride=5 却忘了升 v，n%4==0 时旧解码器会静默读出 10 个错位实体并盖进世界（实测 n=4/8/12/16 中招）；
+ *   · 平行数组让 v1 解码器原样可读（多出的 o 被忽略），且长度不符能**显式报错**。
+ * 代价是容量 +12~27%（同一列整数进 JSON，实测 2000 格从 3899 → 4950 字符），可接受。
+ *
+ * @param {{gv:string, w:[number,number], entities:Array<{code:number|string,dx:number,dy:number,rot:number,orig?:number}>, version?:number}} data
+ *        `entities[i].orig`（可选）：该格的 originalRotation；全缺则写纯 v1 载荷
  * @returns {string}
  */
 export function encodeBlueprint(data) {
     const flat = [];
+    const origs = [];
+    let anyOrig = false;
     for (const e of data.entities) {
         flat.push(e.code, e.dx, e.dy, e.rot);
+        const o = e.orig === undefined || e.orig === null ? null : e.orig;
+        if (o !== null) anyOrig = true;
+        origs.push(o);
     }
-    const payload = { v: BLUEPRINT_FORMAT_VERSION, gv: data.gv, w: data.w, e: flat };
+    const useV2 = anyOrig || data.version === 2;
+    const payload = { v: useV2 ? BLUEPRINT_FORMAT_VERSION : 1, gv: data.gv, w: data.w, e: flat };
+    // 只有真的要表达 orig 时才写 o（纯 v1 载荷保持逐字节与历史产物一致）
+    if (useV2) payload.o = origs;
     return BLUEPRINT_PREFIX + LZString.compressToEncodedURIComponent(JSON.stringify(payload));
 }
 
