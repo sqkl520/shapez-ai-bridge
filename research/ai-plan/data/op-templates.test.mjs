@@ -348,10 +348,21 @@ if (fs.existsSync(SAVE_DUMP)) {
     eq("balancer 可解码但 v1 禁止 emit（isV1Emittable=false）",
         [codeFor("balancer", "default", 0, 0) === 4, isV1Emittable("balancer")], [true, false]);
     // 范围外建筑：隧道 rv=0 **可解码**（存档里有 182 条），但 v1 不可 emit；wire 在存档里不存在 → 无 code 凭据
-    eq("隧道：rv=0 可解码=22、rv=1 拒绝且 reason=out-of-scope:tunnel、不可 emit",
-        (() => { let rv1 = "ok"; try { codeFor("underground_belt", "default", 0, 1); } catch (e) { rv1 = e.reason; }
-                 return [codeFor("underground_belt", "default", 0, 0), rv1, isV1Emittable("underground_belt")]; })(),
-        [22, "out-of-scope:tunnel", false]);
+    /* ⚠️ 本条已**改写**：旧断言是「隧道 rv=1 必须被拒、reason=out-of-scope:tunnel」，
+       依据是 C4（smartplace 删带）。实机复核推翻了那个依据：
+         · 关闭 `enableTunnelSmartplace` 后，sender↔receiver 之间的带子完整保留（实测 2→2）；
+         · 注册表 `underground_belt.js:45-48` 明确给出 22(sender)/23(receiver)；
+         · level-11 存档里两种 code 各 107 个 —— 这是实机凭据，不是推测。
+       所以现在：codeFor 必须能解出 22 **和** 23，且两者都允许发射（subject to scope.tunnels）。
+       详见 research/ai-plan/tmp/TUNNEL-VERIFIED.md。 */
+    eq("隧道：rv=0 → code 22(sender)、rv=1 → code 23(receiver)，两者都可解码",
+        (() => { let rv1 = null; try { rv1 = codeFor("underground_belt", "default", 0, 1); } catch (e) { rv1 = e.reason; }
+                 return [codeFor("underground_belt", "default", 0, 0), rv1]; })(),
+        [22, 23]);
+    eq("隧道 rv 语义已实证 ⇒ allowedRvariants 承认 [0,1]（不再是「无凭据只认 rv=0」）",
+        allowedRvariants("underground_belt"), [0, 1]);
+    eq("隧道不再是「范围外建筑」（v1ScopeReason 返回 null；wire 仍是范围外）",
+        [v1ScopeReason("underground_belt"), v1ScopeReason("wire")], [null, "out-of-scope:wire"]);
     eq("wire：level-11 存档里没有 wire ⇒ 本包**无 code 凭据** → codeFor 拒绝（不瞎猜 code）",
         (() => { try { codeFor("wire", "default", 0, 0); return "ok"; } catch (e) { return e.reason; } })(),
         "emit:mismatch");
@@ -364,13 +375,15 @@ eq("belt 是唯一有 rv 位的 v1 建筑", RV_ALLOWED.belt, [0, 1, 2]);
 for (const b of ["miner", "cutter", "rotater", "stacker", "mixer", "painter", "trash", "hub"])
     eq(`${b} 只允许 rv=0`, allowedRvariants(b), [0]);
 eq("未列出的建筑默认 rv=[0]（注册表里没 rv≠0 的组合）", allowedRvariants("balancer"), [0]);
-eq("隧道/wire：allowedRvariants 只承认 rv=0（其 rv 语义无凭据），但**解码**用得到 code",
-    [allowedRvariants("underground_belt"), allowedRvariants("wire")], [[0], [0]]);
+/* 隧道 rv 语义已实证（22=sender/23=receiver，注册表 + 存档各 107 条）⇒ 承认 [0,1]；wire 仍无凭据 ⇒ [0]。 */
+eq("allowedRvariants：隧道 [0,1]（rv 是 sender/receiver 位）、wire 仍 [0]",
+    [allowedRvariants("underground_belt"), allowedRvariants("wire")], [[0, 1], [0]]);
 eq("隧道 code 仍可解码（P7 读盘对拍要解 182 条隧道）",
     [codeFor("underground_belt", "default", 0, 0), SAVE_CODES["underground_belt|default"]], [22, 22]);
-throwsSpec("隧道 rv=1 → 拒（语义无凭据，且 v1 范围外）", () => codeFor("underground_belt", "default", 0, 1), "out-of-scope");
-eq("v1ScopeReason 给 §2.5 的分诊串", [v1ScopeReason("underground_belt"), v1ScopeReason("wire"), v1ScopeReason("cutter")],
-    ["out-of-scope:tunnel", "out-of-scope:wire", null]);
+eq("隧道 rv=1 → code 23（receiver），不再抛错", codeFor("underground_belt", "default", 0, 1), 23);
+/* 隧道已从「范围外」移出（实机证实可用）；wire 仍在。 */
+eq("v1ScopeReason 给 §2.5 的分诊串（隧道已移出）", [v1ScopeReason("underground_belt"), v1ScopeReason("wire"), v1ScopeReason("cutter")],
+    [null, "out-of-scope:wire", null]);
 // cutQuad 在 v1Blocked 名单里（C6 第 3 条：quad 4 路输出 v1 需汇合方案）→ 不在可 emit 集合
 eq("v1 可 emit 集合 = op 枚举(减 cutQuad) + trash/belt/hub",
     Object.keys(ALL_TEMPLATES).filter(o => isV1Emittable(ALL_TEMPLATES[o].building, ALL_TEMPLATES[o].variant)).sort(),

@@ -261,7 +261,10 @@ function resolveMachineCode(e) {
     // H2：非 belt 只出 rv=0。**没有** allowNonBeltRv 之类的口子 —— 下面算 code 用的是
     // codeFor(...,rv=0)，若此处放行 rv≠0 就会产出「意图带 rv、code 却是 rv=0」的蓝图（比拒绝危险）。
     // gatePlan 的 preflightP2Assertions 已经先拒过一次，这里是第二道（防 opts 组合出来的旁路）。
-    if (e.rotationVariant !== 0) {
+    // ⚠️ 隧道例外：它的 rv 是 sender/receiver 位，codeFor 会按 rv 给出正确的 22/23，
+    //    此时"意图与 code 不符"的风险不存在（code 就是按 rv 算的）。
+    const tunnelRv = tpl.building === "underground_belt";
+    if (e.rotationVariant !== 0 && !tunnelRv) {
         // 故意把 offending rv 交给 P2 —— 让它给出权威的「不存在该 code」判定与分诊串
         try {
             codeFor(tpl.building, tpl.variant, e.rot, e.rotationVariant);
@@ -278,7 +281,11 @@ function resolveMachineCode(e) {
     }
     let code;
     try {
-        code = codeFor(tpl.building, tpl.variant, 0, 0);       // 任务书规定的调用形态
+        /* 隧道按**真实 rv** 调：它的 rv 是 sender/receiver 位，code 随之变成 22/23。
+           其余建筑仍按任务书规定的 `(...,0,0)` 形态 —— 它们的 rv 恒 0，两者等价。 */
+        code = tunnelRv
+            ? codeFor(tpl.building, tpl.variant, e.rot, e.rotationVariant)
+            : codeFor(tpl.building, tpl.variant, 0, 0);       // 任务书规定的调用形态
     } catch (err) {
         return { ok: false, reason: specReason(err), check: EMIT_GATES.CODE, detail: `codeFor 抛错：${err && err.message}` };
     }

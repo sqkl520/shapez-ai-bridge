@@ -88,6 +88,8 @@ export const V1_KINDS = Object.freeze(["miner", "belt", "cutter", "rotater", "pa
 
 /** 通道走格上限（防御无限环；超过即认定路由不闭合）。 */
 const MAX_WALK = 256;
+/** 隧道最大跨度（与 place.mjs / route.mjs 同值；P5 独立声明，不跨层 import）。 */
+const TUNNEL_MAX_SPAN = 4;
 
 /* ════════════════════════════════ 小工具 ════════════════════════════════ */
 
@@ -310,7 +312,11 @@ function codeOf(view, e) {
 }
 
 /** 带子的**权威**朝向：一律从 (r,rv) 现推；存储的 inDir/outDir 只是文档。 */
-const beltDirs = e => ({ entry: beltEntry(e.rotationVariant, e.rot), exit: beltExit(e.rotationVariant, e.rot) });
+/* 隧道（underground_belt）不走 beltEntry/beltExit：那套是给 rv∈{0,1,2} 的普通带子算转弯的，
+   而隧道的 code 是 22/23、rv 只表示 sender/receiver。它的方向就是实体上记的 inDir/outDir。 */
+const beltDirs = e => (e.kind === "underground_belt"
+    ? { entry: e.inDir, exit: e.outDir }
+    : { entry: beltEntry(e.rotationVariant, e.rot), exit: beltExit(e.rotationVariant, e.rot) });
 
 /* ════════════════════════ 通道合法性预检（V5 认领，V4/V6/V9/S1 跳过） ════════════════════════ */
 /**
@@ -681,7 +687,9 @@ const runV4 = (ctx, checks, errors) => {
     const audit = ctx.audit || (ctx.audit = edgeAudit(view));
     const bad = [], keys = [];
     const beltByCell = new Map();
-    for (const e of view.entities) if (isBeltKind(e.kind)) beltByCell.set(key(e.dx, e.dy), e);
+    /* 隧道也进这张表：walkChannel 要在 sender 处识别"接下来是跳跃"；
+       表里没有它会走到 sender 就当"没有带子格"判死（V4 超时的根因）。 */
+    for (const e of view.entities) if (isBeltKind(e.kind) || e.kind === "underground_belt") beltByCell.set(key(e.dx, e.dy), e);
     const fedSlots = new Map();
 
     for (const [ci, ch] of (view.layout.channels || []).entries()) {
@@ -799,9 +807,14 @@ function walkChannel(ch, beltByCell, view) {
     const startTile = add(ch.from.cell, ch.from.outDir);
     const goal = ch.to.cell, lastBelt = add(goal, ch.to.inDir);
     const path = [];
+    /* 走格上限**按端点跨度动态给**：固定的 256 只够短通道，而长通道（多矿机目标里
+       矿机铺开 300+ 格）本来就是几十到几百格 —— 拿 256 判它"环"是误判（实测 ch7 跨 385 格）。
+       仍保留上限（跨度 + 余量），环依旧会被抓到，只是不再冤枉长通道。 */
+    const span = Math.abs(goal[0] - startTile[0]) + Math.abs(goal[1] - startTile[1]);
+    const walkCap = Math.max(MAX_WALK, span * 3 + 16);
     if (startTile[0] === goal[0] && startTile[1] === goal[1]) return { ok: true, path };
     let cur = startTile, prevDir = ch.from.outDir;
-    for (let step = 0; step < MAX_WALK; step++) {
+    for (let step = 0; step < walkCap; step++) {
         const at = beltByCell.get(key(cur[0], cur[1]));
         if (!at) {
             if (cur[0] === goal[0] && cur[1] === goal[1]) return { ok: true, path };
@@ -813,6 +826,26 @@ function walkChannel(ch, beltByCell, view) {
         if (cur[0] === lastBelt[0] && cur[1] === lastBelt[1]) {
             if (d.exit !== OPP[ch.to.inDir]) return { ok: false, path, at: [...cur], detail: `末格 (${cur.join(",")}) exit=${d.exit}，但 ${ch.to.nodeId} 输入槽 (${goal.join(",")})/${ch.to.inDir} 要 ${OPP[ch.to.inDir]}` };
             return { ok: true, path };
+        }
+        /* ★ 隧道跳跃 ★
+           走到 sender（code 22）后，下一格不是相邻格，而是沿同方向找到的 receiver（code 23）——
+           中间那些格被"穿过"、本来就没有实体。不跳这一步的话，walker 会在空档处判定
+           「没有带子格（路由缺口）」，把一条合法通道判死（实测 V4 走满 256 格超时）。 */
+        if (at.code === 22) {
+            const dir = d.exit;
+            let hop = cur;
+            let found = null;
+            for (let k = 0; k < (TUNNEL_MAX_SPAN + 1); k++) {
+                hop = add(hop, dir);
+                const nx = beltByCell.get(key(hop[0], hop[1]));
+                /* 中间格**可能站着别的通道的带子**（隧道正是用来穿过它的）——
+                   不能因为"有实体"就停，只有碰到 receiver 才算到达。 */
+                if (nx && nx.code === 23) { found = hop; break; }
+            }
+            if (!found) return { ok: false, path, at: [...cur], detail: `sender (${cur.join(",")}) 前方 ${TUNNEL_MAX_SPAN + 1} 格内没有配对的 receiver（隧道不成立）` };
+            prevDir = d.exit;
+            cur = found;
+            continue;
         }
         prevDir = d.exit;
         cur = add(cur, d.exit);
@@ -847,7 +880,9 @@ const runV6 = (ctx, checks, errors) => {
     const { view } = ctx;
     const audit = ctx.audit || (ctx.audit = edgeAudit(view));
     const beltByCell = new Map();
-    for (const e of view.entities) if (isBeltKind(e.kind)) beltByCell.set(key(e.dx, e.dy), e);
+    /* 隧道也进这张表：walkChannel 要在 sender 处识别"接下来是跳跃"；
+       表里没有它会走到 sender 就当"没有带子格"判死（V4 超时的根因）。 */
+    for (const e of view.entities) if (isBeltKind(e.kind) || e.kind === "underground_belt") beltByCell.set(key(e.dx, e.dy), e);
     const payloads = new Map(), owners = new Map(), clashes = [], thru = [];
 
     (view.layout.channels || []).forEach((ch, ci) => {
@@ -944,7 +979,9 @@ const runV9 = (ctx, checks, errors) => {
     const { view } = ctx;
     const audit = ctx.audit || (ctx.audit = edgeAudit(view));
     const beltByCell = new Map();
-    for (const e of view.entities) if (isBeltKind(e.kind)) beltByCell.set(key(e.dx, e.dy), e);
+    /* 隧道也进这张表：walkChannel 要在 sender 处识别"接下来是跳跃"；
+       表里没有它会走到 sender 就当"没有带子格"判死（V4 超时的根因）。 */
+    for (const e of view.entities) if (isBeltKind(e.kind) || e.kind === "underground_belt") beltByCell.set(key(e.dx, e.dy), e);
     const channels = (view.layout.channels || []).filter((c, i) => !audit.skip.has(i));
     const stranded = [];
     for (const p of view.layout.placements || []) {
@@ -1089,7 +1126,20 @@ const runV8 = (ctx, checks, errors) => {
     if (scope) {
         if (scope.layers !== 1) vios.push({ what: "层数", detail: `scope.layers=${fmt(scope.layers)}`, reason: "out-of-scope:multilayer" });
         if (scope.wires !== false) vios.push({ what: "wire", detail: `scope.wires=${fmt(scope.wires)}`, reason: "out-of-scope:wire" });
-        if (scope.tunnels !== false) vios.push({ what: "隧道", detail: `scope.tunnels=${fmt(scope.tunnels)}`, reason: "out-of-scope:tunnel" });
+        /* 隧道：**不再是越界**。原判断依据是 C4（smartplace 会在 paste 中途删带），
+           实机复现后确认那是 `enableTunnelSmartplace` 开关造成的：
+             开 → sender↔receiver 之间的同向带子被删（复现，2→0）；
+             关 → 完整保留（2→2）。
+           隧道的编码/跨度/粘贴行为都已实测（见 research/ai-plan/tmp/TUNNEL-VERIFIED.md）。
+           所以这里只校验「scope 声明与实际用法一致」，不再一律拒绝：
+             · scope.tunnels=true   ⇒ 允许出现 underground_belt；
+             · scope.tunnels=false  ⇒ 出现隧道仍按越界拒（保持旧口径，防静默扩权）。 */
+        if (scope.tunnels !== true && scope.tunnels !== false) {
+            vios.push({ what: "隧道许可", detail: `scope.tunnels=${fmt(scope.tunnels)}（只接受 true|false）`, reason: "out-of-scope:tunnel" });
+        }
+        if (scope.tunnels === false && (view.layout.beltCells || []).some?.(b => b.tunnel)) {
+            vios.push({ what: "隧道", detail: "scope.tunnels=false 但布局里出现了隧道", reason: "out-of-scope:tunnel" });
+        }
         if (scope.rotatedMachines !== false) vios.push({ what: "旋转机器许可", detail: `scope.rotatedMachines=${fmt(scope.rotatedMachines)}`, reason: "out-of-scope:rotated-machine" });
         if (scope.maxFanIn !== 2) vios.push({ what: "入度上限", detail: `scope.maxFanIn=${fmt(scope.maxFanIn)}`, reason: "dag-not-placeable:fanin>2" });
     }
@@ -1100,8 +1150,12 @@ const runV8 = (ctx, checks, errors) => {
         if (t && t.v1Blocked) vios.push({ what: "v1 阻断变体", detail: `${p.nodeId} op=${p.op}（${t.building}/${t.variant}：4 路输出无汇合模板 / 需 wire 层）`, reason: "dag-not-placeable:fanin>2", cell: p.cell });
     }
     for (const e of view.entities) {
-        if (e.kind && !V1_KINDS.includes(e.kind)) vios.push({ what: "范围外实体", detail: `${e.nodeId} kind=${e.kind}`, reason: v1ScopeReason(e.kind) || "out-of-scope:rotated-machine", cell: [e.dx, e.dy] });
-        if (!isBeltKind(e.kind) && (e.rotationVariant || 0) !== 0) vios.push({ what: "非 belt rv≠0", detail: `${e.nodeId}(${e.kind}) rv=${e.rotationVariant}`, reason: "emit:mismatch", cell: [e.dx, e.dy] });
+        /* 隧道（underground_belt）在 scope.tunnels=true 时是**合法**实体，不再算"范围外"。
+           它仍要过下面两条通用检查：rv 位（sender=0/receiver=1，属 belt 族所以跳过非 belt 那条）
+           与 code 位（22/23 由 MACHINE_CODES 给出）。 */
+        const tunnelAllowed = scope && scope.tunnels === true && e.kind === "underground_belt";
+        if (e.kind && !V1_KINDS.includes(e.kind) && !tunnelAllowed) vios.push({ what: "范围外实体", detail: `${e.nodeId} kind=${e.kind}`, reason: v1ScopeReason(e.kind) || "out-of-scope:rotated-machine", cell: [e.dx, e.dy] });
+        if (!isBeltKind(e.kind) && e.kind !== "underground_belt" && (e.rotationVariant || 0) !== 0) vios.push({ what: "非 belt rv≠0", detail: `${e.nodeId}(${e.kind}) rv=${e.rotationVariant}`, reason: "emit:mismatch", cell: [e.dx, e.dy] });
         if (isBeltKind(e.kind) && !ORDER.includes(beltDirs(e).exit)) vios.push({ what: "非法带向", detail: `${e.nodeId} r=${e.rot} rv=${e.rotationVariant}`, reason: "belt-turn-unsolvable", cell: [e.dx, e.dy] });
         // code 位必须由模板推导（plan §1.6：belt 用 beltCode(rv)、机器用 codeFor；**不得手填 magic number**）
         const want = codeOf(view, e);
