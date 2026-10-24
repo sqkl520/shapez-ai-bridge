@@ -89,6 +89,14 @@ NONE/EJECT 扰动不翻。⇒ V3 生成时不动点**覆盖不了未来的合法
 **处置**：B-1 修复单→P3（red-green；废料带避 16 口全表，不只底排）；B-2 修复单→solver（**颜料升一等节点** mineColor/mix + 给 P8 的消费契约）；B-3 待前两者修后由 P8 复跑定性（可能需要 P4 的 Z 车道或改配方）。
 契约缺口（P8 报）：§2.5 无 solver 类 reason；`stats.bbox` 与 `layout.bbox` 口径互斥（已派生归一）；solver steps 无 parents（shape-ops 只读重放重建）。**L3 归 P7，被拦目标的交接件故意缺席（如实）**。
 
+## L3 进展（08:2x — 两个真实缺陷先后暴露，逐个修）
+**P8 颜料契约已完成入库（`e107da7`）**：harness 304 断言绿；可建目标从 6 → **8 个（含 L3 验收目标 `----CuCu`）**；`out/` 10 组三件套。设计要点：`color:<name>` → 编译期 token（颜色放进 shape key 的 color 位：`-g------`；语法合法、代数为空形状、每副本 hash 不同），**每条消费边独立副本**（否则 `CgScScCg` 的 green 喂 mix+paint 会触发扇出>1）；`checkPigments` 从"缺料即拒"翻转为护栏。
+**仍拦**：上色目标卡在 **painter→hub 竖车道**（painter 出 +x，hub 需 +y，竖车道撞 hub 4×4；648 组参数 0 命中）——属 P3 几何项，非颜料项。`pigmentGate.ok===true` 是可机器验证的"颜料不再是瓶颈"凭据。
+
+**★ L3 runner 立刻抓到下一个缺陷（已派 P8 修复单 `ae98c873`）**：
+`siteStage` 选 anchor 只看"矿机对齐资源 + 距原点近"，**从不检查布局矩形是否压到 hub 4×4**；`regionClear` 只拒"含非 hub 实体"的世界。实测：`anchor=[0,0]` → 布局压住 hub(-2,-2..1,1) → dry_run **3 条 blocked（occupant=hub uid 10000）**、`apply=11/14`。这正是 dry_run 门禁存在的意义——**它拦住了半建**。
+**教训（第三次同一坐标系出错）**：`ctx.hub`（世界）/ `ctx.hubDesign`（设计系）/ P3 的 `HUB_CLEAR`（设计系净空行）三个概念必须有一处固定说明；已要求 P8 写进 NOTES。
+
 ## L0/L1 断言账（各包主线程**亲自复跑**所得，非口头）
 contract 92 · data 637+变异 7 组 · router 184+变异 19/19 · validator 171+矩阵 19/19+双实现 0 差 · emitter 289（含 L1 85）· placer 78 · belt-rules 17（17/17）· 既有五套回归 25+7+12+19+47 —— **合计 ≈1480+ 条，全绿**。
 P8 在建 `run-all.mjs` 把这张表变成一条命令。
