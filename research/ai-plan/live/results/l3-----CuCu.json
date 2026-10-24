@@ -1,0 +1,98 @@
+{
+ "goal": "----CuCu",
+ "steps": {
+  "new_game": {
+   "ok": true,
+   "op": "new_game",
+   "game_mode": "regularMode",
+   "internal_id": "e35d93f08c2a28ef1aec005b45818bd52f783bc5"
+  },
+  "compile": {
+   "ok": true,
+   "reason": null,
+   "entities": 14,
+   "validator_pass": true,
+   "blueprint_len": 117,
+   "bbox": [
+    2,
+    12
+   ],
+   "corners": 0
+  },
+  "dry_run": {
+   "would_apply": 11,
+   "would_delete": 0,
+   "blocked": 3,
+   "unknown_code": 0,
+   "bbox": [
+    0,
+    0,
+    1,
+    11
+   ],
+   "destroys": []
+  }
+ },
+ "pass": false,
+ "world": {
+  "internal_id": "e35d93f08c2a28ef1aec005b45818bd52f783bc5",
+  "level": 1,
+  "shape": "CuCuCuCu",
+  "delivered_before": 0,
+  "required": 30,
+  "hub": [
+   -2,
+   -2
+  ]
+ },
+ "seed": 18043,
+ "compile_ms": 264,
+ "fail_reason": "dry_run: blocked entries",
+ "fail_detail": [
+  {
+   "dx": 1,
+   "dy": 1,
+   "cell": [
+    1,
+    1
+   ],
+   "kind": "trash",
+   "duplicateInPlan": false,
+   "occupant": {
+    "uid": 10000,
+    "type": "hub"
+   },
+   "reason": "solid collision"
+  },
+  {
+   "dx": 0,
+   "dy": 1,
+   "cell": [
+    0,
+    1
+   ],
+   "kind": "belt",
+   "duplicateInPlan": false,
+   "occupant": {
+    "uid": 10000,
+    "type": "hub"
+   },
+   "reason": "solid collision"
+  },
+  {
+   "dx": 0,
+   "dy": 0,
+   "cell": [
+    0,
+    0
+   ],
+   "kind": "belt",
+   "duplicateInPlan": false,
+   "occupant": {
+    "uid": 10000,
+    "type": "hub"
+   },
+   "reason": "solid collision"
+  }
+ ]
+}
