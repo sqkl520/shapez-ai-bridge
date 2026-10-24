@@ -71,6 +71,24 @@ NONE/EJECT 扰动不翻。⇒ V3 生成时不动点**覆盖不了未来的合法
 **✅ `paste dry_run` 已做完并实机验证（`97e6637`，03:15）**：mod+协议+4 自测（25 条全绿）；实机对照——同弹药贴工厂密集区报 3 apply/3 destroy/5 block（真 uid），贴空地报 8/8 干净，**dry_run 后世界 2805 零改动**。L3 的 P8/P7 脚本从此必须先 dry_run 核对再真贴（PROTOCOL §5 已写明；其局限：plan 内多格机器互叠归 V1，mod 不兜底）。
 **主线程挂账更新**：~~②paste dry_run~~ ✅完成；③CONTEST 裁决增量：C-1/C-2/C-5（hub kind 7..20 区间）已裁决（C-5 批次收敛时统一修 P1 判据）；P6 报的 `op-templates argv 洗灯`缺陷 ✅亲修+回归锁（`f7f7a2d`）；⑤孤儿存档清理待批次尾。
 
+## P8 观察 + 坐标系洞事件（07:40）
+- P8 扫了 67 分钟未推进 compile.mjs（骨架定格 06:18）→ 我发沉淀闸提示；**P5 的复跑恰好命中根因**：
+- **★真 bug（P5 发现，P3 修复单已发）**：`place({steps, hub:世界系})` 时机器仍从局部 (0,…) 排布 → 连接带跨 ~2600 格（`bbox=[1204,1409]`、`beltCells=2604`）；`place.mjs:627` 的 hub 只当资源搜索中心用；P3 测试全程 `connectHub:false` → **零覆盖路径**。P8 的 hub×gap 扫描大量失败是这个洞的症状，不是参数问题。
+- 处置：①P3 修复单 = red-green（先失败测试贴 RED，再最小修复贴 GREEN；四张金网格不许动；(a)全世界系 vs (b)局部+调用方平移由它裁决并说明）；②P8 停止加密扫描，临时绕行=输出整体平移到 hub 邻域，等 P3；③P8 的 sweep 另产出一类真发现：**routeAll 对通道入参顺序敏感** → 要求落成 NOTES+最小复现+contest（契约问题，非绕行理由）。
+- **P5 复活插曲**：我给已完结的 P5 发裁决通报，把它唤醒了 ~13 分钟——它把 NOTES 的 F2 更新成"已裁决+三方合流复核"，并**反证了坐标系洞**。产出是净收益，流程教训收下：给已完结包发消息前先 ListAgents。
+- 纪律再验证：**P8 自己的 NOTES 写了"golden 场景不可直接喂、能复现的是结论"**（F4）——fixture 是结论快照不是输入的诚实话，全批次都在防同一个"永绿"陷阱。
+
+## P8 完成 + 三个集成缺陷（07:5x，主线程验收 4336c49）
+**P8 入库**：harness L0 **252 断言**、run-all **13 组 ~1872 断言**全绿；**6 个目标真布通**（CuCuCuCu/RuRuRuRu/Cu----Cu/--CuCu--/Ru----Ru/--SuSu--）产出过 P5 门禁的蓝图 + 逐格 round-trip + 双跑字节相等；out/ 交接三件套齐（anchor/hub/chargeMode/entities/validator.pass）。
+**它的真价值是负结果**：
+| # | 包 | 严重度 | 缺陷 | 主线程复核 |
+|---|---|---|---|---|
+| B-1 | P3 | 高 | cutter **废料通道排进 hub 底排入口行** → 所有半形状目标（`----CuCu` 等）V3 死；不连 hub 则通过；640 组参数扫描 0 命中 | ✅ 复现 `ok:false reason:validate:V3`，bbox [3,10] |
+| B-2 | solver | 高 | 颜料折进 `paint.args`，painter color 槽**永无供料** → 一切上色目标（L7/8/10/11）V4 死；契约里也没颜料通道的位置（`payload` 必须 shortKey，`"--------"` 是唯一不动点） | ✅ 复现 `CrCrCrCr`/`CgScScCg` 均 V4 |
+| B-3 | P3/P4 | 中 | 双分支入 stacker 无隧道布不通 → `CgScScCg` 几何层阻塞 | 待 B-1/B-2 修后复验 |
+**处置**：B-1 修复单→P3（red-green；废料带避 16 口全表，不只底排）；B-2 修复单→solver（**颜料升一等节点** mineColor/mix + 给 P8 的消费契约）；B-3 待前两者修后由 P8 复跑定性（可能需要 P4 的 Z 车道或改配方）。
+契约缺口（P8 报）：§2.5 无 solver 类 reason；`stats.bbox` 与 `layout.bbox` 口径互斥（已派生归一）；solver steps 无 parents（shape-ops 只读重放重建）。**L3 归 P7，被拦目标的交接件故意缺席（如实）**。
+
 ## L0/L1 断言账（各包主线程**亲自复跑**所得，非口头）
 contract 92 · data 637+变异 7 组 · router 184+变异 19/19 · validator 171+矩阵 19/19+双实现 0 差 · emitter 289（含 L1 85）· placer 78 · belt-rules 17（17/17）· 既有五套回归 25+7+12+19+47 —— **合计 ≈1480+ 条，全绿**。
 P8 在建 `run-all.mjs` 把这张表变成一条命令。
