@@ -979,6 +979,73 @@ console.log("\n── ④ import lint ──");
 	}
 }
 
+/* ══════════════════════ ⑥ 矿机列由资源决定（多矿机目标） ══════════════════════ */
+console.log("\n── ⑥ planMinerColumns：矿机 x 由资源决定 ──");
+{
+	// 核心事实：矿机的唯一硬约束是"压在自己的资源上"，它们之间的相对间距没有意义。
+	// 行式布局默认把同层机器按 游标+colGap 等距排开（间距 4）—— 对多矿机目标等于要求
+	// 世界里的矿恰好落在 4 格栅格上。`CpCpCpCp` 需要的 Cu/blue/red 三连在 ±400 内
+	// 只有 2 处满足这种相对偏移（且都在边缘）。planMinerColumns 把这个不该固定的量放开。
+	ok(typeof place.planMinerColumns === "function", "⑥ planMinerColumns 已导出（多矿机列规划的唯一入口）");
+
+	// ① 同色可互换、**跨色次序不可变**：blue/red/Cu 各一台 ⇒ 必须保序
+	{
+		const miners = [
+			{ id: "b", resource: "blue" },
+			{ id: "r", resource: "red" },
+			{ id: "c", resource: "CuCuCuCu" },
+		];
+		const r = place.planMinerColumns(miners, { seed: 43391, region: { x0: -400, y0: -400, x1: 400, y1: 400 }, center: [0, 0] });
+		ok(r !== null, "⑥-a 三种不同色的矿机能求出一组列");
+		if (r) {
+			const xs = ["b", "r", "c"].map(k => r.get(k)[0]);
+			ok(xs[0] < xs[1] && xs[1] < xs[2],
+				`⑥-a ★跨色必须保序（blue<red<Cu 实得 ${xs.join(",")}）—— 反序会让通道从右往左走，物理不成立`);
+			const ys = ["b", "r", "c"].map(k => r.get(k)[1]);
+			eq(new Set(ys).size, 1, "⑥-a 同色/跨色都在同一行（planMinerColumns 只解「同一行」这一档）");
+		}
+	}
+	// ② 同色两台：允许聚拢，但仍须保序（同色之间换序不影响端点）
+	{
+		const miners = [
+			{ id: "g1", resource: "green" },
+			{ id: "b", resource: "blue" },
+			{ id: "g2", resource: "green" },
+		];
+		const r = place.planMinerColumns(miners, { seed: 43391, region: { x0: -400, y0: -400, x1: 400, y1: 400 }, center: [0, 0] });
+		ok(r !== null, "⑥-b 同色重复的矿机也能求解");
+		if (r) {
+			const gx = [r.get("g1")[0], r.get("g2")[0]].sort((a, b) => a - b);
+			const bx = r.get("b")[0];
+			ok(gx[0] !== gx[1], "⑥-b 两台同色矿机落在**不同的**格（不重叠）");
+			ok(gx[0] < bx, `⑥-b ★同色集团可以整体左移（green@${gx.join(",")} 都在 blue@${bx} 左侧）`);
+		}
+	}
+	// ③ 反证：把跨色次序反过来喂，得到的解必须仍然对**那个**次序保序
+	{
+		const miners = [
+			{ id: "c", resource: "CuCuCuCu" },
+			{ id: "r", resource: "red" },
+			{ id: "b", resource: "blue" },
+		];
+		const r = place.planMinerColumns(miners, { seed: 43391, region: { x0: -400, y0: -400, x1: 400, y1: 400 }, center: [0, 0] });
+		if (r) {
+			const xs = ["c", "r", "b"].map(k => r.get(k)[0]);
+			ok(xs[0] < xs[1] && xs[1] < xs[2],
+				`⑥-c ★输入次序反了，输出也必须跟着反（Cu<red<blue 实得 ${xs.join(",")}）—— 证明"保序"是按输入次序算的，不是硬编码`);
+		} else {
+			say(true, "⑥-c 反序无解（合理：世界不提供该次序的组合）—— 不构成失败");
+		}
+	}
+	// ④ 资源不可满足时返回 null（不伪造）
+	{
+		const r = place.planMinerColumns(
+			[{ id: "x", resource: "紫色的不存在资源" }],
+			{ seed: 43391, region: { x0: -8, y0: -8, x1: 8, y1: 8 }, center: [0, 0] });
+		eq(r, null, "⑥-d ★不存在的资源 ⇒ 返回 null（不编造列）");
+	}
+}
+
 /* ══════════════════════ ⑤ node --check ══════════════════════ */
 console.log("\n── ⑤ node --check ──");
 {
