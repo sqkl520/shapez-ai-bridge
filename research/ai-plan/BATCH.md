@@ -97,6 +97,12 @@ NONE/EJECT 扰动不翻。⇒ V3 生成时不动点**覆盖不了未来的合法
 `siteStage` 选 anchor 只看"矿机对齐资源 + 距原点近"，**从不检查布局矩形是否压到 hub 4×4**；`regionClear` 只拒"含非 hub 实体"的世界。实测：`anchor=[0,0]` → 布局压住 hub(-2,-2..1,1) → dry_run **3 条 blocked（occupant=hub uid 10000）**、`apply=11/14`。这正是 dry_run 门禁存在的意义——**它拦住了半建**。
 **教训（第三次同一坐标系出错）**：`ctx.hub`（世界）/ `ctx.hubDesign`（设计系）/ P3 的 `HUB_CLEAR`（设计系净空行）三个概念必须有一处固定说明；已要求 P8 写进 NOTES。
 
+## L3 逼近终局（08:5x — 三个缺陷已修，剩 B-4）
+**P8 anchor 修复入库（`ad8f188`）**：三处根因（第 3 处是我没诊断到的——`compileInner` 把设计系 `anchor:[0,0]` 原样透传给 P6，即使选对 anchor 也会贴到世界原点）。新增 `worldFrameV1` 世界系检查 + 测试 §J（旧 anchor 摆同一布局 ⇒ V1 fail 且 **hitCount===3**，与实机 dry_run 的 3 条 blocked 逐数对上）。
+**实机验证**：`dry_run 11/14 blocked=3` → **`14/14 blocked=0`**；L3 runner 现在跑到 **paste applied=14 failed=0、逐格对拍 0/14 不符**。
+**剩 B-4（P3）**：`hubConnection` 硬接"设计系 hub 正上方"；`site.anchor=hub_world−hubDesign` 时才重合能接上（`hubPinned=true`），本 seed 上 `hubPinned=false` → 带子末端对着空气 → `await met=false delivered 0→0`。
+**派修 P3**：核心不变式 = **`ok:true ⟹ 真的能接上`**，不许再产出"贴得上但接不上"却 ok:true 的蓝图。方案 (a) 自行选 16 口中可达者 / (b) 钉死 anchor 否则硬拒（诚实降级）。最终判据 = l3-run 在新档跑到 `[7] await met=true`。
+
 ## L0/L1 断言账（各包主线程**亲自复跑**所得，非口头）
 contract 92 · data 637+变异 7 组 · router 184+变异 19/19 · validator 171+矩阵 19/19+双实现 0 差 · emitter 289（含 L1 85）· placer 78 · belt-rules 17（17/17）· 既有五套回归 25+7+12+19+47 —— **合计 ≈1480+ 条，全绿**。
 P8 在建 `run-all.mjs` 把这张表变成一条命令。
