@@ -141,7 +141,10 @@ import {
 /* ════════════════════════════ 常量（P1 独占，见 plan §3 冲突仲裁） ════════════════════════════ */
 
 /** §2.1 kind 枚举（逐字） */
-export const ENTITY_KINDS = Object.freeze(["miner", "belt", "cutter", "rotater", "painter", "stacker", "mixer", "trash", "hub"]);
+/* 实体 kind 枚举。`underground_belt` 是 scope.tunnels=true 时才出现的合法 kind
+   （code 22=sender / 23=receiver）。它不在 V1_KINDS 里 —— 那是 P5 用来判"越界"的另一份表，
+   两份表的差异正是"契约允许表达" vs "v1 默认允许使用"。 */
+export const ENTITY_KINDS = Object.freeze(["miner", "belt", "cutter", "rotater", "painter", "stacker", "mixer", "trash", "hub", "underground_belt"]);
 /** 非带子的实体（= 三态里的 solid） */
 export const SOLID_KINDS = Object.freeze(ENTITY_KINDS.filter(k => k !== "belt"));
 
@@ -297,6 +300,11 @@ export function assertCompiledEntity(e, path = "entities[0]", opts = {}) {
     if (!isPosInt(out.instanceIdx)) throw new ContractViolation(`${path}.instanceIdx`, ">=0 整数", out.instanceIdx);
     for (const k of ["dx", "dy"]) if (Math.abs(out[k]) > 1e7) throw new ContractViolation(`${path}.${k}`, "蓝图内相对坐标（|v|<=1e7）", out[k]);
 
+    /* 隧道（underground_belt）：sender/receiver 的朝向与身份都由 rot/rv 表达，
+       下面两处"机器不许转、非 belt 不许带 rv"的规则要给它开例外 ——
+       它本来就是有向的 1×1 建筑，不是"被旋转的机器"。 */
+    const isTunnel = out.kind === "underground_belt";
+
     if (out.kind === "belt") {
         if (out.rotationVariant < 0 || out.rotationVariant > 2) {
             throw new ContractViolation(`${path}.rotationVariant`, "belt 的 rv ∈ 0|1|2（1=直 2=左弯 3=右弯）", out.rotationVariant);
@@ -313,16 +321,27 @@ export function assertCompiledEntity(e, path = "entities[0]", opts = {}) {
         if (entry !== out.inDir) throw new ContractViolation(`${path}.rot`, `entry(旋转后局部 bottom)=${entry} 必须等于 inDir=${out.inDir}`, out.rot);
         if (exit !== out.outDir) throw new ContractViolation(`${path}`, `exit(r=${out.rot},rv=${out.rotationVariant})=${exit} 必须等于 outDir=${out.outDir}`, { rot: out.rot, rv: out.rotationVariant });
     } else {
-        if (out.rotationVariant !== 0) {
-            throw new ContractViolation(`${path}.rotationVariant`, `非 belt 实体 v1 恒 rv=0（plan §2.2 迁移路径 4：实机无 rv≠0 证据）`, out.rotationVariant);
+        /* 隧道的 rv 位是 **sender/receiver 的区分位**（0=sender、1=receiver），
+           不是"非 belt 实体不许带 rv"那条规则要防的东西。实机存档里正是这样编码的
+           （`underground_belt.js:45-48`：code 22=rv0、code 23=rv1）。 */
+        if (out.rotationVariant !== 0 && !isTunnel) {
+            throw new ContractViolation(`${path}.rotationVariant`, `非 belt 实体 v1 恒 rv=0（plan §2.2 迁移路径 4：实机无 rv≠0 证据；隧道除外——它的 rv 是 sender/receiver 位）`, out.rotationVariant);
         }
-        if (out.rot !== 0 && !opts.allowRotatedMachine && out.kind !== "belt") {
+        /* 隧道需要 rot：sender/receiver 的朝向就是它的 `rotation`（实机存档里都是 180/90）。
+           它不是"机器被旋转"意义上的 rot——隧道本身就是有向的 1×1 建筑，
+           方向必须由 rot 表达（蓝图格式里没有别的字段能承载）。 */
+        if (out.rot !== 0 && !opts.allowRotatedMachine && out.kind !== "belt" && !isTunnel) {
             // D1 + §0 范围（scope.rotatedMachines:false）：只有带子靠旋转表达方向；
             // 机器（含 miner/trash/hub）的 r≠0 会让 ejector/acceptor 方位整体移位，v1 一律禁止。
             throw new ContractViolation(`${path}.rot`, `0（决策 D1 / scope.rotatedMachines:false：v1 不旋转任何机器，旋转需求由 belt 拐弯 solveTurn 实现）`, out.rot);
         }
-        if (out.code < 7 || out.code > 20) {
-            throw new ContractViolation(`${path}.code`, `非 belt 实体用建筑码 7..20（facts/building-codes-live.json）`, out.code);
+        /* 隧道码 22/23 不在"机器码 7..20"区间里：它是 underground_belt 家族
+           （op-templates 的 MACHINE_CODES：default=22、rv=1→23），实机存档已确认。 */
+        const codeLo = isTunnel ? 22 : 7, codeHi = isTunnel ? 23 : 20;
+        if (out.code < codeLo || out.code > codeHi) {
+            throw new ContractViolation(`${path}.code`, isTunnel
+                ? `隧道的 code ∈ 22(sender)|23(receiver)（underground_belt.js:45-48，实机存档确认）`
+                : `非 belt 实体用建筑码 7..20（facts/building-codes-live.json）`, out.code);
         }
         if (out.kind === "trash" || out.kind === "hub") {
             if (out.outDir !== null) throw new ContractViolation(`${path}.outDir`, `${out.kind} 无输出（outDir 必须 null，GEOMETRY 表1）`, out.outDir);
@@ -337,6 +356,9 @@ export function assertCompiledEntity(e, path = "entities[0]", opts = {}) {
 /** entities 的产出分层（plan §2.1 硬规定 + 陷阱表 #6 / layout-merge.mjs:96-127）：
  *  0=机器（P3） 1=直线带（P4） 2=拐角带（最后放）。返回 phase 或 -1（非带子机器归 0）。 */
 export function entityOrderPhase(e) {
+    /* 隧道与拐角带同属"最后放"的一档：它的两端要与相邻带子对接，
+       提前放会在邻居不齐时定型（正是陷阱表 #6 讲的施工顺序）。 */
+    if (e.kind === "underground_belt") return 2;
     if (e.kind !== "belt") return 0;
     return e.rotationVariant === 0 ? 1 : 2;
 }

@@ -752,6 +752,9 @@ export function placeStage(steps, ctx) {
 		rowGap: ctx.rowGap, colGap: ctx.colGap,
 		demandPerSec: ctx.demandPerSec || 0,
 		instanceIdx: 0,
+		// 隧道：只有显式开启时才让 P3 用（默认 false ⇒ 既有目标逐字节不变）。
+		// P3 用隧道跨过的格会出现在 layout.beltCells 里，P4 据此整条采纳（见 route.mjs）。
+		...(ctx.tunnels === true ? { tunnels: true } : {}),
 	};
 	let rep;
 	try { rep = place(input); }
@@ -1242,18 +1245,34 @@ function machineEntities(layout) {
 }
 /** 带子格：(rot,rv,code,inDir,outDir) 全部来自 P4（solveTurn/beltCode 现算，本包不重算方向） */
 function beltEntities(route) {
-	return (route.beltCells || []).map(b => ({
-		code: b.code, dx: b.cell.x, dy: b.cell.y, rot: b.rot,
-		nodeId: `belt@${b.cell.x},${b.cell.y}`, instanceIdx: 0, kind: "belt",
-		rotationVariant: b.rv, inDir: b.inDir, outDir: b.outDir,
-	}));
+	return (route.beltCells || []).map(b => {
+		/* 隧道格：kind 用 `underground_belt`，code 用 22(sender)/23(receiver)。
+		   ⚠️ 不能混成 `kind:"belt"` + code 22 —— P5 的 expectedCode 对 belt 族一律按
+		   `beltCode(rv)` 算（只会得到 1/2/3），code=22 会被判成 `emit:mismatch`。
+		   建筑名与 code 的对应见 op-templates 的 MACHINE_CODES：underground_belt default=22、rv=1→23。 */
+		if (b.tunnel) {
+			return {
+				code: b.tunnel === "sender" ? 22 : 23,
+				dx: b.cell.x, dy: b.cell.y, rot: b.rot,
+				nodeId: `tunnel@${b.cell.x},${b.cell.y}`, instanceIdx: 0, kind: "underground_belt",
+				rotationVariant: b.tunnel === "sender" ? 0 : 1, inDir: b.inDir, outDir: b.outDir,
+			};
+		}
+		return {
+			code: b.code, dx: b.cell.x, dy: b.cell.y, rot: b.rot,
+			nodeId: `belt@${b.cell.x},${b.cell.y}`, instanceIdx: 0, kind: "belt",
+			rotationVariant: b.rv, inDir: b.inDir, outDir: b.outDir,
+		};
+	});
 }
 /** §2.1 硬规定的产出分层：机器 → 直线带 → 拐角带（本包**自己**就按这个序拼，
  *  P6 的 reorder 只是兜底逃生口，不是常态路径）。 */
 function orderedEntities(machines, belts) {
-	const straights = belts.filter(b => b.rotationVariant === 0);
-	const corners = belts.filter(b => b.rotationVariant !== 0);
-	return [...machines, ...straights, ...corners];
+	const straights = belts.filter(b => b.kind === "belt" && b.rotationVariant === 0);
+	const corners = belts.filter(b => b.kind === "belt" && b.rotationVariant !== 0);
+	// 隧道与拐角带同属最后一档（两端要与相邻带子对接，必须最后放）
+	const tunnels = belts.filter(b => b.kind === "underground_belt");
+	return [...machines, ...straights, ...corners, ...tunnels];
 }
 
 /** stats（§2.1 硬规定 4：与 entities / layout 自洽，P1 契约逐条对拍） */
@@ -1399,6 +1418,8 @@ function compileInner(input) {
 		demandPerSec: input.demandPerSec || 0, searchRadius: input.searchRadius,
 		// 诊断口径：input.allowVerticalLane === false ⇒ 只许 hlane（见 routeStage 的注释）
 		allowVerticalLane: input.allowVerticalLane !== false,
+		// 隧道：显式开启时 P3 才能用它跨过必然相交的通道（默认关 ⇒ 既有目标逐字节不变）
+		tunnels: input.tunnels === true,
 	};
 	const pl = trace(stages, "placeStage", placeStage(mp.steps, ctx));
 	if (pl.ok === false) return bail({ ...pl, layout: null, entities: null });
@@ -1448,7 +1469,10 @@ function compileInner(input) {
 	   （hub 在 hubLocal），平移不改变任何相对几何（V1/V3/V4/V6 全是相对判据），所以闸的结论与框无关。 */
 	const vd = trace(stages, "validateStage", validateStage({
 		goal: g.goal, layout, entities: entsLocal,
-		world: hubWorldState(hubLocal, seed), scope: { ...SCOPE_V1 },
+		// scope 随 input.tunnels 打开：P5 的 V8 会按 `scope.tunnels !== false` 判「越界」，
+		// 而隧道是否可用由调用方显式决定（默认关 ⇒ 既有目标逐字节不变）。
+		world: hubWorldState(hubLocal, seed),
+		scope: { ...SCOPE_V1, tunnels: input.tunnels === true },
 		demandPerSec: input.demandPerSec || 0,
 	}, {
 		dag: dagForS1(dg), level: isInt(input.level) ? input.level : g.level,
