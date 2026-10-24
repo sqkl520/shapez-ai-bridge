@@ -94,29 +94,35 @@ drift 格 `[1,4]` 是 cutter 的**废料带拐角**，正好落在 hub 底排入
 它紧邻 hub 的 acceptor，computeBelt 把 hub 当**机器邻居**重算 rv（belt-rules.mjs:8-10 的机器邻居角落漂移），
 P5 的 `V3-belt-fixed-point` 必红。
 
-**修法选择：(a) 机器簇与 hub 之间留净空（取 `HUB_CLEAR = 2`）。** 为什么不是 (b) 侧向出料：
+**修法选择：(a) 机器簇与 hub 之间留净空（取 `HUB_CLEAR = 3`）。** 为什么不是 (b) 侧向出料：
 - (b) 要求**每一个**未用输出口都改走横向 —— 那会把 cutter 的右列废料带从"直串一步"变成"拐弯一步"，
   等于给所有带废料口的机器凭空加 1 个拐角（第一原则：拐角越少越好，GRID-LAYOUT:41-62），
   而且 painter/mixer 这类 +x 流机器的输出本来就横向，再"侧向"没有可去之处。治标不治本。
 - (a) 只是把整个机器簇往下挪，**簇内相对几何完全不变**（拐角数、车道分配、相对列位一个都不动），
   因此金网格零扰动、P4 的车道推导也不受影响。这是唯一"改了 hub 邻接、没改布局本身"的修法。
 
-**`HUB_CLEAR = 2` 的依据**（不是拍 1 或 3，是按 16 口全表算出来的）：
+**`HUB_CLEAR = 3` 的依据**（不是拍脑袋：2/3/4 逐值实测 + 16 口全表核对）：
 - 只避开**底排**（`y = hub.y+HUB_SIZE`）不够 —— hub 还有**左列/右列**入口（`x = hub.x-1` / `hub.x+HUB_SIZE`），
-  竖直走向的废料带（cutter 右列 → trash 常常 straight 向下）会撞上左/右列入口格 ⇒ 同样漂。故不能按"行"算，要按**入口圈**算。
-- 净空 1 行时：机器顶行 = `hub.y+HUB_SIZE+1`，废料带占该行；若 trash 落在机器顶行，它离 hub 底排入口 `hub.y+HUB_SIZE`
-  只差 1 行 —— **不相邻**，安全。但废料带**侧让**（`trashCandidates` 的 ② 分支）可能再外扩 1 行到 `hub.y+HUB_SIZE`，
-  那就又压回入口行。取 2 行 = 1 行净空 + 1 行侧让余量，实测 36 组（hub 位置 × site 偏移 × 链形）全绿。
-- 用例外的 hub 位置也一样：净空是相对 `hubLocal` 算的，而 `hubLocal = hub − origin`，故与世界坐标无关（test ④ 覆盖 site 偏移分支）。
+  竖直走向的废料带（cutter 右列 → trash 常常 straight 向下）会撞上左/右列入口格 ⇒ 同样漂。故按**整圈 16 格**算，不按"行"算。
+- **净空=1**（原状）：废料带拐角落在底排入口行 → drift=1（就是 P8 看到的 V3）。
+- **净空=2**：带子已不漂（drift=0），**但发现一个更隐蔽的坑** —— trash **机器**恰好落在底排入口格 `(1,4)` 上。
+  它不吃带子路径，可它①永久占掉 hub 的一个入口，②作为机器邻居同样干扰相邻的收集带格。
+  「drift=0」这种单一判据会漏掉它，所以测试改成**同时锁"无机器落在入口圈上"**。
+- **净空=3**：trash 退到 `(1,5)`、废料带 `(1,6..7)` 全在圈外；圈上只剩**收集带末格** `(0,4)` —— 那是它的职责，必须落在入口。
+- 净空=4 只多浪费 1 行，无额外收益。
+- 其它 hub 位置同样成立：净空相对 `hubLocal` 算，而 `hubLocal = hub − origin`，与世界坐标无关
+  （test ④ 覆盖「无 site / site=hub / site 偏移」× 4 个 hub 位置 = 12 组）。
 
-**验收证据**（`placer/test.mjs` ①e，30 条断言）：
+**验收证据**（`placer/test.mjs` ①e，44 条断言）：
 - ① 废料带每格 ∉ `hubEntriesWorld(hubLocal)` 的 16 入口格（**全表**，不只底排；比对在**局部系**做 ——
   第一版我拿世界 hub 比局部带坐标，非零 hub 时断言恒真 = 假绿，已修）；
+- ①b 无**机器**（含 trash）落在 16 入口格上；收集带最多 1 格在圈上（其末格）；
 - ② 用 P5 的 `belt-sim.simulateBelts`（**只读依赖**，Coordinator 明确许可）对整张报告跑含机器邻居的不动点：`drift=0`、
   `fixedPoints === tilesChecked` —— 这是 V3 的**同一判据**，本测试绿 ⟺ V3 不会挂；
 - ③ 反向自证：不连 hub 时 drift=0（证明漂移确由 hub 邻接引入，不是几何本身）；
-- ④ hub 四个位置 × 三种 site（无 / 同锚 / 偏移）全扫。
-- **变异锁**：把 `HUB_CLEAR` 改回 1（= 原始缺陷状态）→ 上述断言**全部变红**；改 0 → T1/T2/T5 红。证明非空断言。
+- ④ hub 四个位置 × 三种 site（无 / 同锚 / 偏移）全扫（废料带 + 机器 + drift 三判据）。
+- **变异锁**（证明非空断言）：`HUB_CLEAR` 改 1（原始缺陷）→ ①①②④ 全红；改 2 → ①b「无机器在入口圈」红
+  （正是净空=2 漏掉 trash 落 `(1,4)` 的那一坑）；改 0 → T1/T2/T5 红。三档都被抓。
 
 **金网格未动**：无 hub 时 `HUB_CLEAR` 不参与任何计算，G1/G2/G3 逐字节不变（test ① 直接锁死），fixture 未改。
 
@@ -124,6 +130,72 @@ P5 的 `V3-belt-fixed-point` 必红。
 （`eq(p.reason, "validate:V3")`、注释"见 NOTES B-1"）—— 本修复让该断言翻红，但那是**缺陷消失**，不是回归。
 C5 应改成断言 `----CuCu + hub` 现在 **ok:true / V3 pass**；另 C4/C6/C7 在我改前就红（颜料闸归因，P8 侧待办）。
 I-1（四个 hubDesign 都与相对布局无关）在我改前红、改后**转绿**。
+
+## 六ter、B-4：收集带末端接不到真实 hub（L3 最后阻塞）—— 修法 (a) + 给 P8 的精确接口
+
+**症状（实机，l3-run 自己复现两次）**：
+```
+[3] ok=true ents=14 vpass=true bp=121 corners=0
+[4] dry_run apply=14 blocked=0 delete=0      ← 贴得上、逐格 0 差
+[5] paste applied=14 failed=0
+[6] 逐格对拍 0/14
+[7] await met=false ticks=20000 delivered 0→0  hub stored []
+```
+蓝图完美落地，但**收集带末端对着空气** → 零交付。
+
+**根因（两层，必须分开看）**：
+1. **place() 忽略 seed 摆机器**：恒把机器簇锚在 hub 正下方（HUB_CLEAR），矿机永远不在资源上。
+   这是 place.mjs 自己的缺陷，**已修**（见下）。
+2. **compile.mjs 传的是设计系假 hub**：`placeStage` 传 `site={0,0}, hub=hubDesign(-4,-4), world.seed=null`，
+   真 hub 只在 `ctx.hub`（世界系）里、**没传进 place**；anchor 在 place 返回**之后**才由 siteStage 解。
+   ⇒ 设计系 hub 恒在 (-4,-4)，平移 anchor 后在世界 `anchor+(-4,-4)`；该点只有 `hubPinned=true` 时才等于真 hub。
+   **place() 结构上不可能知道 anchor / 真世界 hub ⇒ 这一层只能在 P8 侧修**（compile.mjs 归 P8，我不改）。
+
+**修法选择：(a)（你裁，我实现了 place 侧那一半）。** 理由：
+- (b)「要求调用方钉死 anchor，钉不死就 `hub-anchor-unpinned` 硬拒」会让**绝大多数 seed 直接失败**
+  （实测 4 个 seed 里 3 个钉不死：资源不在锚点位上）。L3 的目标是"真能产"，不是"诚实地说不行"——
+  硬拒只是把 0 交付换成 ok:false，仍然交不了货。所以 (b) 只能是兜底，不该是主路径。
+- (a) 可行且通用：place() **已经有** `pickResourceCells`（seed → 资源格）这一整套机制，只是没用它摆机器。
+  现在补上：**给 seed 时按资源反推机器簇平移量**，让矿机精确压在资源上；收集带再从矿机真所在处
+  走到可达的 hub 入口（`planChannel` 的 Z 型本来就能跑长距离，实测 13 格 2 拐角）。
+
+**place() 侧已实现（本单改动）**：
+- `place()` 新增 seed 感知：`hubLocal && seed` 时先 `pickResourceCells`，用「第一台矿机的资源局部格 − 当前局部格」
+  求平移量，整体移动机器簇 ⇒ 矿机压真资源。无 seed / 无 hub 时走原路径,，**金网格逐字节不变**。
+- `pickResourceCells` 现在**排除 hub 4×4 覆盖的资源格**（物理上放不下矿机；实测 seed 43391/hub(-30,25)
+  有 3 个 CuCuCuCu 正压在 hub 身上）。
+- trash 候选新增一条几何约束：trash 是机器，**不得 4-邻接别的通道的拐角带格**（机器邻居会让那格 rv 漂移，
+  与 B-1 同类）。只约束拐角格 —— 直带格相邻是常态且无害（G1 的 trash 一直贴着主链直带）。
+  实测修好了 hub(40,40) 的 drift 1 格。
+
+**给 P8 的精确接口（compile.mjs 是你们的文件，我不改；以下是建议的最小改动）**：
+`placeStage(steps, ctx)` 目前构造 —
+```js
+site: { x: 0, y: 0 },
+hub:  { x: ctx.hubDesign[0], y: ctx.hubDesign[1] },      // 设计系
+world: hubWorldState(ctx.hubDesign, null),                // seed: null
+```
+**建议改成**（当 `input.hub` 给了真实世界 hub 时）：
+```js
+// 以真 hub 为原点作图：origin = 真 hub ⇒ 局部 hub=(0,0)，机器簇按 seed 的资源摆放，
+// 收集带从资源处走到 hub 的真实入口 —— 这样 siteStage 解出的 anchor 自然把两者对齐。
+site: { x: hubW[0], y: hubW[1] },
+hub:  { x: hubW[0], y: hubW[1] },
+world: hubWorldState([0, 0], seed),      // 局部系里 hub 在原点；seed 传进去（关键！）
+seed,                                    // ← 新增：place 靠它摆矿机
+```
+其中 `hubW = input.hub`（世界系左上角）。**注意**：这会改变 `layout` 的局部原点（从设计系 (-4,-4) 改成真 hub），
+所以 `siteStage` 的 `hubDesign`、`alignBbox`、P5 的 world 三处要跟着改成同一框 —— 属于 P8 的坐标口径调整，
+需要你们那边同步（我在 placer 侧保证：`place({site:W, hub:W, seed})` 的输出自洽、entry 落在真入口，
+见 test ①f 的 F1/F3，共 30+ 断言锁死）。
+
+**若 P8 暂时不想改坐标口径**（改动面较大）：那就退到 **(b) 诚实降级** —— 在 `site.hubPinned === false` 时
+把整单改成 `ok:false, reason:"hub-anchor-unpinned"`（§2.5 需新增该 reason，或者复用
+`dag-not-placeable:column-conflict-unresolved` 并在 hint 点名）。这样至少 `ok:true ⟹ 真能接上`。
+
+**核心不变式（本单要求）**：`ok:true ⟹ 收集带末端落在真实 hub 的 16 入口之一上`。
+placer 侧已用 test ①f 的 F1/F3 锁住"给真 hub 时必成立"；**整条链是否成立取决于 P8 传不传真 hub**。
+当前链路仍不成立（L3 [7] 0 交付），已如实记录在 `research/ai-plan/live/results/l3-----CuCu.json`。
 
 ## 七、别人包的现场（只点名，不动）
 
