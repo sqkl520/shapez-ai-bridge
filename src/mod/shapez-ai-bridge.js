@@ -324,6 +324,12 @@ class Mod extends shapez.Mod {
                 case "new_game":
                     result = await this.newGame(params || {});
                     break;
+                case "game_setting":
+                    result = this.gameSetting(params || {});
+                    break;
+                case "delete_save":
+                    result = await this.deleteSave(params || {});
+                    break;
                 default:
                     this.sendError(id, -32601, "method_not_found", "Unknown method: " + method);
                     return;
@@ -337,6 +343,68 @@ class Mod extends shapez.Mod {
                 this.sendError(id, 2003, "mod_error", String(err && err.message ? err.message : err));
             }
         }
+    }
+
+    /**
+     * 读写游戏设置项（**白名单**，只放行与「安全粘贴」相关的几个）。
+     *
+     * 为什么需要它：`enableTunnelSmartplace` 开着时，落一个隧道 receiver 会**删掉**它与 sender
+     * 之间的带子（`systems/underground_belt.js:53-66`，不检查 immutable）。我们的 paste 每格都
+     * dispatch `entityManuallyPlaced`，于是含隧道的蓝图会在粘贴**过程中**被拆坏，而 `applied`
+     * 仍显示成功。关掉这个开关后该回调第一行就 return，隧道可安全粘贴（源码确认）。
+     *
+     * 白名单而不是任意键：调用方是 AI/工具，不该能顺手改掉玩家的画面/音量/语言等设置。
+     * 每次读写都回**当前实际值**（从 `app.settings.getAllSettings()` 重新取），
+     * 不缓存 —— 玩家在 GUI 里手动改过之后，我们看到的必须是最新状态。
+     *
+     * params: { key?: string, value?: boolean|string|number }
+     *   - 只给 key        → 读
+     *   - 同时给 key/value → 写（写后回读，确认真的生效）
+     *   - 都不给          → 列出白名单里所有项的当前值
+     */
+    gameSetting(params) {
+        const SETTING_WHITELIST = {
+            enableTunnelSmartplace: "bool",   // 隧道磁贴自带删除中间带（C4 的根因）
+            alwaysMultiplace: "bool",         // 连放模式：影响逐格放置的手感，不影响正确性
+            disableCutDeleteWarnings: "bool", // 只影响 UI 警告
+        };
+        if (!this.app || !this.app.settings) {
+            throw this.rpcError(1003, "not_in_game", "app.settings 不可用（未进入世界）",
+                "游戏设置需要 app.settings，请在 InGameState 下调用");
+        }
+        const readAll = () => {
+            const all = this.app.settings.getAllSettings();
+            const out = {};
+            for (const k in SETTING_WHITELIST) out[k] = all[k];
+            return out;
+        };
+        const key = params.key;
+        if (key === undefined) return { settings: readAll(), whitelist: Object.keys(SETTING_WHITELIST) };
+        if (!Object.prototype.hasOwnProperty.call(SETTING_WHITELIST, key)) {
+            throw this.rpcError(2001, "invalid_action", "setting not in whitelist: " + String(key),
+                "Allowed: " + Object.keys(SETTING_WHITELIST).join(", "));
+        }
+        if (params.value === undefined) {
+            return { key, value: this.app.settings.getAllSettings()[key] };
+        }
+        const want = params.value;
+        const type = SETTING_WHITELIST[key];
+        if (type === "bool" && typeof want !== "boolean") {
+            throw this.rpcError(2001, "invalid_action", key + " 只接受 boolean，实得 " + JSON.stringify(want));
+        }
+        const before = this.app.settings.getAllSettings()[key];
+        /* 游戏的真实写入口是 `updateSetting(id, value)`（不是 setSetting —— 那是别的引擎的习惯名）。
+           它做三件事：按 SettingHandle 的 validate 校验、写进 currentData.settings、触发 changeCb、
+           再 writeAsync 持久化。用错名字会静默地什么都改不到，所以这里写死并回读验证。 */
+        this.app.settings.updateSetting(key, want);
+        const after = this.app.settings.getAllSettings()[key];
+        if (after !== want) {
+            throw this.rpcError(2003, "mod_error",
+                key + " 写入未生效（期望 " + JSON.stringify(want) + "，回读 " + JSON.stringify(after) + "）",
+                "设置可能被只读层覆盖；不要假设设置已改，需按返回值判定");
+        }
+        this.log("setting", key, ":", before, "->", after);
+        return { key, before, value: after, changed: before !== after };
     }
 
     sendError(id, code, codeName, detail, hint) {
@@ -1824,6 +1892,50 @@ class Mod extends shapez.Mod {
             });
         }
         return { saves };
+    }
+
+    /**
+     * 删除存档（**走游戏自己的 deleteSavegame**，不是删磁盘文件）。
+     *
+     * 为什么必须走游戏 API：直接 `fs.unlink` 只能删掉文件，游戏内存里的索引还在，
+     * 于是 `list_saves` 会继续列出已经不存在的存档 —— 点进去才报 `no savegame`。
+     * `app.savegameMgr.deleteSavegame(meta)` 会做两件事：`deleteAsync()` 删文件、
+     * 再从 `currentData.savegames` 里摘掉那条索引并持久化（bundle 的 `_deleteSavegame`）。
+     *
+     * 安全约束（**这是玩家的数据，删错了找不回来**）：
+     *   - 必须显式给 `internal_id`，不接受"删全部"之类的形式；
+     *   - 拒绝删除当前正在玩的存档（`getCurrentSavegameId` 之类）；
+     *   - `dry_run:true` 只报告将要删什么，不动手。
+     *
+     * params: { internal_id: string, dry_run?: boolean }
+     */
+    async deleteSave(p) {
+        this.assertWritable("delete_save");
+        const id = p.internal_id;
+        if (typeof id !== "string" || id.length < 3) {
+            throw this.rpcError(2001, "invalid_action", "internal_id (string) is required",
+                "单条删除，不接受批量或通配；先用 list_saves 取 id");
+        }
+        const mgr = this.app.savegameMgr;
+        const meta = (mgr.getSavegamesMetaData() || [])
+            .find(m => (m.internalId !== undefined ? m.internalId : m.internal_id) === id);
+        if (!meta) {
+            throw this.rpcError(2002, "game_rejected", "no savegame with internal_id " + id,
+                "Use list_saves to see available ids");
+        }
+        // 拒绝删当前世界：那会把玩家正在玩的东西从脚下抽走
+        const cur = mgr.currentSavegameId !== undefined ? mgr.currentSavegameId
+            : (mgr.currentSavegame ? mgr.currentSavegame.internalId : null);
+        if (cur && cur === id) {
+            throw this.rpcError(2003, "mod_error", "refusing to delete the savegame currently loaded",
+                "先 load 到别的存档或回主菜单，再删这一个");
+        }
+        const info = { internal_id: id, level: meta.level === undefined ? null : meta.level,
+            last_update: meta.lastUpdate === undefined ? null : meta.lastUpdate };
+        if (p.dry_run === true) return { dry_run: true, would_delete: info };
+        await mgr.deleteSavegame(meta);
+        this.log("savegame deleted", id);
+        return { ok: true, op: "delete_save", deleted: info };
     }
 
     async loadSave(p) {

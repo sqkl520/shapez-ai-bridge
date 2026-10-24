@@ -437,6 +437,21 @@ export function assignLanes(report, opts = {}) {
     const R = opts.searchRadius == null ? 16 : assertInt(opts.searchRadius, "assignLanes.opts.searchRadius");
     const maxLanes = opts.maxLanes == null ? 24 : assertInt(opts.maxLanes, "assignLanes.opts.maxLanes");
     const geoms = report.channels.map((ch, i) => channelGeom(ch, i));
+    /* ★ P3 已逐格铺好、且 P4 无法自行重算的通道：**只限含隧道的那些** ★
+       含隧道的通道端点对在 `channelGeom` 看来往往"不可布"（P3 是穿过去的），
+       P4 重算会把它判死 —— 所以这几条整条采纳 P3 的路径。
+       ⚠️ **不能把所有 beltCells 都算进来**：那等于让 P4 完全不做车道分配，
+          `CrCrCrCr` 的 col 车道就凭空消失了（回归会红）。
+       判据：这条通道的 beltCells 里是否出现 `tunnel` 标记。 */
+    const preRouted = new Set();
+    if (Array.isArray(report.beltCells)) {
+        const byCh = new Map();
+        for (const b of report.beltCells) {
+            if (!byCh.has(b.channelId)) byCh.set(b.channelId, []);
+            byCh.get(b.channelId).push(b);
+        }
+        for (const [cid, list] of byCh) if (list.some(b => b.tunnel)) preRouted.add(cid);
+    }
     const conflicts = [];
     const cornerCells = [];
     const unresolvedChannels = new Set();   // 有未解决冲突的通道：route.mjs **必须跳过**（不留半成品 IR）
@@ -479,6 +494,7 @@ export function assignLanes(report, opts = {}) {
 
     /* ── 阶段 0：无车道形态先占格 ── */
     for (const g of geoms) {
+        if (preRouted.has(g.id)) continue;        // P3 已铺好（含隧道）：不参与车道/占格
         if (g.kind === "direct") { cellsByChannel.set(g.id, []); continue; }   // 0 格：不占、不铺
         if (g.kind === "search" || g.kind === "hlane" || g.kind === "vlane") continue;
         const cells = geomCells(g);
@@ -537,7 +553,7 @@ export function assignLanes(report, opts = {}) {
     };
 
     /* ── 阶段 1：hlane（水平车道 = row）── */
-    const hgeoms = geoms.filter(g => g.kind === "hlane");
+    const hgeoms = geoms.filter(g => g.kind === "hlane" && !preRouted.has(g.id));
     const preTracks = [];
     const htodo = [];
     for (const g of hgeoms) {
@@ -588,7 +604,7 @@ export function assignLanes(report, opts = {}) {
      *   串行加障碍 ⇒ 后分配的车道看得见先分配的；两股流要同一格时后一条的候选全不可行
      *   （记 lane-column，整条不铺），而 route.mjs 的产出锁 counterDirectedCells 会独立给出
      *   crossing-needs-tunnel —— 真交叉绝不被「打开 vlane」抹成成功。 */
-    const vgeoms = geoms.filter(g => g.kind === "vlane");
+    const vgeoms = geoms.filter(g => g.kind === "vlane" && !preRouted.has(g.id));
     if (vgeoms.length && opts.allowVerticalLane === false) {
         for (const g of vgeoms) {
             unresolvedChannels.add(g.id);

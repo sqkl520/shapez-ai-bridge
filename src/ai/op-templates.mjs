@@ -111,10 +111,14 @@ export const UNLOCK_LEVEL_FALLBACK = Object.freeze({
  *      facts/building-code-table.md 的推断结论正确，但成立的理由是"rv 只能取 0"。 */
 export const RV_ALLOWED = Object.freeze({
     belt: [0, 1, 2],
+    /* 隧道的 rv 是 **sender/receiver 区分位**（0=sender、1=receiver），有实机凭据：
+       `buildings/underground_belt.js:45-48` 的 getAllVariantCombinations（22/23）+ 存档取证。
+       与 belt 的"rv=转弯形态"是**不同的语义**，只是恰好共用同一个字段。 */
+    underground_belt: [0, 1],
     miner: [0], cutter: [0], rotater: [0], stacker: [0], mixer: [0], painter: [0], trash: [0], hub: [0],
 });
-/** 有 rv≠0 但明确落在 v1 范围外的建筑（C3 wire / C4 隧道；请求时给专门 reason） */
-export const OUT_OF_SCOPE_BUILDINGS_WITH_RV = Object.freeze(["underground_belt", "wire"]);
+/** 有 rv≠0 但语义无实机凭据、明确落在 v1 范围外的建筑（wire）。隧道已移出（见 RV_ALLOWED）。 */
+export const OUT_OF_SCOPE_BUILDINGS_WITH_RV = Object.freeze(["wire"]);
 
 /** 是否可旋转（上游 `getIsRotateable()`：基类默认 true，meta_building.js:176-178/258-262 会在
  *  false 时强制返回 {rotation:0, rotationVariant:0}）。**实机印证**：level-11 存档里
@@ -465,11 +469,41 @@ export function opByName(op) {
     if (!t) throw new SpecError("opByName(op)", "已知 op 名之一", op, "validate:V8-scope");
     return t;
 }
+/**
+ * 隧道的两条"合成模板"：code 22/23 ↔ underground_belt 的 sender/receiver。
+ *
+ * 为什么要合成：`OP_TEMPLATES` 是**算子**表（mine/cut/stack…），隧道不是算子而是布线元件，
+ * 所以它不在 EMBEDDED 里。但 P6 发射时需要从 code 反查建筑（"不依赖游戏注册表"的自证），
+ * 没有它就只能拒绝隧道蓝图。
+ *
+ * 依据（实机确认）：`buildings/underground_belt.js:45-48` 的 getAllVariantCombinations
+ *   { internalId: 22, variant: default, rotationVariant: 0 }  → sender（入口）
+ *   { internalId: 23, variant: default, rotationVariant: 1 }  → receiver（出口）
+ * 两者都是 1×1、靠 `rotation` 表达朝向（存档里是 180/90）。
+ */
+const TUNNEL_TEMPLATES = Object.freeze([
+    Object.freeze({
+        op: "tunnelSender", building: "underground_belt", variant: "default",
+        kind: "underground_belt", code: 22, footprint: Object.freeze([1, 1]),
+        inputs: Object.freeze([]), outputs: Object.freeze([{ cell: Object.freeze([0, 0]), dir: "top", role: "out" }]),
+        ratePerSec: null, isTunnel: true,
+    }),
+    Object.freeze({
+        op: "tunnelReceiver", building: "underground_belt", variant: "default",
+        kind: "underground_belt", code: 23, footprint: Object.freeze([1, 1]),
+        inputs: Object.freeze([{ cell: Object.freeze([0, 0]), dir: "top", role: "in" }]), outputs: Object.freeze([]),
+        ratePerSec: null, isTunnel: true,
+    }),
+]);
+
 export function templateForBuildingCode(code) {
-    const all = [...EMBEDDED, ...AUX];
+    const all = [...EMBEDDED, ...AUX, ...TUNNEL_TEMPLATES];
     return all.find(t => t.code === code) || null;
 }
 export function templateByBuildingVariant(building, variant) {
+    /* ⚠️ **不含** TUNNEL_TEMPLATES：sender/receiver 共用 building+variant，
+       按 (building,variant) 反查会二选一，spec 加载循环会把两者的字段互相覆盖。
+       隧道只能按 **code** 查（templateForBuildingCode）。 */
     const all = [...EMBEDDED, ...AUX];
     return all.find(t => t.building === building && t.variant === variant) || null;
 }
@@ -519,7 +553,12 @@ export function codeFor(building, variant = "default", rot = 0, rv = 0) {
     const key = `${building}|${variant}`;
     // MACHINE_CODES = 15 条专用提取实验；SAVE_CODES = level-11 存档实机直读（hub/balancer/隧道只在这里有）。
     // 两张表都必须与各自的原始数据文件逐键相等 —— 由包测试直接读文件校验。
-    const code = MACHINE_CODES[key] ?? SAVE_CODES[key];
+    let code = MACHINE_CODES[key] ?? SAVE_CODES[key];
+    /* ★ 隧道：rv 是 sender/receiver 位，code = 基码 + rv（22 → sender、23 → receiver）★
+       MACHINE_CODES/SAVE_CODES 只登记基码（rv=0 的那一个），rv=1 的 23 不在表里；
+       但注册表 `underground_belt.js:45-48` 明确给了 22/23 两条，且 level-11 存档里
+       两种 code 各 107 个 —— 这是**实机凭据**，不是推测。 */
+    if (building === "underground_belt" && code !== undefined && rv === 1) code = code + 1;
     if (code === undefined)
         throw new SpecError(`codeFor(${key})`, "已知 building|variant 组合（见 MACHINE_CODES / SAVE_CODES）", key, "emit:mismatch");
     // H2：非 belt 只允许 rv=0。隧道/wire **确有** rv≠0 的 code（存档：22→23），
@@ -579,6 +618,11 @@ export function isRotatable(building) {
 export function assertV1Rotation(building, rot = 0) {
     const r = assertQuadrantAngle(rot, `rotation("${building}")`);
     if (building === "belt") return r;
+    /* 隧道（underground_belt）也是**靠 rot 表达朝向**的布线元件，和 belt 同类：
+       sender/receiver 各自朝哪个方向就由 rotation 决定（实机存档里是 180/90）。
+       "加工机器恒 r=0" 防的是机器旋转后 ejector/acceptor 方位整体移位，
+       而隧道的 ejector/acceptor 方位**本来就是随 rot 走的**。 */
+    if (building === "underground_belt") return r;
     if (r !== 0 && ROTATABLE[building] === false)
         throw new SpecError(`rotation("${building}")`,
             "上游 getIsRotateable()=false ⇒ 恒 r=0（trash.js:27-29 / hub.js:31-33，存档实机印证）", rot,

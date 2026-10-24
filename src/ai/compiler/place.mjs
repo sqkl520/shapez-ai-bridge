@@ -587,10 +587,69 @@ export function planMinerColumns(miners, ctx) {
 	return out;
 }
 
+/**
+ * WP2：给「多输入机器」算出它的父该落到哪些行、它自己该落在哪一列。
+ *
+ * 两个独立约束，都来自 `planChannel` 的 `bottom` 输入硬律（喂它的上游列必须 <= 输入列）：
+ *
+ * ① **列**：stacker 的两个 bottom 输入在 `st.x` / `st.x+1`。若两台上游分别在 -121、-39 出料，
+ *    只看 slot0 会把 stacker 摆到 -121，第二台永远喂不进来。必须取所有约束里**最靠东**的那个。
+ * ② **行**：两台上游同在一行时，西侧那台横移到东侧输入的过程必然穿过东侧那台本体 ——
+ *    扫遍 (p0.x, p1.x, st.x) 的组合没有一组能两条都通。分到不同行后都成为 1 拐角 elbow。
+ *    方向：喂 slot1 的父**往下**（y 更大），因为下游必须在其上方（朝下输入要带子从下往上走）。
+ *    幅度取**半个 rowGap**：上游那层离下一层只有一个 rowGap，往下推一整排会压到下层机器。
+ *
+ * ⚠️ 只对 `stack` 生效。`mix` 的两个输入同位（同一行），靠 WP1 的槽序修正解决；
+ *    矿机不参与（y 由资源行钉死）。
+ * @param {object[]} nodes DAG 节点（已定 x/y）
+ * @param {{rowGap:number}} ctx
+ * @returns {{rowY:Map<string,number>, colX:Map<string,number>}} 空 Map = 不改
+ */
+export function planMultiInputRows(nodes, ctx) {
+	const rowY = new Map(), colX = new Map();
+	const gap = ctx.rowGap;
+	for (const n of nodes) {
+		if (n.op !== "stack") continue;
+		const slots = inSlotsOf(n);
+		const bottoms = slots.map((s, i) => ({ s, i })).filter(e => e.s.dir === "bottom");
+		if (bottoms.length < 2) continue;
+		const parents = bottoms.map(b => ({ b, p: n.parents[b.i] })).filter(e => e.p);
+		if (parents.length < 2) continue;
+
+		// ① 列：本机 x 必须 >= 每个上游的带子列 − 本机该槽的偏移
+		let needX = -Infinity;
+		for (const { b, p } of parents) {
+			if (p.op === "mine") continue;                 // 矿机 x 由资源定，不参与反推
+			const feeds = outSlotsOf(p)[0];
+			if (!feeds) continue;
+			const dirOff = feeds.dir === "right" ? 1 : feeds.dir === "left" ? -1 : 0;
+			const want = (p.x + feeds.cx + dirOff) - b.s.cx;
+			if (want > needX) needX = want;
+		}
+		/* ★ 再加一个余量：两条上游的**竖直段**不能贴在一起 ★
+		   只保证「>= 最东约束」时，本机会紧贴最东那台上游，两条竖段就挤在相邻两列上 ——
+		   第一条通道把它竖段落的列占掉，第二条就无路可走（实测 stacker.x=-40 时
+		   slot1 FAIL、-36 时两条都通）。
+		   余量取 2：给两条竖段各留一列，再加一格间隔。 */
+		if (Number.isFinite(needX)) colX.set(n.id, needX + 2);
+
+		// ② 行：两台上游同行时把喂 slot1 的那台往下让半排
+		const lowerP = n.parents[bottoms[0].i];
+		const upperP = n.parents[bottoms[1].i];
+		if (!lowerP || !upperP || lowerP === upperP) continue;
+		if (lowerP.op === "mine" || upperP.op === "mine") continue;
+		if (lowerP.y !== upperP.y) continue;
+		rowY.set(upperP.id, lowerP.y + Math.max(1, Math.floor(gap / 2)));
+	}
+	return { rowY, colX };
+}
+
 export function assignRows(levels, opts = {}) {
 	const rowGap = opts.rowGap === undefined ? ROW_H : opts.rowGap;
 	const colGap = opts.colGap === undefined ? COL_GAP : opts.colGap;
 	const minerX = opts.minerX || null;   // 矿机层 nodeId → [x,y]（给了 seed 且多矿机时由 planMinerColumns 求）
+	const multiX = opts.multiX || null;   // 多输入机器 nodeId → x（WP2：必须 >= 所有上游的带子列）
+	const rowY = opts.rowY || null;       // nodeId → y 覆盖（WP2：把喂 slot1 的父往下让半排）
 	const occupied = new Map();                       // "y" → Set("x")
 	const claim = (n, x0) => {
 		for (let dy = 0; dy < n.h; dy++) {
@@ -613,6 +672,14 @@ export function assignRows(levels, opts = {}) {
 		list.forEach(n => { n.row = y; n.y = y; });
 		rows.push({ level: li, y, nodeIds: list.map(n => n.id) });
 	});
+	/* WP2 的行覆盖：把 `rowY` 点名的节点挪到指定 y。
+	   必须放在三层遍历**之前** —— `clash`/`claim` 都以 `n.row` 为键，
+	   放在这里就等于"这批机器的初始行不同"，后续让位/回填逻辑无需改动。 */
+	if (rowY) {
+		for (const list of levels) for (const n of list) {
+			if (rowY.has(n.id)) { n.y = rowY.get(n.id); n.row = rowY.get(n.id); }
+		}
+	}
 
 	// 第一遍：自下而上，先满足父列，撞占用则单向右移（确定性）
 	levels.forEach((list, li) => {
@@ -637,6 +704,7 @@ export function assignRows(levels, opts = {}) {
 			   资源给的是世界系，布局用局部系（世界 = origin + 局部），调用方已经把中心换成
 			   世界系并原样返回世界系 x ⇒ 这里减回去由调用方负责（minerX 里存的直接是局部 x）。 */
 			if (li === 0 && minerX && minerX.has(n.id)) x = minerX.get(n.id)[0] - (opts.originX || 0);
+			else if (multiX && multiX.has(n.id)) x = multiX.get(n.id);
 			else if (li > 0) {
 				const want = desiredX(n);
 				/* ★ 不能用 `Math.max(cursor, want)` ★
@@ -681,6 +749,10 @@ export function assignRows(levels, opts = {}) {
 			   矿机层合法地落在 -220；照旧判就把**所有**下游的父列对齐请求全跳过，
 			   于是 mix 停在 0、与矿机隔 120 格。负 x 不是非法值，只是坐标。 */
 			if (want === undefined || want === n.x) continue;
+			/* `multiX` 点名的节点是**联合求解**的结果（x 必须 >= 所有上游的带子列）。
+			   第二遍的 `desiredX` 只看主输入，会把它拉回去 —— 那样第一轮的联合求解就白做了。
+			   所以这些节点在这一遍跳过。 */
+			if (multiX && multiX.has(n.id)) continue;
 			if (clash(occupied, n.row, want, want + n.w - 1, n.h)) continue;
 			unclaim(n); n.x = want; claim(n, want);
 		}
@@ -786,6 +858,117 @@ function clash(occupied, y, x0, x1, h) {
 	return false;
 }
 
+/**
+ * 隧道跨度上限（基础 tier）。`globalConfig.undergroundBeltMaxTilesByTier[0] === 5`，
+ * 即 sender 与 receiver 之间最多隔 5 格。实机统计（level-11 存档 107 对）里玩家只用 2~3 格，
+ * 说明这是"跨过 1~2 格障碍"的工具，不是长距离连接。这里取 4 作保守上限。
+ */
+export const TUNNEL_MAX_SPAN = 4;
+
+/**
+ * 把一条直线段上的**连续阻挡**替换成隧道跨越。
+ *
+ * 为什么需要它：`planChannel` 只能走空路。当两条通道在同一列/行上必然相交时
+ * （例如 `-g------` 要横穿 `-b------` 到 mixer 的那条竖带），换 lane 行也没用 ——
+ * 横走段无论落在哪一行，都要跨过那一列。这正是游戏给隧道的用途。
+ *
+ * 隧道语义（`buildings/underground_belt.js:45-48` + 实机存档验证）：
+ *   code 22 = sender（入口，rv=0）、code 23 = receiver（出口，rv=1），都是 1×1，
+ *   两者 `rotation` 相同、共线；中间的格子被"穿过"（不放带子）。
+ *
+ * ★ 隧道格的 (inDir, outDir) ★
+ *   带子的 inDir≠outDir 是铁律（`beltGlyph` 会断言），但隧道格**不拐弯**：
+ *   sender 的进货面 = 来向的反面、出货面 = 前进方向（正常带子）；
+ *   receiver 同理。所以两者仍是 `inDir = OPP[dir] / outDir = dir` —— 与普通直带同形。
+ *   "隧道"身份靠 `tunnel` 字段表达，**不靠方向**。渲染/发射都先看 `tunnel`。
+ *
+ * 返回的 cells 里用 `tunnel: "sender"|"receiver"` 标记。找不到 ≤ TUNNEL_MAX_SPAN 的
+ * 可行跨度就返回 null（不改，让上层如实失败）。
+ *
+ * @param {Array<[number,number]>} path 直线路径（含首尾）
+ * @param {string} dir 行进方向
+ * @param {(c:[number,number])=>boolean} blocked 该格是否被占
+ * @returns {{cells:Array<{cell:[number,number],inDir:string,outDir:string,tunnel?:string}>, span:number}|null}
+ */
+export function tunnelOverPath(path, dir, blocked) {
+	if (path.length < 3) return null;
+	// 找最长的连续阻挡段
+	let best = null;
+	for (let i = 1; i < path.length - 1; i++) {
+		if (!blocked(path[i])) continue;
+		let j = i;
+		while (j + 1 < path.length - 1 && blocked(path[j + 1])) j++;
+		const span = j - i + 1;
+		if (span <= TUNNEL_MAX_SPAN && (!best || span > best.span)) best = { from: i, to: j, span };
+		i = j;
+	}
+	if (!best) return null;
+	// 隧道两端必须落在路径内（sender 在 best.from-1，receiver 在 best.to+1）
+	if (best.from < 1 || best.to > path.length - 2) return null;
+	const out = [];
+	for (let i = 0; i < path.length; i++) {
+		const c = path[i];
+		if (i >= best.from && i <= best.to) continue;                 // 被穿过的格子：不放东西
+		const cell = { cell: c, inDir: OPP[dir], outDir: dir };       // 与普通直带同形，不拐弯
+		if (i === best.from - 1) cell.tunnel = "sender";
+		if (i === best.to + 1) cell.tunnel = "receiver";
+		out.push(cell);
+	}
+	// 被穿过的格（sender 与 receiver 之间）：调用方要拿去占位，防止别的通道在那儿铺带子
+	const crossed = [];
+	for (let i = best.from; i <= best.to; i++) crossed.push(path[i]);
+	return { cells: out, span: best.span, crossed };
+}
+
+/** 从 a 到 b 的单位方向（不相邻 → null）*/
+function dirToward(a, b) {
+	const dx = b[0] - a[0], dy = b[1] - a[1];
+	if (Math.abs(dx) + Math.abs(dy) !== 1) return null;
+	return ORDER.find(d => DIRV[d][0] === dx && DIRV[d][1] === dy) || null;
+}
+
+/**
+ * 按**最终的格序列**重算每格的 (inDir, outDir)。
+ *
+ * 为什么需要：隧道替换会**删掉**若干格（被穿过的那些），于是原本"相邻"的两格之间
+ * 出现了空档、原本不相邻的两格变成了邻居。若沿用替换前的方向，就会出现
+ * 「上一格出口朝右、下一格却在正上方」这种自相矛盾的路径（实测 ch8 的 (-36,40)：
+ * 隧道跨过 (-38,40) 之后它成了拐点，但 outDir 还停在 right）。
+ *
+ * 规则：
+ *   · 隧道格（sender/receiver）：方向 = 它所在段的**行进方向**（`tunnelDir`），不拐弯；
+ *   · 普通格：入向 = 从相邻的上一格来，出向 = 朝相邻的下一格去；
+ *     若前/后不相邻（隧道跨越），该侧按相邻那一侧的方向补（直行）。
+ */
+function recomputeDirs(cells, firstDir, lastDir, tunnelDirOf) {
+	if (!cells.length) return cells;
+	const out = cells.map(c => ({ ...c }));
+	for (let k = 0; k < out.length; k++) {
+		const cur = out[k];
+		if (cur.tunnel) {
+			const d = tunnelDirOf(k);
+			cur.inDir = OPP[d];
+			cur.outDir = d;
+			continue;
+		}
+		const prev = k > 0 ? out[k - 1] : null;
+		const next = k < out.length - 1 ? out[k + 1] : null;
+		const dIn = prev ? dirToward(prev.cell, cur.cell) : null;
+		const dOut = next ? dirToward(cur.cell, next.cell) : null;
+		// 入向：优先看实际相邻；不相邻（隧道跨越）就看下一格方向的反面（直行穿过去）
+		const inDir = dIn ? OPP[dIn]
+			: prev ? (prev.tunnel ? OPP[tunnelDirOf(k - 1)] : OPP[firstDir])
+			: OPP[firstDir];
+		// 出向：优先看实际相邻；否则保持与入向相反（直行），隧道后的第一格例外见下
+		const outDir = dOut ? dOut
+			: next ? (next.tunnel ? tunnelDirOf(k + 1) : (lastDir || dOut))
+			: lastDir;
+		cur.inDir = inDir;
+		cur.outDir = outDir;
+	}
+	return out;
+}
+
 /* ═════════════════════ 4) 通道规划（几何；绝不产 belt code）═════════════════════ */
 
 /**
@@ -813,7 +996,16 @@ export function planChannel(first, d1, last, inDir, ctx = {}) {
 	// ① 直线（0 拐角）
 	if (d1 === d2 && rayAligned(first, last, d1)) {
 		const cells = lineCells(first, last);
-		if (!free(cells)) return { ok: false, why: "cell-occupied", at: cells.find(blocked) };
+		if (!free(cells)) {
+			/* 直线被挡时：若阻挡是**1~4 格连续**，用隧道跨过去（这正是隧道的用途）。
+			   仅在显式允许时尝试 —— `ctx.tunnels === true` 由调用方按 scope 打开，
+			   默认关闭以保证既有目标逐字节不变。 */
+			if (ctx.tunnels === true) {
+				const tun = tunnelOverPath(cells, d1, blocked);
+				if (tun) return { ok: true, kind: "tunnel-straight", lane: null, cornerCount: 0, cells: tun.cells, tunnels: 1, tunnelSpanCells: tun.crossed };
+			}
+			return { ok: false, why: "cell-occupied", at: cells.find(blocked) };
+		}
 		return { ok: true, kind: "straight", lane: null, cornerCount: 0,
 			cells: cells.map(c => ({ cell: c, inDir: OPP[d1], outDir: d1 })) };
 	}
@@ -844,17 +1036,92 @@ export function planChannel(first, d1, last, inDir, ctx = {}) {
 	if (d1 !== d2 && OPP[d1] !== d2) {
 		const el = isVert(d1) ? [first[0], last[1]] : [last[0], first[1]];
 		if (!sameCell(el, first) && !sameCell(el, last) && rayAligned(first, el, d1) && rayAligned(el, last, d2)) {
-			const path = lineCells(first, el);          // 含 el
-			for (const c of lineCells(el, last)) if (!sameCell(c, el)) path.push(c);
+			const p1 = lineCells(first, el);          // 含 el
+			const p2 = lineCells(el, last);
+			const path = p1.slice();
+			for (const c of p2) if (!sameCell(c, el)) path.push(c);
 			const cells = tagPath(path, el, d1, d2);
 			if (sameCell(cells[cells.length - 1].cell, last)) {
-				if (!free(cells)) return { ok: false, why: "cell-occupied", at: cells.find(blocked) };
-				return { ok: true, kind: "elbow", lane: null, cornerCount: countPathCorners(cells), cells };
+				if (free(cells)) return { ok: true, kind: "elbow", lane: null, cornerCount: countPathCorners(cells), cells };
+				/* 拐角路径被挡：两段各自可被隧道跨过（十字交叉的典型形态）。
+				   隧道穿不过机器，所以被机器占的格仍会让该段失败 —— 正确的拒绝。 */
+				if (ctx.tunnels === true) {
+					let out = cells, used = 0; const crossedAll = [];
+					for (const sg of [{ cells: p1, dir: d1 }, { cells: p2, dir: d2 }]) {
+						if (!sg.cells.some(blocked)) continue;
+						const tun = tunnelOverPath(sg.cells, sg.dir, blocked);
+						if (!tun) continue;
+						const keep = new Map(tun.cells.map(c => [cellKey(c.cell[0], c.cell[1]), c]));
+						const drop = new Set();
+						for (const c of sg.cells) if (!keep.has(cellKey(c[0], c[1]))) drop.add(cellKey(c[0], c[1]));
+						const next = [];
+						for (const x of out) {
+							const k = cellKey(x.cell[0], x.cell[1]);
+							if (drop.has(k)) continue;
+							next.push(keep.has(k) ? { ...x, ...keep.get(k) } : x);
+						}
+						out = next; used++; if (tun.crossed) crossedAll.push(...tun.crossed);
+					}
+					if (used > 0 && out.length && sameCell(out[out.length - 1].cell, last)) {
+						/* 隧道替换删掉了若干格 ⇒ 相邻关系变了，必须按最终序列**重算方向**，
+						   否则会出现「上一格朝右、下一格在上方」的自相矛盾（实测 ch8）。 */
+						const tunDir = (idx) => {
+							// 隧道格所在段的行进方向：取它前后相邻普通格给出的方向
+							for (let j = idx - 1; j >= 0; j--) {
+								const s = dirToward(out[j].cell, out[idx].cell);
+								if (s) return s;
+							}
+							for (let j = idx + 1; j < out.length; j++) {
+								const s = dirToward(out[idx].cell, out[j].cell);
+								if (s) return s;
+							}
+							return d1;
+						};
+						const fixedCells = recomputeDirs(out, d1, d2, tunDir);
+						return { ok: true, kind: "tunnel-elbow", lane: null,
+							cornerCount: fixedCells.filter(x => isCorner(x.inDir, x.outDir)).length, cells: fixedCells, tunnels: used, tunnelSpanCells: crossedAll };
+					}
+				}
+				return { ok: false, why: "cell-occupied", at: cells.find(blocked) };
 			}
 		}
 	}
 	// ⑥ Z（M4 形态）：两拐点 + 一条车道
-	const lane = pickLane(first, d1, last, d2, ctx);
+	/* ★ 车道行必须**真的空**，不能只看几何可行 ★
+	   `pickLane` 原来的候选排序是「离 last 最近」优先，但它从不看 `occupied` —— 于是会挑中
+	   一行横段正好穿过机器的位置（实测：CgScScCg 的 ch1 选了 y=46，而 mixer 就在 (-219,46)，
+	   横段从 -265 走到 -218 直接把机器穿了）。这不是隧道能救的：隧道只穿带子，不穿机器。
+	   修法：把「这一行的横段有没有被占」作为**可行性的一部分**，不可行就试下一个候选。
+	   只在 ctx.strictLane 或显式要求时启用，避免改变既有目标的默认行为 ——
+	   不，这里改为**总是**检查：横段穿过机器在任何情况下都是错的，没有例外。 */
+	const candsLane = [];
+	{
+		const vert0 = isVert(d1);
+		const axis0 = vert0 ? 1 : 0;
+		const f0 = first[axis0], l0 = last[axis0];
+		let lo0 = -Infinity, hi0 = Infinity;
+		if (DIRV[d1][axis0] > 0) lo0 = Math.max(lo0, f0 + 1); else hi0 = Math.min(hi0, f0 - 1);
+		if (DIRV[d2][axis0] > 0) hi0 = Math.min(hi0, l0 - 1); else lo0 = Math.max(lo0, l0 + 1);
+		if (!Number.isFinite(lo0)) lo0 = Math.min(f0, l0) - 8;
+		if (!Number.isFinite(hi0)) hi0 = Math.max(f0, l0) + 8;
+		if (lo0 <= hi0) {
+			for (let v = Math.ceil(lo0); v <= Math.floor(hi0); v++) candsLane.push(v);
+			candsLane.sort((a, b) => cmpNum(Math.abs(a - l0), Math.abs(b - l0)) || cmpNum(a, b));
+		}
+	}
+	let lane = null;
+	const aOf = v => (isVert(d1) ? [first[0], v] : [v, first[1]]);
+	const bOf = v => (isVert(d1) ? [last[0], v] : [v, last[1]]);
+	for (const v of candsLane) {
+		const pooled = ctx.lanePool && ctx.lanePool.has(isVert(d1) ? `row:${v}` : `col:${v}`);
+		if (ctx.strictLane && pooled) continue;
+		if (blocked) {
+			const seg = lineCells(aOf(v), bOf(v));
+			if (seg.some(blocked)) continue;            // 这一行的横段压到机器/带子 → 换下一行
+		}
+		lane = v; break;
+	}
+	if (lane === null) lane = pickLane(first, d1, last, d2, ctx);   // 兜底：保持旧语义
 	if (lane === null) return { ok: false, why: "column-conflict", at: first };
 	const a = isVert(d1) ? [first[0], lane] : [lane, first[1]];
 	const b = isVert(d1) ? [last[0], lane] : [lane, last[1]];
@@ -870,7 +1137,44 @@ export function planChannel(first, d1, last, inDir, ctx = {}) {
 	for (const c of lineCells(b, last)) { if (sameCell(c, b)) continue; cells.push({ cell: c, inDir: OPP[cells[cells.length - 1].outDir], outDir: d2 }); }
 	if (!sameCell(cells[cells.length - 1].cell, last)) return { ok: false, why: "no-turn", at: last };
 	const raw = cells.map(x => x.cell);
-	if (raw.some(blocked)) return { ok: false, why: "cell-occupied", at: raw.find(blocked) };
+	if (raw.some(blocked)) {
+		/* Z 形的三段都可能被挡，且性质不同：
+		   · 车道横段（a→b）：被挡 = 与另一条通道的竖直段十字交叉 —— 最典型的隧道场景；
+		   · 首/尾竖直段：被挡 = 撞到别的通道的横段 —— 同样是隧道场景（只是方向相反）。
+		   所以**三段都试**：对每一段做一次 `tunnelOverPath`，只要该段的连续阻挡 ≤4 格就跨过去。
+		   隧道穿不过**机器**，所以 `blocked` 里机器占的格仍会让整段失败 —— 那是正确的拒绝。 */
+		if (ctx.tunnels === true) {
+			const segs = [
+				{ cells: lineCells(first, a), dir: d1 },
+				{ cells: lineCells(a, b), dir: dH },
+				{ cells: lineCells(b, last), dir: d2 },
+			];
+			let out = cells;
+			let used = 0;
+			for (const sg of segs) {
+				const bad = sg.cells.some(blocked);
+				if (!bad) continue;
+				const tun = tunnelOverPath(sg.cells, sg.dir, blocked);
+				if (!tun) continue;                      // 这一段救不了，保持原样
+				// 用隧道版替换这一段：被穿过的格从 out 里删掉，sender/receiver 打标记
+				const keep = new Map(tun.cells.map(c => [cellKey(c.cell[0], c.cell[1]), c]));
+				const drop = new Set();
+				for (const c of sg.cells) if (!keep.has(cellKey(c[0], c[1]))) drop.add(cellKey(c[0], c[1]));
+				const next = [];
+				for (const x of out) {
+					const k = cellKey(x.cell[0], x.cell[1]);
+					if (drop.has(k)) continue;
+					next.push(keep.has(k) ? { ...x, ...keep.get(k) } : x);
+				}
+				out = next; used++;
+			}
+			if (used > 0 && out.length && sameCell(out[out.length - 1].cell, last)) {
+				const cc = out.filter(x => isCorner(x.inDir, x.outDir)).length;
+				return { ok: true, kind: "tunnel", lane, cornerCount: cc, cells: out, tunnels: used, tunnelSpanCells: crossedAll };
+			}
+		}
+		return { ok: false, why: "cell-occupied", at: raw.find(blocked) };
+	}
 	const cornerCount = cells.filter(x => isCorner(x.inDir, x.outDir)).length;
 	return { ok: true, kind: cornerCount === 2 ? "z" : "z-degraded", lane, cornerCount, cells };
 }
@@ -1213,7 +1517,19 @@ export function place(input = {}) {
 			minerX = planMinerColumns(minersInOrder, { seed: seedEarly, region, center: centerW });
 		}
 	}
-	const { rows } = assignRows(levels, { rowGap: input.rowGap, colGap: input.colGap, minerX });
+	/* WP2：两轮布局。`planMultiInputRows` 要读上游已定的 x/y，而那些只有 `assignRows`
+	   跑完第一轮之后才存在 —— 所以先排一次 → 算约束 → 带上约束重排。
+	   只给 seed 时启用：无 seed 的金网格路径必须逐字节不变（G1/G2/G3）。 */
+	let layoutOpts = { rowGap: input.rowGap, colGap: input.colGap, minerX };
+	let pass = assignRows(levels, layoutOpts);
+	if (seedEarly !== null) {
+		const rr = planMultiInputRows(nodes, { rowGap: input.rowGap === undefined ? ROW_H : input.rowGap });
+		if (rr.rowY.size || rr.colX.size) {
+			layoutOpts = { ...layoutOpts, rowY: rr.rowY, multiX: rr.colX };
+			pass = assignRows(levels, layoutOpts);
+		}
+	}
+	const { rows } = pass;
 
 	/* (b) 有 hub：把机器簇对齐到 hub 正下方（局部系），消除混框导致的千格收集带。
 	   顶行 → hub 底缘下方 HUB_CLEAR 行；minX → hub 左列（hub 底部 4 个 entry 覆盖 hubLocal.x..x+3）。
@@ -1284,6 +1600,7 @@ export function place(input = {}) {
 	}
 
 	const channels = [], lanes = [], conflicts = [], beltCells = [];
+	let tunnelCount = 0;                                   // 本布局用了几段隧道（meta 里报）
 	const lanePool = new Set();
 	let seq = 0;
 
@@ -1294,8 +1611,16 @@ export function place(input = {}) {
 		const first = beltSide(fromCell, outSlot.dir);
 		const last = beltSide(toCell, inSlot.dir);
 		const id = o.id || `ch${seq}`;
-		const r = planChannel(first, outSlot.dir, last, inSlot.dir, { occupied, lanePool, strictLane: o.strictLane === true });
+		const r = planChannel(first, outSlot.dir, last, inSlot.dir,
+			{ occupied, lanePool, strictLane: o.strictLane === true, tunnels: input.tunnels === true });
 		const report = {
+			/* ★ 显式 id：与 P4 的 `channelIdOf` 对齐 ★
+			   P3 内部用 `ch<n>`（序号）标识通道，而 P4 在没有显式 id 时会自己推
+			   `from->to#ordinal` —— 两套名字互不相认，`report.beltCells` 里的 channelId
+			   就匹配不上 P4 的 geoms（隧道/预铺路径的采纳因此失效）。
+			   在 channels[] 上写死 `id` 后，P4 的 `channelIdOf` 第一分支直接取它，
+			   两侧从此用同一个名字。 */
+			id,
 			from: { nodeId: parent.id, cell: fromCell, slot: outSlot.dir, outDir: outSlot.dir },
 			to: { nodeId: child.id, cell: toCell, slot: inSlot.dir, inDir: inSlot.dir },
 			lane: null, payload,
@@ -1337,10 +1662,50 @@ export function place(input = {}) {
 			if (ex) { if (!ex.channelIds.includes(id)) ex.channelIds.push(id); }
 			else lanes.push(vert ? { row: r.lane, column: null, channelIds: [id] } : { row: null, column: r.lane, channelIds: [id] });
 		}
-		for (const b of r.cells) { occupied.add(cellKey(b.cell[0], b.cell[1])); beltCells.push({ ...b, id }); }
+		for (const b of r.cells) {
+			/* 隧道格（sender/receiver）占格；被"穿过"的格**不**占 —— 那是隧道的语义
+			   （别的东西可以从它上方/下方经过）。 */
+			occupied.add(cellKey(b.cell[0], b.cell[1]));
+			beltCells.push({ ...b, id });
+		}
+		/* ★ 但"被穿过的格"必须记进一份**独立的隧道占用表** ★
+		   它们对普通带子是空闲的（这正是隧道存在的理由），可对**另一条隧道**必须可见 ——
+		   否则两条隧道会选同一段格互相穿。更关键的是：后续通道若在那格铺了普通带子，
+		   `walkChannel` 走到 sender 时会在"空档"里撞见它，把合法隧道判成不成立
+		   （实测 (-38,40)：ch8 的隧道穿过它，而 ch7 后铺时又在那儿放了一条竖带）。
+		   P3 的规则：**先到先得** —— 隧道跨过的格对后续通道算"已占"，
+		   后续通道绕开即可（这正是"隧道优先占道"的工程选择）。 */
+		if (r.kind && r.kind.startsWith("tunnel")) {
+			const spanCells = new Set();
+			for (const b of r.cells) spanCells.add(cellKey(b.cell[0], b.cell[1]));
+			if (r.tunnelSpanCells) for (const c of r.tunnelSpanCells) occupied.add(cellKey(c[0], c[1]));
+		}
+		if (r.kind && r.kind.startsWith("tunnel")) tunnelCount++;
 		channels.push(report);
-		return { report, ok: true, kind: r.kind, cornerCount: r.cornerCount, id };
+		return { report, ok: true, kind: r.kind, cornerCount: r.cornerCount, id, tunnels: r.tunnels || 0 };
 	};
+
+	/* ★ WP1：可交换多输入机器（只有 mix）的槽序必须与**西→东**一致 ★
+	   `planChannel` 对 bottom 输入的硬律是：喂它的上游列必须 <= 该输入列（直入或 Z），
+	   绝不能更靠东 —— 从东侧绕回来是 4 拐角，v1 无隧道，做不到。
+	   mix 的 slot0 在 mix.x、slot1 在 mix.x+1，所以**两个父必须西→东排列**。
+	   而 `layerAndOrder` 的 barycenter 序是按 DAG 邻接给的，与槽序无关：实测
+	   CgScScCg 的矿机序是 `---g----, -b------, -g------, n0, n6`，
+	   而 mix 的槽序是 `[-b------(blue), -g------(green)]` —— blue 在 -221、green 在 -267，
+	   即 slot0 的父比 slot1 的父更靠**东**。这一条就足以让第二条颜料通道必撞机器。
+	   ⚠️ **只对 mix 做**：`stack` 的 slot0/slot1 是**下层/上层**（item_processor.js 的
+	     process_STACKER 按 items.get(0)/get(1) 取），换序会产出 ScScCgCg 而不是 CgScScCg ——
+	     一份**能通过校验但语义错**的蓝图。mix 则是对称的（colors.js 的
+	     bitfieldToColor[i|j] 可交换），换序语义等价。 */
+	for (const n of nodes) {
+		if (n.op !== "mix") continue;
+		const idx = n.parents.map((p, i) => ({ p, i })).filter(e => e.p);
+		if (idx.length < 2) continue;
+		const sorted = idx.slice().sort((a, b) => (a.p.x - b.p.x) || (a.i - b.i));
+		if (sorted.every((e, k) => e.i === idx[k].i)) continue;     // 已符合西→东，不动
+		n.parents = sorted.map(e => e.p);
+		while (n.parents.length < n.template.inputs.length) n.parents.push(null);
+	}
 
 	/* 8.1 上游 → 本节点（按槽序；slotRole/ordinal 是给 P4 的定位凭据）*/
 	for (const n of nodes) {
@@ -1469,7 +1834,7 @@ export function place(input = {}) {
 
 	const rep = buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubConnection,
 		occupancy: occupancyLocal, hubLocal, input, waste, resourceTable,
-		depthNormalized: levels.depthNormalized || null });
+		depthNormalized: levels.depthNormalized || null, tunnelCount });
 	assertLayoutReport(rep, "layout");
 	return rep;
 }
@@ -1488,7 +1853,7 @@ export function place(input = {}) {
  * cornerCount 与渲染**同源**（同一批 beltCells 的臂对判定），并交叉断言
  * "grid 里 7/9/L/J 的个数 === cornerCount"（不一致 = 本包 bug，抛契约错，不许静默）。
  */
-function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubConnection, occupancy, input, waste, resourceTable, hubLocal, depthNormalized = null }) {
+function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubConnection, occupancy, input, waste, resourceTable, hubLocal, depthNormalized = null, tunnelCount = 0 }) {
 	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 	const touch = c => {
 		if (!c) return;
@@ -1515,7 +1880,13 @@ function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubCo
 		const x = c[0] - minX, y = c[1] - minY;
 		if (x >= 0 && x < w && y >= 0 && y < h) paint[y][x] = g;
 	};
-	for (const b of beltCells) put(b.cell, beltGlyph(b.inDir, b.outDir));
+	for (const b of beltCells) {
+		// 隧道格的 inDir===outDir（是一条"穿过"而非转弯），没有带子字符可画：
+		// sender 画 'o'、receiver 画 'O'，一眼能与带子区分开。
+		if (b.tunnel === "sender") { put(b.cell, "o"); continue; }
+		if (b.tunnel === "receiver") { put(b.cell, "O"); continue; }
+		put(b.cell, beltGlyph(b.inDir, b.outDir));
+	}
 	for (const n of nodes) {
 		const fp = n.template.footprint;
 		for (let dy = 0; dy < fp[1]; dy++) for (let dx = 0; dx < fp[0]; dx++) put([n.x + dx, n.y + dy], GRID_CHARS.empty);
@@ -1547,6 +1918,7 @@ function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubCo
 		scope: { ...SCOPE_V1 },
 		wasteRoles: waste.map(x => ({ ...x })),
 		trashCount: nodes.filter(n => n.op === "trash").length,
+		tunnelCount,
 		beltTiles: beltCells.length,
 		minerCells: resourceTable ? Object.fromEntries([...resourceTable].map(([k, v]) => [k, [v[0], v[1]]])) : null,
 		// 矿机 → **世界资源名**的显式映射（P8 的 siteStage 拿它对拍 seed 的资源图）。
@@ -1566,6 +1938,13 @@ function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubCo
 	return {
 		grid, rows, placements, channels, lanes, hubConnection,
 		bbox: [w, h], occupancy, conflicts, cornerCount, meta,
+		/* ★ P3 的逐格路由结果（含隧道）★
+		   P4 传统上**丢弃** P3 的逐格路径、按 channels 的端点 + lane 重算 —— 那样隧道信息
+		   就丢了（P3 用隧道跨过的格，P4 重算时会当成"这里应该有一条带子"，随即失败）。
+		   本字段把 P3 真正铺出来的格子（带 `tunnel` 标记）交给 P4，让它优先采纳。
+		   §2.3 的 LayoutReport 契约不要求这个字段（`assertLayoutReport` 只校验**必需**键），
+		   加它不破坏既有消费者；P4 不认识它时行为不变。 */
+		beltCells: beltCells.map(b => ({ cell: [b.cell[0], b.cell[1]], inDir: b.inDir, outDir: b.outDir, channelId: b.id, tunnel: b.tunnel || null })),
 	};
 }
 

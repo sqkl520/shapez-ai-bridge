@@ -45,6 +45,9 @@ export const STEP_COST = 1;
 export const TURN_COST = 2;
 /** 熔断预算（状态数上限），耗尽 → 独立语义，不许混成「无路」 */
 export const SEARCH_POP_CAP = 4000;
+/** 隧道最大跨度（基础 tier 的 sender↔receiver 间距）。与 place.mjs 的 TUNNEL_MAX_SPAN 同值；
+ *  route.mjs 不 import place.mjs（依赖方向只能是 P4 → 更低层），所以这里独立声明一份。 */
+export const TUNNEL_MAX_SPAN = 4;
 
 /* ───────────────────────────── 结构化内部错误 ───────────────────────────── */
 
@@ -228,6 +231,26 @@ export function assertEndpoints(belts, g, channelId) {
 export function chainClosure(belts) {
     for (let k = 0; k < belts.length - 1; k++) {
         const u = belts[k], v = belts[k + 1];
+        /* ★ 隧道：sender 与 receiver 之间隔了 1~4 格（那些格被"穿过"、没有实体）★
+           u 是 sender、v 是 receiver 时两者**不要求相邻**：只要同向、共线、跨度在范围内。
+           `tunnel` 字段由 P3 标出（见 place.mjs 的 tunnelOverPath）。
+           普通带子（u.tunnel 不是 "sender"）仍走原来的严格相邻判据。 */
+        if (u.tunnel === "sender" && v.tunnel === "receiver") {
+            const exT = beltExit(u.rv, u.rot), enT = beltEntry(v.rv, v.rot);
+            const dx = v.cell.x - u.cell.x, dy = v.cell.y - u.cell.y;
+            const alongX = dy === 0 && DIRV[exT][1] === 0 && Math.sign(dx) === DIRV[exT][0];
+            const alongY = dx === 0 && DIRV[exT][0] === 0 && Math.sign(dy) === DIRV[exT][1];
+            const span = Math.abs(dx) + Math.abs(dy);
+            const okT = exT === OPP[enT] && (alongX || alongY) && span >= 2 && span <= TUNNEL_MAX_SPAN + 1;
+            if (!okT) {
+                return { ok: false, pairs: k, detail: {
+                    index: k, u: { cell: u.cell, rot: u.rot, rv: u.rv, exit: exT, tunnel: "sender" },
+                    v: { cell: v.cell, rot: v.rot, rv: v.rv, entry: enT, tunnel: "receiver" },
+                    want: `隧道两端须同向共线、跨度 2..${TUNNEL_MAX_SPAN + 1}（实得 span=${span}）`,
+                } };
+            }
+            continue;
+        }
         const ex = beltExit(u.rv, u.rot), en = beltEntry(v.rv, v.rot);
         const ux = u.cell.x + DIRV[ex][0], uy = u.cell.y + DIRV[ex][1];
         const vx = v.cell.x + DIRV[en][0], vy = v.cell.y + DIRV[en][1];
@@ -395,6 +418,36 @@ export function routeAll(report, opts = {}) {
     };
 
     for (const g of lane.geoms) {
+        /* ★ P3 已逐格铺好的通道（含隧道）：整条采纳，P4 不重算 ★
+           必须在 `unresolvedChannels` / `cellsByChannel` / Dijkstra 之前处理 ——
+           含隧道的通道端点对在 `channelGeom` 看来往往"不可布"（P3 是穿过去的），
+           走到任何"重算"分支都会把它判死，隧道就白铺了。 */
+        const preCells = Array.isArray(report.beltCells)
+            ? report.beltCells.filter(b => b.channelId === g.id)
+            : [];
+        if (preCells.some(b => b.tunnel)) {
+            const tunneled = preCells.map(b => {
+                if (b.tunnel) {
+                    /* 隧道格也要有 (rot, rv)：`chainClosure` 用 beltExit/beltEntry 校验相邻连通性，
+                       rot=null 会让它算不出方向、把整条链判成不闭合（实测 ch8 第 79 对）。
+                       隧道的进出方向就是该段的行进方向 —— 与普通直带同形，照常 solveTurn。
+                       code 仍留 null：发射层按 `tunnel` 字段写 22/23，不按 solveTurn 的 1/2/3。 */
+                    const pT = poseOf(b.inDir, b.outDir);
+                    return { cell: { x: b.cell[0], y: b.cell[1] }, inDir: b.inDir, outDir: b.outDir,
+                        tunnel: b.tunnel, rot: pT ? pT.rotation : null, rv: pT ? pT.rotationVariant : null,
+                        code: null, channelId: g.id };
+                }
+                const p = poseOf(b.inDir, b.outDir);
+                return { cell: { x: b.cell[0], y: b.cell[1] }, inDir: b.inDir, outDir: b.outDir,
+                    tunnel: null, rot: p ? p.rotation : null, rv: p ? p.rotationVariant : null,
+                    code: p ? p.code : null, channelId: g.id };
+            });
+            beltCells.push(...tunneled);
+            mark(g.id, tunneled);
+            for (const b of tunneled) blocked.add(cellKey(b.cell.x, b.cell.y));
+            continue;
+        }
+
         // 车道阶段判定「这条通道整条不铺」（撞既有世界 / 需分层 / 找不到行）→ 一条带子都不产，
         // 也不兜底：半成品 IR 流向 P5/P6 比整单失败更危险（plan §2.1「绝不产出会堵死的蓝图」）。
         if (lane.unresolvedChannels.has(g.id)) continue;
@@ -417,6 +470,7 @@ export function routeAll(report, opts = {}) {
             // 车道分配失败的通道：cellsByChannel 里没有 → 不重复报，交给 lane 的 reason
             continue;
         }
+
 
         const laid = layCells(g, cells, g.id);
         if (!laid.ok) {
