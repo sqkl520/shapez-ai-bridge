@@ -347,6 +347,28 @@ export function mapOps(dagResult) {
 	const out = [];
 	const names = new Set();
 	for (const [i, s] of dagResult.dag.entries()) {
+		// ── 颜料节点：`mineColor` → 矿机（采纯色矿）；`mix` → mixer（两 bottom 进、top 出）──
+		//    hash 用 rebuildDag 分配的 shortKey token（P3 只认这个空间；见 rebuildDag 头注）。
+		if (s.kind === "pigment") {
+			const op = s.op === "mineColor" ? "mine" : s.op;
+			if (op !== "mine" && op !== "mix") {
+				return fail("out-of-scope:wire", { nodeId: s.hash, cell: null, check: "V8-scope" },
+					`未知颜料 op "${s.op}"（只认 mineColor/mix）`);
+			}
+			const tpl = ALL_TEMPLATES[op];
+			if (!tpl) return fail("out-of-scope:wire", { nodeId: s.hash, cell: null, check: "" }, `op "${op}" 不在 op-templates`);
+			names.add(op);
+			out.push({
+				id: s.hash, op, hash: s.hash, depth: isInt(s.depth) ? s.depth : 0,
+				args: op === "mix" ? { colors: (s.inputs || []).map(h => (dagResult.dag.find(x => x.hash === h) || {}).color).filter(Boolean) } : {},
+				// mine 无输入；mix 的两条颜料输入即它的两个 bottom 槽（顺序 = solver 的 [a,b]，去重后保序）
+				inputs: op === "mine" ? [] : (s.inputs || []).slice(),
+				kind: "pigment", color: s.color, solverHash: s.solverHash,
+				_solverOp: s.op, _solverArgs: clone(s.args || {}),
+			});
+			continue;
+		}
+
 		const spec = OP_MAP[s.op];
 		if (!spec) {
 			return fail("out-of-scope:wire", { nodeId: `n${i}`, cell: null, check: "V8-scope" },
@@ -371,171 +393,310 @@ export function mapOps(dagResult) {
 		out.push({
 			id: `n${i}`, op, hash: s.hash, depth: isInt(s.depth) ? s.depth : null,
 			args: spec.args(s),
-			inputs: s.op === "mine" ? [] : (s.parents || []).slice(),
+			// P3 的约定：inputs 元素 = 上游节点 hash。solver 已给（形状或颜料 token），直接采用。
+			inputs: s.op === "mine" ? [] : (s.inputs || []).slice(),
+			kind: "shape",
 			_solverOp: s.op, _solverArgs: clone(s.args || {}),
 		});
 	}
 	return { ok: true, steps: out, opNames: [...names].sort(cmpStr) };
 }
 
-/** dag → S1 判据要的形态（P5 的 shapeReplay 吃 {hash,op,args,parents}）——**原 op 名**，不经变体改写。 */
+/** dag → S1 判据要的形态（P5 的 shapeReplay 吃 {hash,op,args,parents}）。
+ * ⚠️ **只保留形状节点**：颜料是 `ColorItem`，不是形状；且颜料 token 的 parse∘hash 会塌成空形状
+ *    （solver-README §1.2 理由 2），留在 S1 里必然假红。`paint` 的 parents 也只留形状（applyOp 只用 [0]）。 */
 export function dagForS1(dagResult) {
-	return (dagResult.dag || []).map(s => ({
-		hash: s.hash, op: s.op, args: clone(s.args || {}), parents: (s.parents || []).slice(),
-		nodeId: `n${s.hash}`,
-	}));
+	const pigmentHashes = new Set(
+		(dagResult.dag || []).filter(s => s.kind === "pigment").flatMap(s => [s.hash, s.solverHash].filter(Boolean)));
+	return (dagResult.dag || [])
+		.filter(s => s.kind !== "pigment")
+		.map(s => ({
+			hash: s.hash,
+			op: s.op,
+			args: clone(s.args || {}),
+			// 只留形状输入（颜料输入不是形状，S1 的 applyOp 也只用 parents[0]）
+			parents: (s.inputs || []).filter(h => !pigmentHashes.has(h)),
+			nodeId: `n${s.hash}`,
+		}));
 }
 
-/* ════════════════ Stage 2a：solver steps → 带 parents 的 DAG（重放 shape-ops）════════════ */
+/* ════════════════ Stage 2a：solver steps → 编译期 DAG（采用 inputs + 颜料 token 化）════════════ */
 
 /**
- * `proto/solver.mjs:218-231 buildPlan()` 返回的 steps **只有** `{hash,op,args,depth}` ——
- * **没有 parents**（`parts.push({ hash, op, args, depth })`，parents 只存在于 solver 内部的
- * `known` 表里，且它 dedupe 时把边信息丢掉了）。而 P3 的 `buildDag` 与 P5 的 S1 都需要「输入 =
- * 上游 hash」的边信息。所以**必须由 P8 重建父节点**：按 op 语义在已出现的 hash 里找能产出该 hash
- * 的那一个/一对（用只读的 `proto/shape-ops.mjs` 现算，不猜、不查表）。
+ * ★ 颜料契约（solver 4e60013 起）★
+ * solver 的 steps 现在**自带 `inputs`**，且颜料是**一等节点**：
+ *   形状节点  hash=<shortKey>      op ∈ mine/cut/cutQuad/rotate(cw|ccw|180)/paint/mix/stack
+ *   颜料节点  hash=color:<name>    op ∈ mineColor/mix    kind="pigment"
+ *   paint.inputs = [shape, pigment]   mix.inputs = [colorA, colorB]   stack.inputs = [lower, upper]
  *
- * 确定性：steps 序 = solver 的依赖序（walk 先父后子）；搜索按 (depth, index) 升序，
- * 双输入按 (lower, upper) 的 index 字典序，首个命中即取（唯一命中时与顺序无关）。
- * 找不到父 = solver 的输出自相矛盾（它的每一步都该由已出现的形状生成）→ 结构化失败，**不猜**。
+ * P8 这边要做三件事（都不改 P1/P3）：
  *
- * @param {object[]} steps solver 的原始 steps
- * @returns {{ok:true, dag:Array<{hash,op,args,depth,parents:string[]}>} | {ok:false,reason,failingNode,hint}}
+ * 1. **采用 solver 的 inputs**，不再猜父节点（旧版靠 shape-ops 搜索重建；现在边信息在上游，
+ *    猜是多余的风险）。但仍**用形状代数自证**：每个形状节点重算一遍，hash 对不上 → 结构化拒。
+ *
+ * 2. **颜料节点 → 合法 shortKey token**。`color:<name>` 进不了 P3：
+ *    · `channels[].payload` 被 P1 的 checkShortKeyGrammar 强制为 shortKey（types.mjs:597）；
+ *    · P3 的 buildDag 要求 hash 唯一，而颜料可能被多个上色器共享（同一 color:<name> 出现多次）。
+ *    解法：把颜色字符塞进**第 k 个象限的空位**，sub 保持 `'-'`：`-c------`、`--c-----`、…
+ *    · 语法：每层 8 字符 = 4×[sub][color]，sub='-' 时 color 可任意 ⇒ 合法；
+ *    · 代数：`parse('-c------')` 的 sub 是 '-' ⇒ 解析成空形状（`--------`），**不污染形状空间**；
+ *    · 唯一性：同色第 k 份副本站第 k 个象限 ⇒ 与同名其它副本 hash 不同 ⇒ 过 P3 的唯一闸。
+ *
+ * 3. **共享颜料 = 复制矿机，不是扇出**（solver-README §3.4-3 / §3.5 实测：扇出会被 P3 判
+ *    `crossing-needs-tunnel`）。每个消费者拿一份独立 token ⇒ 独立矿机 + 独立矿位。
+ *
+ * @param {object[]} steps solver 的原始 steps（带 inputs）
+ * @returns {{ok:true, dag:object[], pigments:object[], tokens:Map<string,string>} | failure}
  */
 export function rebuildDag(steps) {
-	const known = [];            // [{hash, shape}]，按出现顺序
-	const out = [];
-	const hashOf = shape => SHAPE_OPS.hash(shape);
-	const tryApply = (op, args, parents) => {
-		try {
-			switch (op) {
-				case "mine": return parents[0];
-				case "cut": {
-					const halves = SHAPE_OPS.cutHalf(parents[0]);
-					return (args.half === "left") ? halves[0] : halves[1];
-				}
-				case "cutQuad": return SHAPE_OPS.cutQuad(parents[0])[args.quad | 0];
-				case "rotate": {
-					const d = args.dir || "cw";
-					return d === "ccw" ? SHAPE_OPS.rotateCCW(parents[0]) : d === "180" ? SHAPE_OPS.rotate180(parents[0]) : SHAPE_OPS.rotateCW(parents[0]);
-				}
-				case "paint": case "paintMirrored": return SHAPE_OPS.paint(parents[0], args.color);
-				case "mix": {
-					const bits = { red: 1, green: 2, blue: 4, yellow: 3, purple: 5, cyan: 6, white: 7 };
-					const rev = { 1: "red", 2: "green", 4: "blue", 3: "yellow", 5: "purple", 6: "cyan", 7: "white" };
-					const bit = (args.colors || []).reduce((a, c) => a | (bits[c] || 0), 0);
-					const merged = rev[bit];
-					return SHAPE_OPS.paint4({ layers: parents[0].layers.map(l => l.map(x => (x ? { ...x } : null))) }, [merged, merged, merged, merged]);
-				}
-				case "stack": return SHAPE_OPS.stack(parents[0], parents[1]);   // parents[0]=下层
-				default: throw new Error(`rebuildDag: 未知 op ${op}`);
-			}
-		} catch { return null; }
+	if (!Array.isArray(steps) || steps.length === 0) {
+		return fail(UPSTREAM_REASON.SOLVER_DAG_BAD, { nodeId: "", cell: null, check: "" }, "solver 的 steps 为空");
+	}
+	const COLOR_CODE = { red: "r", green: "g", blue: "b", yellow: "y", purple: "p", cyan: "c", white: "w" };
+	const MAX_COPIES = 4;                          // 4 个象限 ⇒ 每色最多 4 份独立矿机
+
+	/**
+	 * `color:<name>` + 副本号 → 合法 shortKey token。
+	 * 形态 = 4 个 `[sub][color]` 对（每对 2 字符）；第 k 个副本把**颜色字符放进第 k 对的 color 位**
+	 * （即下标 `2k+1`），其余字符全 `'-'`。例：k=0 → `--g-----`?
+	 * ⚠️ 不能把颜色字符放到 sub 位（偶数下标）—— 那会让 `sub='g'` 触发语法闸
+	 * （types.mjs:223 的 `sub ∈ R|C|S|W|-`）。颜色位才是唯一合法落点。
+	 */
+	const tokenFor = (color, k) => {
+		const cc = COLOR_CODE[color];
+		if (!cc || !isInt(k) || k < 0 || k >= MAX_COPIES) return null;
+		const chars = ["-", "-", "-", "-", "-", "-", "-", "-"];
+		chars[k * 2 + 1] = cc;                     // 第 k 对的 color 位
+		return chars.join("");
 	};
-	for (const [i, s] of steps.entries()) {
-		let parents = [];
-		if (s.op === "mine") {
-			parents = [];                                   // 矿机吃资源格，无上游
-		} else if (["cut", "cutQuad", "rotate", "paint", "paintMirrored", "mix"].includes(s.op)) {
-			const hit = known.find(k => { const r = tryApply(s.op, s.args || {}, [k.shape]); return r && hashOf(r) === s.hash; });
-			if (!hit) {
-				return failReason(UPSTREAM_REASON.SOLVER_DAG_BAD, `n${i}`,
-					`solver 的 step ${i}（${s.op} ${JSON.stringify(s.args || {})} → ${s.hash}）在已出现的形状里找不到父节点`,
-					{ class: "solver-dag-unreconstructable", step: i });
-			}
-			parents = [hit.hash];
-		} else if (s.op === "stack") {
-			let hit = null;
-			outer: for (const a of known) for (const b of known) {
-				if (a === b) continue;
-				const r = tryApply("stack", s.args || {}, [a.shape, b.shape]);
-				if (r && hashOf(r) === s.hash) { hit = [a.hash, b.hash]; break outer; }
-			}
-			if (!hit) {
-				return failReason(UPSTREAM_REASON.SOLVER_DAG_BAD, `n${i}`,
-					`solver 的 step ${i}（stack ${JSON.stringify(s.args || {})} → ${s.hash}）找不到能产出它的 (下层, 上层) 组合；`
-					+ `已知形状 ${known.map(k => k.hash).join("/")}`,
-					{ class: "solver-dag-unreconstructable", step: i });
-			}
-			parents = hit;
-		} else {
-			return fail("out-of-scope:wire", { nodeId: `n${i}`, cell: null, check: "" },
-				`solver 发了未知 op "${s.op}"（rebuildDag 只认 ${Object.keys(OP_MAP).join("/")}）`);
-		}
-		out.push({ hash: s.hash, op: s.op, args: clone(s.args || {}), depth: isInt(s.depth) ? s.depth : null, parents });
-		// mine 的产物 = 资源格形状：P3 用 inputs=[] + hash 当资源 shortKey
-		try { known.push({ hash: s.hash, shape: SHAPE_OPS.parse(s.hash) }); }
-		catch (e) {
-			return failReason(UPSTREAM_REASON.SOLVER_DAG_BAD, `n${i}`,
-				`solver 的 hash "${s.hash}" 不能被 proto/shape-ops.mjs parse：${e && e.message}`,
-				{ class: "solver-dag-unreconstructable", step: i });
+
+	/** solver 侧：hash -> step */
+	const bySolverHash = new Map();
+	for (const s of steps) bySolverHash.set(s.hash, s);
+	const isPigment = s => !!(s && (s.kind === "pigment" || s.op === "mineColor"
+		|| (typeof s.hash === "string" && s.hash.startsWith("color:"))));
+
+	/**
+	 * ① 统计每个颜料被**几条消费边**引用（`paint` 的 color 槽 / `mix` 的每个输入）。
+	 *   为什么按边而不是按节点：P3 的 buildDag 不允许扇出（一个 hash 只能有一条出边），
+	 *   而同一颜料天然会被多台上色器共享（CgScScCg 的 green 同时进 mix 与 paint）。
+	 *   ⇒ 每条消费边一份独立副本（各自一台矿机 + 独立矿位），这是 v1 唯一可布的形式。
+	 */
+	const demand = new Map();                      // color -> 需要几份
+	const consumers = new Map();                   // color -> [消费者 step.hash]
+	for (const s of steps) {
+		if (isPigment(s)) continue;
+		for (const h of (s.inputs || [])) {
+			const up = bySolverHash.get(h);
+			if (!isPigment(up)) continue;
+			const color = (up.args && up.args.color) || String(h).replace(/^color:/, "");
+			demand.set(color, (demand.get(color) || 0) + 1);
+			if (!consumers.has(color)) consumers.set(color, []);
+			consumers.get(color).push(s.hash);
 		}
 	}
-	return { ok: true, dag: out };
+	// 每色最多 MAX_COPIES 份；超了就是配方异常（同一个颜色喂 >4 台上色器）
+	for (const [color, n] of demand) {
+		if (n > MAX_COPIES) {
+			return fail(UPSTREAM_REASON.CONTRACT, { nodeId: `pigment:${color}`, cell: null, check: "" },
+				`颜料 ${color} 被 ${n} 个消费者引用（${consumers.get(color).join(", ")}），`
+				+ `超过 token 空间的 ${MAX_COPIES} 份：v1 的「共享颜料 → 复制矿机」放不下，需 P1 给 payload 定契约（NOTES §3）`);
+		}
+	}
+
+	/**
+	 * ② 展开原料链：`color:<name>` 的**第 k 份副本**节点（包括 mix 的两个上游也要复制）。
+	 *    返回该副本的 token；同 (color,k) 只建一次（mix 复用上游副本时不重复建节点）。
+	 */
+	const out = [];
+	const pigments = [];
+	const alias = new Map();                        // `${solverHash}#${k}` -> token
+	const copyCount = new Map();                    // color -> 下一个可用副本号（按消费顺序递增）
+
+	const buildPigmentCopy = (color, k, depth = 0) => {
+		const key = `color:${color}#${k}`;
+		if (alias.has(key)) return alias.get(key);
+		const token = tokenFor(color, k);
+		if (!token) return null;
+		const up = bySolverHash.get(`color:${color}`);          // solver 侧的颜料节点（mineColor 或 mix）
+		if (!up) return null;
+		let inputs = [];
+		let op = up.op;
+		if (op === "mix") {
+			// 混色的两个原色：各自也需要**本副本专属**的矿机（不能共享，否则又一次扇出）
+			const srcColors = (up.inputs || []).map(h => {
+				const n = bySolverHash.get(h);
+				return (n && n.args && n.args.color) || String(h).replace(/^color:/, "");
+			});
+			for (const sc of srcColors) {
+				const scK = copyCount.get(sc) || 0;
+				copyCount.set(sc, scK + 1);
+				const t = buildPigmentCopy(sc, scK, depth + 1);
+				if (!t) return null;
+				inputs.push(t);
+			}
+		}
+		const node = {
+			id: token, hash: token, color, op, args: { color }, inputs,
+			depth: isInt(depth) ? depth : 0, kind: "pigment", solverHash: `color:${color}`, copy: k,
+		};
+		alias.set(key, token);
+		pigments.push({ color, token, from: op, inputs: inputs.slice(), copy: k });
+		out.push(node);
+		return token;
+	};
+
+	/** 为一次消费分配该颜色的下一份副本 */
+	const allocPigment = (color) => {
+		const k = copyCount.get(color) || 0;
+		copyCount.set(color, k + 1);
+		return buildPigmentCopy(color, k, 0);
+	};
+
+	/**
+	 * ③ 按 solver 的依赖序走一遍，形状节点直接产出；颜料输入按消费边各取一份新副本。
+	 */
+	const byHash = new Map();                       // solver hash -> 本包节点（形状）
+	const compute = (op, args, parentShapes) => {
+		switch (op) {
+			case "mine": return SHAPE_OPS.parse(args.__hash);
+			case "cut": {
+				const h = SHAPE_OPS.cutHalf(parentShapes[0]);
+				return args.half === "left" ? h[0] : h[1];
+			}
+			case "cutQuad": return SHAPE_OPS.cutQuad(parentShapes[0])[args.quad | 0];
+			case "rotate": {
+				const d = args.dir || "cw";
+				return d === "ccw" ? SHAPE_OPS.rotateCCW(parentShapes[0]) : d === "180" ? SHAPE_OPS.rotate180(parentShapes[0]) : SHAPE_OPS.rotateCW(parentShapes[0]);
+			}
+			case "paint": case "paintMirrored": return SHAPE_OPS.paint(parentShapes[0], args.color);
+			case "stack": return SHAPE_OPS.stack(parentShapes[0], parentShapes[1]);
+			default: return null;
+		}
+	};
+
+	for (const [i, s] of steps.entries()) {
+		if (isPigment(s)) continue;                  // 颜料节点在第 ② 步按消费边展开，这里跳过
+
+		const inputs = Array.isArray(s.inputs) ? s.inputs.slice()
+			: (Array.isArray(s.parents) ? s.parents.slice() : []);
+		const resolved = [];
+		for (const h of inputs) {
+			const up = bySolverHash.get(h);
+			if (isPigment(up)) {
+				const color = (up.args && up.args.color) || String(h).replace(/^color:/, "");
+				const t = allocPigment(color);
+				if (!t) {
+					return fail(UPSTREAM_REASON.CONTRACT, { nodeId: `${s.hash}`, cell: null, check: "" },
+						`为 ${s.hash} 的颜料输入 ${color} 分配副本失败（该色已用满 ${MAX_COPIES} 份）`);
+				}
+				resolved.push(t);
+			} else {
+				if (!byHash.has(h)) {
+					return failReason(UPSTREAM_REASON.SOLVER_DAG_BAD, `n${i}`,
+						`${s.hash} 的形状输入 ${h} 尚未出现（solver 的 steps 不是依赖序）`,
+						{ class: "solver-dag-unreconstructable", step: i });
+				}
+				resolved.push(h);
+			}
+		}
+
+		const node = {
+			id: s.hash, hash: s.hash, op: s.op, args: clone(s.args || {}),
+			inputs: resolved, depth: isInt(s.depth) ? s.depth : null,
+			kind: "shape", solverHash: s.hash, instanceIdx: 0,
+		};
+		byHash.set(s.hash, node);
+
+		// 自证：形状部分必须能被形状代数重算（颜料不参与形状运算）
+		const shapeParents = resolved
+			.map(h => byHash.get(h)).filter(n => n && n.kind === "shape")
+			.map(n => SHAPE_OPS.parse(n.hash));
+		const args = { ...(s.args || {}), __hash: s.hash };
+		let got = null;
+		try { got = compute(s.op, args, shapeParents.slice(0, s.op === "stack" ? 2 : 1)); } catch { /* 下面统一报 */ }
+		const expectShape = got ? SHAPE_OPS.hash(got) : null;
+		if (expectShape !== s.hash) {
+			return failReason(UPSTREAM_REASON.SOLVER_DAG_BAD, `n${i}`,
+				`solver 的 step ${i}（${s.op} ${JSON.stringify(s.args || {})} → ${s.hash}）用形状代数重算得 ${expectShape ?? "(无法重算)"}`,
+				{ class: "solver-dag-unreconstructable", step: i });
+		}
+		out.push(node);
+	}
+
+	return { ok: true, dag: out, pigments, demand: Object.fromEntries(demand) };
 }
 
-/** 造一条带 `class`（枚举外的精确分诊码）的失败对象。reason 仍严格落 §2.5。 */
-function failReason(reason, nodeId, detail, extra = {}) {
-	const f = fail(reason, { nodeId: nodeId || "", cell: null, check: "" },
-		`${detail}｜P8 不猜语义。**精确分诊码**=${extra.class || "-"}（§2.5 枚举无对应项，见 harness/NOTES.md §2.5 缺口）`);
-	return { ...f, class: extra.class || null };
-}
-
-/* ════════════════ Stage 2½：颜料供料闸（fail-closed，绝不替 solver 补数据）════════════ */
+/* ════════════════ Stage 2½：颜料供料闸（接新契约后：校验〉补数据）════════════════ */
 
 /**
- * solver 把颜料**折进了 paint 的 color 参数**（`solver-README.md`「能力边界」表里的自我登记：
- * 「解里 `paint cyan` 隐含 mixer（解的呈现没显式列出 mix 步骤）【缺口：plan 输出中应插入 mix 节点】」）。
- * 后果：paint 节点只有 **1 个 parent**，而 painter 模板是 **2 个输入槽**（shape←left、color←top，
- * GEOMETRY 表1:19 + 表3 规则 6「颜料是独立物流：painter 的 color 从 top 进 → 必须为颜料留垂直通道」，
- * M2a 实机验证过两条不同方向的物流都到位才上色）。空着的 color 槽 = 上色器堵死。
+ * solver 4e60013 起颜料是**一等节点**（`mineColor` / `mix`，hash=`color:<name>`），
+ * `paint.inputs = [shape, pigment]`。所以本闸的职责从「发现颜料缺失就拒」变成**三件事**：
  *
- * 本包**不替上游补颜料节点**，理由两条：
- *   1. 任务书明写「管线对上游违约输入要 fail-closed（拒了并说明，**不静默修数据**）」；凭空造一台矿机
- *      采一个「不存在的颜料」就是静默改配方。
- *   2. 契约里**没有颜料通道的位置**：`LayoutReport.channels[].payload` 必须是 shapez shortKey
- *      （types.mjs:597 checkShortKeyGrammar），而游戏里颜料是 `ColorItem` 不是 `ShapeItem`
- *      （recon/upstream-full/src/js/game/items/color_item.js:28 `getItemType()="color"`）。
- *      实测：唯一能过语法闸又不被 S1 判假的 token 只有**空形状** `"--------"`
- *      （`parse∘hash` 的不动点；任何 `-r-r-r-r` 这类「有色空位」都被 hash 归一回 `--------`，
- *      S1 立刻报 `expectedHash="-r-r-r-r" actualHash="--------"`），而它只有一个 ⇒
- *      **两台以上上色器无法在同一张图里各自拿到颜料来源**（第二台撞 P3 的「hash 唯一」闸，
- *      共用一台撞 P3 的「扇出 >1 → 需隧道」闸）。这条缺口登记进 NOTES（要 P1 给 payload 加
- *      `kind:"color"` 或 P2 给 OpTemplate 加 colorSource 字段才能治本）。
+ *   1. **painter 必须真的拿到颜料**：`paint` 的输入槽数（模板 2 个：shape/color）必须都有上游。
+ *      这是旧 B-2 的护栏 —— 如果将来 solver 又退回「颜料折进 args」，这里立刻报，不会悄悄放行。
+ *   2. **颜料输入必须指向颜料节点**：`paint.inputs[1]` 对应的节点 `kind === "pigment"`；
+ *      指到形状上 = 配方错，拒（不猜）。
+ *   3. **mixer 必须有两个颜色输入**（模板 2 个 bottom），且都必须是颜料节点。
  *
- * @param {object} step 重建出的 dag 节点（{hash,op,args,parents}）
- * @param {object} tpl  该 op 的 OpTemplate
- * @returns {{ok:false,reason,failingNode,hint,class}|null} null = 供料齐
+ * `mineColor` 不在这里校验 —— 它就是矿机，矿位由 siteStage 按 `color` 与 `tileResource` 对拍。
+ *
+ * @param {object[]} dag rebuildDag 的 dag（节点已 token 化，含 kind/color）
+ * @returns {{ok:true}|failure}
  */
-export function checkPigmentFeeding(step, tpl) {
-	const needs = (tpl && tpl.inputs ? tpl.inputs.length : 0);
-	const has = (step.parents || []).filter(Boolean).length;
-	if (has >= needs || needs === 0) return null;
-	const slots = (tpl.inputs || []).map(s => s.role);
-	const unfed = slots.slice(has);
-	const isPaint = step.op === "paint" || step.op === "paintMirrored" || step.op === "mix";
-	const f = fail(validateReason("V4-slot-alignment"),
-		{ nodeId: `paint(${step.hash})`, cell: null, check: "V4-slot-alignment" },
-		`${step.op}(${JSON.stringify(step.args || {})}) → ${step.hash} 有 ${needs} 个输入槽（${slots.join("/")}）`
-		+ `但配方只给了 ${has} 个上游，空槽 ${unfed.join("/")} 无供料：`
-		+ (isPaint
-			? `颜料是**独立物流**（GEOMETRY 表3 规则 6）而 proto/solver.mjs 把颜料混色**折进了 paint.color**、`
-			+ `不产出 mix/pigment 节点（solver-README「缺口：plan 输出中应插入 mix 步骤」）。`
-			: `op ${step.op} 的第 ${has} 个输入槽缺上游。`)
-		+ `**P8 不凭空造矿机补颜料**（那是静默改配方），也不塞进蓝图 —— 交给配方层修：`
-		+ `要么 solver 显式产出 mix/颜料节点，要么 P1/P2 给「颜料通道」定契约形态（见 harness/NOTES.md 缺口 G-PIGMENT）`);
-	return { ...f, class: "solver-pigment-folded-into-paint" };
-}
-
-/** 整条 dag 的颜料供料扫描（第一个未供料的槽即拒，reason 精确、不往下猜布局）。 */
 export function checkPigments(dag) {
+	const byHash = new Map((dag || []).map(n => [n.hash, n]));
 	for (const step of dag || []) {
-		const spec = OP_MAP[step.op];
-		const opName = spec && spec.variant ? spec.variant({ args: step.args }) : (spec ? spec.op : step.op);
-		const tpl = ALL_TEMPLATES[opName];
-		if (!tpl) continue;                                  // 未知 op 由 mapOps 负责拒
-		const bad = checkPigmentFeeding({ ...step, op: opName }, tpl);
-		if (bad) return bad;
+		if (step.kind === "pigment") {
+			// mix 的两个输入必须是「更早出现的颜料节点」
+			if (step.op === "mix") {
+				const ins = step.inputs || [];
+				if (ins.length !== 2) {
+					return fail(validateReason("V4-slot-alignment"),
+						{ nodeId: step.hash, cell: null, check: "V4-slot-alignment" },
+						`mix(${step.color}) 需要 2 个颜色输入（mixer 两个 bottom），实得 ${ins.length}`);
+				}
+				for (const h of ins) {
+					const up = byHash.get(h);
+					if (!up || up.kind !== "pigment") {
+						return fail(validateReason("V4-slot-alignment"),
+							{ nodeId: step.hash, cell: null, check: "V4-slot-alignment" },
+							`mix(${step.color}) 的输入 ${h} 不是颜料节点（实得 ${up ? up.kind : "不存在"}）`);
+					}
+				}
+			}
+			continue;
+		}
+
+		const tpl = ALL_TEMPLATES[step.op];
+		if (!tpl) continue;                                  // 未知 op 归 mapOps
+		const needs = (tpl.inputs || []).length;
+		const has = (step.inputs || []).length;
+		if (has < needs) {
+			const slots = (tpl.inputs || []).map(x => x.role);
+			return fail(validateReason("V4-slot-alignment"),
+				{ nodeId: step.hash, cell: null, check: "V4-slot-alignment" },
+				`${step.op}(${JSON.stringify(step.args || {})}) → ${step.hash} 有 ${needs} 个输入槽`
+				+ `（${slots.join("/")}）但只给了 ${has} 个上游，空槽 ${slots.slice(has).join("/")} 无供料：`
+				+ (step.op === "paint"
+					? `颜料是**独立物流**（GEOMETRY 表3 规则 6）。solver 现在应当产出 mineColor/mix 节点；`
+					+ `若这里报错，说明配方层又退回了「颜料折进 args.color」（solver-README §1 的旧缺口）`
+					: `该 op 的第 ${has} 个输入槽缺上游`));
+		}
+		// painter 的第 2 输入必须是颜料节点
+		if (step.op === "paint" && has >= 2) {
+			const pig = byHash.get(step.inputs[1]);
+			if (!pig || pig.kind !== "pigment") {
+				return fail(validateReason("V4-slot-alignment"),
+					{ nodeId: step.hash, cell: null, check: "V4-slot-alignment" },
+					`paint(${step.hash}) 的 color 槽输入 ${step.inputs[1]} 不是颜料节点（实得 ${pig ? pig.kind : "不存在"}）`);
+			}
+			if (pig.color !== (step.args && step.args.color)) {
+				return fail(validateReason("V4-slot-alignment"),
+					{ nodeId: step.hash, cell: null, check: "V4-slot-alignment" },
+					`paint(${step.hash}) 要 ${step.args && step.args.color}，但 color 槽接的是 ${pig.color}`);
+			}
+		}
 	}
 	return { ok: true };
 }
@@ -944,16 +1105,16 @@ function compileInner(input) {
 	}));
 	if (sv.ok === false) return bail(sv);
 
-	/* 2a. 重建父节点（solver 的 steps 不带 parents —— 见 rebuildDag 头注） */
+	/* 2a. solver steps → 编译期 DAG（采用 inputs + 颜料 token 化 + 形状代数自证） */
 	const dg = trace(stages, "rebuildDag", rebuildDag(sv.steps));
 	if (dg.ok === false) return bail(dg);
 
-	/* 2b. op 映射 → P3 归一化 steps */
+	/* 2b. op 映射 → P3 归一化 steps（`mineColor`→`mine`、颜料 token 作 hash） */
 	const mp = trace(stages, "mapOps", mapOps(dg));
 	if (mp.ok === false) return bail(mp);
 
-	/* 2½. 颜料供料闸：painter 的 color 槽被 solver 折进了 args（见 checkPigmentFeeding）。
-	   本包**不凭空造矿机补数据** → 精确分诊 + 拒。放在作图之前，省一次无用的 place/route。 */
+	/* 2½. 颜料契约闸：painter 的 color 槽必须接颜料节点、mixer 必须两色输入（见 checkPigments）。
+	   solver 4e60013 起颜料是一等节点；本闸是**护栏**（退回旧缺口会立刻红），不是补数据。 */
 	const pig = trace(stages, "pigmentGate", checkPigments(dg.dag));
 	if (pig.ok === false) return bail(pig);
 

@@ -146,16 +146,56 @@ out/<goal>.validator.json {goal, ...ValidatorReport, gate:auditReport}
 - `provenance.worldPlacement.pasteAt = anchor + emit.anchor` 是「蓝图内 min corner 的世界坐标」，
   与 mod 的 `export_blueprint` 口径一致（`paste_blueprint{x,y}` 填它或 anchor 等价 —— 本包的 anchor 已归一）。
 
-## 7. 已产出的交接件（本轮）
 
+## 7. 接新颜料契约（B-2 修复后，P8 最后一轮）
+
+solver `4e60013` 之后 `steps[]` 变成：形状节点 `hash=<shortKey>`，颜料节点 `hash=color:<name>`、
+`op ∈ {mineColor, mix}`、`inputs` 显式（`paint → [shape, pigment]`、`mix → [colorA, colorB]`）。
+P8 侧接法（**不改 P3/P1**）：
+
+1. **`rebuildDag` 不再重建父节点**：solver 现在给了 `inputs`，直接采用；形状代数复算降级为**自证**
+   （hash 与 inputs 对不上 → 结构化拒，仍不猜）。
+2. **颜料节点 → 编译期 token**：`color:<name>` 不能进 P3（`channels.payload` 必须是 shortKey，
+   types.mjs:597）。P8 在映射层把它换成**合法 shortKey 语法的 token**：
+   四象限 sub 全 `'-'`、把颜色字符放在第 k 个象限（`-c------`、`--c-----`…）。
+   · `parse` 对 `-c` 只看 sub（`'-'`）忽略颜色 ⇒ token 解析成空形状、不会污染形状代数；
+   · 语法闸（每层 8 字符、每象限 `[sub][color]`）通过；
+   · **同色第 k 份副本用第 k 个象限** ⇒ hash 唯一，满足 P3 的「hash 唯一」闸。
+3. **共享颜料 = 复制矿机，不是扇出**（solver-README §3.4-3 / §3.5 实测：扇出会被 P3 判
+   `crossing-needs-tunnel`）。每个消费者拿一份独立 token ⇒ 独立矿机 + 独立矿位。
+4. **S1 只复放形状**：颜料节点不是形状（`ColorItem`），从 `dagForS1` 里剔除，`paint` 的 parents
+   只留 shape。理由：`applyOp('paint')` 只用 `parents[0]`；而 pigment token 的 `parse∘hash` 会塌成
+   空形状（solver-README §1.2 理由 2），留在 S1 里必假红。
+
+
+## 8. 已产出的交接件（本轮）
 | goal | 官方关卡 | 实体 | 带子 | 拐角 | 蓝图 | validator |
 |---|---|---|---|---|---|---|
-| `CuCuCuCu` | 1 | 2 | 1 | 0 | 68 字符 | pass |
-| `RuRuRuRu` | 3 | 2 | 1 | 0 | 68 字符 | pass |
-| `Cu----Cu` | 5 | 20 | 16 | 0 | 133 字符 | pass |
-| `--CuCu--` | — | 20 | 16 | 0 | 134 字符 | pass |
-| `Ru----Ru` | — | 20 | 16 | 0 | 133 字符 | pass |
-| `--SuSu--` | — | 20 | 16 | 0 | 134 字符 | pass |
+| `CuCuCuCu` | 1 | 4 | 3 | 0 | 见 out/ | pass |
+| `RuRuRuRu` | 3 | 4 | 3 | 0 | 见 out/ | pass |
+| `Cu----Cu` | 5 | 22 | 18 | 0 | 见 out/ | pass |
+| `--CuCu--` | — | 22 | 18 | 0 | 见 out/ | pass |
+| `Ru----Ru` | — | 22 | 18 | 0 | 见 out/ | pass |
+| `--SuSu--` | — | 22 | 18 | 0 | 见 out/ | pass |
+| **`----CuCu`** | **2（L3 验收目标）** | **14** | **11** | 4 | 见 out/ | pass |
+| `RuRu----` | 4 | 14 | 11 | 4 | 见 out/ | pass |
+| `Cu------` | 6 | 32 | 26 | — | 见 out/ | pass |
 
-> `----CuCu`（L2）、`CrCrCrCr`（L7）、`CgScScCg`（L11）**没有**交接件 —— 它们被 B-1/B-2 拦下。
-> 这是如实记录：`run-all` 的绿是「闸正常工作」，不是「所有目标都能布」。
+### 8.1 仍被拦的目标（精确 reason，不伪造）
+
+| goal | 卡在哪 | reason | 归因 |
+|---|---|---|---|
+| `CrCrCrCr`（L7）、`RbRb----`（L8）、`CpCpCpCp`（L9） | `routeStage` | `dag-not-placeable:column-conflict-unresolved` | **P3/P4 几何**：painter 的输出朝 **+x**，而 hub 在树上端需要 **+y** 竖车道；`assignLanes` 对 `n2->hub[out]`（vlane）报 `lane-column`，与 hub 4×4 占位冲突。**颜料通道本身可布**（`connectHub:false` 时同一布局 route 全绿：28 带 / 5 拐角）⇒ 瓶颈不在颜料，是 painter→hub 的那一竖段。 |
+| `CgScScCg`（L11） | `routeStage` | 同上（先遇到 `placeStage` 的 `crossing-needs-tunnel`，再是 lane 冲突） | P3/P4 的**双分支汇入 stacker**（B-3）叠加 painter→hub 的 +x/+y 问题 |
+
+**给主线程的判断依据（可复现）**：
+```js
+// 同一 CrCrCrCr 布局：连 hub 失败，不连 hub 全绿 ⇒ 失败点是 hub 连接段
+place({steps, hub:{x:-4,y:-4}, world:hubWorldState([-4,-4],null), connectHub:false})  // → route OK, 28 belts / 5 corners
+place({steps, hub:{x:-4,y:-4}, world:hubWorldState([-4,-4],null)})                    // → route FAIL, n2->hub lane-column
+```
+扫过 `hub ∈ [-8..8]×[-8..0] × rowGap{8,10,12} × colGap{3,4,5,6}` 共 648 组：**0 命中** ⇒ 不是参数问题。
+建议 P4：给 `painter`（`flowAxis:"x"`）到 hub 的通道**优先选水平入口**（hub 左列/右列），
+或在 `assignLanes` 里允许 v1 用「列车道」；M2a 实机验证过 painter 右出接 trash，说明 +x 本身可达。
+
+> `run-all` 的绿是「闸正常工作」；`----CuCu`（L3 目标）现在真的能出蓝图，上色目标仍被几何拦下 —— 如实分开记。

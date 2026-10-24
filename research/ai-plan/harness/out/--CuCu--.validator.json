@@ -8,11 +8,11 @@
    "evidence": {
     "cell": [
      -4,
-     17
+     19
     ],
     "nodeId": "n0",
     "expected": "落点矩形全空（r=0 包围盒）",
-    "actual": "21 格全空（机器 4 台 + 带子 16 格）",
+    "actual": "23 格全空（机器 4 台 + 带子 18 格）",
     "note": "决策 D1：机器恒 r=0 → 无需旋转包围盒；三态占用与冲突矩阵一律走 P1 的 Grid.placementConflicts"
    }
   },
@@ -33,12 +33,12 @@
    "evidence": {
     "cell": [
      -4,
-     16
+     18
     ],
-    "nodeId": "belt@-4,16",
+    "nodeId": "belt@-4,18",
     "expected": "computeBelt(含机器邻居) 不动点 = 设计的 (r,rv)",
-    "actual": "16/16 全是不动点；施工顺序合规",
-    "note": "includesMachineNeighbors=true（邻居含机器 9 次、带子 24 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
+    "actual": "18/18 全是不动点；施工顺序合规",
+    "note": "includesMachineNeighbors=true（邻居含机器 9 次、带子 28 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
    }
   },
   {
@@ -48,7 +48,7 @@
     "cell": null,
     "nodeId": null,
     "expected": "端点 ∈ 模板槽位 + 通道走通 + 链闭合 + 出口有 acceptor + 生产槽有供料",
-    "actual": "4 条通道 / 16 带格全对齐",
+    "actual": "4 条通道 / 18 带格全对齐",
     "note": "槽位真值 = P2 OP_TEMPLATES + rotateSlot（v1 机器恒 r=0）；带向真值 = src/ai/belt-rules.mjs（**不 import proto 那份**）"
    }
   },
@@ -82,7 +82,7 @@
     "nodeId": "n0",
     "expected": "demandPerSec",
     "actual": "0",
-    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = miner@0.4/s；拐角 0 个 → 有效带长 16.00（derate 1.000，机器限速 ⇒ 只报告不折进判定）"
+    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = miner@0.4/s；拐角 0 个 → 有效带长 18.00（derate 1.000，机器限速 ⇒ 只报告不折进判定）"
    }
   },
   {
@@ -113,7 +113,7 @@
    "evidence": {
     "cell": [
      -4,
-     1
+     3
     ],
     "nodeId": "n2",
     "expected": "当前等级 L1 的可用机器集",
@@ -135,8 +135,8 @@
  ],
  "errors": [],
  "beltSim": {
-  "tilesChecked": 16,
-  "fixedPoints": 16,
+  "tilesChecked": 18,
+  "fixedPoints": 18,
   "drift": [],
   "includesMachineNeighbors": true
  },
@@ -181,8 +181,8 @@
    "errors": 0,
    "failIds": [],
    "beltSim": {
-    "tilesChecked": 16,
-    "fixedPoints": 16,
+    "tilesChecked": 18,
+    "fixedPoints": 18,
     "drift": [],
     "includesMachineNeighbors": true
    }

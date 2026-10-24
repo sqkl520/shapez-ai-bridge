@@ -50,7 +50,7 @@ console.log("\n── A 端到端：真实关卡目标（level 1-5 的官方形�
  *   level 1 `CuCuCuCu`、level 3 `RuRuRuRu`、level 5 `Cu----Cu`。
  * 选它们不是挑软柿子：v1 范围（单层/无隧道/机器不转/入度≤2）能**真布通**的就是这些形态。
  */
-const PASSING = ["CuCuCuCu", "RuRuRuRu", "Cu----Cu", "--CuCu--", "Ru----Ru", "--SuSu--"];
+const PASSING = ["CuCuCuCu", "RuRuRuRu", "Cu----Cu", "--CuCu--", "Ru----Ru", "--SuSu--", "----CuCu", "RuRu----"];
 const plans = {};
 for (const goal of PASSING) {
 	const p = compilePlan({ goal, seed: 43391 });
@@ -168,37 +168,56 @@ console.log("\n── C 失败路径：每条都断言精确 reason（不静默�
 	eq(levelForGoal("----CuCu"), 2, "C3b levelForGoal('----CuCu') === 2（官方 L2）");
 	eq(levelForGoal("CuCuCuCu"), 1, "C3b levelForGoal('CuCuCuCu') === 1");
 }
-// C4 颜料供料（solver 把颜料折进 paint；P8 不补数据 → fail-closed）
+// C4 颜料契约（solver 4e60013 起颜料是一等节点 → 路径变化，但护栏仍在）
 {
+	// ① 正向：新契约下颜料确实进了 plan（mineColor/mix 节点 + paint 双输入）
+	const { solveGoal: sg, rebuildDag: rb } = await import(pathToFileURL(path.join(REPO, "src/ai/compiler/compile.mjs")).href);
+	const sv = sg("CrCrCrCr", {});
+	const dg = rb(sv.steps);
+	const pig = dg.dag.filter(n => n.kind === "pigment");
+	say(pig.length === 1 && pig[0].op === "mineColor" && pig[0].color === "red", "C4 新契约：CrCrCrCr 的 plan 含 1 个 mineColor(red)", pig);
+	const paint = dg.dag.find(n => n.op === "paint");
+	say(paint && paint.inputs.length === 2, "C4 新契约：paint 有两路输入（shape + pigment）", paint && paint.inputs);
+	say(paint && /^-+r/.test(paint.inputs[1]) || /r/.test(paint.inputs[1]), "C4 新契约： pigments 输入是合法 shortKey token（sub 全 '-'）", paint && paint.inputs[1]);
+	// ② 颜料 token 必须过 P1 语法、且 hash 唯一（这是 P3 的两个硬闸）
+	const { assertLayoutReport } = await import(pathToFileURL(path.join(REPO, "src/ai/compiler/types.mjs")).href);
+	for (const n of pig) say(!/^[-RCSW][rgbypcuw-]$/.test(n.hash.slice(0, 2)) || n.hash.length === 8, `C4 token ${n.hash} 长度 8（P1 语法闸）`);
+	const hashes = dg.dag.map(n => n.hash);
+	eq(new Set(hashes).size, hashes.length, "C4 所有节点 hash 唯一（P3 的唯一闸）");
+	// ③ 护栏：如果配方层退回「颜料折进 args」，pigmentGate 必须拒（用旧形态构造）
+	const { checkPigments } = await import(pathToFileURL(path.join(REPO, "src/ai/compiler/compile.mjs")).href);
+	const legacy = [{ hash: "CrCrCrCr", op: "paint", args: { color: "red" }, inputs: ["CuCuCuCu"], kind: "shape" }];
+	say(checkPigments(legacy).ok === false, "C4 护栏：paint 只有 1 路输入（旧缺口形态）→ pigmentGate 拒");
+	// ④ 上色目标当前被 P3/P4 的 painter→hub 几何拦下（NOTES §8.1），reason 必须精确
 	const p = compilePlan({ goal: "CrCrCrCr", seed: 43391 });
-	say(p.ok === false, "C4 上色目标 → ok:false（painter 的 color 槽无供料）");
-	eq(p.reason, "validate:V4", "C4 reason === validate:V4（输入槽空供料）");
-	eq(p.class, "solver-pigment-folded-into-paint", "C4 class 精确点名「solver 颜料折叠」");
-	eq(p.failingNode && p.failingNode.check, "V4-slot-alignment", "C4 failingNode.check === V4-slot-alignment");
-	ok(/solver|mix|颜料/.test(p.hint || ""), "C4 hint 说明是 solver 缺口 + 归口", p.hint);
-	say(p.stages.pigmentGate && p.stages.pigmentGate.ok === false, "C4 在 pigmentGate 段就拒（省掉一次无用作图）");
+	say(p.ok === false, "C4 上色目标仍被拦（painter→hub 竖车道，P3/P4 几何）");
+	eq(p.reason, "dag-not-placeable:column-conflict-unresolved", "C4 reason 精确（不伪造成功）");
+	say(p.stages.pigmentGate.ok === true, "C4 失败点**不在**颜料闸（颜料已过，卡在几何）", p.stages);
 }
-// C5 上游结构阻断：P3 的 cutter 废料行压在 hub 底排 → V3 死锁（见 NOTES B-1）
+// C5 ✓ B-1 已修：----CuCu（L3 验收目标）现在真的能出蓝图
 {
 	const p = compilePlan({ goal: "----CuCu", seed: 43391 });
-	say(p.ok === false, "C5 ----CuCu（level-2 官方目标）当前被 V3 拒");
-	eq(p.reason, "validate:V3", "C5 reason === validate:V3（含机器邻居下拐角不是不动点）");
-	eq(p.failingNode && p.failingNode.check, "V3-belt-fixed-point", "C5 failingNode.check === V3-belt-fixed-point");
-	ok(p.validation && p.validation.beltSim.drift.length >= 1, "C5 报告里带 drift 凭据", p.validation && p.validation.beltSim.drift);
-	// 同一布局**不连 hub** 时 V3 通过 —— 证明失败来自 hub 邻接，不是几何本身
-	const nh = compilePlan({ goal: "----CuCu", seed: 43391 });
-	void nh;
+	say(p.ok === true, "C5 ----CuCu（L3 验收目标）→ ok:true（B-1 修复后）", p.ok === false ? { reason: p.reason, hint: p.hint } : undefined);
+	if (p.ok) {
+		say(p.validation.pass === true, "C5 ----CuCu: validator.pass");
+		eq(p.validation.beltSim.drift.length, 0, "C5 ----CuCu: V3 drift === 0");
+		say(p.entities.length === 14, "C5 ----CuCu: 14 实体", p.entities.length);
+		say(p.blueprint.startsWith("SZBP1."), "C5 ----CuCu: 产出蓝图");
+	}
 }
-// C6 多分支汇合（CgScScCg 的 4 输入双分支）→ P3/P4 的 lane 冲突
+// C6 多分支汇合（CgScScCg）→ 仍被 P3/P4 拦（B-3 + painter 几何）
 {
 	const p = compilePlan({ goal: "CgScScCg", seed: 43391 });
-	say(p.ok === false, "C6 CgScScCg 顶层失败（颜料 + 汇合双重阻断）");
-	say(p.reason === "validate:V4" && p.class === "solver-pigment-folded-into-paint", "C6 先被颜料闸拒（归因顺序：配方层先于几何层）", { reason: p.reason, class: p.class });
+	say(p.ok === false, "C6 CgScScCg 仍失败（B-3 未修）");
+	say(["dag-not-placeable:crossing-needs-tunnel", "dag-not-placeable:column-conflict-unresolved"].includes(p.reason),
+		"C6 reason ∈ {crossing-needs-tunnel, column-conflict-unresolved}", p.reason);
+	say(p.stages.pigmentGate.ok === true, "C6 颜料闸已过（不是颜料问题）", p.stages);
 }
-// C7 无资源 + 出口：no-resource 在 pigment 之后（顺序即归因优先级）
+// C7 多层 / 无资源 的归因顺序不变
 {
-	const p = compilePlan({ goal: "RbRbRbRb", seed: 43391 });
-	say(p.ok === false && p.class === "solver-pigment-folded-into-paint", "C7 上色目标优先报颜料缺口（配方层归因优先）");
+	const p = compilePlan({ goal: "RbRb----", seed: 43391 });
+	say(p.ok === false && p.reason === "dag-not-placeable:column-conflict-unresolved",
+		"C7 上色目标归因到几何（颜料已过）", { reason: p.reason, class: p.class });
 }
 
 /* ══════════════════ D. 交接件三件套 ══════════════════ */
@@ -314,13 +333,31 @@ console.log("\n── H 单元：op 映射表与工具函数 ──");
 	// inspectGoal
 	eq(inspectGoal("CuCuCuCu").layers, 1, "H inspectGoal(CuCuCuCu).layers === 1");
 	eq(inspectGoal("A:B").ok, false, "H inspectGoal 非法层长度 → ok:false");
-	// checkPigments：有 shape+color 两路供料就该放行
-	const goodDag = [{ hash: "CuCuCuCu", op: "mine", args: {}, parents: [] }, { hash: "CrCrCrCr", op: "paint", args: { color: "red" }, parents: ["CuCuCuCu", "--------"] }];
-	const mappedGood = goodDag.map(s => ({ ...s, op: OP_MAP[s.op].variant ? OP_MAP[s.op].variant(s) : s.op }));
-	say(checkPigments(mappedGood).ok === true, "H checkPigments：color 槽有供料 → ok");
-	const badDag = [{ hash: "CrCrCrCr", op: "paint", args: { color: "red" }, parents: ["CuCuCuCu"] }];
-	const mappedBad = badDag.map(s => ({ ...s, op: OP_MAP[s.op].variant ? OP_MAP[s.op].variant(s) : s.op }));
-	say(checkPigments(mappedBad).ok === false, "H checkPigments：color 槽空 → 拒");
+	// checkPigments（新契约）：painter 的 color 槽必须接**颜料节点**；mixer 必须两个颜料输入
+	const goodDag = [
+		{ hash: "CuCuCuCu", op: "mine", args: {}, inputs: [], kind: "shape" },
+		{ hash: "-r------", op: "mine", args: { color: "red" }, inputs: [], kind: "pigment", color: "red" },
+		{ hash: "CrCrCrCr", op: "paint", args: { color: "red" }, inputs: ["CuCuCuCu", "-r------"], kind: "shape" },
+	];
+	say(checkPigments(goodDag).ok === true, "H checkPigments：color 槽接颜料节点 → ok");
+	const badShape = [
+		{ hash: "CuCuCuCu", op: "mine", args: {}, inputs: [], kind: "shape" },
+		{ hash: "RuRuRuRu", op: "mine", args: {}, inputs: [], kind: "shape" },
+		{ hash: "CrCrCrCr", op: "paint", args: { color: "red" }, inputs: ["CuCuCuCu", "RuRuRuRu"], kind: "shape" },
+	];
+	say(checkPigments(badShape).ok === false, "H checkPigments：color 槽接了**形状** → 拒");
+	const badMix = [
+		{ hash: "CuCuCuCu", op: "mine", args: {}, inputs: [], kind: "shape" },
+		{ hash: "-g------", op: "mine", args: { color: "green" }, inputs: [], kind: "pigment", color: "green" },
+		{ hash: "----c---", op: "mix", args: { color: "cyan" }, inputs: ["CuCuCuCu", "-g------"], kind: "pigment", color: "cyan" },
+	];
+	say(checkPigments(badMix).ok === false, "H checkPigments：mix 的输入不是颜料 → 拒");
+	const badColor = [
+		{ hash: "CuCuCuCu", op: "mine", args: {}, inputs: [], kind: "shape" },
+		{ hash: "-g------", op: "mine", args: { color: "green" }, inputs: [], kind: "pigment", color: "green" },
+		{ hash: "CrCrCrCr", op: "paint", args: { color: "red" }, inputs: ["CuCuCuCu", "-g------"], kind: "shape" },
+	];
+	say(checkPigments(badColor).ok === false, "H checkPigments：颜料颜色与 args.color 不符 → 拒");
 	// 重试常量
 	eq(ROUTE_RETRY_MAX, 3, "H ROUTE_RETRY_MAX === 3（加宽重试上限）");
 	// CLI 的 argv 解析
@@ -348,16 +385,19 @@ console.log("\n── I 上游阻断的最小证据（本包不改上游；这�
 	}
 	eq(rels.filter(Boolean).length, 4, "I-1 四个不同 hubDesign 都能作图");
 	say(rels.every(r => JSON.stringify(r) === JSON.stringify(rels[0])), "I-1 相对布局与 hubDesign 无关 ⇒ 「换 hub 位置」不是解法（P3 把机器簇对齐到 hub）", rels);
-	// I-2 solver 的 steps 确实不带 parents（所以 P8 必须重建 DAG）
-	const s0 = sv.steps[0];
-	say(!("parents" in s0), "I-2 solver 的 step 没有 parents 字段（P8 的 rebuildDag 因此必需）");
-	say(rebuildDag(sv.steps).ok === true, "I-2 rebuildDag 能重建出正确的父链");
-	// I-3 solver 的 paint 只有一个 parent（颜料被折进 args）
+	// I-2 solver 现在**自带 inputs**（4e60013 起），P8 直接采用并在形状代数上自证
+	const s0 = sv.steps.find(x => x.op === "cut");
+	say(s0 && Array.isArray(s0.inputs) && s0.inputs.length === 1, "I-2 solver 的 step 带 inputs（P8 直接采用，不再猜父节点）", s0 && s0.inputs);
+	say(rebuildDag(sv.steps).ok === true, "I-2 rebuildDag 采用 inputs 后仍过形状代数自证");
+	// I-3 solver 的 paint 有 2 路输入（shape + 颜料节点）—— 这就是 B-2 的修复
 	const svCr = solveGoal("CrCrCrCr", {});
+	const paintStep = svCr.steps.find(x => x.op === "paint");
+	say(paintStep && paintStep.inputs.length === 2, "I-3 solver 的 paint 有 2 路输入（shape + pigment）", paintStep && paintStep.inputs);
+	say(paintStep && String(paintStep.inputs[1]).startsWith("color:"), "I-3 第 2 输入是 color:<name> 命名空间", paintStep && paintStep.inputs[1]);
 	const dagCr = rebuildDag(svCr.steps);
 	const paintNode = dagCr.dag.find(s => s.op === "paint");
-	say(paintNode && paintNode.parents.length === 1, "I-3 solver 的 paint 只有 1 个 parent（颜料折进 args.color，无 mix 节点）", paintNode);
-	// I-4 空形状是唯一能当颜料通道的 token（parse∘hash 不动点）
+	say(paintNode && paintNode.inputs.length === 2, "I-3 P8 侧的 paint 保留了 2 路输入", paintNode && paintNode.inputs);
+	say(dagCr.dag.filter(n => n.kind === "pigment").length === 1, "I-3 颜料是独立节点（不是 args 方言）");
 	const SO = await import(pathToFileURL(path.join(REPO, "research/ai-player/proto/shape-ops.mjs")).href);
 	eq(SO.hash(SO.parse("--------")), "--------", "I-4 「--------」是 parse∘hash 不动点（唯一可当通道 token 的空形状）");
 	eq(SO.hash(SO.parse("-r-r-r-r")), "--------", "I-4 「-r-r-r-r」被 hash 归一回空形状 ⇒ 有色颜料 token 无法作 payload");
@@ -365,6 +405,6 @@ console.log("\n── I 上游阻断的最小证据（本包不改上游；这�
 
 /* ══════════════════ 汇总 ══════════════════ */
 console.log(`\n${fail === 0 ? "✓" : "✗"} P8 harness L0：${pass} 通过 / ${fail} 失败（${Date.now() - t0}ms）`);
-console.log(`  通过的目标（真布通）：${PASSING.filter(g => plans[g] && plans[g].ok).join(" ")}`);
-console.log(`  被闸拦下的目标（精确 reason 已锁）：----CuCu(V3) CrCrCrCr(V4/颜料) CgScScCg(V4/颜料) 多层(scope)`);
+console.log(`  通过的目标（真布通，含 L3 验收目标 ----CuCu）：${PASSING.filter(g => plans[g] && plans[g].ok).join(" ")}`);
+console.log(`  仍被拦的目标（精确 reason 已锁）：CrCrCrCr/RbRb----/CpCpCpCp(painter→hub 竖车道) CgScScCg(B-3+几何) 多层(scope)`);
 if (fail) process.exitCode = 1;
