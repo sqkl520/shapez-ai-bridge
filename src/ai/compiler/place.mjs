@@ -40,7 +40,7 @@ import { Grid, cellKey } from "./grid.mjs";
 import { assertLayoutReport, SCOPE_V1, ORDER, OPP, DIRV } from "./types.mjs";
 import { makeFailure, ContractViolation } from "./errors.mjs";
 import { ALL_TEMPLATES, hubEntriesWorld } from "../op-templates.mjs";
-import { findResource, regionAround, tileResource } from "../world.mjs";
+import { findResource, regionAround, tileResource, resourcesInRegion } from "../world.mjs";
 
 export const PLACE_VERSION = "0.5.0";
 
@@ -479,9 +479,118 @@ export function layerAndOrder(nodes) {
  *   - 水平进料（painter 的 shape←left）⇒ 父列 = 槽格外侧列（本机列 - 1 - cx）
  * @returns {{levels:Array, rows:Array, occupied:Map<string,Set<string>>}}
  */
+/**
+ * 给**矿机层**求一组 x（世界系），使得每台矿机都压在自己的资源上。
+ *
+ * 为什么需要它：`assignRows` 默认把同层机器按 `游标 + colGap` 等距排开（间距 4 格）。
+ * 矿机的**唯一**硬约束是"压在自己的资源格上" —— 它们之间的相对间距毫无意义，
+ * 因为矿机之间不直接相连（各自的出料各走各的通道）。把一个不该固定的量固定住，
+ * 就等于要求世界里的矿恰好落在 4 格栅格上：`CpCpCpCp` 需要 Cu/blue/red 三连，
+ * ±400 内只有 2 处满足这种相对偏移，且都在边缘（实测）。这不是搜索范围问题。
+ *
+ * 算法（确定性）：
+ *   ① 对区域内每个 y，按布局的**左右次序**求一组资源 x（每台取"比前一台大的最左一个"）；
+ *   ② 保留**跨度最小**的那一行（跨度决定通道长度，V4 有 256 格上限）；
+ *   ③ 同跨度按"离搜索中心近"再按 y 升序 tie-break（完全确定，无 locale 依赖）。
+ *
+ * ★ 同色矿机允许**互换次序** ★
+ * 两台同色矿机（如 `CgScScCg` 的 `-g------` 与 `---g----`，都是 green）在 DAG 里是
+ * **互不相关**的节点（各自喂不同的消费者），交换它们的左右次序不改变任何通道的端点，
+ * 因此不产生交叉 —— 而"严格保序"会让 `CgScScCg` 在 ±400 内无解（实测 0 行）。
+ * 互换只在**同色**之间做；跨色交换会改变端点相对位置，可能交叉，不做。
+ *
+ * @param {object[]} miners 矿机节点（按布局 x 升序）
+ * @param {{seed:number, region:object, center:number[]}} ctx
+ * @returns {Map<string, number[]>|null} nodeId → [x, y]（世界系）；保序无解时返回 null
+ */
+export function planMinerColumns(miners, ctx) {
+	const { seed, region, center } = ctx;
+	if (!miners.length) return null;
+	const shapes = miners.map(m => m.resource || m.hash);
+	// 同一行里，每种资源可取的那些 x：y → shape → sorted xs
+	const byRow = new Map();
+	for (const [x, y, s] of resourcesInRegion(seed, region)) {
+		if (!byRow.has(y)) byRow.set(y, new Map());
+		const m = byRow.get(y);
+		if (!m.has(s)) m.set(s, []);
+		m.get(s).push(x);
+	}
+	for (const m of byRow.values()) for (const xs of m.values()) xs.sort(cmpNum);
+
+	const need = new Map();
+	for (const s of shapes) need.set(s, (need.get(s) || 0) + 1);
+
+	/** 按给定次序在某一行上贪心取 x；取不到返回 null */
+	const greedy = (m, order) => {
+		let prev = -Infinity; const xs = [];
+		for (const s of order) {
+			const x = (m.get(s) || []).find(v => v > prev);
+			if (x === undefined) return null;
+			xs.push(x); prev = x;
+		}
+		return xs;
+	};
+	/** 生成"同色可互换"的次序。
+	 *
+	 * ⚠️ **只能交换同色**，绝不能让不同颜色之间换位：
+	 *    不同色的矿机喂不同的消费者，换了左右次序会改变端点相对位置 → 通道交叉
+	 *    （`CpCpCpCp` 若允许 blue/red/Cu 全排列，会选出 `-b(-93) → -r(-120) → n0(-121)`
+	 *     这种**反序**解：跨度很小、但红线从右往左走，物理上不成立）。
+	 *    真正的自由度只有：**同色集团可以整体挪到别处**（`green,blue,green` → `green,green,blue`）。
+	 *
+	 * 做法：保持颜色首次出现的**顺序**（= 跨色次序），只把每种颜色的重复出现"聚拢"到
+	 * 该颜色可用的若干个位置组合上。颜色 ≤ 5、每种 ≤ 2 ⇒ 组合数很小。
+	 */
+	const permsOf = a => a.length <= 1 ? [a] : a.flatMap((v, i) => permsOf([...a.slice(0, i), ...a.slice(i + 1)]).map(r => [v, ...r]));
+	const colorSeq = [...new Set(shapes)];                 // 跨色次序 = 首次出现序（不可变）
+	/* 同色的"位置分配"：把第 k 个重复项放进哪些槽位。这里用最简的一档 ——
+	   同色项**相邻**（紧挨着），这对本仓库的目标族是唯一需要的形态，且天然不产生反序。 */
+	const orders = [(() => {
+		const out = [];
+		for (const s of colorSeq) for (let k = 0; k < (need.get(s) || 0); k++) out.push(s);
+		return out;
+	})()];
+	/* 若某色出现 ≥2 次，再补一个"该色分散到原来各自位置"的候选（保原始序），
+	   两者都试、按跨度取优 —— 两者都不改变跨色次序。 */
+	if ([...need.values()].some(n => n > 1)) orders.push(shapes.slice());
+	void permsOf;
+
+	const cands = [];
+	for (const [y, m] of byRow) {
+		if ([...need].some(([s, n]) => (m.get(s) || []).length < n)) continue;
+		for (const order of orders) {
+			const xs = greedy(m, order);
+			if (!xs) continue;
+			cands.push({ y, xs, order, span: xs[xs.length - 1] - xs[0], d: Math.abs(y - center[1]) });
+		}
+	}
+	if (!cands.length) return null;
+	cands.sort((a, b) => a.span - b.span || a.d - b.d || a.y - b.y);
+	const best = cands[0];
+	const out = new Map();
+	/* 把按 `best.order` 取到的 x，还原到**每台矿机自己的颜色**上：
+	   第 k 个位置属于 order[k] 这种颜色；同色的第 j 台矿机取该颜色第 j 个槽。
+	   这样 nodeId → x 的映射对同色互换是稳定的（谁站哪个位由颜色决定，不由 id 决定）。 */
+	const slotsByShape = new Map();     // shape → [x...]（按 order 里出现的次序）
+	best.order.forEach((s, i) => {
+		if (!slotsByShape.has(s)) slotsByShape.set(s, []);
+		slotsByShape.get(s).push(best.xs[i]);
+	});
+	const used = new Map();
+	miners.forEach(mt => {
+		const s = mt.resource || mt.hash;
+		const k = used.get(s) || 0;
+		used.set(s, k + 1);
+		const arr = slotsByShape.get(s) || [];
+		out.set(mt.id, [arr[k], best.y]);
+	});
+	return out;
+}
+
 export function assignRows(levels, opts = {}) {
 	const rowGap = opts.rowGap === undefined ? ROW_H : opts.rowGap;
 	const colGap = opts.colGap === undefined ? COL_GAP : opts.colGap;
+	const minerX = opts.minerX || null;   // 矿机层 nodeId → [x,y]（给了 seed 且多矿机时由 planMinerColumns 求）
 	const occupied = new Map();                       // "y" → Set("x")
 	const claim = (n, x0) => {
 		for (let dy = 0; dy < n.h; dy++) {
@@ -507,17 +616,57 @@ export function assignRows(levels, opts = {}) {
 
 	// 第一遍：自下而上，先满足父列，撞占用则单向右移（确定性）
 	levels.forEach((list, li) => {
+		/* `cursor` 的起点：矿机层从 0 开始（它的 x 由资源给，游标只是兜底）；
+		   其他层从**本层第一台机器的父 x** 开始 —— 不能从 0，也不能取整层的 min。
+		   矿机层由资源决定后可能整层西移到 -270；此时下游若仍从 0 起排，会全部堆在最右端，
+		   与自己的父隔着 200+ 格（实测：CgScScCg 的 paint 在 8、其 painter 输入在 -219）。
+		   ⚠️ 但也不能用**整层**的最小父 x：L1 里 mix 的父在 -266、n1 的父在 -124，
+		   取整层 min 会把 n1 也从 -266 起排，反而把它推离自己的父。按"第一台的父"起步，
+		   后续每台仍由 `desiredX` 定（它按**各自**的父算），游标只在前者撞占时才兜底。 */
 		let cursor = 0;
+		if (li > 0) {
+			const first = list[0];
+			const px = first ? first.parents.filter(Boolean).map(p => p.x).filter(Number.isFinite) : [];
+			if (px.length) cursor = Math.min(...px);
+		}
 		for (const n of list) {
 			n.w = n.template.footprint[0];
 			n.h = n.template.footprint[1];
 			let x = cursor;
-			if (li > 0) {
+			/* 矿机层：x 由**资源**决定（见 planMinerColumns）。这里只做坐标系的换算：
+			   资源给的是世界系，布局用局部系（世界 = origin + 局部），调用方已经把中心换成
+			   世界系并原样返回世界系 x ⇒ 这里减回去由调用方负责（minerX 里存的直接是局部 x）。 */
+			if (li === 0 && minerX && minerX.has(n.id)) x = minerX.get(n.id)[0] - (opts.originX || 0);
+			else if (li > 0) {
 				const want = desiredX(n);
-				if (want !== undefined) x = Math.max(cursor, want);
+				/* ★ 不能用 `Math.max(cursor, want)` ★
+				   cursor 是「上一台机器的右缘 + colGap」，它只为**同层**防重叠服务。
+				   拿它给 want 兜底等于规定"同层机器只能从左往右排"，于是多输入机器
+				   （stacker/mixer 的两个 bottom 在同一行的相邻两列）的**第二个**输入永远
+				   对不上上游喷口：CgScScCg 里 n9 想落在 x=14（带子正对 stacker 的上层输入），
+				   却被 cursor 顶到 18，通道只能报 column-conflict。
+				   正确判据只有一个：**want 那一格有没有被占**。没被占就放 want ——
+				   同层机器允许向左回填，只要不重叠（下面 while 的 clash 逐个方向兜底）。 */
+				/* ⚠️ 这里曾写 `want < 0 ? cursor : want` —— 与第二遍同一个错误假设：
+				   "布局坐标不能是负的"。矿机 x 由资源决定后，负坐标是完全合法的常态
+				   （CgScScCg 的矿机整层在 -266..-42）。照旧判就把**所有**负的 want 换成
+				   cursor，下游于是全部贴在最西端、与自己的父错开 130+ 格。 */
+				if (want !== undefined) x = want;
 			}
 			let guard = 0;
-			while (clash(occupied, n.row, x, x + n.w - 1, n.h) && guard++ < 4096) x++;
+			/* 撞占用时让位：矿机层**只向右**扫（它的 x 是资源给定的，不能随便挪开资源）；
+			   其他层**优先向左找空位**再向右 —— 消费者只要落在"带子对得上"的位置就行，
+			   左右都可以，而向右扫会把整簇机器推离父列（实测：CpCpCpCp 的 mix 被推到 x=2，
+			   与矿机隔着 120 格）。向左先试能保住零拐角/短通道。 */
+			const scanRight = li === 0;
+			if (scanRight) {
+				while (clash(occupied, n.row, x, x + n.w - 1, n.h) && guard++ < 4096) x++;
+			} else if (clash(occupied, n.row, x, x + n.w - 1, n.h)) {
+				let left = x;
+				while (left >= 0 && clash(occupied, n.row, left, left + n.w - 1, n.h) && guard++ < 4096) left--;
+				if (left >= 0 && !clash(occupied, n.row, left, left + n.w - 1, n.h)) x = left;
+				else { guard = 0; while (clash(occupied, n.row, x, x + n.w - 1, n.h) && guard++ < 4096) x++; }
+			}
 			n.x = x;
 			claim(n, x);
 			cursor = x + n.w + colGap;
@@ -527,29 +676,105 @@ export function assignRows(levels, opts = {}) {
 	for (let li = levels.length - 1; li >= 0; li--) {
 		for (const n of levels[li]) {
 			const want = desiredX(n);
-			if (want === undefined || want === n.x || want < 0) continue;
+			/* ⚠️ 这里曾写 `want < 0 → continue`。那是"布局坐标系不允许负 x"的旧假设 ——
+			   它只在矿机被钉在 0 起点时才成立。现在矿机 x 由资源决定（可在任意负坐标），
+			   矿机层合法地落在 -220；照旧判就把**所有**下游的父列对齐请求全跳过，
+			   于是 mix 停在 0、与矿机隔 120 格。负 x 不是非法值，只是坐标。 */
+			if (want === undefined || want === n.x) continue;
 			if (clash(occupied, n.row, want, want + n.w - 1, n.h)) continue;
 			unclaim(n); n.x = want; claim(n, want);
 		}
 	}
+	/**
+	 * 第三遍：**次输入的上游回填**（多输入机器，如 stacker/mixer）。
+	 *
+	 * 为什么前两遍不够：`desiredX` 只服务"主输入"。stacker 的两个输入在**同一行的相邻两列**
+	 * [0,0] / [1,0]，都朝 bottom。主输入的上游对准了，次输入的上游却停在自己的游标位 ——
+	 * 于是它的带子列远离下游次输入列，`planChannel` 只能报 column-conflict
+	 * （CgScScCg 的 n9→n10：带子在 19，输入要 16）。
+	 *
+	 * ★ 为什么只能往**左**回填 ★
+	 * `planChannel` 的 1 拐角形态（elbow / startTurn）都要求"先沿 d1 走、再沿 d2 走"，
+	 * 而 d1 是上游的喷出方向。上游朝 +x 出料时，它只能**向右**伸到下游，再竖向接入。
+	 * 也就是说上游的带子列必须 ≤ 下游输入列（严格左即 1 拐角，相等即 startTurn）。
+	 * 从右侧绕回来是 4 拐角 —— v1 无隧道，做不到。所以回填方向是单向的：往左找。
+	 *
+	 * 算法：从"紧贴下游次输入列"的位置开始向左扫，取**第一个不撞**的锚点。
+	 * 每台上游只动一次（不迭代、不连锁），遍历顺序确定（层号升序）⇒ 同输入逐字节同输出。
+	 * 找不到空位就保持原样，由 `planChannel` 如实上报 column-conflict（不硬凑）。
+	 */
+	levels.forEach(list => {
+		for (const n of list) {
+			const slots = inSlotsOf(n);
+			const bottoms = slots.map((s, i) => ({ s, i })).filter(x => x.s.dir === "bottom");
+			if (bottoms.length < 2) continue;
+			for (const b of bottoms.slice(1)) {
+				const p = n.parents[b.i];
+				if (!p || p.x === undefined) continue;
+				const pOut = outSlotsOf(p);
+				const feeds = pOut[0] || null;
+				if (!feeds) continue;
+				const dirOff = feeds.dir === "right" ? 1 : feeds.dir === "left" ? -1 : 0;
+				if (feeds.dir !== "right" && feeds.dir !== "left") continue;   // 竖直出料：同列对齐已由前两遍负责
+				// 最贴近的位置：带子列正好等于下游次输入列
+				const ideal = (n.x + b.s.cx) - feeds.cx - dirOff;
+				if (ideal === p.x) continue;
+				// 向左扫（d1=right ⇒ 带子列必须 <= 下游输入列；越过理想位向右没意义）
+				let placedAt = null;
+				for (let cand = Math.min(ideal, p.x); cand >= 0 && cand >= ideal - 32; cand--) {
+					if (cand === p.x) { placedAt = cand; break; }             // 原位就够左 ⇒ 不动
+					if (clash(occupied, p.row, cand, cand + (p.w || 1) - 1, p.h || 1)) continue;
+					placedAt = cand; break;
+				}
+				if (placedAt === null || placedAt === p.x) continue;
+				unclaim(p); p.x = placedAt; claim(p, placedAt);
+			}
+		}
+	});
 	return { levels, rows, occupied };
 }
 
-/** 本机锚点理想列 = 主输入的父列反推（无父/父未定列 → undefined）*/
+/** 本机锚点理想列 = **每个输入槽各自**反推出来的理想列里，取主输入那一支（无父/父未定列 → undefined）*/
 export function desiredX(n) {
 	const ps = n.parents.filter(Boolean);
 	if (!ps.length || ps.every(p => p.x === undefined)) return undefined;
 	const slots = inSlotsOf(n);
 	if (!slots.length) return undefined;
-	// 主输入 = 第一个竖直进料口（下进上出）；纯水平机器（painter）用第 0 槽
-	let idx = slots.findIndex(s => s.dir === "bottom");
-	if (idx < 0) idx = 0;
-	const p = ps[idx] || ps[0];
-	if (!p || p.x === undefined) return undefined;
-	const s = slots[idx];
-	if (s.dir === "left") return p.x + 1 - s.cx;      // 父列的右侧一格是带子格 ⇒ 锚点 = 父列 + 1 - cx
-	if (s.dir === "right") return p.x - 1 - s.cx;
-	return p.x - s.cx;                                 // bottom/top：同列直入（2×1 的第二路自动 +1）
+	/* ★ 必须**按槽**取父，不能按父的下标取槽 ★
+	   `n.parents` 是按槽序排的（parents[i] ↔ inSlots[i]），但父未必都定了列。
+	   上一版用 `ps[idx]`（idx=第一个 bottom 槽的下标）去配 `slots[idx]`，一旦某个父的槽不是
+	   bottom（stacker 的下层/上层都是 bottom、但两个输入在不同列；painter 的 shape 槽是 left），
+	   就会拿错槽去反推 → 第二个输入永远对不上（CgScScCg 的 n9→n10 差一格就是这么来的）。
+	   这里逐槽配对，再把"该槽对应的父"代进反推式。 */
+	// 主槽 = 第一个竖直进料口（下进上出）；纯水平机器（painter）用第 0 槽
+	const mainIdx = Math.max(0, slots.findIndex(s => s.dir === "bottom"));
+	// 主槽优先；主槽的父没定列时按槽序退回其它可用槽（保持旧行为：不因一个未定的父就不排）
+	const order = [mainIdx, ...slots.map((_, i) => i).filter(i => i !== mainIdx)];
+	for (const i of order) {
+		const p = ps[i];
+		const s = slots[i];
+		if (!p || p.x === undefined || !s) continue;
+		return anchorFromParent(n, p, s);
+	}
+	return undefined;
+}
+
+/**
+ * 上游父 `p` 的**出料口外那一格带子**在 x 上的位置，反推出本机锚点 x。
+ * 机器原点与出料口可以差一格：painter 的 outputs 在 cell [1,0]、朝 right ⇒ 带子在锚点 +2。
+ * 上一版直接返回 `p.x - s.cx`，等于假设"父的出料口就在父原点上、且竖直喷出"，于是
+ * painter → stacker 这类「上游偏一格、朝右出料」的组合永远差一格（CpCpCpCp/CgScScCg 都死在这）。
+ * 父没有出料槽（trash / 自定义节点）→ 退回"原点竖直"的旧口径，金网格不变。
+ */
+function anchorFromParent(n, p, s) {
+	const pOut = outSlotsOf(p);
+	const feeds = pOut.find(o => (p.usedOut ? !p.usedOut.has(o.role) : true)) || pOut[0] || null;
+	const beltCol = feeds
+		? p.x + feeds.cx + (feeds.dir === "right" ? 1 : feeds.dir === "left" ? -1 : 0)
+		: p.x;
+	if (s.dir === "left") return beltCol + 1 - s.cx;   // 带子在本机进料面外一格 ⇒ 锚点 = 带子列 + 1 - cx
+	if (s.dir === "right") return beltCol - 1 - s.cx;
+	return beltCol - s.cx;                             // bottom/top：带子列 == 进料槽列
 }
 
 function clash(occupied, y, x0, x1, h) {
@@ -968,7 +1193,27 @@ export function place(input = {}) {
 	   这是**排版几何**的校正（层号 = 画在第几行），不是配方数据改写 —— nodes[].depth 只服务本文件的行分配；
 	   校正凭据挂在返回的 levels 数组上（非数组属性），不进 LayoutReport（§2.3 无此字段，不擅自扩契约）。 */
 	const levels = layerAndOrder(nodes);
-	const { rows } = assignRows(levels, { rowGap: input.rowGap, colGap: input.colGap });
+	/* ★ 矿机层的 x 由**资源**决定，不是由列游标决定 ★
+	   行式布局默认把同层机器按 `游标 + colGap` 等距排开（间距 4）。对单矿机目标无所谓，
+	   但多矿机目标（上色 = 形状矿 + 1~4 台颜料矿）的矿位在世界里是**散落**的：要求它们
+	   恰好落在「相对偏移 4 格」上几乎不可能（CpCpCpCp 需要的 Cu/blue/red 三连在 ±400 内
+	   只有 2 处，且都不在 4 格间距上）。这不是搜索范围问题 —— 是布局把一个不该固定的量
+	   固定了。矿机的**唯一**硬约束是"压在自己的资源上"，相对间距完全自由。
+	   所以给了 seed 时，先用资源图求一组**保序**的矿机 x（保序 = 不换左右次序，通道不交叉），
+	   再让消费者按 desiredX 跟随。没给 seed / 无资源约束时完全跳过 → 金网格逐字节不变。 */
+	const seedEarly = input.seed !== undefined && input.seed !== null ? input.seed
+		: (input.world && input.world.seed !== undefined ? input.world.seed : null);
+	let minerX = null;
+	if (seedEarly !== null) {
+		const minerLevel = levels[0] || [];
+		const minersInOrder = minerLevel.filter(n => n.op === "mine");
+		if (minersInOrder.length > 1) {
+			const centerW = [origin.x, origin.y];
+			const region = input.region || regionAround(centerW, input.range === undefined ? 96 : input.range);
+			minerX = planMinerColumns(minersInOrder, { seed: seedEarly, region, center: centerW });
+		}
+	}
+	const { rows } = assignRows(levels, { rowGap: input.rowGap, colGap: input.colGap, minerX });
 
 	/* (b) 有 hub：把机器簇对齐到 hub 正下方（局部系），消除混框导致的千格收集带。
 	   顶行 → hub 底缘下方 HUB_CLEAR 行；minX → hub 左列（hub 底部 4 个 entry 覆盖 hubLocal.x..x+3）。
