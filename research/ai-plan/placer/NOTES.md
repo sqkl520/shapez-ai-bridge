@@ -73,8 +73,9 @@ planChannel 逐形态 + 负例 + 契约 + 裁决落地 G1/G7/G10/K1 + import lin
 **实现**（place.mjs `place()` 开头 + `buildReport`）：
 - `origin = input.site || input.hub || {0,0}`；世界 hub、既有 occupancy、资源格（meta.minerCells）一律
   减 origin 摄入成局部；`hubEntries(hubLocal)` 用局部原点。
-- 有 hub 时把机器簇整体平移到「hub 正下方」（顶行 = hub 底缘下 1 行、minX = hub 左列），落在 hub 底部 4 口之一上方；
+- 有 hub 时把机器簇整体平移到「hub 正下方」（顶行 = hub 底缘下 **HUB_CLEAR** 行、minX = hub 左列），落在 hub 底部 4 口之一上方；
   簇内相对几何不变，故**收集带只跨 1 段**（≈HUB 底到机器顶 + 机器内部高度），bbox 回到几十格。
+  `HUB_CLEAR` 的取值与理由见 §六bis（B-1 修复）。
 - 无 hub：origin 缺省 (0,0)、跳过平移 → **金网格逐字节不变**（test T4 锁死；G1/G2/G3/G4 未动、fixture 未动）。
 
 **给 P8 的用法（回答协调者的"要回答 P8"）**：
@@ -84,6 +85,45 @@ planChannel 逐形态 + 负例 + 契约 + 裁决落地 G1/G7/G10/K1 + import lin
   若 P8 仍想拿世界系坐标，直接传 `input.site = 世界锚点`，本包报告原点即该锚点、机器簇就在它附近。
 - 平移不变性有锁（test T2：site/hub 同步世界平移 → grid/bbox/channels/hubConnection 逐字节等价），
   证明"局部系"是真的、没有世界坐标泄漏（T3/T5 进一步锁 placement 与 meta.minerCells 都在局部幅度内）。
+
+## 六bis、B-1：废料带压在 hub 入口圈 → V3 漂移（P8 集成发现，阻塞 L3）
+
+**复现（P8 扫 640 组 rowGap×colGap×hubDesign 全 0 命中 ⇒ 拓扑问题，非调参）**：
+`compilePlan({goal:'----CuCu',seed:43391,hub:{x:0,y:0}})` → `ok:false reason:validate:V3`。
+drift 格 `[1,4]` 是 cutter 的**废料带拐角**，正好落在 hub 底排入口行 `y=hub.y+HUB_SIZE` 上 ——
+它紧邻 hub 的 acceptor，computeBelt 把 hub 当**机器邻居**重算 rv（belt-rules.mjs:8-10 的机器邻居角落漂移），
+P5 的 `V3-belt-fixed-point` 必红。
+
+**修法选择：(a) 机器簇与 hub 之间留净空（取 `HUB_CLEAR = 2`）。** 为什么不是 (b) 侧向出料：
+- (b) 要求**每一个**未用输出口都改走横向 —— 那会把 cutter 的右列废料带从"直串一步"变成"拐弯一步"，
+  等于给所有带废料口的机器凭空加 1 个拐角（第一原则：拐角越少越好，GRID-LAYOUT:41-62），
+  而且 painter/mixer 这类 +x 流机器的输出本来就横向，再"侧向"没有可去之处。治标不治本。
+- (a) 只是把整个机器簇往下挪，**簇内相对几何完全不变**（拐角数、车道分配、相对列位一个都不动），
+  因此金网格零扰动、P4 的车道推导也不受影响。这是唯一"改了 hub 邻接、没改布局本身"的修法。
+
+**`HUB_CLEAR = 2` 的依据**（不是拍 1 或 3，是按 16 口全表算出来的）：
+- 只避开**底排**（`y = hub.y+HUB_SIZE`）不够 —— hub 还有**左列/右列**入口（`x = hub.x-1` / `hub.x+HUB_SIZE`），
+  竖直走向的废料带（cutter 右列 → trash 常常 straight 向下）会撞上左/右列入口格 ⇒ 同样漂。故不能按"行"算，要按**入口圈**算。
+- 净空 1 行时：机器顶行 = `hub.y+HUB_SIZE+1`，废料带占该行；若 trash 落在机器顶行，它离 hub 底排入口 `hub.y+HUB_SIZE`
+  只差 1 行 —— **不相邻**，安全。但废料带**侧让**（`trashCandidates` 的 ② 分支）可能再外扩 1 行到 `hub.y+HUB_SIZE`，
+  那就又压回入口行。取 2 行 = 1 行净空 + 1 行侧让余量，实测 36 组（hub 位置 × site 偏移 × 链形）全绿。
+- 用例外的 hub 位置也一样：净空是相对 `hubLocal` 算的，而 `hubLocal = hub − origin`，故与世界坐标无关（test ④ 覆盖 site 偏移分支）。
+
+**验收证据**（`placer/test.mjs` ①e，30 条断言）：
+- ① 废料带每格 ∉ `hubEntriesWorld(hubLocal)` 的 16 入口格（**全表**，不只底排；比对在**局部系**做 ——
+  第一版我拿世界 hub 比局部带坐标，非零 hub 时断言恒真 = 假绿，已修）；
+- ② 用 P5 的 `belt-sim.simulateBelts`（**只读依赖**，Coordinator 明确许可）对整张报告跑含机器邻居的不动点：`drift=0`、
+  `fixedPoints === tilesChecked` —— 这是 V3 的**同一判据**，本测试绿 ⟺ V3 不会挂；
+- ③ 反向自证：不连 hub 时 drift=0（证明漂移确由 hub 邻接引入，不是几何本身）；
+- ④ hub 四个位置 × 三种 site（无 / 同锚 / 偏移）全扫。
+- **变异锁**：把 `HUB_CLEAR` 改回 1（= 原始缺陷状态）→ 上述断言**全部变红**；改 0 → T1/T2/T5 红。证明非空断言。
+
+**金网格未动**：无 hub 时 `HUB_CLEAR` 不参与任何计算，G1/G2/G3 逐字节不变（test ① 直接锁死），fixture 未改。
+
+**连带发现（别的包，只点名不动）**：P8 的 `harness/test.mjs` C5 **把缺陷当期望锁住了**
+（`eq(p.reason, "validate:V3")`、注释"见 NOTES B-1"）—— 本修复让该断言翻红，但那是**缺陷消失**，不是回归。
+C5 应改成断言 `----CuCu + hub` 现在 **ok:true / V3 pass**；另 C4/C6/C7 在我改前就红（颜料闸归因，P8 侧待办）。
+I-1（四个 hubDesign 都与相对布局无关）在我改前红、改后**转绿**。
 
 ## 七、别人包的现场（只点名，不动）
 
