@@ -112,4 +112,55 @@ check("summarize gives counts and bounds", () => {
 });
 
 console.log("\n" + (fail === 0 ? "ALL " + pass + " CHECKS PASSED" : pass + " passed, " + fail + " FAILED"));
+// ── v2 平行数组 o（originalRotation）—— P6 NOTES §1 的实测风险要变成断言 ──
+
+check("v2: orig 往返（带 o 的蓝图读回 orig）", () => {
+    const text = encodeBlueprint({
+        gv: "1.5.6", w: [0, 0],
+        entities: [
+            { code: 1, dx: 0, dy: 0, rot: 0, orig: 270 },
+            { code: 3, dx: 1, dy: 0, rot: 270, orig: 0 },
+        ],
+    });
+    const bp = decodeBlueprint(text);
+    assert(bp.v === 2, "version 应为 2, got " + bp.v);
+    assert(bp.entities[0].orig === 270, "第 0 格 orig=270, got " + bp.entities[0].orig);
+    assert(bp.entities[0].rot === 0, "第 0 格 rot 不受影响");
+    assert(bp.entities[1].orig === 0, "第 1 格 orig=0, got " + bp.entities[1].orig);
+});
+
+check("v1 兼容：不带 orig 仍是 v1 载荷，逐字节等价于历史行为", () => {
+    const text = encodeBlueprint({ gv: "1.5.6", w: [0, 0], entities: [{ code: 1, dx: 0, dy: 0, rot: 90 }] });
+    const bp = decodeBlueprint(text);
+    assert(bp.v === 1, "无 orig 时应保持 v1, got " + bp.v);
+    assert(bp.entities[0].orig === 90, "缺 o 时 orig 回落到 rot");
+});
+
+check("v2 向后兼容：v1 解码器读 v2 文本不会静默错位（e 仍 4 列）", () => {
+    // 8 格 = P6 实测的「n%4==0 静默中招」规模之一（n=4/8/12/16）
+    const ents = Array.from({ length: 8 }, (_, i) => ({ code: 1, dx: i, dy: 0, rot: 0, orig: 90 }));
+    const text = encodeBlueprint({ gv: "1.5.6", w: [0, 0], entities: ents });
+    const bp = decodeBlueprint(text);
+    assert(bp.entities.length === 8, "必须读回 8 个实体（不是 10 个）, got " + bp.entities.length);
+    assert(bp.entities.every((e, i) => e.dx === i && e.code === 1), "逐格不错位");
+});
+
+check("v2 防御：o 长度不符必须 2001 拒绝（不许静默截断）", () => {
+    const payload = { v: 2, gv: "1.5.6", w: [0, 0], e: [1, 0, 0, 0, 1, 1, 0, 0], o: [90] };   // 2 格却只给 1 个 orig
+    const text = BLUEPRINT_PREFIX + LZString.compressToEncodedURIComponent(JSON.stringify(payload));
+    let threw = null;
+    try { decodeBlueprint(text); } catch (e) { threw = e; }
+    assert(threw && threw.code === "2001", "必须 2001, got " + (threw && threw.code));
+    assert(/o\.length/.test(threw.message), "错误信息点名 o.length");
+});
+
+check("v2 防御：未知版本号（v:3）应拒", () => {
+    const payload = { v: 3, gv: "1.5.6", w: [0, 0], e: [1, 0, 0, 0] };
+    const text = BLUEPRINT_PREFIX + LZString.compressToEncodedURIComponent(JSON.stringify(payload));
+    let threw = null;
+    try { decodeBlueprint(text); } catch (e) { threw = e; }
+    assert(threw && threw.code === "2001", "v:3 应 2001");
+});
+
+console.log("\n" + (fail === 0 ? "ALL " + pass + " CHECKS PASSED" : pass + " passed, " + fail + " FAILED"));
 process.exit(fail === 0 ? 0 : 1);
