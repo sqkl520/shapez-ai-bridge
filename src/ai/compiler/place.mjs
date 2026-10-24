@@ -57,6 +57,16 @@ export const COL_GAP = 3;
 export const LANE_OFF = 1;
 /** hub 占地 4×4（GEOMETRY 表1）*/
 export const HUB_SIZE = 4;
+/**
+ * 机器簇顶行与 hub 底缘之间的**净空行数**（B-1 修复，选法 (a)）。
+ * 为什么必须 ≥1：hub 的 16 个入口里，底排 4 个落在 `hub.y+HUB_SIZE` 这一行，且它们与 hub 的 acceptor
+ * 直接相邻 —— 任何带子格若落在**入口行/列**上，就会把 hub 当"机器邻居"参与 computeBelt，rv 被重算
+ * （belt-rules.mjs:8-10 的机器邻居角落漂移），P5 的 V3-belt-fixed-point 必红。
+ * 只避开底排不够：左列/右列入口是 `hub.x-1` / `hub.x+HUB_SIZE` 两列，竖直走向的废料带会撞上。
+ * 取 2 行 = 1 行净空 + 1 行容错（废料带的侧向让位可能要再占一行，见 trashCandidates）。
+ * 无 hub 时该常量不参与任何计算 → 四张金网格逐字节不变。
+ */
+export const HUB_CLEAR = 2;
 /** trash 沿输出口外推的最大步数（超出 → no-site-large-enough）*/
 export const TRASH_PUSH_MAX = 6;
 /** 单条通道允许的最大带子格数（防御：越界说明列分配崩了，宁拒不猜）*/
@@ -740,13 +750,13 @@ export function place(input = {}) {
 	const { rows } = assignRows(levels, { rowGap: input.rowGap, colGap: input.colGap });
 
 	/* (b) 有 hub：把机器簇对齐到 hub 正下方（局部系），消除混框导致的千格收集带。
-	   顶行 → hub 底缘下一行；minX → hub 左列（hub 底部 4 个 entry 覆盖 localHub.x..x+3，机器靠左对齐即落在其中一列上方）。
+	   顶行 → hub 底缘下方 HUB_CLEAR 行；minX → hub 左列（hub 底部 4 个 entry 覆盖 hubLocal.x..x+3）。
 	   无 hub：完全跳过 → 金网格（site/hub 皆缺省）逐字节不变。 */
 	if (hubLocal) {
 		let minX = Infinity, minY = Infinity;
 		for (const n of nodes) { if (n.x < minX) minX = n.x; if (n.y < minY) minY = n.y; }
 		const dx = hubLocal[0] - minX;
-		const dy = (hubLocal[1] + HUB_SIZE + 1) - minY;   // 机器簇顶行落在 hub 底缘下方一行
+		const dy = (hubLocal[1] + HUB_SIZE + HUB_CLEAR) - minY;   // 机器簇顶行落在 hub 底缘下方 HUB_CLEAR 行
 		if (dx !== 0 || dy !== 0) {
 			for (const n of nodes) { n.x += dx; n.y += dy; n.row += dy; }
 			for (const r of rows) r.y += dy;

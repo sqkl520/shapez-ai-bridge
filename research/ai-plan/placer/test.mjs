@@ -221,6 +221,115 @@ console.log("\n── ①d 世界系 hub 坐标一致性（P5 bug 回归锁）�
 	}
 }
 
+/* ══════════════════════ ①e 废料带不得落在 hub 入口行/列 + rv 必须是不动点（P8 集成发现，先红后绿）══════════════════════ */
+// B-1 复现（P8 扫 640 组 rowGap×colGap×hubDesign 全 0 命中 → 拓扑问题，非调参）：
+//   连 hub 时，cutter 的**废料带**被排进 hub 底排入口那一行，紧贴 hub 的 acceptor ⇒ 机器邻居让该带格 rv 被重算
+//   （belt-rules.mjs:8-10 的「机器邻居角落」漂移）⇒ P5 的 V3-belt-fixed-point 红。
+// 两条判据（本测试自证，不依赖 P5 跑通整条链）：
+//   ① 废料带（slotRole==="discard"）的**每一格**都不在 hub 的 16 个入口行/列上（用 op-templates 的 16 口表算）；
+//      收集带（slotRole==="out"）例外 —— 它本来就该终止在入口格上。
+//   ② 用 P5 的 belt-sim（**只读依赖**，Coordinator 明确许可）对整张报告跑含机器邻居的不动点：
+//      drift 必须为 0。这是 V3 的同一个判据，故本测试绿 ⟺ V3 不会挂。
+console.log("\n── ①e 废料带避开 hub 入口行/列 + rv 不动点（P8 B-1 回归锁）──");
+{
+	const BS = await imp(path.join(COMPILER, "belt-sim.mjs"));
+	const beltRules = await imp(path.join(ROOT, "src", "ai", "belt-rules.mjs"));
+	const { OPP } = types;
+	const P4DIR = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
+
+	// 从 P3 的 channel 几何重建 belt 实体（用权威 solveTurn 定 (rot,rv)，**不 import P4**）
+	const beltEntities = rep => {
+		const out = [];
+		for (const c of rep.channels) {
+			const first = [c.from.cell[0] + P4DIR[c.from.outDir][0], c.from.cell[1] + P4DIR[c.from.outDir][1]];
+			const last = [c.to.cell[0] + P4DIR[c.to.inDir][0], c.to.cell[1] + P4DIR[c.to.inDir][1]];
+			const r = place.planChannel(first, c.from.outDir, last, c.to.inDir, {});
+			if (!r.ok) continue;
+			for (const b of r.cells) {
+				const t = beltRules.solveTurn(b.inDir, b.outDir);
+				out.push({ kind: "belt", nodeId: c.to.nodeId === "hub" ? `belt@hub` : `${c.from.nodeId}>${c.to.nodeId}`,
+					dx: b.cell[0], dy: b.cell[1], rot: t.rotation, rotationVariant: t.rotationVariant,
+					code: beltRules.beltCode(t.rotationVariant), inDir: b.inDir, outDir: b.outDir, _role: c.slotRole });
+			}
+		}
+		return out;
+	};
+	// 世界闸要 hub 实体（P8 链路里 hub 由 world 提供；这里模拟同样的输入）
+	const mkWorld = (hub) => ({
+		tick: 0, seed: 43391, hub, entities: [{ uid: 1, type: "hub", x: hub.x, y: hub.y, r: 0, variant: "default", rotationVariant: 0, code: 26, layer: "regular" }],
+		resources: [], replaceableBeltCells: [],
+	});
+	// hub 的「入口圈」= 贴 hub 4×4 的正交邻接格，也正是 hub 会被算成**机器邻居**的那些格
+	//   （底排 4 格 / 顶排 4 格 / 左列 4 格 / 右列 4 格，共 16 格）。
+	// ⚠️ 坐标系：(b) 口径下报告是 **局部系**，局部 hub = 世界 hub − origin（origin = site ?? hub）。
+	//    直接拿世界 hub 去比对局部带坐标是**假绿**（我第一版就踩了：非零 hub 时断言恒真）。
+	const localHubOf = (input) => input.site
+		? [input.hub.x - input.site.x, input.hub.y - input.site.y]
+		: [0, 0];
+	const hubRing = (hubLocal) => {
+		const set = new Set();
+		for (const e of ot.hubEntriesWorld(hubLocal)) set.add(`${e.cell[0]},${e.cell[1]}`);
+		return set;
+	};
+	const hubEntryRows = hubLocal => new Set(ot.hubEntriesWorld(hubLocal)
+		.filter(e => e.face === "top" || e.face === "bottom").map(e => e.cell[1]));
+	const hubEntryCols = hubLocal => new Set(ot.hubEntriesWorld(hubLocal)
+		.filter(e => e.face === "left" || e.face === "right").map(e => e.cell[0]));
+
+	// 场景：半切（cutter 右列是废料）+ 连 hub —— P8 B-1 的最小复现
+	const HUB = { x: 0, y: 0 };
+	const baseInput = {
+		steps: [{ op: "cut", hash: "CuCu----", inputs: ["CuCuCuCu"], depth: 1 }],
+		hub: HUB, connectHub: true, world: mkWorld(HUB), seed: 43391,
+	};
+	const rep = place.place(baseInput);
+	ok(rep.ok !== false, `B-1 半切+连 hub 作图成功（实得 ${rep.ok === false ? rep.reason : "ok"}）`);
+	if (rep.ok !== false) {
+		const ents = beltEntities(rep);
+
+		// ① 废料带的每一格都不在 hub 的 16 个入口格上（用全表，不只底排；局部系比对）
+		const ring = hubRing(localHubOf(baseInput));
+		const waste = ents.filter(e => e._role === "discard");
+		ok(waste.length > 0, `B-1 存在废料带（实得 ${waste.length} 格）`);
+		const bad = waste.filter(e => ring.has(`${e.dx},${e.dy}`));
+		eq(bad.map(e => [e.dx, e.dy]), [], "B-1① 废料带每格都不在 hub 的 16 入口格上（全表核对，不只底排）");
+
+		// ② 含机器邻居的 rv 不动点（V3 的同一判据）
+		const sim = BS.simulateBelts(rep, { entities: ents.map(({ _role, ...e }) => e) });
+		eq(sim.drift.map(d => d.cell), [], `B-1② 废料/全部带格是含机器邻居的不动点（drift=0，实得 ${JSON.stringify(sim.drift.map(d => d.cell))}）`);
+		eq([sim.tilesChecked, sim.fixedPoints], [sim.tilesChecked, sim.tilesChecked], "B-1② 全部带格 fixedPoints === tilesChecked");
+	}
+
+	// ③ 自证方法：不连 hub 时 V3 本就通过（证明是"废料带与 hub 入口共行"的拓扑问题）
+	{
+		const noHubRep = place.place({ steps: [{ op: "cut", hash: "CuCu----", inputs: ["CuCuCuCu"], depth: 1 }], ...noHub });
+		const sim = BS.simulateBelts(noHubRep, { entities: beltEntities(noHubRep).map(({ _role, ...e }) => e) });
+		eq(sim.drift.map(d => d.cell), [], "B-1③ 不连 hub 时 drift=0（自证：漂移确由 hub 入口共行引入）");
+	}
+
+	// ④ 其它 hub 位置 + **site 偏移**都要成立（不只 x=0,y=0；site≠hub 时局部 hub≠(0,0)，是关键分支）
+	// 注：不扫 (1200,-1400) —— seed 43391 那里半径内没有 CuCuCuCu，会以 no-resource-in-range 正当拒绝（世界事实，
+	//     不是 B-1 的拓扑问题；坐标系/平移不变性已由 ①d 的 T2/T3 覆盖）。
+	for (const h of [{ x: 0, y: 0 }, { x: 40, y: 40 }, { x: -30, y: 25 }, { x: 12, y: -8 }]) {
+		for (const site of [null, { x: h.x, y: h.y }, { x: h.x - 5, y: h.y + 7 }]) {
+			const input = {
+				steps: [{ op: "cut", hash: "CuCu----", inputs: ["CuCuCuCu"], depth: 1 }],
+				hub: h, connectHub: true, world: mkWorld(h), seed: 43391,
+			};
+			if (site) input.site = site;
+			const tag = `hub=${JSON.stringify(h)}${site ? ` site=${JSON.stringify(site)}` : ""}`;
+			const r = place.place(input);
+			if (r.ok === false) { ok(false, `B-1④ ${tag} 作图被拒（${r.reason}）`); continue; }
+			const ents = beltEntities(r);
+			const ring = hubRing(localHubOf(input));
+			const badW = ents.filter(e => e._role === "discard" && ring.has(`${e.dx},${e.dy}`));
+			eq(badW.map(e => [e.dx, e.dy]), [], `B-1④ ${tag} 废料带不在 hub 16 入口格上`);
+			const sim = BS.simulateBelts(r, { entities: ents.map(({ _role, ...e }) => e) });
+			eq(sim.drift.map(d => d.cell), [], `B-1④ ${tag} drift=0`);
+		}
+	}
+}
+
 /* ══════════════════════ 逐字节稳定（跑两次恒等，无随机）══════════════════════ */
 console.log("\n── ①b 确定性：同输入逐字节同输出 ──");
 const r2a = place.place({ steps: G2_STEPS, ...noHub });
