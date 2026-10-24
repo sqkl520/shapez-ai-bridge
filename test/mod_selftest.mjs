@@ -77,6 +77,9 @@ const stubShapez = {
         1: { metaInstance: { getId: () => "belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => true }, variant: "default", rotationVariant: 0 },
         7: { metaInstance: { getId: () => "miner", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 0 },
         9: { metaInstance: { getId: () => "cutter", getDimensions: () => ({ x: 2, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 0 },
+        // 隧道：22=sender(rv0) / 23=receiver(rv1)，1×1、不可替换（buildings/underground_belt.js:45-48）
+        22: { metaInstance: { getId: () => "underground_belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 0 },
+        23: { metaInstance: { getId: () => "underground_belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 1 },
     },
 };
 
@@ -480,6 +483,67 @@ function beltLineText(count) {
     const payload = JSON.stringify({ v: 1, gv: "1.5.6", w: [0, 0], e });
     return "SZBP1." + sandbox.shapez.compressX64(payload);
 }
+
+/** 含隧道的蓝图：belt + sender(22) + receiver(23) + belt */
+function tunnelLineText() {
+    const e = [1, 0, 0, 0, 22, 1, 0, 180, 23, 3, 0, 180, 1, 4, 0, 0];
+    const payload = JSON.stringify({ v: 1, gv: "1.5.6", w: [0, 0], e });
+    return "SZBP1." + sandbox.shapez.compressX64(payload);
+}
+
+/* ★ 含隧道的蓝图必须临时挂起 enableTunnelSmartplace ★
+   不开的话，receiver 落地时 `onEntityManuallyPlaced`（underground_belt.js:53）会把
+   sender 与它之间同向的带子删掉，而 `applied` 仍报成功（实机 A/B 复现：开 → 2→0，关 → 2→2）。
+   这条锁三件事：① 粘贴期间开关被设为 false；② 结束后恢复原值；③ 返回值如实报告。 */
+check("含隧道的蓝图：粘贴期间挂起 smartplace，结束后恢复原值", () => {
+    const m = newMod();
+    const root = pasteStubRoot([], []);
+    const seen = [];                       // 记录每次 placeOne 时开关的取值
+    const settings = {
+        enableTunnelSmartplace: true,
+        _v: true,
+        getAllSettings() { return { enableTunnelSmartplace: this._v }; },
+        updateSetting(k, v) { assert(k === "enableTunnelSmartplace", "只动这一个设置, got " + k); this._v = v; },
+    };
+    m.app = { settings };              // mod 用的是 this.app（构造参数），不是 root.app
+    root.logic.tryPlaceBuilding = () => {
+        seen.push(settings._v);            // 每落一格看一眼
+        return { uid: 600 + seen.length };
+    };
+    const res = m.opPasteBlueprint(root, { text: tunnelLineText(), x: 10, y: 10, charge: false });
+    assert(res.applied === 4, "4 格全落地, got " + res.applied);
+    assert(seen.every(v => v === false), "粘贴期间开关必须是 false（否则 receiver 会删带）, got " + JSON.stringify(seen));
+    assert(settings._v === true, "结束后必须恢复成 true, got " + settings._v);
+    assert(res.tunnels && res.tunnels.in_plan === 2, "返回值如实报告 2 个隧道格, got " + JSON.stringify(res.tunnels));
+});
+
+check("含隧道的蓝图 dry_run：报告 will_disable_smartplace，且**不改动**设置", () => {
+    const m = newMod();
+    const root = pasteStubRoot([], []);
+    let touched = 0;
+    m.app = { settings: {
+        getAllSettings: () => ({ enableTunnelSmartplace: true }),
+        updateSetting: () => { touched++; },
+    } };
+    const res = m.opPasteBlueprint(root, { text: tunnelLineText(), x: 10, y: 10, charge: false, dry_run: true });
+    assert(res.tunnels && res.tunnels.will_disable_smartplace === true, "dry_run 要预告会关开关");
+    assert(touched === 0, "dry_run 不许改任何设置（预检不该有副作用）, touched=" + touched);
+});
+
+check("不含隧道的蓝图：不碰 settings（回归锁）", () => {
+    const m = newMod();
+    const root = pasteStubRoot([], []);
+    let touched = 0;
+    root.app = { settings: {
+        getAllSettings: () => ({ enableTunnelSmartplace: true }),
+        updateSetting: () => { touched++; },
+    } };
+    root.logic.tryPlaceBuilding = () => ({ uid: 700 });
+    const res = m.opPasteBlueprint(root, { text: beltLineText(3), x: 10, y: 10, charge: false });
+    assert(res.applied === 3, "3 格落地");
+    assert(touched === 0, "纯带蓝图不该动 settings, touched=" + touched);
+    assert(res.tunnels === null, "无隧道时 tunnels 字段为 null, got " + JSON.stringify(res.tunnels));
+});
 
 check("paste dry_run 不落地：干净落点全量 would_apply、零销毁零阻断、bbox 正确", () => {
     const m = newMod();
