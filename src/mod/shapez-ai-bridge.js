@@ -1616,6 +1616,14 @@ class Mod extends shapez.Mod {
             });
         }
 
+        /* ★ 蓝图里有没有隧道？★
+           code 22=sender / 23=receiver（`buildings/underground_belt.js:45-48` + 存档实机 107 对）。
+           有隧道就必须在粘贴期间关掉 `enableTunnelSmartplace`，否则：
+             sender 先落 → receiver 后落 → `onEntityManuallyPlaced`（underground_belt.js:53）
+             把两者之间同向的带子全删掉，而 `applied` 仍然显示成功。
+           实机 A/B 复现：开 → 之间带子 2→0；关 → 2→2。见 research/ai-plan/tmp/TUNNEL-VERIFIED.md。 */
+        const hasTunnel = items.some(it => it.code === 22 || it.code === 23);
+
         // dry_run：只预检不落地。存在的理由（实机取证 facts/... → live/results/belt-silent-overwrite.json）：
         // 真粘贴落在既有 belt/wire 上会「静默替换」——旧 uid 消失、响应 failed:[]、零报告；
         // 落在既有机器上则整条目失败（碰撞拒）但其它条目照常。调用方必须先 dry_run 核对。
@@ -1696,6 +1704,15 @@ class Mod extends shapez.Mod {
                 charge_preview: charging0
                     ? { cost: cost0, have: have0, affordable: have0 >= cost0 }
                     : { cost: 0, have: null, affordable: true },
+                /* 隧道预检：告诉调用方"真粘贴会临时改一个游戏设置"。
+                   这是**唯一**会在 paste 期间被改动的全局状态，必须显式报告，
+                   否则调用方无法解释"为什么我贴完之后设置变了"（本包会恢复，但如
+                   粘贴中途崩溃则不会）。 */
+                tunnels: hasTunnel
+                    ? { in_plan: items.filter(it => it.code === 22 || it.code === 23).length,
+                        will_disable_smartplace: true,
+                        note: "粘贴期间会临时关闭 enableTunnelSmartplace，结束后恢复原值" }
+                    : null,
                 tick: root.time.now(),
             };
         }
@@ -1754,10 +1771,25 @@ class Mod extends shapez.Mod {
                 else failed.push({ dx, dy, reason: "game_rejected", code });
             }
         };
-        if (root.logic.performImmutableOperation) {
-            root.logic.performBulkOperation(() => root.logic.performImmutableOperation(placeAll));
-        } else {
-            root.logic.performBulkOperation(placeAll);   // 兼容旧版签名（理论上 1002 已挡）
+        /* ★ 含隧道时临时关闭 smartplace ★
+           必须在 performBulkOperation **之外**切换，且用 try/finally：
+             · 外面切：smartplace 的删除发生在 `entityManuallyPlaced` 回调里，
+               而该信号在 placeOne 内部就 dispatch 了 —— 包在 bulk 里太晚；
+             · finally 恢复：即使粘贴抛错也要还原玩家的设置，绝不留下副作用。
+           只在**原本是开**的时候才关（若玩家本来就关着，不要多此一举地"开回来"）。
+           两个分支都要走这段 —— 挂起逻辑与"有没有 immutable 包装"无关。 */
+        const settings = this.app && this.app.settings;
+        const wasSmart = hasTunnel && settings
+            && settings.getAllSettings().enableTunnelSmartplace === true;
+        if (wasSmart) settings.updateSetting("enableTunnelSmartplace", false);
+        try {
+            if (root.logic.performImmutableOperation) {
+                root.logic.performBulkOperation(() => root.logic.performImmutableOperation(placeAll));
+            } else {
+                root.logic.performBulkOperation(placeAll);   // 兼容旧版签名（理论上 1002 已挡）
+            }
+        } finally {
+            if (wasSmart) settings.updateSetting("enableTunnelSmartplace", true);
         }
 
         // 只在有建筑真正落地时才扣费（与游戏一致：tryPlace 成功后 takeShapeByKey）
@@ -1780,6 +1812,8 @@ class Mod extends shapez.Mod {
             count,
             cost,
             charged: shouldCharge && applied > 0,
+            // 含隧道时如实报告"粘贴期间关过 smartplace 并已恢复"
+            tunnels: hasTunnel ? { in_plan: items.filter(it => it.code === 22 || it.code === 23).length, smartplace_suspended: true } : null,
             tick: root.time.now(),
         };
     }
