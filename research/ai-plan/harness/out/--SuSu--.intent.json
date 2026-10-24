@@ -1,15 +1,12 @@
 {
  "goal": "--SuSu--",
  "schema": "shapez-ai/handoff-intent@1",
- "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoC0ALLAAwC68ApsQOxWzQCcLHlrc30ATCwDMLfn1hdWLaAA5p05uL7Z5fDKtYUlrEdoEbo3bZN6w52xVO4rt67VquxBejUalxDVagF8gA",
+ "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoAcATLALQAsADALrwCmxA7LLbNAJwey+docQRU4BmPmUH8+wriVmz20wdkWCM6rtS3QJKrqK6zOBgcc4KDyi7DUHNBnQaNy3fU8bjRT9AL5AA",
  "anchor": [
-  0,
-  0
+  82,
+  -40
  ],
- "hub": [
-  -4,
-  -4
- ],
+ "hub": null,
  "chargeMode": "false",
  "gv": null,
  "count": 22,
@@ -387,8 +384,8 @@
    "format_version": 1,
    "exported_from": "1.5.6",
    "anchor": [
-    -4,
-    0
+    82,
+    -40
    ],
    "count": 22,
    "bounds": [
@@ -402,7 +399,7 @@
     "12": 1,
     "20": 1
    },
-   "text_length": 143
+   "text_length": 147
   },
   "summaryErr": null
  },
@@ -430,7 +427,7 @@
     "stackPairs": 1592,
     "capped": false
    },
-   "ms": 20,
+   "ms": 19,
    "known": 1647
   },
   "seed": 43391,
@@ -473,10 +470,12 @@
     86,
     -40
    ],
-   "hub": [
+   "hub": null,
+   "hubInferred": [
     82,
     -44
    ],
+   "hubPinned": false,
    "pasteAt": [
     82,
     -40
@@ -488,7 +487,13 @@
    "designHubLocal": [
     -4,
     -4
-   ]
+   ],
+   "worldFrameV1": {
+    "ok": true,
+    "skipped": "no-world-hub",
+    "worldRect": null,
+    "hubRect": null
+   }
   }
  }
 }

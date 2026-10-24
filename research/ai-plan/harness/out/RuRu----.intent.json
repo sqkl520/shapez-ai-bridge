@@ -1,15 +1,12 @@
 {
  "goal": "RuRu----",
  "schema": "shapez-ai/handoff-intent@1",
- "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoC0ALLAAwC68ApsQOxWzRyWwCcLAzCwEwc47Vi2gchLbpI4AOMS2YzY2BRwxrYFZf00iRE0XF00AvkA",
+ "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoBMsAtNABwC68ApsQOywAMs0c7AnG7AMx8S7OFw59o7EX17T2VCXxZzY2RewzrYAFi1kVYsVPFx9NAL5A",
  "anchor": [
-  0,
-  0
+  2,
+  -18
  ],
- "hub": [
-  -4,
-  -4
- ],
+ "hub": null,
  "chargeMode": "false",
  "gv": null,
  "count": 14,
@@ -276,8 +273,8 @@
    "format_version": 1,
    "exported_from": "1.5.6",
    "anchor": [
-    -4,
-    0
+    2,
+    -18
    ],
    "count": 14,
    "bounds": [
@@ -290,7 +287,7 @@
     "9": 1,
     "20": 1
    },
-   "text_length": 117
+   "text_length": 119
   },
   "summaryErr": null
  },
@@ -360,10 +357,12 @@
     6,
     -18
    ],
-   "hub": [
+   "hub": null,
+   "hubInferred": [
     2,
     -22
    ],
+   "hubPinned": false,
    "pasteAt": [
     2,
     -18
@@ -375,7 +374,13 @@
    "designHubLocal": [
     -4,
     -4
-   ]
+   ],
+   "worldFrameV1": {
+    "ok": true,
+    "skipped": "no-world-hub",
+    "worldRect": null,
+    "hubRect": null
+   }
   }
  }
 }
