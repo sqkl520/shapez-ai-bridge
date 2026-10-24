@@ -27,7 +27,7 @@ const REPO = path.resolve(HERE, "..", "..", "..");
 
 const { compilePlan, writeHandoff, inspectGoal, solveGoal, rebuildDag, mapOps, OP_MAP, levelForGoal, hubWorldState,
 	CUTQUAD_MIN_LEVEL, ROUTE_RETRY_MAX, goalSlug, checkPigments, normalizeHub,
-	hubClearOf, worldFrameHubCheck, entityRectOf, siteStage } =
+	hubClearOf, worldFrameHubCheck, entityRectOf, entityCellsOf, siteStage } =
 	await import(pathToFileURL(path.join(REPO, "src/ai/compiler/compile.mjs")).href);
 const { assertCompiledPlan, ContractViolation, SCOPE_V1 } = await import(pathToFileURL(path.join(REPO, "src/ai/compiler/types.mjs")).href);
 const { decodeBlueprint } = await import(pathToFileURL(path.join(REPO, "src/shared/blueprint.mjs")).href);
@@ -404,15 +404,30 @@ console.log("\n── I 上游阻断的最小证据（本包不改上游；这�
 	eq(SO.hash(SO.parse("-r-r-r-r")), "--------", "I-4 「-r-r-r-r」被 hash 归一回空形状 ⇒ 有色颜料 token 无法作 payload");
 }
 
-/* ══════════════════ J. 世界系 hub 不相交（L3 首个实机缺陷的回归锁）══════════════════ */
-/* 现场：seed 18043 / hub(-2,-2) / goal ----CuCu —— siteStage 只按资源选 anchor，得 [0,0]，
+/* ══════════════════ J. 世界系 hub 不相交 + 真 hub 接线（L3 首个实机缺陷的回归锁）══════════════════ */
+/* 历史：seed 18043 / hub(-2,-2) / goal ----CuCu —— siteStage 只按资源选 anchor，得 [0,0]，
    布局在世界系压住 hub(-2,-2..1,1) → dry_run 3 格 blocked（occupant=hub uid 10000）⇒ 半建。
-   这里锁四条：(1) 纯判据真能报相交 (2) 世界系 V1 对"压 hub"的布局给 fail
-   (3) L3 实参端到端 anchor 不再压 hub（且 site.anchor 是世界系）
-   (4) hub 钉死路径优先（给一个资源允许的 hub，收集带真能接上 hub）。 */
-console.log("\n── J 世界系 hub 不相交（L3 实参的回归锁）──");
+   第二现场（B-4）：布局逐格零差、却零交付 —— compile 传的是设计系假 hub + seed:null，
+   收集带末端落在 anchor+(-4,-4)，只有 hubPinned 时才碰巧是真 hub。
+   这里锁：(1) 纯判据（逐格）真能报相交 (2) 实参 anchor 不再压 hub
+   (3) **ok:true ⟹ 收集带末端 ∈ 真 hub 的 16 入口 且 矿机压真资源**（B-4 的核心不变式）
+   (4) 接不上时**诚实失败**（不产蓝图），不再"退回一个接不上的 anchor 报绿灯"。 */
+console.log("\n── J 世界系 hub 不相交 + 真 hub 接线（L3 回归锁）──");
 {
-	// J-1 纯判据：anchor+实体矩形 vs hub 4×4
+	const { hubEntriesWorld } = await import(pathToFileURL(path.join(REPO, "src/ai/op-templates.mjs")).href);
+	const { tileResource } = await import(pathToFileURL(path.join(REPO, "src/ai/world.mjs")).href);
+	/** 世界系：hubConnection 的 entry（世界格）是否真是 hub 的 16 入口之一，且 side/dir 与该口一致 */
+	const entryOnHub = (hc, hubWorld, anchor) => {
+		if (!hc) return { ok: false, why: "hubConnection=null" };
+		const w = [anchor[0] + hc.entry[0], anchor[1] + hc.entry[1]];
+		const hit = hubEntriesWorld(hubWorld).find(e => e.cell[0] === w[0] && e.cell[1] === w[1]);
+		if (!hit) return { ok: false, why: `entry_world=${JSON.stringify(w)} 不在 hub(${hubWorld}) 的 16 入口上`, world: w };
+		if (hit.face !== hc.side) return { ok: false, why: `side=${hc.side} ≠ 该口 face=${hit.face}`, world: w };
+		if (hit.dir !== hc.dir) return { ok: false, why: `dir=${hc.dir} ≠ 该口 dir=${hit.dir}`, world: w };
+		return { ok: true, world: w, face: hit.face };
+	};
+
+	// J-1 纯判据：anchor + 实体**逐格** vs hub 4×4
 	const ents = [{ dx: 0, dy: 0, kind: "belt", nodeId: "b" }, { dx: 1, dy: 1, kind: "trash", nodeId: "t" }];
 	eq(entityRectOf(ents), [0, 0, 1, 1], "J-1 entityRectOf 取实体 min/max（不含 hub、不含槽位格）");
 	const bad = worldFrameHubCheck(ents, [0, 0], [-2, -2]);
@@ -425,64 +440,101 @@ console.log("\n── J 世界系 hub 不相交（L3 实参的回归锁）──
 	say(hubClearOf([2, 2], [0, 0, 0, 11], [-2, -2]).clear === true, "J-1 紧贴 hub 右缘（实体 x=2 起）算不相交（闭区间语义）");
 	say(hubClearOf([1, 0], [0, 0, 0, 0], [-2, -2]).clear === false, "J-1 压 hub 最后一列（实体 x=1,y=0）算相交");
 	say(hubClearOf([2, 0], [0, 0, 0, 0], [-2, -2]).clear === true, "J-1 同一行向右挪一格（x=2）即不相交");
+	// J-1b 包围框 ≠ 实际占格：B-4 的收集带可以**贴着 hub 侧面**绕到顶/左/右入口 ——
+	//      包围框把它整个罩住，但没有任何一格是 hub 的 solid 格 ⇒ 必须判 clear（否则 78% 的合法布局被误杀）
+	{
+		const side = [{ dx: 4, dy: 0, kind: "belt", nodeId: "b1" }, { dx: 0, dy: -2, kind: "belt", nodeId: "b2" }];
+		const rectBox = entityRectOf(side);                                  // [0,-2,4,0]：包围框横跨 hub
+		say(rectBox[0] <= 3 && rectBox[2] >= 0 && rectBox[1] <= 3 && rectBox[3] >= 0, "J-1b 前提：这两个实体包围框确实横跨 hub 4×4", rectBox);
+		eq(worldFrameHubCheck(side, [0, 0], [0, 0]).ok, true,
+			"J-1b ★逐格判据：贴 hub 右缘 + 顶缘的带子（包围框压 hub）⇒ 仍 pass（dry_run 也只认实际格）");
+	}
 
-	// J-2 ★「布局压 hub ⇒ 世界系 V1 fail」。先复现**旧** anchor [0,0]（P5 在设计系恒 pass，V1 的洞不在这）
+	// J-2 ★L3 实参（seed 18043 / hub(-2,-2)）—— B-4 之后 anchor 钉死、收集带接真入口
 	const pL3 = compilePlan({ goal: "----CuCu", seed: 18043, hub: { x: -2, y: -2 } });
-	say(pL3.ok === true, "J-2 L3 实参（seed 18043 / hub(-2,-2) / ----CuCu）仍 ok:true", pL3.ok === false ? pL3.reason : undefined);
+	say(pL3.ok === true, "J-2 L3 实参（seed 18043 / hub(-2,-2) / ----CuCu）ok:true", pL3.ok === false ? { reason: pL3.reason, hint: pL3.hint } : undefined);
 	if (pL3.ok) {
 		const anchor = pL3.site.anchor;
-		const entsAll = pL3.entities.map(e => ({ ...e }));
-		const wf = worldFrameHubCheck(entsAll, anchor, [-2, -2]);
-		say(wf.ok === true, "J-2 实参 anchor 下世界系 V1 pass（实体矩形不压 hub）", wf);
+		const wf = worldFrameHubCheck(entityCellsOf(pL3.entities, pL3.layout.placements), anchor, [-2, -2]);
+		say(wf.ok === true, "J-2 实参 anchor 下世界系 V1 pass（逐格不压 hub）", wf);
 		eq(anchor, pL3.provenance.worldPlacement.pasteAt,
-			"J-2 site.anchor === provenance.pasteAt（P7 照它 paste；旧版给的是设计系 [0,0]）");
-		// 旧 bug 的形态：把同一套实体按 [0,0] 摆 —— 必须被世界系 V1 抓住
-		const stale = worldFrameHubCheck(entsAll, [0, 0], [-2, -2]);
-		say(stale.ok === false, "J-2 ★同一布局按旧 anchor[0,0] 摆 ⇒ 世界系 V1 fail（升为断言：布局压 hub ⇒ V1 fail）", stale);
-		eq(stale.hitCount, 3, "J-2 ★命中格数 === 3（与实机 dry_run 的 3 条 blocked 逐数对上）");
+			"J-2 site.anchor === provenance.pasteAt（P7 照它 paste）");
 		eq(pL3.stages.worldFrameV1.ok, true, "J-2 stages.worldFrameV1 记了这道闸（P7/主线程可审计）");
-		// 世界矩形与 hub 的关系写进 provenance（P7 能自己复核，不必信任结论）
 		eq(pL3.provenance.worldPlacement.worldFrameV1.hubRect, [-2, -2, 1, 1], "J-2 provenance 带 hub 世界矩形");
-		// ★ 如实：L3 实参下 hub 钉死不可行（(-2,13) 没有铜）⇒ 蓝图贴得上但接不上 hub。
-		//    site.hub 必须是**真实** hub，不能被"布局隐含的 hub"冒充。
 		eq(pL3.site.hub, [-2, -2], "J-2 site.hub === 真实 hub(-2,-2)（不是布局隐含位置）");
-		eq(pL3.site.hubPinned, false, "J-2 ★L3 实参 hubPinned === false（如实：收集带没接上 hub）");
-		say(JSON.stringify(pL3.provenance.worldPlacement.hubInferred) !== JSON.stringify(pL3.site.hub),
-			"J-2 ★布局隐含 hub ≠ 真实 hub —— 缺口在 provenance 里可见",
-			{ inferred: pL3.provenance.worldPlacement.hubInferred, real: pL3.site.hub });
+		// ★ B-4：真 hub + seed ⇒ anchor 钉死，收集带末端落在真入口（不再是"贴得上但接不上"）
+		eq(pL3.site.hubPinned, true, "J-2 ★hubPinned === true（anchor 由真 hub 唯一确定）");
+		eq(pL3.provenance.worldPlacement.hubInferred, [-2, -2], "J-2 布局隐含 hub === 真实 hub（收集带真接上了）");
+		const on = entryOnHub(pL3.layout.hubConnection, [-2, -2], pL3.provenance.worldPlacement.anchor);
+		say(on.ok === true, "J-2 ★收集带末端落在真实 hub 的 16 入口之一", on);
+		// 矿机必须压在真资源上（否则贴得再准也零交付）
+		const miners = pL3.provenance.minerCells || [];
+		const badM = miners.filter(m => tileResource(18043, m.cell[0], m.cell[1]) !== m.shape);
+		eq(badM, [], "J-2 ★每台矿机都压在其 payload 对应的真资源上");
+		// 旧 bug 的形态：把同一套实体按 [0,0] 摆 —— 必须被逐格 V1 抓住
+		const stale = worldFrameHubCheck(entityCellsOf(pL3.entities, pL3.layout.placements), [0, 0], [-2, -2]);
+		say(stale.ok === false, "J-2 ★同一布局按旧 anchor[0,0] 摆 ⇒ 世界系 V1 fail", stale);
 	}
 
-	// J-3 hub 钉死路径：资源允许时 anchor 必须让 hub 落在**给定**世界位置（收集带才接得上）
-	//     seed 43391 的铜块在 (-9..-4, 6..12)，设计系矿机 (-4,11) ⇒ 钉死 anchor = hub − [-4,-4]
-	const pPin = compilePlan({ goal: "----CuCu", seed: 43391, hub: { x: -9, y: -8 } });
-	say(pPin.ok === true, "J-3 hub(-9,-8) / seed 43391：ok:true（资源允许钉死）", pPin.ok === false ? pPin.reason : undefined);
-	if (pPin.ok) {
-		eq(pPin.site.hub, [-9, -8], "J-3 site.hub === 给定世界 hub（锚点真的钉在给定位置）");
-		eq(pPin.site.hubPinned, true, "J-3 site.hubPinned === true");
-		eq(pPin.provenance.worldPlacement.hubPinned, true, "J-3 provenance.worldPlacement.hubPinned === true");
-		eq([pPin.site.hub, pPin.provenance.worldPlacement.hubInferred], [[-9, -8], [-9, -8]],
-			"J-3 钉死时 布局隐含 hub === 真实 hub（收集带真接上了）");
-		eq(pPin.provenance.minerCells[0].cell, [-9, 7], "J-3 矿机落在铜上（钉死后仍过资源校验）");
+	// J-3 ★核心不变式（B-4 的可执行锁）：**ok:true ⟹ entry ∈ 真 hub 16 入口 且 矿机压真资源**
+	//     扫 3 个 goal × 4 个 seed × 3 个 hub；成功的每一个都必须成立（失败的不算数，由 J-4 锁）
+	{
+		let checked = 0, violations = [];
+		for (const goal of ["----CuCu", "Cu----Cu", "RuRu----"]) {
+			for (const seed of [18043, 81868, 43391, 12345]) {
+				for (const hub of [[-2, -2], [7, 3], [-30, 25]]) {
+					const p = compilePlan({ goal, seed, hub: { x: hub[0], y: hub[1] } });
+					if (!p.ok) continue;
+					checked++;
+					const on = entryOnHub(p.layout.hubConnection, hub, p.provenance.worldPlacement.anchor);
+					const badM = (p.provenance.minerCells || []).filter(m => tileResource(seed, m.cell[0], m.cell[1]) !== m.shape);
+					const pinned = p.site.hubPinned === true;
+					const inferred = JSON.stringify(p.provenance.worldPlacement.hubInferred) === JSON.stringify(hub);
+					if (!on.ok || badM.length || !pinned || !inferred) {
+						violations.push({ goal, seed, hub, on, badM, pinned, inferred });
+					}
+				}
+			}
+		}
+		ok(checked >= 20, `J-3 扫到足够多的成功样本（实得 ${checked}）`);
+		eq(violations, [], `J-3 ★${checked} 个 ok:true 计划全部满足：entry ∈ 真 hub 16 入口、矿机压真资源、anchor 钉死`);
 	}
-	// J-4 钉死不可行时**退回**不压 hub 的 anchor，并在 stages 留 preferredRejected 凭据
-	const pBack = compilePlan({ goal: "----CuCu", seed: 43391, hub: { x: -5, y: -4 } });
-	say(pBack.ok === true, "J-4 hub 钉死不可行（-5,-4 处没有铜）⇒ 退回资源允许的 anchor", pBack.ok === false ? pBack.reason : undefined);
-	if (pBack.ok) {
-		eq(pBack.site.hub, [-5, -4], "J-4 site.hub === **真实**给定 hub（不是布局隐含的那个位置）");
-		eq(pBack.site.hubPinned, false, "J-4 site.hubPinned === false（如实：没真接上 hub）");
-		say(JSON.stringify(pBack.provenance.worldPlacement.hubInferred) !== JSON.stringify(pBack.site.hub),
-			"J-4 布局隐含的 hub ≠ 真实 hub —— 缺口如实可见（P7/MS 不会被 hubInferred 骗）",
-			{ inferred: pBack.provenance.worldPlacement.hubInferred, real: pBack.site.hub });
-		say(worldFrameHubCheck(pBack.entities, pBack.site.anchor, [-5, -4]).ok === true,
-			"J-4 退回的 anchor 仍不压给定 hub（硬约束不因为退回而豁免）");
+
+	// J-4 接不上时**诚实失败**：不产蓝图、reason 在 §2.5 枚举里（旧的"退回一个接不上的 anchor 报绿灯"已被删除）
+	{
+		const cases = [[55852, [-2, -2]], [43391, [-30, 25]]];
+		let sawFail = 0;
+		for (const [seed, hub] of cases) {
+			const p = compilePlan({ goal: "----CuCu", seed, hub: { x: hub[0], y: hub[1] } });
+			if (p.ok) {
+				// 成功也行 —— 但必须接上真 hub（与 J-3 同判据）
+				const on = entryOnHub(p.layout.hubConnection, hub, p.provenance.worldPlacement.anchor);
+				say(on.ok, `J-4 seed=${seed} hub=${JSON.stringify(hub)} 成功时 entry 必落真入口`, on);
+				continue;
+			}
+			sawFail++;
+			say(typeof p.reason === "string" && /^(validate:|no-site|dag-not-placeable|no-resource)/.test(p.reason),
+				`J-4 seed=${seed} hub=${JSON.stringify(hub)} 接不上 ⇒ 结构化失败（${p.reason}），不产蓝图`);
+			eq(p.blueprint, undefined, "J-4 ★失败计划没有蓝图字段（绝不产出「贴得上但接不上」的假绿）");
+		}
+		ok(sawFail >= 1, `J-4 至少覆盖到一条诚实失败路径（实得 ${sawFail}）`);
+
+		// J-4b hub 钉死不可行（资源离 hub 太远也无所谓 —— 现在 anchor 由 hub 唯一确定；
+		//      真正的失败原因是几何/资源，不是"钉不死"）—— 必失败且**不许**回退成"另一个 anchor 的绿灯"
+		const far = compilePlan({ goal: "SuSuSuSu", seed: 55852, hub: { x: 900, y: 900 }, range: 24 });
+		say(far.ok === false, "J-4b 资源范围外 + 真 hub ⇒ ok:false（不回退到接不上的 anchor）", far.ok === true ? far.site : far.reason);
 	}
-	// J-5 无 hub 的老路径逐字节不变（既有 304 断言的确定性基线）
+
+	// J-5 无 hub 的老路径逐字节不变（确定性基线；金网格不进 place 的 seed 路径）
 	const pNoHubA = compilePlan({ goal: "CuCuCuCu", seed: 43391 });
 	const pNoHubB = compilePlan({ goal: "CuCuCuCu", seed: 43391 });
 	say(pNoHubA.ok && pNoHubB.ok && pNoHubA.blueprint === pNoHubB.blueprint, "J-5 未给 hub 时仍确定（蓝图逐字节相等）");
 	eq(pNoHubA.site.hub, null, "J-5 未给 hub 时 site.hub === null（世界 hub 未知，不假装知道）");
 	say(pNoHubA.provenance.worldPlacement.hubInferred !== null,
 		"J-5 推算的世界 hub 只进 provenance.hubInferred（诊断用，不当契约值）");
+	// J-5b 未给 hub 的蓝图必须与「B-4 之前」逐字节同（seed 不得漏进 place 的旧路径）
+	//     —— 判据用 designAnchor：未给 hub 时作图局部原点仍是设计系 [0,0]，anchor 由资源解出
+	eq(pNoHubA.provenance.worldPlacement.designHubLocal, [-4, -4], "J-5b 未给 hub 时设计系 hub 仍是 [-4,-4]（旧路径未被改道）");
 }
 
 /* ══════════════════ 汇总 ══════════════════ */

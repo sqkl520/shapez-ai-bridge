@@ -1,0 +1,69 @@
+{
+ "goal": "CuCuCuCu",
+ "steps": {
+  "new_game": {
+   "ok": true,
+   "op": "new_game",
+   "game_mode": "regularMode",
+   "internal_id": "d340269d46b159ba203007d9e5d4f7f3340c87b3"
+  },
+  "compile": {
+   "ok": true,
+   "reason": null,
+   "entities": 12,
+   "validator_pass": true,
+   "blueprint_len": 113,
+   "bbox": [
+    9,
+    4
+   ],
+   "corners": 1
+  },
+  "dry_run": {
+   "would_apply": 12,
+   "would_delete": 0,
+   "blocked": 0,
+   "unknown_code": 0,
+   "bbox": [
+    -11,
+    1,
+    -3,
+    4
+   ],
+   "destroys": []
+  },
+  "paste": {
+   "applied": 12,
+   "failed": 0
+  },
+  "intent_diff": [],
+  "delivery": {
+   "met": true,
+   "ticks_run": 1260,
+   "delivered_before": 0,
+   "delivered_after": 1,
+   "level_before": 1,
+   "level_after": 1,
+   "stored": [
+    [
+     "CuCuCuCu",
+     1
+    ]
+   ]
+  }
+ },
+ "pass": true,
+ "world": {
+  "internal_id": "d340269d46b159ba203007d9e5d4f7f3340c87b3",
+  "level": 1,
+  "shape": "CuCuCuCu",
+  "delivered_before": 0,
+  "required": 30,
+  "hub": [
+   -2,
+   -2
+  ]
+ },
+ "seed": 15935,
+ "compile_ms": 279
+}
