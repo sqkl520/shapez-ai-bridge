@@ -1,9 +1,9 @@
 {
  "goal": "----CuCu",
- "seed": 55852,
+ "seed": 77844,
  "anchor": [
-  -8,
-  -3
+  -6,
+  -6
  ],
  "hub": [
   -2,
@@ -14,7 +14,7 @@
   {
    "code": 7,
    "dx": 0,
-   "dy": 11,
+   "dy": 10,
    "rot": 0,
    "nodeId": "n0",
    "instanceIdx": 0,
@@ -26,7 +26,7 @@
   {
    "code": 9,
    "dx": 0,
-   "dy": 3,
+   "dy": 2,
    "rot": 0,
    "nodeId": "n1",
    "instanceIdx": 0,
@@ -37,7 +37,7 @@
   },
   {
    "code": 20,
-   "dx": 1,
+   "dx": 2,
    "dy": 1,
    "rot": 0,
    "nodeId": "n1d1",
@@ -50,67 +50,7 @@
   {
    "code": 1,
    "dx": 0,
-   "dy": 10,
-   "rot": 0,
-   "nodeId": "belt@-4,10",
-   "instanceIdx": 0,
-   "kind": "belt",
-   "rotationVariant": 0,
-   "inDir": "bottom",
-   "outDir": "top"
-  },
-  {
-   "code": 1,
-   "dx": 0,
    "dy": 9,
-   "rot": 0,
-   "nodeId": "belt@-4,9",
-   "instanceIdx": 0,
-   "kind": "belt",
-   "rotationVariant": 0,
-   "inDir": "bottom",
-   "outDir": "top"
-  },
-  {
-   "code": 1,
-   "dx": 0,
-   "dy": 8,
-   "rot": 0,
-   "nodeId": "belt@-4,8",
-   "instanceIdx": 0,
-   "kind": "belt",
-   "rotationVariant": 0,
-   "inDir": "bottom",
-   "outDir": "top"
-  },
-  {
-   "code": 1,
-   "dx": 0,
-   "dy": 7,
-   "rot": 0,
-   "nodeId": "belt@-4,7",
-   "instanceIdx": 0,
-   "kind": "belt",
-   "rotationVariant": 0,
-   "inDir": "bottom",
-   "outDir": "top"
-  },
-  {
-   "code": 1,
-   "dx": 0,
-   "dy": 6,
-   "rot": 0,
-   "nodeId": "belt@-4,6",
-   "instanceIdx": 0,
-   "kind": "belt",
-   "rotationVariant": 0,
-   "inDir": "bottom",
-   "outDir": "top"
-  },
-  {
-   "code": 1,
-   "dx": 0,
-   "dy": 5,
    "rot": 0,
    "nodeId": "belt@-4,5",
    "instanceIdx": 0,
@@ -122,7 +62,7 @@
   {
    "code": 1,
    "dx": 0,
-   "dy": 4,
+   "dy": 8,
    "rot": 0,
    "nodeId": "belt@-4,4",
    "instanceIdx": 0,
@@ -134,7 +74,19 @@
   {
    "code": 1,
    "dx": 0,
-   "dy": 2,
+   "dy": 7,
+   "rot": 0,
+   "nodeId": "belt@-4,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 6,
    "rot": 0,
    "nodeId": "belt@-4,2",
    "instanceIdx": 0,
@@ -146,7 +98,7 @@
   {
    "code": 1,
    "dx": 0,
-   "dy": 1,
+   "dy": 5,
    "rot": 0,
    "nodeId": "belt@-4,1",
    "instanceIdx": 0,
@@ -158,7 +110,7 @@
   {
    "code": 1,
    "dx": 0,
-   "dy": 0,
+   "dy": 4,
    "rot": 0,
    "nodeId": "belt@-4,0",
    "instanceIdx": 0,
@@ -169,15 +121,135 @@
   },
   {
    "code": 1,
-   "dx": 1,
-   "dy": 2,
+   "dx": 0,
+   "dy": 3,
    "rot": 0,
-   "nodeId": "belt@-3,2",
+   "nodeId": "belt@-4,-1",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
    "inDir": "bottom",
    "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "belt@-4,-3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-3,-4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 2,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-2,-4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-1,-4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 4,
+   "dy": 1,
+   "rot": 180,
+   "nodeId": "belt@0,-3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 4,
+   "dy": 2,
+   "rot": 180,
+   "nodeId": "belt@0,-2",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 4,
+   "dy": 3,
+   "rot": 180,
+   "nodeId": "belt@0,-1",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 3,
+   "dx": 0,
+   "dy": 0,
+   "rot": 0,
+   "nodeId": "belt@-4,-4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 2,
+   "inDir": "bottom",
+   "outDir": "right"
+  },
+  {
+   "code": 3,
+   "dx": 4,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@0,-4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 2,
+   "inDir": "left",
+   "outDir": "bottom"
+  },
+  {
+   "code": 3,
+   "dx": 1,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "belt@-3,-3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 2,
+   "inDir": "bottom",
+   "outDir": "right"
   }
  ]
 }

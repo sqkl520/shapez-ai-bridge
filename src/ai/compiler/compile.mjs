@@ -704,25 +704,40 @@ export function checkPigments(dag) {
 /* ════════════════ Stage 3：place（P3）════════════════ */
 
 /**
- * P3 作图。**单一坐标系 = 设计系**（site=[0,0]，hub 用设计坐标 hubDesign）：
- *   · 80e1444 之后 place() 的 LayoutReport 是 site 相对局部系，一切世界输入在门口按 origin 换算；
- *     所以 hub 与 world 必须给**同一个框**，否则 occupancy 与机器混框 → V4 假 fail
- *     （本包一度报「(0,3) 不是 hub 的输入槽」，就是这个混框的现场，见 NOTES.md C-1）。
- *   · world 必须一起传：place 靠它产出 occupancy（设计系的 hub 16 格 solid），
- *     P5 的 V1/V3/V4 与 P7 的对拍全在这一个框里。
- *   · validateWorld（place.mjs:177）对「entities 里有非 hub 实体」直接返回
- *     out-of-scope:rotated-machine（v1 不增量对接旧厂，plan §6 R2）—— 本包只灌一台 hub。
+ * P3 作图。**坐标系分两档，取决于是否给了真实世界 hub**（B-4 修复，placer/NOTES §6ter）：
+ *
+ *   ⓐ `ctx.hub` 给了（真实世界 hub 左上角 W）⇒ **局部原点 = W**（`site = hub = W`）：
+ *      · place() 的 origin = site = W ⇒ `hubLocal = W − W = [0,0]`（P3 内部以真 hub 为原点作图）；
+ *      · `seed` 一并传进去 ⇒ P3 按资源反推机器簇平移，矿机压真资源，收集带从矿机处走到局部 (0,0)
+ *        这个 hub 的真实 16 入口之一（placer test ①f F1/F3 锁死）；
+ *      · `world` 必须是**世界系**（hub 实体在 W）：place() 的 occupancy = world 实体 − origin，
+ *        减完正好落在局部 (0,0)，与 hubLocal 同框。P5 收到的是同一框的**局部**版（见 validateStage）。
+ *   ⓑ 未给 hub ⇒ 维持旧行为（site=[0,0]、hub=[-4,-4]、world.seed=null、不传 seed）——
+ *      这一档是金网格与 L0 确定性基线的**逐字节兼容路径**，不许动。
+ *
+ * 为什么必须这样（根因）：place() 的 LayoutReport 是 site 相对局部系；旧代码传的是设计系假 hub
+ * (-4,-4) + `seed:null`，于是机器簇被锚在假 hub 下方、矿机永远离资源，anchor 只能事后平移，
+ * 收集带末端落在 `anchor + (-4,-4)` —— 只有 `hubPinned=true` 时才碰巧等于真 hub。L3 现场
+ * 「逐格零差、零交付」就是这条（placer/NOTES §6ter）。
+ *
+ * validateWorld（place.mjs:189）对「entities 里有非 hub 实体」直接返回
+ * out-of-scope:rotated-machine（v1 不增量对接旧厂，plan §6 R2）—— 本包只灌一台 hub。
  * @returns {{ok:true, layout:object, hubDesign:number[]} | failure}
  */
 export function placeStage(steps, ctx) {
+	const hubW = Array.isArray(ctx.hub) && ctx.hub.length === 2 && ctx.hub.every(Number.isFinite)
+		? [Math.trunc(ctx.hub[0]), Math.trunc(ctx.hub[1])] : null;
+	const seed = Number.isFinite(ctx.seed) ? ctx.seed : null;
 	const input = {
 		steps: clone(steps),
-		// 单一坐标系：设计系（site = [0,0]，hub 用设计坐标 hubDesign）。
-		// world 必须一起传：place 的 occupancy = world 实体 − origin（= 设计系 16 格 hub），
-		// P5 的 V1/V3/V4 与 P7 的对拍全在这一个框里（NOTES.md 坐标口径）。
-		site: { x: 0, y: 0 },
-		hub: { x: ctx.hubDesign[0], y: ctx.hubDesign[1] },
-		world: hubWorldState(ctx.hubDesign, null),
+		// ⓐ 原点 = 真 hub（世界系）；ⓑ 原点 = [0,0]（设计系，兼容路径）
+		site: hubW ? { x: hubW[0], y: hubW[1] } : { x: 0, y: 0 },
+		hub: hubW ? { x: hubW[0], y: hubW[1] } : { x: ctx.hubDesign[0], y: ctx.hubDesign[1] },
+		// world 一律给**世界系**（place 自己减 origin）：ⓐ 真 hub 处 ⇒ 局部 occupancy=(0,0)；
+		// ⓑ 设计系 hub ⇒ 与旧行为逐字节相同（seed:null）。
+		world: hubW ? hubWorldState(hubW, seed) : hubWorldState(ctx.hubDesign, null),
+		// ★ 关键：只有给真 hub 时才把 seed 交给 P3（否则矿机被挪到资源上，会改金网格/确定性基线）
+		...(hubW && seed !== null ? { seed } : {}),
 		rowGap: ctx.rowGap, colGap: ctx.colGap,
 		demandPerSec: ctx.demandPerSec || 0,
 		instanceIdx: 0,
@@ -773,7 +788,8 @@ export function routeStage(placeResult, ctx) {
 		for (const mode of CHANNEL_ORDER_MODES) {
 			const layout = mode === "asis" ? placed.layout : { ...placed.layout, channels: orderChannels(placed.layout, mode) };
 			let ro;
-			try { ro = routeAll(layout, { hubOrigin: ctx.hubDesign.slice(), searchRadius: ctx.searchRadius }); }
+			const hubOrigin = Array.isArray(ctx.hubLocal) ? ctx.hubLocal : ctx.hubDesign;
+			try { ro = routeAll(layout, { hubOrigin: hubOrigin.slice(), searchRadius: ctx.searchRadius }); }
 			catch (e) { return absorb(e, "route(P4)", { nodeId: "", cell: null, check: "V4-slot-alignment" }, "P4 抛了未收敛的契约错"); }
 			log.push({ gap: g, rowGap, colGap, order: mode, ok: ro.ok, reason: ro.reason, laneColumn: laneColumnConflicts(layout).length, belt: ro.beltTiles, corners: ro.cornerCount });
 			if (ro.ok && ro.closure && ro.closure.ok) {
@@ -808,30 +824,49 @@ function normalizeOrigin(origin) {
 /** hub 世界占地 4×4（与 P3 的 HUB_SIZE 同源；本文件不 import P3 常量以免框混用 —— 见 §5 的坐标口径注） */
 const HUB_WORLD_SIZE = 4;
 
-/** 两个闭区间矩形 [x0,y0,x1,y1] 是否相交（含边界；空的/非法输入 → false，绝不"猜相交"）。 */
-function rectsIntersect(a, b) {
-	if (!a || !b || a.length !== 4 || b.length !== 4 || ![...a, ...b].every(Number.isFinite)) return false;
-	return !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
-}
-
 /**
- * 世界系硬约束：**落点矩形（anchor + 设计系实体矩形）∩ hub 世界 4×4 == ∅**。
+ * 世界系硬约束（**B-4 起是逐格判据**）：`anchor + 每个实体的实际占用格` ∩ hub 世界 4×4 == ∅。
  *
- * 为什么必须是实体矩形、不是 `layout.bbox`：P3 的 `buildReport` 把 hub 的 16 格也算进 bbox
- * （`place.mjs` 的 `touch(hubLocal)`），那是**布局所在框**；而 hub 不在 entities 里（它是既有世界，
- * 不被 paste）。用含 hub 的 bbox 做判据，等于"hub 与自己必须不相交" —— 恒假。
- * 而 `alignBbox()` 之后的 `layout.bbox` 恰好就是实体跨度（`bboxP3` 保留 P3 原值），
- * 且实测那次 `bbox=[2,12]` 正是实体跨度 —— 所以这里优先用调用方给的 `ctx.entityRect`
- * （= entsLocal 的 min/max，最贴近"会被 paste 的格"），缺省才退回 layout 的裸口径。
+ * ⚠️ 为什么不能再用「实体**包围框** ∩ hub」：B-4 之前布局整块摆在 hub 下方、收集带竖直贴到
+ *   hub 底缘的入口格，包围框天然退出 hub。B-4 之后 place() 让收集带**绕到 hub 顶/左/右**入口
+ *   （seed 决定矿位，方向不再恒为「下方」），带子会从 hub 侧面擦过去 —— 包围框把这些**合法**的
+ *   贴边格吃进去，于是「资源→真入口」的正确布局被包围框假判成压 hub（18043/81868/43391 全中）。
+ *   dry_run 的 `solid collision` 判的是**实际格**是否被 hub 占住（hub 那 16 格是 solid），
+ *   所以本闸也必须逐格判 —— 与 P7 的实机判据同义，不是放宽。
  *
- * @param {[number,number]} anchor 设计系原点的世界坐标
- * @param {[number,number,number,number]} rect 设计系实体矩形 [x0,y0,x1,y1]
+ * 保留包围框结果（worldRect/hubRect）作诊断字段：它只回答"两者有没有挨着"，不再决定 pass。
+ *
+ * @param {Array<{dx:number,dy:number,w?:number,h?:number}>|[number,number,number,number]} entities 局部系实体；
+ *        **传 [x0,y0,x1,y1] 四元数组**时按「一个包围矩形」处理（旧口径，仅供 siteStage ⓑ 的候选粗判与
+ *        单元测试用；compileInner 的判据一律传实体表，逐格）。
+ * @param {[number,number]} anchor 局部 → 世界的平移量
  * @param {[number,number]} hubWorld hub 世界左上角
  */
-export function hubClearOf(anchor, rect, hubWorld) {
-	const worldRect = [anchor[0] + rect[0], anchor[1] + rect[1], anchor[0] + rect[2], anchor[1] + rect[3]];
+export function hubClearOf(anchor, entities, hubWorld) {
 	const hubRect = [hubWorld[0], hubWorld[1], hubWorld[0] + HUB_WORLD_SIZE - 1, hubWorld[1] + HUB_WORLD_SIZE - 1];
-	return { clear: !rectsIntersect(worldRect, hubRect), worldRect, hubRect };
+	// 旧口径：四元数组 = 一个包围矩形（长度 4 且元素是数字）
+	const rect = Array.isArray(entities) && entities.length === 4 && entities.every(Number.isFinite) ? entities : null;
+	const list = rect
+		? [{ dx: rect[0], dy: rect[1], w: rect[2] - rect[0] + 1, h: rect[3] - rect[1] + 1, kind: "rect", nodeId: "" }]
+		: (entities || []);
+	const hits = [];
+	for (const e of list) {
+		const w = Number.isFinite(e.w) ? e.w : 1, h = Number.isFinite(e.h) ? e.h : 1;
+		for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) {
+			const x = anchor[0] + e.dx + dx, y = anchor[1] + e.dy + dy;
+			if (x >= hubRect[0] && x <= hubRect[2] && y >= hubRect[1] && y <= hubRect[3]) {
+				hits.push({ cell: [x, y], kind: e.kind, nodeId: e.nodeId });
+			}
+		}
+	}
+	let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+	for (const e of list) {
+		const w = Number.isFinite(e.w) ? e.w : 1, h = Number.isFinite(e.h) ? e.h : 1;
+		x0 = Math.min(x0, anchor[0] + e.dx); y0 = Math.min(y0, anchor[1] + e.dy);
+		x1 = Math.max(x1, anchor[0] + e.dx + w - 1); y1 = Math.max(y1, anchor[1] + e.dy + h - 1);
+	}
+	const worldRect = Number.isFinite(x0) ? [x0, y0, x1, y1] : null;
+	return { clear: hits.length === 0, worldRect, hubRect, hits };
 }
 
 /** 设计系实体矩形：优先用调用方给的（compileInner 从 entities 现算），缺省退回 placements+通道端点。 */
@@ -864,32 +899,40 @@ export function entityRectOf(entities) {
 }
 
 /**
- * **世界系 V1 闸（本包自加的第二道 V1，P5 那道只看得见设计系）**。
+ * entities → **逐格**占用表（`{dx,dy,w,h,kind,nodeId}`），供世界系 V1 闸按实际占格判 hub 相交。
+ * 机器取 layout.placements 的 footprint（cutter 2×1 等），带子 1×1。缺 footprint → 1×1（保守 = 多算占用，不会漏报）。
+ */
+export function entityCellsOf(entities, placements) {
+	const fpOf = new Map();
+	for (const p of placements || []) if (p && p.nodeId) fpOf.set(p.nodeId, p.footprint);
+	return (entities || []).map(e => {
+		const fp = fpOf.get(e.nodeId);
+		const w = Array.isArray(fp) && Number.isFinite(fp[0]) ? fp[0] : 1;
+		const h = Array.isArray(fp) && Number.isFinite(fp[1]) ? fp[1] : 1;
+		return { dx: e.dx, dy: e.dy, w, h, kind: e.kind, nodeId: e.nodeId };
+	});
+}
+
+/**
+ * **世界系 V1 闸（本包自加的第二道 V1，P5 那道只看得见作图局部系）**。
  *
- * 为什么需要它（2026-10 的 L3 首个实机缺陷）：`validateStage` 喂的世界是
- * `hubWorldState(hubDesign)` —— **设计系**的 hub。在设计系里，布局与设计 hub 天然不相交
- * （P3 就是这么排的），所以 P5 的 V1 永远只能是 pass：它看不见**真实 hub 在世界系的位置**。
- * 这不是 V1 的判据漏洞（给世界系输入它抓得准，见 NOTES §1.0 的复现），而是**框**的错位：
- * 布局被 `site.anchor` 平移后，hub 的那 16 格也跟着平移量走，而 P5 收到的那份世界没跟着走。
+ * 为什么需要它（2026-10 的 L3 首个实机缺陷）：`validateStage` 喂的世界是**局部系**的 hub
+ * （hubWorldState(hubLocal)）。在局部系里，布局与 hub 天然不相交（P3 就是这么排的），所以 P5 的
+ * V1 永远只能是 pass：它看不见**真实 hub 在世界系的位置**。这不是 V1 的判据漏洞，而是**框**的
+ * 错位：布局被 `site.anchor` 平移后，hub 的那 16 格也跟着平移量走，而 P5 收到的那份世界没跟着走。
  *
- * 判据 = 「会被 paste 的实体矩形 + anchor」∩「真实 hub 4×4」== ∅。失败即整单 fail
- * （§2.5 归到 `validate:V1`，`check:"V1-occupancy"`，与 dry_run 的 `solid collision` 同义）。
- * @param {Array<{dx:number,dy:number}>} entities 设计系实体
- * @param {[number,number]} anchor 设计 → 世界的平移量
+ * 判据（B-4 起）= 「会被 paste 的实体**逐格** + anchor」∩「真实 hub 4×4」== ∅（见 hubClearOf 头注：
+ * 包围框会把合法的贴边收集带误判）。失败即整单 fail（§2.5 归到 `validate:V1`，
+ * `check:"V1-occupancy"`，与 dry_run 的 `solid collision` 同义）。
+ * @param {Array<{dx:number,dy:number,w?:number,h?:number}>} entities 局部系实体
+ * @param {[number,number]} anchor 局部 → 世界的平移量
  * @param {[number,number]|null} hubWorld 真实 hub 世界左上角；null = 未知（不判）
  */
 export function worldFrameHubCheck(entities, anchor, hubWorld) {
 	if (!hubWorld) return { ok: true, skipped: "no-world-hub", worldRect: null, hubRect: null };
-	const rect = entityRectOf(entities);
-	const hc = hubClearOf(anchor, rect, hubWorld);
+	const hc = hubClearOf(anchor, entities, hubWorld);
 	if (hc.clear) return { ok: true, worldRect: hc.worldRect, hubRect: hc.hubRect };
-	const hits = [];
-	for (const e of entities) {
-		const x = anchor[0] + e.dx, y = anchor[1] + e.dy;
-		if (x >= hc.hubRect[0] && x <= hc.hubRect[2] && y >= hc.hubRect[1] && y <= hc.hubRect[3]) {
-			hits.push({ cell: [x, y], kind: e.kind, nodeId: e.nodeId });
-		}
-	}
+	const hits = hc.hits;
 	return { ok: false, worldRect: hc.worldRect, hubRect: hc.hubRect, hits: hits.slice(0, 8), hitCount: hits.length };
 }
 
@@ -898,19 +941,19 @@ export function worldFrameHubCheck(entities, anchor, hubWorld) {
  * 的资源 shortKey 恰等于该矿机通道的 payload（= 它要采的形状）。
  * 判据与 P2 world.mjs 同源（tileResource 是 gen-resources CLI 逐格对拍过的真值），本包不重算 chunk。
  *
- * ⚠️ 坐标系裁决（§2.1 / P1 fixture plan-l1.json 口径）：layout 与 entities **全程留在设计系**
- *   （布局原点 = [0,0]，hub 在 hubLocal），世界坐标 = `site.anchor + [dx,dy]`。
- *   所以本函数只产 anchor（平移量），**不平移 layout** —— 平移会让 P5 的 hub 槽位、
- *   P6 的锚点归一、P7 的对拍三处各拿一套坐标，那才是真正的错位来源。
+ * ⚠️ 坐标系裁决（§2.1 / P1 fixture plan-l1.json 口径）：layout 与 entities **全程留在作图局部系**
+ *   （世界坐标 = `site.anchor + [dx,dy]`）。所以本函数只产 anchor（平移量），**不平移 layout**。
  *
- * ⚠️ **世界系硬约束（2026-10 修，L3 首个实机缺陷）**：候选 anchor 除了"矿机压对资源"，
- *   还必须满足 `anchor + 实体矩形` 与**真实 hub 的 4×4**（`ctx.hub`，世界系）不相交。
- *   上一版只看资源与距原点，于是 `anchor=[0,0]` 把布局整块压进 hub(-2,-2..1,1)：
- *   P5 在设计系是**自洽**的（设计系 hub 在 [-4,-4]，与实体不相交），dry_run 却在世界系抓到
- *   3 格 blocked（occupant=hub uid 10000）⇒ 半建。**设计系自洽 ≠ 世界系自洽**。
- *   两者不一致时以能通过 dry_run 为准（实体矩形 ∩ hub 世界 4×4 == ∅）。
- *   给了 hub 时**优先**试"hub 钉死"的那个 anchor（anchor = hub − hubDesign）：
- *   它能真正把收集带接上 hub（L3 的交付前提）；资源不允许时才退回"离原点最近且不压 hub"。
+ * ⚠️ **B-4 起有两档局部原点**（与 placeStage 同一判据，见其头注）：
+ *   ⓐ `ctx.hubLocal` 由调用方给出（= **hub 在作图局部系里的坐标**，给了真 hub 时是 `[0,0]`）
+ *      ⇒ 本函数**不做资源重定位**：机器簇已由 place() 按 seed 对齐到真资源上，收集带也已接到
+ *      局部 hub 的入口，anchor 唯一确定：`anchor = 真 hub 世界 − hubLocal`。此时 `hubPinned` 恒为 true，
+ *      且再解一次 anchor 只会把一套已经正确的世界坐标再平移一次（B-4 的原始病灶）。
+ *   ⓑ 未给（旧路径 / 直接调用的兼容口径）⇒ 维持原有「候选 anchor × 资源对拍」的行为，逐字节不变
+ *      （L0 确定性基线）。`compileInner` 恒走 ⓐ，所以 ⓑ 只为旧单测与诊断保留。
+ *
+ * ⚠️ **世界系硬约束**：ⓐ 分支**不在这里判** hub 相交（包围框会误杀贴边收集带）；
+ *   权威判据是 `compileInner` 的 `worldFrameHubCheck`（逐格）。ⓑ 的候选粗判仍用实体包围矩形。
  * @returns {{ok:true, anchor:number[], hubLocal:number[], miners:Array, region:object} | failure}
  */
 export function siteStage(layout, ctx) {
@@ -929,10 +972,36 @@ export function siteStage(layout, ctx) {
 	const seed = ctx.seed;
 	const region = ctx.region || regionAround(ctx.origin || [0, 0], ctx.range === undefined ? 96 : ctx.range);
 	const cells = resourcesInRegion(seed, region);
-	// 世界系硬约束的两份输入：实体矩形（设计系）+ hub 世界左上角（ctx.hub，世界系）
+	// 世界系硬约束的两份输入：实体矩形（局部系）+ hub 世界左上角（ctx.hub，世界系）
 	const rect = designEntityRect(layout, ctx.entityRect);
 	const hubWorldFixed = Array.isArray(ctx.hub) && ctx.hub.length === 2 && ctx.hub.every(Number.isFinite)
 		? [Math.trunc(ctx.hub[0]), Math.trunc(ctx.hub[1])] : null;
+
+	/* ⓐ 真 hub 作图档（B-4）：局部原点 = 真 hub ⇒ hubLocal=[0,0]，anchor 唯一 = hubWorld − hubLocal。
+	   不再走资源重扫 —— place() 已经把矿机压在真资源上，重解 anchor 只会把正确的世界坐标再平移一次。 */
+	if (Array.isArray(ctx.hubLocal) && ctx.hubLocal.length === 2 && hubWorldFixed) {
+		const anchor = [hubWorldFixed[0] - ctx.hubLocal[0], hubWorldFixed[1] - ctx.hubLocal[1]];
+		const minersW = miners.map(m => ({ nodeId: m.nodeId, cell: [anchor[0] + m.cell[0], anchor[1] + m.cell[1]], shape: m.shape }));
+		const bad = minersW.filter(m => tileResource(seed, m.cell[0], m.cell[1]) !== m.shape);
+		if (bad.length) {
+			return fail("no-resource-in-range",
+				{ nodeId: bad[0].nodeId, cell: bad[0].cell, check: "V1-occupancy" },
+				`放置层给的矿位与 seed=${seed} 的资源图对不上（${bad.map(b => `${b.nodeId}@${b.cell} 要 ${b.shape} 实得 ${tileResource(seed, b.cell[0], b.cell[1])}`).join("；")}）`
+				+ `｜这是**上游 place() 与资源图脱节**，P8 不猜、不偷偷平移（B-4 的口径：anchor 唯一确定）`);
+		}
+		/* hub 相交**不在这里判**：包围框会误杀"收集带贴 hub 侧面走到入口"的合法布局
+		   （B-4 的收集带方向由 seed 决定，不再恒为「hub 下方」）。权威判据是 compileInner 的
+		   worldFrameHubCheck（逐格）；这里只给包围矩形作诊断。 */
+		const hubRect = [hubWorldFixed[0], hubWorldFixed[1],
+			hubWorldFixed[0] + HUB_WORLD_SIZE - 1, hubWorldFixed[1] + HUB_WORLD_SIZE - 1];
+		return {
+			ok: true, anchor, hubDesign: ctx.hubDesign.slice(), hubLocal: ctx.hubLocal.slice(),
+			hubWorld: hubWorldFixed.slice(), hubPinned: true,
+			entityRect: rect.slice(), hubClear: { clear: null, hubRect, deferredTo: "worldFrameHubCheck" }, miners: minersW,
+			region, seed, candidatesTried: 1, hubBlocked: 0, preferredRejected: null,
+		};
+	}
+
 	// 候选 anchor：把第一台矿机对到它那份资源上。
 	// 排序中心：给了 hub ⇒ **离真实 hub 最近**（该 anchor 摆出的布局离 hub 越近，收集带越短；
 	//   钉死那个 d=0）；未给 hub ⇒ 离**原点**最近（既有行为，逐字节不变 —— L0 的确定性锁在这条上）。
@@ -1269,9 +1338,18 @@ function compileInner(input) {
 	const pig = trace(stages, "pigmentGate", checkPigments(dg.dag));
 	if (pig.ok === false) return bail(pig);
 
-	/* 3+4. 作图 + 路由（**设计系**：site=[0,0]，hub=[0,HUB_DESIGN_DY]；重试闭环在 routeStage 里） */
+	/* 3+4. 作图 + 路由。**局部原点分两档**（B-4，见 placeStage 头注）：
+	   ⓐ 给了真 hub ⇒ 局部原点 = 真 hub（hubLocal=[0,0]），place 按 seed 摆矿机、收集带接真入口；
+	   ⓑ 未给 hub ⇒ 设计系（site=[0,0]，hub=hubDesign），逐字节保持旧基线。
+	   `hubLocal` 是本包内唯一的「hub 在作图局部系里的坐标」，三处坐标口径都以它为准：
+	     placeStage  - hub = 真 hub 世界坐标 + seed（原点=hub ⇒ place 的 hubLocal=[0,0]）
+	     siteStage   - 只解 anchor：anchor = hubWorld − hubLocal（不再资源重扫）
+	     P5 world    - hubWorldState(hubLocal, seed)（与 layout.occupancy 同框） */
+	const hubLocal = hubWorldIn.given ? [0, 0] : hubWorldIn.design.slice();
 	const ctx = {
-		steps: mp.steps, hubDesign: hubWorldIn.design, rowGap, colGap,
+		steps: mp.steps, hubDesign: hubWorldIn.design, hubLocal,
+		hub: hubWorldIn.given ? hubWorldIn.world.slice() : null, seed,
+		rowGap, colGap,
 		demandPerSec: input.demandPerSec || 0, searchRadius: input.searchRadius,
 	};
 	const pl = trace(stages, "placeStage", placeStage(mp.steps, ctx));
@@ -1280,19 +1358,20 @@ function compileInner(input) {
 	if (rt.ok === false) return bail({ ...rt, layout: pl.layout, entities: null });
 	const layoutLocal = rt.layout;
 
-	/* entities（设计系，§2.1 的执行序：机器 → 直线带 → 拐角带）*/
+	/* entities（作图局部系，§2.1 的执行序：机器 → 直线带 → 拐角带）*/
 	const entsLocal = orderedEntities(machineEntities(layoutLocal), beltEntities(rt.route));
 	trace(stages, "entities", { ok: true, n: entsLocal.length });
 
-	/* 5. 世界选址：只解 anchor（布局原点的世界坐标 = 平移量）；layout/entities **留在设计系**（§2.1）
-	   ★ 三份坐标必须同时给对，少一份就是半建（NOTES §1.0 的固定说明）：
-	     ctx.hub       = **世界系** hub 左上角（input.hub；未给 → null）—— 世界系硬约束只认它
-	     ctx.hubDesign = **设计系** hub 左上角（P3 作图框；恒 [-4,-4]）—— P3/P5 的 occupancy 只认它
-	     ctx.entityRect= entsLocal 的 min/max（设计系）—— 判"落点矩形"用实体跨度，不用 layout.bbox
+	/* 5. 世界选址：只解 anchor（布局原点的世界坐标 = 平移量）；layout/entities **留在作图局部系**（§2.1）
+	   ★ 四份坐标必须同时给对，少一份就是半建（NOTES §1.0 / §6ter）：
+	     ctx.hub        = **世界系** hub 左上角（input.hub；未给 → null）—— 世界系硬约束只认它
+	     ctx.hubLocal   = **作图局部系** hub 左上角（给了 hub ⇒ [0,0]，见上）—— anchor 与 P5 的框
+	     ctx.hubDesign  = **设计系** hub 左上角（恒 [-4,-4]）—— 仅 ⓑ 路径（未给 hub）使用
+	     ctx.entityRect = entsLocal 的 min/max（局部系）—— 判"落点矩形"用实体跨度，不用 layout.bbox
 	                     （P3 的 bbox 含 hub 16 格 ⇒ 拿它判 hub 相交恒假，见 designEntityRect 头注） */
 	const site = siteStage(layoutLocal, {
 		seed, world: input.world || null, range: input.range, origin: normalizeOrigin(input.origin), region: input.region,
-		hubDesign: hubWorldIn.design, hub: hubWorldIn.world, entityRect: entityRectOf(entsLocal),
+		hubDesign: hubWorldIn.design, hubLocal, hub: hubWorldIn.world, entityRect: entityRectOf(entsLocal),
 	});
 	if (site.ok === false) { trace(stages, "siteStage", site); return bail(site); }
 	trace(stages, "siteStage", { ok: true, anchor: site.anchor });
@@ -1303,7 +1382,7 @@ function compileInner(input) {
 	   布局在世界系被 anchor 平移后可能整块压住**真实 hub** —— 设计系里看不出来。
 	   这里的判据与 paste dry_run 的 `solid collision` 同义；不过 ⇒ 整单 fail（不产蓝图）。
 	   凭据写进 stages 与 provenance，P7/主线程能用同一组数字对拍。（NOTES §1.0） */
-	const wfHub = worldFrameHubCheck(entsLocal, site.anchor, hubWorldIn.world);
+	const wfHub = worldFrameHubCheck(entityCellsOf(entsLocal, layoutLocal.placements), site.anchor, hubWorldIn.world);
 	trace(stages, "worldFrameV1", wfHub.ok ? { ok: true } : { ok: false, reason: "validate:V1" });
 	if (wfHub.ok === false) {
 		return bail({
@@ -1317,11 +1396,11 @@ function compileInner(input) {
 		});
 	}
 
-	/* 6. 判闸（intent 永远带上）—— 在**设计系**跑：place 产出的 occupancy 与 P5 的世界视图同框，
-	   平移不改变任何相对几何（V1/V3/V4/V6 全是相对判据），所以闸的结论与框无关。 */
+	/* 6. 判闸（intent 永远带上）—— 在**作图局部系**跑：place 产出的 occupancy 与 P5 的世界视图同框
+	   （hub 在 hubLocal），平移不改变任何相对几何（V1/V3/V4/V6 全是相对判据），所以闸的结论与框无关。 */
 	const vd = trace(stages, "validateStage", validateStage({
 		goal: g.goal, layout, entities: entsLocal,
-		world: hubWorldState(hubWorldIn.design, seed), scope: { ...SCOPE_V1 },
+		world: hubWorldState(hubLocal, seed), scope: { ...SCOPE_V1 },
 		demandPerSec: input.demandPerSec || 0,
 	}, {
 		dag: dagForS1(dg), level: isInt(input.level) ? input.level : g.level,
@@ -1337,7 +1416,7 @@ function compileInner(input) {
 	   P6 的 w（蓝图元数据锚点）会自己归一成世界 min corner，二者不冲突（plan §2.1 已写）。 */
 	const pre = assemblePlan({
 		goal: g.goal, layout, route: rt.route, entities: entsLocal,
-		anchor: site.anchor, hub: hubWorldIn.given ? site.hubWorld : null, world: hubWorldState(hubWorldIn.design, seed),
+		anchor: site.anchor, hub: hubWorldIn.given ? site.hubWorld : null, world: hubWorldState(hubLocal, seed),
 		demandPerSec: input.demandPerSec || 0, level: g.level, solver: sv, orderMode: rt.orderMode,
 		gapTries: rt.gapTries, seed, rowGap: rt.rowGap, colGap: rt.colGap, site,
 	});
@@ -1363,9 +1442,9 @@ function compileInner(input) {
 	final.site = {
 		anchor: [em.emit.anchor[0], em.emit.anchor[1]],
 		// hub 一律报**真实世界 hub**（input.hub）；未给 → null（世界 hub 未知，不假装知道）。
-		// ⚠️ 绝不填 `site.hubWorld`（= anchor + hubDesign，那是**布局隐含的** hub 位置）：
-		//    未钉死时它与真实 hub 不是同一个点（本轮 L3 实参：布局隐含 [-7,-7]，真实 [-2,-2]），
-		//    填进去等于让 P7/MS 以为"收集带接上 hub 了"—— 又一个"看着对、实际没接"的假绿。
+		// ⚠️ 绝不填 `site.hubWorld`（= anchor + hubLocal，那是**布局隐含的** hub 位置）：
+		//    B-4 起两者由构造相等（anchor 就是 hubWorld − hubLocal），但语义上仍只认 input.hub ——
+		//    若将来 P3 又改了作图原点，这个字段不会跟着变成"看着接上了"的假绿。
 		hub: hubWorldIn.given ? hubWorldIn.world.slice() : null,
 		hubPinned: site.hubPinned === true,
 	};
@@ -1386,9 +1465,11 @@ function compileInner(input) {
 			hubInferred: site.hubWorld,
 			hubPinned: site.hubPinned === true,
 			pasteAt: [em.emit.anchor[0], em.emit.anchor[1]],
-			// 设计系的平移量（诊断用）：anchor + designAnchor === pasteAt；P5 的 V4 槽位、P3 的坐标都在设计系
+			// 设计系的平移量（诊断用）：anchor + designAnchor === pasteAt。
+			// ⚠️ 给了真 hub 时作图局部原点 = 真 hub，**不再经过设计系**：这两项只为旧路径（未给 hub）留档。
 			designAnchor: [em.emit.anchor[0] - site.anchor[0], em.emit.anchor[1] - site.anchor[1]],
 			designHubLocal: hubWorldIn.design,
+			hubLocal,                     // B-4：hub 在作图局部系里的坐标（给了 hub ⇒ [0,0]，未给 ⇒ 设计系）
 			worldFrameV1: wfHub,
 		},
 	};
@@ -1398,12 +1479,12 @@ function compileInner(input) {
 }
 
 /**
- * hub 输入的归一 —— 设计系 hub 恒 DEF_DESIGN，世界 hub 只用于反推 anchor（见 compileInner 的坐标口径）。
+ * hub 输入的归一 —— `design` 恒 DEF_DESIGN（仅**未给 hub** 的旧路径用于作图），
+ * 给了 hub 时它只用于把世界 hub 与作图局部系对上（`anchor = hub − hubLocal`，见 compileInner）。
  *   · 未给 hub → design=[-4,-4]（P1 plan-l1 的 hubConnection.entry=[0,-1] + side=bottom 反推的 anchor），
  *     世界位置由 siteStage 解出（L3 要求「无人工坐标」）。
- *   · 给了 hub（[x,y] / "x,y" / {x,y}）→ 当**世界坐标**用：siteStage 把布局原点摆到能让 hub 落在该处，
- *     设计系内仍是 DEF_DESIGN —— 因为 P3 会把机器簇对齐到「hub 正下方」，改设计系 hub 会改几何，
- *     改世界 hub 只改整体平移量。
+ *   · 给了 hub（[x,y] / "x,y" / {x,y}）→ 当**世界坐标**用：作图局部原点 = 真 hub（B-4），
+ *     `hubLocal=[0,0]`、`anchor = hubWorld`；`design` 不再参与几何。
  * @returns {{given:boolean, world:number[]|null, design:number[], bad?:unknown}}
  */
 export function normalizeHub(hub) {

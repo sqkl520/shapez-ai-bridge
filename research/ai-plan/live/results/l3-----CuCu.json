@@ -5,37 +5,56 @@
    "ok": true,
    "op": "new_game",
    "game_mode": "regularMode",
-   "internal_id": "e35d93f08c2a28ef1aec005b45818bd52f783bc5"
+   "internal_id": "d42699650e1ac394ac090730f04ce07cf6acb865"
   },
   "compile": {
    "ok": true,
    "reason": null,
-   "entities": 14,
+   "entities": 20,
    "validator_pass": true,
-   "blueprint_len": 117,
+   "blueprint_len": 147,
    "bbox": [
-    2,
-    12
-   ],
-   "corners": 0
-  },
-  "dry_run": {
-   "would_apply": 11,
-   "would_delete": 0,
-   "blocked": 3,
-   "unknown_code": 0,
-   "bbox": [
-    0,
-    0,
-    1,
+    5,
     11
    ],
+   "corners": 3
+  },
+  "dry_run": {
+   "would_apply": 20,
+   "would_delete": 0,
+   "blocked": 0,
+   "unknown_code": 0,
+   "bbox": [
+    -6,
+    -6,
+    -2,
+    4
+   ],
    "destroys": []
+  },
+  "paste": {
+   "applied": 20,
+   "failed": 0
+  },
+  "intent_diff": [],
+  "delivery": {
+   "met": false,
+   "ticks_run": 20000,
+   "delivered_before": 0,
+   "delivered_after": 0,
+   "level_before": 1,
+   "level_after": 1,
+   "stored": [
+    [
+     "----CuCu",
+     61
+    ]
+   ]
   }
  },
  "pass": false,
  "world": {
-  "internal_id": "e35d93f08c2a28ef1aec005b45818bd52f783bc5",
+  "internal_id": "d42699650e1ac394ac090730f04ce07cf6acb865",
   "level": 1,
   "shape": "CuCuCuCu",
   "delivered_before": 0,
@@ -45,54 +64,7 @@
    -2
   ]
  },
- "seed": 18043,
- "compile_ms": 264,
- "fail_reason": "dry_run: blocked entries",
- "fail_detail": [
-  {
-   "dx": 1,
-   "dy": 1,
-   "cell": [
-    1,
-    1
-   ],
-   "kind": "trash",
-   "duplicateInPlan": false,
-   "occupant": {
-    "uid": 10000,
-    "type": "hub"
-   },
-   "reason": "solid collision"
-  },
-  {
-   "dx": 0,
-   "dy": 1,
-   "cell": [
-    0,
-    1
-   ],
-   "kind": "belt",
-   "duplicateInPlan": false,
-   "occupant": {
-    "uid": 10000,
-    "type": "hub"
-   },
-   "reason": "solid collision"
-  },
-  {
-   "dx": 0,
-   "dy": 0,
-   "cell": [
-    0,
-    0
-   ],
-   "kind": "belt",
-   "duplicateInPlan": false,
-   "occupant": {
-    "uid": 10000,
-    "type": "hub"
-   },
-   "reason": "solid collision"
-  }
- ]
+ "seed": 77844,
+ "compile_ms": 275,
+ "fail_reason": "await: no delivery observed"
 }
