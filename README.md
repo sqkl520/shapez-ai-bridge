@@ -110,6 +110,42 @@ Curl examples below assume bash. On Windows PowerShell `curl` is an alias for `I
 
 The full protocol contract (methods, error codes, observation schema) lives in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
+## Build a factory from a target shape
+
+`src/ai/` contains a layout compiler: give it a goal shape, and it plans a working production line offline, then hands you a blueprint that pastes and delivers.
+
+```bash
+node src/ai/compiler/cli.mjs --goal "CuCuCuCu" --seed 43391 --hub -2,-2 --json
+```
+
+It runs the whole chain with no game running: recipe solver → offline resource map (the world is a pure function of `map.seed`) → row layout → belt routing with explicit `(rotation, rotationVariant)` → ten-check validator → SZBP1 blueprint.
+
+**Verified end to end on a live game** — compile, paste, and the hub's goal counter actually advances:
+
+```
+compile    ok · 12 entities · validator pass · 113-char blueprint
+dry_run    12/12 apply · 0 blocked · 0 destroy
+paste      applied 12 · 0 drift against intent
+await      hub_delivered_increased met at 1260 ticks · delivered 0→1
+```
+
+Every stage is offline-checkable before it touches the game, and nothing is pasted until a `dry_run` shows a clean landing.
+
+### What it handles today
+
+| | |
+|---|---|
+| Goals that build | `CuCuCuCu`, `RuRuRuRu`, `SuSuSuSu`, `----CuCu`, `RuRu----`, `Cu----Cu`, `Cu------`, `--CuCu--`, `Ru----Ru`, `--SuSu--` |
+| Not yet | Painted goals (`CrCrCrCr`, `CgScScCg`, …) — the painter's output runs along +x while the hub needs +y, and the vertical lane collides with the hub body. Multilayer goals are out of scope by design (`scope.layers: 1`). |
+
+### Safety rules the compiler enforces
+
+- **Refuses to emit a plan that would land on existing buildings.** Only belts and wires are replaceable in shapez; pasting over one silently destroys it, and pasting over a machine half-builds the line while still reporting success. `paste_blueprint` gained a `dry_run` that reports `would_apply` / `would_delete` / `blocked` before anything happens.
+- **Refuses corners that would flip.** A belt's turn is recomputed from its neighbours, so a corner must be a fixed point of that recomputation; when no original rotation makes it one, the plan fails instead of producing a line that breaks later.
+- **Never pastes into a dirty region.** v1 builds on fresh ground only.
+
+See [`research/ai-plan/BATCH.md`](research/ai-plan/BATCH.md) for the build ledger and [`research/ai-player/SYNTHESIS.md`](research/ai-player/SYNTHESIS.md) for the research behind it.
+
 ## Compatibility
 
 Generated from `compat.json`:
@@ -136,6 +172,9 @@ An honest list, taken from the phase-0 recon ([`PHASE0-RECON.md`](PHASE0-RECON.m
 - **`step` / `await` fast-forward runs synchronously on the render thread** — large tick counts briefly freeze the screen. A single step is capped at 20,000 ticks.
 - **Observations of big factories must be clipped** with `region` and/or `max_entities`. Over-limit observations report `truncated: true` and always include full `stats` — never a silent cut.
 - **Desktop only** (Windows / macOS / Linux Electron builds). The mobile and browser versions of shapez.io do not support mods and are not applicable.
+- **`new_game` needs a fresh game process.** After a very long uptime the game can wedge in the menu: the save is created but the state machine never enters the world. Restart the game and it works immediately.
+- **The layout compiler's output is god-mode.** It uses `charge:false` and does not check building unlock levels, so it can place a stacker at level 2. The acceptance target (`CuCuCuCu`) needs only the level-1 cutter, so it holds under either reading, but any "cleared level N" claim from the compiler is a god-mode claim.
+- **The compiler builds on fresh ground only.** It refuses to place over existing buildings (v1), so extending a running factory is not supported yet.
 
 ## Troubleshooting
 
