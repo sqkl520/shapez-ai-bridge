@@ -1,7 +1,7 @@
 {
  "goal": "Cu----Cu",
  "schema": "shapez-ai/handoff-intent@1",
- "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoC0ALLAAwC68ApsQOxWzTOWwCcL3H0cfFgCZB7Vi2jYJEjNL4VBfAMxzWQ1fw0dFsAByqxA2FJ2ydC8RxU71O7eLj6aAXyA",
+ "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoC0ALLAAwC68ApsQOxWzQCcLHlrc30vsAMwsATH1hdWLaAA5p05uL7Z5fDKtYUlrYdugiN0btskC52xVO4rt67VquwDejcalwjVagF8gA",
  "anchor": [
   0,
   0
@@ -12,35 +12,37 @@
  ],
  "chargeMode": "false",
  "gv": null,
- "count": 20,
+ "count": 22,
  "stride": 4,
  "entityOrder": [
   "n0",
   "n1",
   "n2",
   "n1d1",
+  "belt@-4,18",
+  "belt@-4,17",
   "belt@-4,16",
   "belt@-4,15",
   "belt@-4,14",
   "belt@-4,13",
   "belt@-4,12",
-  "belt@-4,11",
   "belt@-4,10",
+  "belt@-4,9",
   "belt@-4,8",
   "belt@-4,7",
   "belt@-4,6",
   "belt@-4,5",
   "belt@-4,4",
-  "belt@-4,3",
   "belt@-4,2",
+  "belt@-4,1",
   "belt@-4,0",
-  "belt@-3,8"
+  "belt@-3,10"
  ],
  "entities": [
   {
    "code": 7,
    "dx": 0,
-   "dy": 17,
+   "dy": 19,
    "rot": 0,
    "nodeId": "n0",
    "instanceIdx": 0,
@@ -52,7 +54,7 @@
   {
    "code": 9,
    "dx": 0,
-   "dy": 9,
+   "dy": 11,
    "rot": 0,
    "nodeId": "n1",
    "instanceIdx": 0,
@@ -64,7 +66,7 @@
   {
    "code": 11,
    "dx": 0,
-   "dy": 1,
+   "dy": 3,
    "rot": 0,
    "nodeId": "n2",
    "instanceIdx": 0,
@@ -76,7 +78,7 @@
   {
    "code": 20,
    "dx": 1,
-   "dy": 7,
+   "dy": 9,
    "rot": 0,
    "nodeId": "n1d1",
    "instanceIdx": 0,
@@ -84,6 +86,30 @@
    "rotationVariant": 0,
    "inDir": "top",
    "outDir": null
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 18,
+   "rot": 0,
+   "nodeId": "belt@-4,18",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 17,
+   "rot": 0,
+   "nodeId": "belt@-4,17",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
   },
   {
    "code": 1,
@@ -148,9 +174,9 @@
   {
    "code": 1,
    "dx": 0,
-   "dy": 11,
+   "dy": 10,
    "rot": 0,
-   "nodeId": "belt@-4,11",
+   "nodeId": "belt@-4,10",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -160,9 +186,9 @@
   {
    "code": 1,
    "dx": 0,
-   "dy": 10,
+   "dy": 9,
    "rot": 0,
-   "nodeId": "belt@-4,10",
+   "nodeId": "belt@-4,9",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -232,9 +258,9 @@
   {
    "code": 1,
    "dx": 0,
-   "dy": 3,
+   "dy": 2,
    "rot": 0,
-   "nodeId": "belt@-4,3",
+   "nodeId": "belt@-4,2",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -244,9 +270,9 @@
   {
    "code": 1,
    "dx": 0,
-   "dy": 2,
+   "dy": 1,
    "rot": 0,
-   "nodeId": "belt@-4,2",
+   "nodeId": "belt@-4,1",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -268,9 +294,9 @@
   {
    "code": 1,
    "dx": 1,
-   "dy": 8,
+   "dy": 10,
    "rot": 0,
-   "nodeId": "belt@-3,8",
+   "nodeId": "belt@-3,10",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -286,11 +312,11 @@
    "rotater": 1,
    "trash": 1
   },
-  "beltTiles": 16,
+  "beltTiles": 18,
   "trash": 1,
   "bbox": [
    2,
-   18
+   20
   ],
   "corners": 0,
   "estThroughputPerSec": 0.4,
@@ -310,8 +336,8 @@
   "errors": 0,
   "failIds": [],
   "beltSim": {
-   "tilesChecked": 16,
-   "fixedPoints": 16,
+   "tilesChecked": 18,
+   "fixedPoints": 18,
    "drift": [],
    "includesMachineNeighbors": true
   },
@@ -351,8 +377,8 @@
  "roundtrip": {
   "ok": true,
   "stride": 4,
-  "decodedCount": 20,
-  "intentCount": 20,
+  "decodedCount": 22,
+  "intentCount": 22,
   "eLength": null,
   "diff": [],
   "beltCodeBad": [],
@@ -364,19 +390,19 @@
     -4,
     0
    ],
-   "count": 20,
+   "count": 22,
    "bounds": [
     2,
-    18
+    20
    ],
    "by_code": {
-    "1": 16,
+    "1": 18,
     "7": 1,
     "9": 1,
     "11": 1,
     "20": 1
    },
-   "text_length": 133
+   "text_length": 143
   },
   "summaryErr": null
  },
@@ -404,7 +430,7 @@
     "stackPairs": 1592,
     "capped": false
    },
-   "ms": 26,
+   "ms": 16,
    "known": 1614
   },
   "seed": 43391,
@@ -437,7 +463,7 @@
     "ok": true,
     "reason": null,
     "laneColumn": 0,
-    "belt": 16,
+    "belt": 18,
     "corners": 0
    }
   ],
@@ -445,15 +471,15 @@
   "worldPlacement": {
    "anchor": [
     -2,
-    -11
+    -13
    ],
    "hub": [
     -6,
-    -15
+    -17
    ],
    "pasteAt": [
     -6,
-    -11
+    -13
    ],
    "designAnchor": [
     -4,
