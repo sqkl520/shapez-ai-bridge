@@ -1,14 +1,14 @@
 {
  "goal": "----CuCu",
  "schema": "shapez-ai/handoff-intent@1",
- "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoC0ALLAAwC68ApsQOxWzRyWwCcLAzCwEwc47Vi2gchLbpI4AOMS2YzY2BRwxrYFZf00iRE0XF00AvkA",
+ "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoC0A7LCQMwC68ApsRQAyzRysCcsrVPsAJlZwObftFbD+3KawAc4-izGtsi1hnWwALFoFbRoyWLj7mNAL5A",
  "anchor": [
-  0,
-  0
+  -7,
+  -3
  ],
  "hub": [
-  -4,
-  -4
+  -2,
+  -2
  ],
  "chargeMode": "false",
  "gv": null,
@@ -276,8 +276,8 @@
    "format_version": 1,
    "exported_from": "1.5.6",
    "anchor": [
-    -4,
-    0
+    -7,
+    -3
    ],
    "count": 14,
    "bounds": [
@@ -290,7 +290,7 @@
     "9": 1,
     "20": 1
    },
-   "text_length": 117
+   "text_length": 120
   },
   "summaryErr": null
  },
@@ -320,7 +320,7 @@
    "ms": 2,
    "known": 5
   },
-  "seed": 43391,
+  "seed": 18043,
   "level": 2,
   "cutQuadAllowed": false,
   "channelOrder": "asis",
@@ -333,8 +333,8 @@
    {
     "nodeId": "n0",
     "cell": [
-     -6,
-     6
+     -7,
+     8
     ],
     "shape": "CuCuCuCu"
    }
@@ -357,16 +357,21 @@
   "laneColumnUnresolved": 0,
   "worldPlacement": {
    "anchor": [
-    -2,
-    -5
+    -3,
+    -3
    ],
    "hub": [
-    -6,
-    -9
+    -2,
+    -2
    ],
+   "hubInferred": [
+    -7,
+    -7
+   ],
+   "hubPinned": false,
    "pasteAt": [
-    -6,
-    -5
+    -7,
+    -3
    ],
    "designAnchor": [
     -4,
@@ -375,7 +380,22 @@
    "designHubLocal": [
     -4,
     -4
-   ]
+   ],
+   "worldFrameV1": {
+    "ok": true,
+    "worldRect": [
+     -7,
+     -3,
+     -6,
+     8
+    ],
+    "hubRect": [
+     -2,
+     -2,
+     1,
+     1
+    ]
+   }
   }
  }
 }

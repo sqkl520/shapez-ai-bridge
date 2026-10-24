@@ -15,8 +15,8 @@
 | `research/ai-plan/harness/out/` | 交接区：`<goal>.szbp.txt` + `.intent.json` + `.validator.json` |
 
 ```
-node research/ai-plan/harness/test.mjs     → 252 通过 / 0 失败（~12s）
-node research/ai-plan/harness/run-all.mjs  → 13/13 组绿，≈1872 条断言，全绿（~32s）
+node research/ai-plan/harness/test.mjs     → 336 通过 / 0 失败（~16s）
+node research/ai-plan/harness/run-all.mjs  → 13/13 组绿，≈2000 条断言，全绿（~36s）
 node src/ai/compiler/cli.mjs --goal "Cu----Cu" --seed 43391
 ```
 
@@ -33,7 +33,33 @@ node src/ai/compiler/cli.mjs --goal "Cu----Cu" --seed 43391
 
 **后果（我踩过的现场）**：一开始我把 `hub` 按世界坐标给 `place()`、又按设计系灌 `WorldState` → occupancy 与机器混框，
 P5 的 V4 报「(0,3) 不是 hub 的输入槽」。修法就是 §1 那条：`place()` 只给 `site={x:0,y:0}` + `hub=hubDesign` + 同框的 world；
-世界平移只体现在 `provenance.worldPlacement`（P7 的 paste 点 = `anchor + emit.anchor`）。
+世界平移只体现在 `provenance.worldPlacement`（P7 的 paste 点）。
+
+### 1.0 三个 hub 概念 —— **固定说明（第三次在同一坐标系上出错后写死）**
+
+这一处已经错过三次（P3 混框 → V4 假 fail；P8 给 emit `site.anchor=[0,0]` → P7 paste 到世界原点；P8 的 `siteStage`
+从不看真实 hub → 布局压 hub 半建）。以后改任何一处，先读这张表：
+
+| 名字 | 在哪 | 系 | 谁写 / 谁读 | 用途（**只有这一个**） |
+|---|---|---|---|---|
+| `ctx.hub` | `siteStage` 的 ctx（来自 `input.hub` → `normalizeHub().world`） | **世界系**：hub 在真实地图上的 4×4 左上角 | P8 写（CLI `--hub` / L3 的 obs） | **世界系硬约束**：落点矩形 `anchor + 实体矩形` 不得与它相交。`null` = 未知，不判 |
+| `ctx.hubDesign` | `placeStage` / `routeStage` / `siteStage` 的 ctx（`normalizeHub().design`，恒 `[-4,-4]`） | **设计系**：`place()` 的 origin 就是它 | P3 作图、P4 路由、P5 的 `hubWorldState()` 都只认它 | 保证机器簇、收集带、hub 16 入口、P5 的 V4 槽位**全在同一框** |
+| `HUB_CLEAR` | `place.mjs:71`（P3 的常量，当前 **3**） | **设计系**：机器簇顶行到 hub 底缘的**净空行数** | 只在 P3 的 `place()` 内部用 | 让废料带/trash 躲开 hub 的 16 入口"正交邻接圈"（B-1 修复） |
+
+**三者关系（一句话）**：`HUB_CLEAR` 是**设计系里的排版余量**，保证布局与设计 hub 不相邻；
+`hubDesign` 是**设计系里 hub 的位置**，P3/P5 靠它算 occupancy；
+`hub` 是**世界系里 hub 的位置**，只有它能回答"贴到世界里会不会压到真 hub"。
+前两者再自洽，也**推不出**第三者的结论 —— 因为 `site.anchor` 是任意的平移量。
+
+**两个系怎么对齐**：`anchor_pinned = hub − hubDesign`（hub 钉死）。此时世界格 = `site.anchor + dx/dy`，
+设计系的 hub 落点恰好就是给定世界 hub。`siteStage` 现在**优先**试这个 anchor（L3 的交付前提：
+收集带必须真接上 hub），资源不允许才退回"离 hub 最近且不压 hub"的 anchor，并把原因记进
+`provenance.worldPlacement.hubPinned=false` + `siteStage().preferredRejected`。
+
+**设计系自洽 ≠ 世界系自洽（本轮缺陷的根）**：P5 的 `validateStage` 拿的是 `hubWorldState(hubDesign)`，
+在设计系里布局与 hub 天然不相交 ⇒ **V1 永远只能 pass**。这不是 V1 的判据洞（给世界系输入它抓得准，
+见下），而是**框**的错位。处置：`compileInner` 在 P5 之后、emit 之前加 **`worldFrameHubCheck()`**
+（`stages.worldFrameV1`），判据与 dry_run 的 `solid collision` 同义；失效即 `validate:V1` 整单 fail。
 
 ## 2. 上游阻断（**本包不改上游**；这里给最小复现与归因，交主线程裁决）
 
@@ -95,6 +121,26 @@ place({steps, site:{x:0,y:0}, hub:{x:-4,y:-4}, world:hubWorldState([-4,-4],null)
 `MILESTONE-M4-SUCCESS.md` 的成功是 `place/place_path` **手写坐标** + 拐角最后放，不是编译器产出的。
 **建议（P3/P4）**：把 M4 的「只让一条分支拐弯 + 两矿不同列」策略做成 `assignRows` 的硬约束（当前 `desiredX` 只是偏好）。
 
+### B-4【P3 · 中】`hubConnection` 硬接设计系 hub 的正上方 → 世界 hub 不在设计系位置时**接不上**
+
+**症状（本轮 L3 实测，不是推断）**：`----CuCu` 在 seed 37447 / hub(-2,-2) 下编译、validator、`dry_run`、
+`paste`、逐格对拍**全绿**（`apply=14/14`、`blocked=0`、`intent_diff=0`），但 `await hub_delivered_increased`
+跑满 20000 tick 交付仍是 0。原因是收集带末端停在 `(-7,-2)`、朝上喷进 `(-7,-3)`，
+而真实 hub 的左/底入口在 `(-3,-2)` 一带 —— **横差 4 列**。
+
+**根因**：`place()` 的 hub 连接是设计系的：`hubConnection = {entry: 顶层输出槽, side:"bottom"}`，
+即"终端正上方那条竖直带直插 hub 底排"。这个几何只在 `anchor + hubDesign === hub`（钉死）时成立。
+`siteStage` 钉不死时（本例钉死要求矿机落在 `(-2,13)`，那里没有铜）会退回"不压 hub 的最近资源位"，
+于是布局被整体平移到 `(-7,·)`，**hub 连接段就悬空了** —— 这条路 P3 从来没被要求支持。
+
+**为什么 P5 不报**：V4 只查「带子出口落进 hub 的入口槽」，而设计系的 hub 就在 `[-4,-4]`，槽位对得上。
+P5 的结论"槽位对齐"在**设计系**是真的，在**世界系**不成立 —— 与 §1.0 是同一类错位。
+
+**建议（P3）**：让 hubConnection 支持四个面（`hubEntriesWorld` 已经有 16 入口的表），
+或在 P4 加"终端 → hub 侧面入口"的折线；本包侧只能做到"钉死优先 + 钉不死如实报"。
+**本包处置**：`site.hubPinned=false` + `provenance.hubInferred ≠ site.hub` 两处都写出来，
+P7/主线程能一眼看到缺口；不伪造"接上了"。
+
 ## 3. 契约缺口（不阻断，但要显式）
 
 1. **`§2.5` 没有「管线内部 / solver」这一类 reason。** 本包必须能表达三类失败：solver 进程/JSON 坏、solver 不可解、
@@ -120,6 +166,9 @@ place({steps, site:{x:0,y:0}, hub:{x:-4,y:-4}, world:hubWorldState([-4,-4],null)
 | `val()` 认不出裸位置参数 goal | `isGoalLike` 正则把 shortKey 当 8 个同字符集字符（实际是 4×`[sub][color]`） | 改 `^([-RCSW][rgbypcuw-]){4}(:...)*$` |
 | 失败只给一行 message，drift 凭据丢了 | `validateStage` 失败时不带 report | 失败对象附 `report/audit`，顶层附 `layout/entities/validation` |
 | lint 自检把自己判红 | 判据字符串里写了禁用模块名 | 改用 P1 的词法级 `collectImportSpecifiers`（只看真 import） |
+| **L3 首个实机缺陷**：`dry_run` 3 格 blocked（occupant=hub uid 10000）、`apply=11/14` | ①`siteStage` 挑 anchor 只看"矿机压资源 + 离原点近"，**从不检查世界系落点矩形是否压 hub**；②`regionClear` 只拒"含非 hub 实体"的世界，**hub 自己不进占用判定** | ①候选 anchor 加硬约束 `anchor + 实体矩形 ∩ hub 世界 4×4 == ∅`（`hubClearOf`），并**优先**试 hub 钉死的 anchor（`hub = anchor + hubDesign`）；②`regionClear` 的 javadoc 写明"hub 不进这里是有意的"，hub 判据移到 `hubClearOf` |
+| 同上：`plan.site.anchor` 宣告 `[0,0]`，P7 照它 paste → 世界原点 | 喂 P6 的 `anchor` 是设计系 `[0,0]`；emit 归一后 `entities.dx/dy` 以 min corner 为 0，但 `site.anchor` 原样透传 ⇒ §2.1 的 `世界 = anchor + dx/dy` 不成立 | 喂 P6 的 `anchor = site.anchor`（世界），并在 emit 后把 `final.site.anchor` 钉成 `em.emit.anchor`（= 世界 min corner = `pasteAt`）；`site.hub` 未给 hub 时改 `null`（原来是设计系 `[-4,-4]` 冒充世界坐标） |
+| 需要四道门才能端到端：L3 dry_run | V1 只看设计系（`hubWorldState(hubDesign)`），**永远只能 pass** —— 是"框"的错位，不是判据洞 | 加 `worldFrameHubCheck()`（`stages.worldFrameV1`）：实体矩形 + anchor vs 真实 hub 4×4，压上即 `validate:V1` 整单 fail；test.mjs §J 用 L3 实参锁"布局压 hub ⇒ V1 fail"（命中 3 格与实机 dry_run 的 3 条 blocked 逐数对上） |
 
 ## 5. 待主线程裁决
 
@@ -180,6 +229,35 @@ P8 侧接法（**不改 P3/P1**）：
 | **`----CuCu`** | **2（L3 验收目标）** | **14** | **11** | 4 | 见 out/ | pass |
 | `RuRu----` | 4 | 14 | 11 | 4 | 见 out/ | pass |
 | `Cu------` | 6 | 32 | 26 | — | 见 out/ | pass |
+
+### 8.0 L3 实参重生成（seed 18043 / hub(-2,-2)）—— 世界系 hub 不相交修复后
+
+`----CuCu` 三件套按 **任务书指定参数**重跑（`node src/ai/compiler/cli.mjs --goal "----CuCu" --seed 18043 --hub "-2,-2"`）：
+
+| 量 | 修前 | 修后 |
+|---|---|---|
+| `site.anchor` | `[0,0]`（设计系原点，错） | **`[-7,-3]`**（世界 min corner，= `pasteAt`） |
+| `site.hub` | `[-4,-4]`（设计系，冒充世界） | **`[-2,-2]`**（真实 hub；修前连这个字段都是错的） |
+| `dry_run.would_apply` | **11** / 14 | **14** / 14 |
+| `dry_run.blocked` | **3**（`(0,0)` belt / `(0,1)` belt / `(1,1)` trash，occupant=hub uid 10000） | **0** |
+| `dry_run.would_delete` / `unknown_code` | 0 / 0 | 0 / 0 |
+| `dry_run.bbox` | `[0,0,1,11]` | `[-7,-3,-6,8]` |
+
+同一套代码在 **`l3-run.mjs` 的实跑**（新档 seed **37447**、hub(-2,-2)、`----CuCu`）上也复现同样的事实：
+
+```
+[3] ok=true reason=- ents=14 vpass=true bp=121 corners=0
+[4] dry_run: apply=14 delete=0 blocked=0 unknown=0
+[5] paste: applied=14 failed=0
+[6] 逐格对拍: 0 处不符 / 14 格
+[7] await … met=false ticks=20000 delivered 0→0   ← 见 B-4：接不上 hub（P3 的 hubConnection）
+```
+
+**如实标注**：`hubPinned=false`（两次都）。seed 18043 / 37447 的铜块都远离 hub 的钉死位置
+（钉死要求矿机落在 `(hub − hubDesign) + (-4,11)`，这两个 seed 上都是空地）。
+所以蓝图**贴得上、不压 hub、逐格对拍 0 差**，但收集带末端在 `(-7,-3)` 朝上，
+真实 hub 在 `[-2,-2..1,1]` —— **接不上**（B-4）。这是 P3 几何项，不是本修复的判据；
+本修复的判据是"同参数下 `dry_run` 干净"，已达成且被 test.mjs §J 锁死。
 
 ### 8.1 仍被拦的目标（精确 reason，不伪造）
 

@@ -12,7 +12,7 @@
  *   P4 router     research/ai-plan/router/test.mjs            （184 断言）
  *   P5 validator  research/ai-plan/validator/test.mjs         （190 断言，含变异矩阵 + 双实现对拍）
  *   P6 emitter    research/ai-plan/emitter/run-all.mjs        （291 断言，含 L1 门 85）
- *   P8 harness    research/ai-plan/harness/test.mjs           （304 断言，本包 L0）
+ *   P8 harness    research/ai-plan/harness/test.mjs           （336 断言，本包 L0）
  *   ── 既有五套回归 ──
  *   mod           test/mod_selftest.mjs                       （25）
  *   blueprint     test/blueprint_selftest.mjs                 （7）
@@ -49,7 +49,7 @@ const SUITES = [
 	{ label: "P4 router", argv: ["research/ai-plan/router/test.mjs"], expect: 185 },
 	{ label: "P5 validator" + (FAST ? "（--fast 跳过）" : ""), argv: ["research/ai-plan/validator/test.mjs"], expect: 190, skip: FAST },
 	{ label: "P6 emitter（L1 门）" + (FAST ? "（--fast 跳过）" : ""), argv: ["research/ai-plan/emitter/run-all.mjs"], extract: /全包汇总 (\d+) 条断言/, extractNum: 1, expect: 291, skip: FAST },
-	{ label: "★ P8 harness（本包 L0）", argv: ["research/ai-plan/harness/test.mjs"], extract: /P8 harness L0：(\d+) 通过/, extractNum: 1, expect: 304 },
+	{ label: "★ P8 harness（本包 L0）", argv: ["research/ai-plan/harness/test.mjs"], extract: /P8 harness L0：(\d+) 通过/, extractNum: 1, expect: 336 },
 	{ label: "既有：mod 自测（25）", argv: ["test/mod_selftest.mjs"], extract: /ALL (\d+) CHECKS PASSED/, extractNum: 1, expect: 25 },
 	{ label: "既有：blueprint 自测（7）", argv: ["test/blueprint_selftest.mjs"], extract: /ALL (\d+) CHECKS PASSED/, extractNum: 1, expect: 7 },
 	{ label: "既有：rpc 自测（12）", argv: ["test/mod_rpc_selftest.mjs"], extract: /ALL (\d+) CHECKS PASSED/, extractNum: 1, expect: 12 },
