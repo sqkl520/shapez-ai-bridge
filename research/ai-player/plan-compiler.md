@@ -7,6 +7,25 @@
 
 ---
 
+---
+
+## 0.0 勘误（批次收敛后回写，2026-10-24）
+
+实施过程中被测出并已修的口径，**以本节为准**（正文保留原始规划，不覆盖，便于追溯）：
+
+1. **`dx/dy` 锚点**（§2.1）：`= site.anchor`（世界锚点），`w` 归一为世界 min corner。原文把两者混写，只在 anchor==w 时同时成立。
+2. **`hubConnection.entry`**（§2.3）：= **带子末格**（hub 外的送带最后一格），`side` = 贴的 hub 边，`dir` = 带子流向。P3/P5/P7 三方独立收敛到此读法。
+3. **`--plan` 单独输入是 UNDECIDABLE**（§5 L1.5）：必须带 intent（`--intent`），否则 exit 2 而非绿灯。
+4. **三个 hub 概念**（实施中三次踩坑，见 P8 `harness/NOTES.md §1.0` 的完整表）：
+   `ctx.hub` = 世界系 hub 位置；`ctx.hubDesign` = 设计系（局部）；`HUB_CLEAR` = 设计系排版净空行数。
+   前两者再自洽也推不出第三者 —— `site.anchor` 是任意平移量（`anchor = hubWorld − hubLocal`）。
+5. **§7 的"布局没人解决"是错的**：竞品 `Songxwn/shapez-auto` 有真布局编译器（源码已读）。差异化应表述为
+   **地图先验 + 确定性时间控制 + 物流观测通道 + 可编程接口**，而不是"没人做过布局"。
+6. **退火 / CP-SAT 不做**（`routing-prior-art.md §7`）：退火用 RNG ⇒ 不可复现，破坏变异测试与逐格 diff 的方法论；
+   MIP 依赖专有/重依赖，违背零依赖铁律。抄它们的**约束清单**，不抄求解器。
+
+---
+
 ## 0. 目标定义（编译器 I/O）
 
 `[已定]` 输入 = 目标形状（游戏 level 定义或 `proto/solver.mjs` 的 steps）+ 地图（seed 离线可算）+ 已建世界（obs 归一为 `WorldState`，§2.6）。
@@ -402,7 +421,7 @@ P2 是**唯一**读 `src/ai/machine-spec.json` 字段名的地方。归一后的
 |---|---|---|---|
 | **L0 离线单测** | P1-P8 各自 | `node src/ai/compiler/<file>.mjs --test`（沿 README:213-215 的 `node <file>` 约定，无框架）；P1 另跑 import-lint | 退出码 0；P3/P4 的金网格逐字节相等；P5 变异测试每次只报对应 check id；**零游戏、零网络** |
 | **L1 蓝图自检（离线回推）** | P6 | `node src/ai/compiler/roundtrip.mjs --test`：`emit → src/shared/blueprint.mjs:29 decodeBlueprint` 回推 | 逐格 `(code,dx,dy,rot)` 与 `entities` 全等；`e.length/4 === entities.length`；belt 格 `code === 1+rv`；`bbox` 与 `LayoutReport.bbox` 一致；`summarizeBlueprint` 可读；`validation.pass===true` 且 `ok===true` 同时成立 |
-| **L1.5 可布性闸（仍在离线）** | P5 | `node src/ai/compiler/validate.mjs --plan research/ai-plan/harness/out/*.validator.json` | `V1..V10 + S1` 全 pass 或 not-applicable；**`beltSim.includesMachineNeighbors===true` 且 `drift.length===0`**（这条是防 rv 漂移的核心，现成脚本只喂带子） |
+| **L1.5 可布性闸（仍在离线）** | P5 | `node src/ai/compiler/validate.mjs --plan <plan.json> --intent <intent.json>`（**必须带 intent**：只给 plan/layout 时 V3/V4/V6 无法判定，CLI 返回 **UNDECIDABLE + exit 2**，不是绿灯；也可直接喂 `<goal>.validator.json` 做自洽审计） | `V1..V10 + S1` 全 pass 或 not-applicable；**`beltSim.includesMachineNeighbors===true` 且 `drift.length===0`**（这条是防 rv 漂移的核心，现成脚本只喂带子） |
 | **L2 实机小 paste** | **仅 P7** | 三级各一脚本：`exp-paste-l1.mjs`（直带进 hub，只换 place→paste）→ `exp-paste-corner.mjs`（加一个拐角）→ `exp-paste-machine.mjs`（加一台加工机 + 拐角）。每级：`snapshot_save` → `paste_blueprint{text,x,y,charge:false}` → `obs{region}` 读回 → **与 `intent.json` 逐格 diff** → `step N` → 清理 → 逐 uid 对拍 | 三级各自 `pass:true`（**脚本自己判定**，不是文档口径）；`(r, rotation_variant, code)` 落盘 == 设计（`diff.length===0`）；清理后世界实体 == 基线（`extra:0, missing:0`）；`delivered_after > delivered_before` |
 | **L3 端到端闭环（新档）** | P8 编排 + P7 执行 | 在**新档**（`new_game{game_mode:"regularMode"}`，`docs/PROTOCOL.md:139`）跑 level-2 目标 `----CuCu`：`node src/ai/compiler/cli.mjs --goal "----CuCu" --seed <新档 seed>` → 离线出蓝图 → P7 `paste` → `await{until:"hub_delivered_increased", timeout_ticks:15000}` | 全程**无人工输入坐标**；`met===true` 且 `goal.requirement.delivered` 严格增加；离线预测矿格 == 实机 `obs.resources` 同格形状（`exp-e2e.mjs:161-164` 的交叉核对必须在）；`result.json` 落盘 |
 | **L4 回归（可选，M2/M3 复刻）** | P8+P7 | 目标 `CgScScCg`（7 步链，含 painter 颜料支线 + stacker 汇合） | 同上 + `hub.stored_shapes["CgScScCg"]` 增加。**注**：此目标需 painter(L6)/stacker(L10) → 只能在新档用 god-mode 口径（§6 R4），或先交付中间形状升级 |
