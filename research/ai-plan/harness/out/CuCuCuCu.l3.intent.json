@@ -1,0 +1,159 @@
+{
+ "goal": "CuCuCuCu",
+ "seed": 15935,
+ "anchor": [
+  -11,
+  1
+ ],
+ "hub": [
+  -2,
+  -2
+ ],
+ "chargeMode": "false",
+ "entities": [
+  {
+   "code": 7,
+   "dx": 0,
+   "dy": 3,
+   "rot": 0,
+   "nodeId": "n0",
+   "instanceIdx": 0,
+   "kind": "miner",
+   "rotationVariant": 0,
+   "inDir": null,
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 2,
+   "rot": 0,
+   "nodeId": "belt@-9,5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "belt@-9,4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-8,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 2,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-7,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-6,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 4,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-5,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 5,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-4,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-3,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 7,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-2,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 8,
+   "dy": 0,
+   "rot": 90,
+   "nodeId": "belt@-1,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 3,
+   "dx": 0,
+   "dy": 0,
+   "rot": 0,
+   "nodeId": "belt@-9,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 2,
+   "inDir": "bottom",
+   "outDir": "right"
+  }
+ ]
+}
