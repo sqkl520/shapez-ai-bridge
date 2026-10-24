@@ -749,24 +749,158 @@ const mkRep = (placements, channels, occupancy = []) => ({
     say(extra.every(k => (bb.why.get(k) || "").startsWith("hub:")),
         `4×4 规则额外扩出的 ${extra.length} 格归因 hub:4x4（不是误记别的占用者）`);
 }
-{   // 竖直车道：默认拒绝（契约 lanes[] 只有 row），显式打开则可用且闭合
+{   // 竖直车道：**默认参与分配**（LANE_SCHEMA_VERSION=2：lanes[] 有 {column}、channels[] 有 laneAxis）；
+    // opts.allowVerticalLane === false 是显式关闭（只许 hlane 的诊断口径）。
+    // 下面三条各自钉住一侧，且都**不是**永绿：
+    //   a) 默认路径必须真的布通并写出 column 台账  → 变异锁 M-20 摘掉 col 写回即红；
+    //   b) 显式关闭必须判死且 reason 精确            → 变异锁 M-21 让开关失效即红；
+    //   c) 契约层必须能表达 column，且跨轴同号不判重 → types 的用例（types.mjs --test 已锁）。
     const rep = mkRep(
         [{ nodeId: "mA", op: "mine", kind: "miner", cell: [2, 2], rot: 0, footprint: [1, 1] },
             { nodeId: "tr", op: "trash", kind: "trash", cell: [6, 5], rot: 0, footprint: [1, 1] }],
         [{ from: { nodeId: "mA", cell: [2, 2], slot: "right", outDir: "right" },
             to: { nodeId: "tr", cell: [6, 5], slot: "left", inDir: "left" },
             lane: null, payload: "----CuCu", id: "vl" }]);
-    const d = rt.routeAll(rep);
-    eq([d.ok, d.geoms[0].kind, d.reason], [false, "vlane", "dag-not-placeable:column-conflict-unresolved"],
-        "vlane 默认拒绝（v1 不开隧道、契约 lanes[] 只有 row → 让 P3 改用 hlane 形态）");
-    const a = rt.routeAll(rep, { allowVerticalLane: true });
-    say(a.ok === true, "opts.allowVerticalLane 打开 → 竖直车道可布", JSON.stringify(a.conflicts));
+    const a = rt.routeAll(rep);
+    say(a.ok === true, "vlane 默认参与分配 → 竖直车道可布（不再默认拒绝）", JSON.stringify(a.conflicts));
+    eq(a.geoms[0].kind, "vlane", "形态 = vlane（水平出 + 水平进）");
     eq(a.cornerCount, 2, "竖直车道 = 2 个拐角");
     say(a.closure.ok, "竖直车道双侧闭合全对");
-    eq(a.report.lanes, [], "竖直车道**不进** lanes[]（row 字段表达不了列，见 NOTES C-3）");
+    eq(a.report.lanes.map(l => ({ row: l.row, column: l.column })), [{ row: null, column: a.colLanes.get("vl") }],
+        "竖直车道**进** lanes[]，用 {column} 表达（row 为 null）");
+    eq([a.report.channels[0].lane, a.report.channels[0].laneAxis], [a.colLanes.get("vl"), "col"],
+        "channels[].lane = 列号、laneAxis = \"col\"（轴随行，不与水平车道的行号混为一谈）");
+    // 列必须在 band 里（车道不能倒着走：flowOut=right ⇒ 腿向右 ⇒ col ≥ cFrom；goalOut=left ⇒ col ≤ cTo）
+    const gv = a.geoms[0];
+    const col = a.colLanes.get("vl");
+    say(Number.isInteger(col) && col >= gv.band[0] && col <= gv.band[1],
+        `列落在前进半平面 band 内（${col} ∈ ${JSON.stringify(gv.band)}）`);
+    // P4 的产出必须仍过 P1 的契约（column 写法是合法的 §2.3 报告）
+    try { types.assertLayoutReport(a.report, "P4 vlane 报告"); say(true, "vlane 的输出仍是合法 LayoutReport（types.assertLayoutReport 通过）"); }
+    catch (e) { say(false, "vlane 的输出仍是合法 LayoutReport", e.allMessages || e.message); }
+
+    // b) 显式关闭：必须判死，且**一条带子都不产**（不留半成品）
+    const off = rt.routeAll(rep, { allowVerticalLane: false });
+    eq([off.ok, off.geoms[0].kind, off.reason], [false, "vlane", "dag-not-placeable:column-conflict-unresolved"],
+        "opts.allowVerticalLane:false → vlane 判死（显式关闭仍然诚实失败，不是静默改走 hlane）");
+    eq(off.beltCells.length, 0, "关闭时该通道一条带子都不产");
+
+    // c) 契约层反例：`{row:col, column:null}` + `laneAxis:"row"` 单看是**自洽**的 —— 契约无法分辨
+    //    「真的有一条水平行 col」与「P4 把列号错写成行号」。所以轴的忠实必须由 P4 的写回 +
+    //    上面两条 (a) 断言守（变异锁 M-20 把 laneAxis 改成 "row" 后立刻红）。
+    //    能由契约抓住的是**结构性**错误：两个都给、都不给、只写 channel 不写台账。下面各钉一条。
+    const asRow = { ...JSON.parse(JSON.stringify(a.report)), lanes: [{ row: col, column: null, channelIds: ["vl"] }] };
+    asRow.channels[0].laneAxis = "row";
+    try { types.assertLayoutReport(asRow, "把列当行写"); say(true, "记录：{row:col}+laneAxis:row 在契约层自洽（轴错只能靠 P4 的写回断言守）"); }
+    catch (e) { say(false, "记录：把列当行写在契约层应当自洽（否则说明契约过严）", e.allMessages || e.message); }
+    let badBoth = false, badNone = false;
+    try { types.assertLayoutReport({ ...JSON.parse(JSON.stringify(a.report)), lanes: [{ row: col, column: col, channelIds: ["vl"] }] }, "两轴同给"); } catch { badBoth = true; }
+    try { types.assertLayoutReport({ ...JSON.parse(JSON.stringify(a.report)), lanes: [{ row: null, column: null, channelIds: ["vl"] }] }, "两轴都不给"); } catch { badNone = true; }
+    say(badBoth, "契约：lanes[] 两个都给（row+column）→ 拒（车道身份无法确定）");
+    say(badNone, "契约：lanes[] 两个都不给 → 拒");
+    const ghostChan = JSON.parse(JSON.stringify(a.report));
+    ghostChan.lanes = [];
+    let ghostCaught = false;
+    try { types.assertLayoutReport(ghostChan, "channels 有 lane 但台账为空"); } catch { ghostCaught = true; }
+    // 互逆判据**已进契约**（审查 F1 修复）：通道声明占车道、台账却是空的 ⇒ 必须被 P1 判死。
+    // 这条原来是「记录：不在契约里」的 say(===false)，现在翻成正例 —— 断言方向变了，强度没降。
+    say(ghostCaught === true, "★channels[].lane 与 lanes[] 的互逆由 assertLayoutReport 强制（台账为空 ⇒ 拒，不再是只靠 M-22）");
 }
 
-/* ══════════════════════ ⑨ P6 的取用形状：beltCells → CompiledEntity ══════════════════════ */
+/* ══════════════════════ ⑧b vlane 的两个结构契约（R4 无界 band / R5 真交叉仍判死） ══════════════════════ */
+
+console.log("\n── ⑧b vlane：无界 band 的候选窗口 / 绝不压 machine·hub / 真交叉仍判死 ──");
+{   // R4：band 一侧开放（[11, +∞)，与 goal CpCpCpCp 的 [4, +∞) 同形）时 windowFor 给 [lo, lo+R]。
+    //   R **必须够用**：近处的列全被挡死，可行列在窗口尾部 → 窗口太窄就诚实地判死。
+    //   两条都断言（窄窗口失败 / 默认窗口成功），窗口大小才是承重的，而不是"反正能过"。
+    //
+    //   几何：miner(2,2) 出 right → first (3,2)；trash(10,10) 的 inDir=right ⇒ last (11,10)、goalOut=left。
+    //   flowOut=right ⇒ col ≥ 3；goalOut=left ⇒ col ≥ 11  ⇒ band = [11, +∞)（上端开放）。
+    //   在 (x,5)（x=11..25）各放一台 1×1 trash 当墙：候选列 c 的竖直腿 (c,2..10) 必穿 (c,5)
+    //   ⇒ c=11..25 全不可行，只有 c≥26 能过。默认 R=16 → 窗口 [11,27] 含 26/27。
+    const mkOpen = () => {
+        const wall = [];
+        for (let x = 11; x <= 25; x++) wall.push({ nodeId: `w${x}`, op: "trash", kind: "trash", cell: [x, 5], rot: 0, footprint: [1, 1] });
+        return {
+            grid: "", rows: [],
+            placements: [
+                { nodeId: "mA", op: "mine", kind: "miner", cell: [2, 2], rot: 0, footprint: [1, 1] },
+                { nodeId: "tr", op: "trash", kind: "trash", cell: [10, 10], rot: 0, footprint: [1, 1] },
+                ...wall,
+            ],
+            channels: [{ from: { nodeId: "mA", cell: [2, 2], slot: "right", outDir: "right" },
+                to: { nodeId: "tr", cell: [10, 10], slot: "right", inDir: "right" },
+                lane: null, payload: "----CuCu", id: "vopen" }],
+            lanes: [], hubConnection: null, bbox: [26, 11], occupancy: [], conflicts: [], cornerCount: 0,
+        };
+    };
+    const repOpen = mkOpen();
+    const gOpen = ln.channelGeom(repOpen.channels[0], 0);
+    say(gOpen.kind === "vlane" && Array.isArray(gOpen.band) && Number.isFinite(gOpen.band[0]) && gOpen.band[1] === Infinity,
+        `构造成立：band 上端开放 [${gOpen.band && gOpen.band[0]}, +∞)（goal CpCpCpCp 的形态）`);
+    const narrow = rt.routeAll(repOpen, { searchRadius: 5 });      // 窗口 [11,16]，全被墙挡
+    say(narrow.ok === false, "窗口太窄（R=5，只够到被墙挡住的列）→ 诚实判死，不产蓝图",
+        `ok=${narrow.ok} reason=${narrow.reason}`);
+    const wide = rt.routeAll(repOpen);                             // 默认 R=16 → 窗口 [11,27]
+    say(wide.ok === true, "默认 R=16 → 候选覆盖到未被挡的列，布通（窗口确实够用）",
+        `${wide.reason} / ${JSON.stringify(wide.conflicts)}`);
+    if (wide.ok) {
+        eq(wide.colLanes.get("vopen"), 26, "选中的列 = 26（最靠下游的唯一自由列 → feasible 真在起作用）");
+        // 绝不压 machine：逐格对拍 buildBlocked
+        const bb = ln.buildBlocked(repOpen, {});
+        const bad = wide.beltCells.filter(b => bb.blocked.has(`${b.cell.x},${b.cell.y}`));
+        eq(bad, [], "vlane 的带格零压 machine（buildBlocked 的 blocked 集逐格对拍）");
+    }
+    // hub：4×4 是**整块**不可穿（不是只 1 格）。把 hub 摆在 band 起点的 4 列上，
+    //   vlane 必须整列绕开它（选 15，而不是 11..14 里的任何一列）。
+    const repHub = mkOpen();
+    repHub.placements = repHub.placements.filter(p => !p.nodeId.startsWith("w"));
+    repHub.placements.push({ nodeId: "hub", op: "hub", kind: "hub", cell: [11, 3], rot: 0, footprint: [1, 1] });
+    const hb = rt.routeAll(repHub);
+    say(hb.ok === true, "hub 4×4 压在 band 起点 → 绕开它布通", JSON.stringify(hb.conflicts));
+    if (hb.ok) {
+        eq(hb.colLanes.get("vopen"), 15, "选中的列 = 15（11..14 被 hub 的 4×4 整块挡死，不是只挡 1 格）");
+        const hubBad = hb.beltCells.filter(b => b.cell.x >= 11 && b.cell.x <= 14 && b.cell.y >= 3 && b.cell.y <= 6);
+        eq(hubBad, [], "vlane 的带格零压 hub 4×4（16 格整块）");
+    }
+}
+{   // R5：**真交叉**（两股流要同一格）仍必须判死，reason 逐字 = crossing-needs-tunnel；
+    //   打开 vlane 不许把它变成成功。
+    //   形态 = 仓库既有的「产出锁可达性」构造（⑤）：同端点、同 ordinal ⇒ 同一条通道 id。
+    //   lane 阶段按 id 记账（leftEdge 去重）看不见重复，route 阶段两股流落在**同一批格**上
+    //   ⇒ counterDirectedCells 命中。这里是它的 vlane 版（水平出/水平进），专门证明
+    //   vlane 的铺格路径**没有**绕过那道产出锁。
+    const rep = {
+        grid: "", rows: [],
+        placements: [
+            { nodeId: "mA", op: "mine", kind: "miner", cell: [2, 2], rot: 0, footprint: [1, 1] },
+            { nodeId: "tr", op: "trash", kind: "trash", cell: [8, 8], rot: 0, footprint: [1, 1] },
+        ],
+        channels: [
+            { from: { nodeId: "mA", cell: [2, 2], slot: "right", outDir: "right" },
+              to: { nodeId: "tr", cell: [8, 8], slot: "left", inDir: "left" },
+              lane: null, payload: "CuCuCuCu", ordinal: 0 },
+            // 端点完全相同、payload 不同、ordinal 撞号 ⇒ channelIdOf 推导出同一个 id（P3 的 bug 形态）
+            { from: { nodeId: "mA", cell: [2, 2], slot: "right", outDir: "right" },
+              to: { nodeId: "tr", cell: [8, 8], slot: "left", inDir: "left" },
+              lane: null, payload: "RuRuCuCu", ordinal: 0 },
+        ],
+        lanes: [], hubConnection: null, bbox: [9, 9], occupancy: [], conflicts: [], cornerCount: 0,
+    };
+    const r = rt.routeAll(rep);
+    say(r.geoms.every(g => g.kind === "vlane"), "构造：两条都是 vlane（水平出 + 水平进）");
+    say(r.ok === false, "vlane 上的真交叉（同格两股流）→ 仍判死（没有被 vlane 变成成功）", `ok=${r.ok}`);
+    eq(r.reason, "dag-not-placeable:crossing-needs-tunnel",
+        "真交叉的 reason 逐字 = dag-not-placeable:crossing-needs-tunnel");
+    say(r.failingNode && r.failingNode.check === "V6-crossing", "归因 check = V6-crossing（需隧道）");
+    // 同一格确实被两条流同时占据（构造性证据，不是"因为别的原因失败"）
+    say(r.conflicts.some(c => c.kind === "crossing" && c.nodeIds.length >= 1), "conflicts 里有 kind=crossing 的条目");
+    // 对照组：把第二条删掉 → 同一几何必须**能布通**（证明上面的失败是交叉，不是几何本身无解）
+    const solo = JSON.parse(JSON.stringify(rep));
+    solo.channels = [solo.channels[0]];
+    const one = rt.routeAll(solo);
+    say(one.ok === true, "对照组：删掉重复流后同一几何布通（失败原因是交叉，不是几何无解）", JSON.stringify(one.conflicts));
+}
 
 console.log("\n── ⑨ 产出可被 P1 assertCompiledEntity 接受（P6 直接取用的形状） ──");
 {

@@ -52,6 +52,7 @@ const eq = (got, want, label) => ok(JSON.stringify(got) === JSON.stringify(want)
 function group(title) { results.push("", `── ${title} ──────────────────────────────`); }
 
 const throws = fn => { try { fn(); return false; } catch { return true; } };
+const clone = o => JSON.parse(JSON.stringify(o));
 
 /* ─────────────────────────── fixture ─────────────────────────── */
 const F = {
@@ -202,6 +203,38 @@ eq([...new Set(cases.map(c => c.expect.split(":")[0]))].sort(),
 /* good fixture 在变异前后必须仍然全 pass（防"判据过敏"） */
 ok(validate(F.plan, { strict: true }).pass, "B23 good fixture plan-l1 仍全 pass");
 ok(validate(F.layout, { entities: F.intent.entities, strict: true }).pass, "B24 good fixture report-layout 仍全 pass");
+
+/* ★ V6 的车道比较必须按 (轴, 下标)：row:3 与 col:3 是两条正交车道，不得报 crossing。
+ *   这条是**正例**（旧实现会假红）；反例（同轴同号 = 真冲突）在同一份 fixture 上必须红，
+ *   两条一起才证明「按轴比较」不是把判据关掉。 */
+{
+    const l = clone(F.layout);
+    l.channels[0] = { ...l.channels[0], lane: 3, laneAxis: "row" };
+    l.channels[1] = { ...l.channels[1], lane: 3, laneAxis: "col" };
+    l.lanes = [{ row: 3, column: null, channelIds: ["chA"] }, { row: null, column: 3, channelIds: ["chB"] }];
+    const r = validate(l, { entities: clone(F.intent.entities), strict: true });
+    eq(r.checks.find(c => c.id === "V6-crossing").status, "pass",
+        "B25 row:3 与 col:3 并存 → V6 pass（车道身份 = (轴, 下标)，裸整数实现会假红）");
+    // 反例：同一个 row 上挂两条不同 payload → 必须 fail（判据没被关掉）
+    const bad = clone(l);
+    bad.channels[1] = { ...bad.channels[1], lane: 3, laneAxis: "row" };
+    bad.lanes = [{ row: 3, column: null, channelIds: ["chA", "chB"] }];
+    const rb = validate(bad, { entities: clone(F.intent.entities), strict: true });
+    eq(rb.checks.find(c => c.id === "V6-crossing").status, "fail", "B26 同一个 row:3 挂两条不同 payload → V6 fail（同行才真冲突）");
+    // 反例：同一个 column 上挂两条不同 payload → 必须 fail（列也要判）
+    const badC = clone(l);
+    badC.channels[0] = { ...badC.channels[0], lane: 3, laneAxis: "col" };
+    badC.lanes = [{ row: null, column: 3, channelIds: ["chA", "chB"] }];
+    const rc = validate(badC, { entities: clone(F.intent.entities), strict: true });
+    eq(rc.checks.find(c => c.id === "V6-crossing").status, "fail", "B27 同一个 column:3 挂两条不同 payload → V6 fail（同列同样判）");
+    // v1 报告（channels[].laneAxis 缺省）仍按 row 处理：不得因缺字段而漏判
+    const legacy = clone(l);
+    delete legacy.channels[0].laneAxis;
+    legacy.channels[1] = { ...legacy.channels[1], laneAxis: "row" };
+    legacy.lanes = [{ row: 3, column: null, channelIds: ["chA", "chB"] }];
+    eq(validate(legacy, { entities: clone(F.intent.entities), strict: true }).checks.find(c => c.id === "V6-crossing").status, "fail",
+        "B28 v1 报告（laneAxis 缺省 = row）与显式 row 同样判冲突（缺字段不漏判）");
+}
 
 /* ═══════════════════════ C. 双实现交叉对拍 ═══════════════════════ */
 group("C 双实现交叉对拍（belt-sim 槽位法 vs belt-rules.test.mjs OPP 回指法）");
@@ -428,7 +461,16 @@ group("F 报告自洽（checks ↔ errors、drift ↔ V3）");
     let bad = 0;
     for (const c of cases) {
         const { input, opts } = c.make();
-        try { validate(input, { ...opts, strict: true }); } catch (e) { bad++; results.push(`      ✗ ${c.id}: ${(e.allMessages || [e.message]).join(" ;; ").slice(0, 200)}`); }
+        // ⚠️ allMessages 的形态不统一：ContractViolation 聚合时是**字符串**（已 join 过），
+        //    单条时可能是数组或 undefined。旧代码直接 .join() ⇒ 一旦聚合路径被走到就 TypeError，
+        //    把「测试报告里的一条失败」变成「测试进程崩掉」（本轮的互逆判据正好走这条路）。
+        const msg = e => {
+            const a = e && e.allMessages;
+            if (Array.isArray(a)) return a.join(" ;; ");
+            if (typeof a === "string" && a) return a;
+            return String((e && e.message) || e);
+        };
+        try { validate(input, { ...opts, strict: true }); } catch (e) { bad++; results.push(`      ✗ ${c.id}: ${msg(e).slice(0, 200)}`); }
     }
     try { validate(F.plan, { strict: true }); validate(F.layout, { entities: F.intent.entities, strict: true }); } catch (e) { bad++; results.push(`      ✗ good fixture: ${e.message.slice(0, 200)}`); }
     ok(bad === 0, "F1 全部 19 条注入 + 2 张 good 报告的 ValidatorReport 都过 P1 的 assertValidatorReport");

@@ -74,7 +74,7 @@ import {
  *   rows: Array<{level:number, y:number, nodeIds:string[]}>,
  *   placements: Array<{nodeId:string, op:string, kind:string, cell:Cell2, rot:number, footprint:[number,number]}>,
  *   channels: Array<LayoutChannel>,
- *   lanes: Array<{row:number, channelIds:string[]}>,
+ *   lanes: Array<LayoutLane>,
  *   hubConnection: {entry:Cell2, side:DirName, dir:number}|null,
  *   bbox: [number,number],
  *   occupancy: Array<{cell:Cell2, state:"solid"|"replaceable", who?:string, kind?:string}>,
@@ -83,11 +83,28 @@ import {
  * }} LayoutReport */
 
 /**
+ * 车道台账条目（§2.3 lanes[]）。**轴 + 下标**二元组是唯一身份：
+ *   - 水平车道（hlane，竖直出/竖直进）→ 记 `{row: r, channelIds}`
+ *   - 竖直车道（vlane，水平出/水平进）→ 记 `{column: c, channelIds}`
+ * **恰好一个** of row/column 是非 null（规则由 assertLayoutReport 强制；两个都给或都不给 = 契约错）。
+ * 为什么不是「一个 lane 字段 + 一个 axis 字段」：row=3 与 column=3 是**两条不同的车道**，
+ *   用同一字段装会让「同一行只能属于一条车道」的判重把跨轴的同号车道误判成冲突
+ *   （P5 的 V6 与 types 自己的判重都要按 (轴, 下标) 比较）。
+ * @typedef {{row:number|null, column:number|null, channelIds:string[]}} LayoutLane
+ */
+
+/**
  * 通道 = 端点对（plan §7.3 自我批判：多对多关系可能要加 slotRole/ordinal，P1 预留可空字段）。
+ * `lane` 的**口径（LANE_SCHEMA_VERSION = 2）**：车道轨道的**下标**（行号或列号），无轴信息；
+ *   轴由 `laneAxis` 给出（"row" = 水平车道行，留空或 "row" 时 `lane` 直接与 `lanes[].row` 对拍；
+ *   "col" = 竖直车道列，与 `lanes[].column` 对拍）。
+ *   两者都为空 ⇔ 该通道**没有占用车道**（direct/single/straight/elbow/search）。单看 `lane`
+ *   无法区分 row=3 与 column=3，所以轴必须随行 —— 这正是 scheme v1 装不下 vlane 的原因。
  * @typedef {{
  *   from:{nodeId:string, cell:Cell2, slot:DirName, outDir:DirName},
  *   to:{nodeId:string, cell:Cell2, slot:DirName, inDir:DirName},
  *   lane:number|null, payload:string,
+ *   laneAxis?:("row"|"col"|null),
  *   slotRole?:("primary"|"secondary"|"shape"|"color"|"lower"|"upper"|"out"|string|null),
  *   ordinal?:number|null,
  * }} LayoutChannel */
@@ -137,6 +154,15 @@ export const SLOT_OUT_ROLES = Object.freeze(["left", "right", "quad0", "quad1", 
 
 /** §2.3 conflicts[].kind 枚举 */
 export const CONFLICT_KINDS = Object.freeze(["cell-occupied", "lane-column", "crossing", "no-turn", "hub-contention"]);
+/** §2.3 lanes[] / channels[].lane 的**轴**枚举（LANE_SCHEMA_VERSION = 2 新增）。
+ *  "row" = 水平车道（固定 y 的整行），"col" = 竖直车道（固定 x 的整列）。
+ *  唯一身份 = (轴, 下标)：`{row:3}` 与 `{column:3}` 是**两条不同**的车道（不得互相判重）。 */
+export const LANE_AXES = Object.freeze(["row", "col"]);
+/** §2.3 lanes[] 的契约版本。v1 = 只有 `row` 的条目（vlane 无法表达 → 被 P4 拒绝）；
+ *  v2 = `{row|null, column|null}` 恰一个非空 + `channels[].laneAxis`（vlane 可表达）。
+ *  版本号的意义：读旧报告（v1 形态）永远合法（`row` 在场、`column` 缺省 null），
+ *  所以 bump 不破坏 fixture；bump 只标记「新写法开始产出 v1 装不下的信息」。 */
+export const LANE_SCHEMA_VERSION = 2;
 /** §2.3 occupancy[].state 用词（注意：与 grid.mjs 的 CELL_STATES 不同名，这里刻意照 plan 原文） */
 export const OCCUPANCY_STATES = Object.freeze(["solid", "replaceable"]);
 /** §2.4 checks[].status 枚举 */
@@ -590,6 +616,17 @@ export function assertLayoutReport(v, path = "layout", opts = {}) {
             const p = `${path}.channels[${i}]`;
             requireKeys(c, ["from", "to", "lane", "payload"], p);
             const out = { from: assertEndpoint(c.from, `${p}.from`, "outDir"), to: assertEndpoint(c.to, `${p}.to`, "inDir"), lane: c.lane === null ? null : assertInt(c.lane, `${p}.lane`), payload: str(c, "payload", p, { allowEmpty: true }) };
+            // laneAxis（LANE_SCHEMA_VERSION=2）：lane 的轴。缺省/null = "row"（v1 的唯一轴，向后兼容）。
+            // 与 lane 的交叉约束：lane===null ⇒ laneAxis 必须 null（未占车道就没有轴可言）；
+            //   lane!==null 且显式给 "row"|"col" ⇒ 采纳；lane!==null 但给 null ⇒ 归一成 "row"（v1 口径）。
+            let axis = null;
+            if (c.laneAxis !== undefined && c.laneAxis !== null) axis = oneOf(c.laneAxis, LANE_AXES, `${p}.laneAxis`);
+            if (c.laneAxis !== undefined && c.laneAxis === null) axis = null;
+            if (out.lane === null) {
+                if (axis !== null) throw new ContractViolation(`${p}.laneAxis`, "lane===null ⇒ laneAxis 必须 null（未占车道的通道没有轴）", axis);
+            } else {
+                out.laneAxis = axis === null ? "row" : axis;
+            }
             if (c.slotRole !== undefined && c.slotRole !== null) oneOf(c.slotRole, [...SLOT_IN_ROLES, ...SLOT_OUT_ROLES], `${p}.slotRole`);
             if (c.slotRole !== undefined) out.slotRole = c.slotRole;
             if (c.ordinal !== undefined && c.ordinal !== null) out.ordinal = assertInt(c.ordinal, `${p}.ordinal`);
@@ -599,12 +636,20 @@ export function assertLayoutReport(v, path = "layout", opts = {}) {
         });
     } catch (e) { push(e); }
 
-    /* lanes */
+    /* lanes —— LANE_SCHEMA_VERSION=2：`{row, column}` **恰一个非 null**（见 LayoutLane 注释）。
+     *   v1 形态 `{row:3, channelIds}` 原样合法（column 缺省 → null），fixture 无需改动；
+     *   新形态 `{column:3, channelIds}` 表达竖直车道。两个都给 / 都不给 = 契约错（不静默择一）。 */
     try {
         report.lanes = arr(v, "lanes", path).map((l, i) => {
             const p = `${path}.lanes[${i}]`;
-            requireKeys(l, ["row", "channelIds"], p);
-            return { row: assertInt(l.row, `${p}.row`), channelIds: arr(l, "channelIds", p).map((s, j) => str({ s }, "s", `${p}.channelIds[${j}]`)) };
+            requireKeys(l, ["channelIds"], p);
+            const row = l.row === undefined || l.row === null ? null : assertInt(l.row, `${p}.row`);
+            const column = l.column === undefined || l.column === null ? null : assertInt(l.column, `${p}.column`);
+            if ((row === null) === (column === null)) {
+                throw new ContractViolation(`${p}`, "{row} 或 {column} **恰一个**非 null（row=行号 / column=列号；两个都给或都不给都无法确定车道身份）",
+                    { row, column });
+            }
+            return { row, column, channelIds: arr(l, "channelIds", p).map((s, j) => str({ s }, "s", `${p}.channelIds[${j}]`)) };
         });
     } catch (e) { push(e); }
 
@@ -663,8 +708,84 @@ export function assertLayoutReport(v, path = "layout", opts = {}) {
                 }
             }
         }
-        const laneRows = report.lanes.map(l => l.row);
-        if (new Set(laneRows).size !== laneRows.length) push(new ContractViolation(`${path}.lanes`, "同一 row 只能属于一条车道（陷阱表 #5：不同分支必须不同行）", laneRows));
+        // 车道身份 = (轴, 下标)：**同一行**不得属于两条车道（陷阱表 #5），同一列同理；
+        // 但 row=3 与 column=3 是**两条不同**的车道，跨轴同号不冲突（vlane 与 hlane 共用整数很常见：
+        // 收集带所在的那一列往往正好等于某条水平车道的行号）。
+        const laneKeys = report.lanes.map(l => `${l.column === null ? "row" : "col"}:${l.column === null ? l.row : l.column}`);
+        if (new Set(laneKeys).size !== laneKeys.length) push(new ContractViolation(`${path}.lanes`, "同一 (轴, 下标) 只能属于一条车道（陷阱表 #5：不同分支必须不同行/列；row 与 column 同号不算冲突）", laneKeys));
+
+        /* ★ 互逆判据（审查 F1，本轮补齐）：`channels[].lane/laneAxis` 与 `lanes[]` 台账必须**互相对得上**。
+           在此之前这条只写在 lane.mjs 的注释里、没有任何代码执行它 —— 于是「通道说 row:99、台账只有 row:3」
+           这样的自相矛盾报告能同时通过 P1 和 P5 的 V6，`laneAxis` 只是**建议**而非契约。
+           判据（逐条，双向）：
+             ① 每条占了车道的通道，其 (轴,下标) 必须能在 lanes[] 里找到一条**同键**的车道；
+             ② 那条车道的 channelIds 必须**包含**该通道（id 推导与 lane.mjs:channelIdOf 同规则）；
+             ③ 台账里列出的每个 channelId 必须对应一条**真的占了这条车道**的通道（不许挂僵尸 id）。
+           id 推导在这里重写一份而不是 import：types.mjs 是 P1 契约层，不依赖 P4 实现（依赖方向只能 P4→P1）。
+           规则与 lane.mjs:channelIdOf 逐字相同；两边漂移时由 P4 套件里的对拍断言抓。 */
+        const chIdOf = (c, i) => {
+            if (typeof c.id === "string" && c.id !== "") return c.id;
+            const base = `${c.from.nodeId}->${c.to.nodeId}`;
+            if (Number.isInteger(c.ordinal)) return `${base}#${c.ordinal}`;
+            if (typeof c.slotRole === "string" && c.slotRole) return `${base}[${c.slotRole}]`;
+            return `${base}@${i}`;
+        };
+        const keyOf = (axis, idx) => `${axis}:${idx}`;
+        const ledgerByKey = new Map();
+        for (const l of report.lanes) {
+            const k = l.column === null ? keyOf("row", l.row) : keyOf("col", l.column);
+            ledgerByKey.set(k, l);
+        }
+        const occupying = new Map();   // channelId → key
+        const derivableIds = new Set(); // channelIdOf 能推导出的全部 id（用于 ③ 的可判定域）
+        report.channels.forEach((c, i) => {
+            derivableIds.add(chIdOf(c, i));
+            if (c.lane === null || c.lane === undefined) return;
+            const axis = c.laneAxis === "col" ? "col" : "row";      // 缺省 = row（v1 兼容）
+            const k = keyOf(axis, c.lane);
+            occupying.set(chIdOf(c, i), k);
+            const l = ledgerByKey.get(k);
+            if (!l) {
+                push(new ContractViolation(`${path}.channels[${i}].lane`,
+                    `通道声明占 ${axis}=${c.lane}，但 lanes[] 里没有这条车道（互逆判据①：台账必须列出每一条被占用的车道）`,
+                    { lane: c.lane, laneAxis: axis, ledger: report.lanes }));
+                return;
+            }
+            const id = chIdOf(c, i);
+            /* ② 通道 → 台账的**反向**指认。这里必须容忍 v1 的手写 id（金 fixture 用「chB」，
+               而 channelIdOf 会推出「mB->st#1」）—— 两套命名都合法，不能因为命名不同就判死一个
+               结构正确的报告。可判定的部分：
+                 · 台账条目**不能是空的**（占了一条车道却不列任何通道 ⇒ 台账没在履职）；
+                 · 若该条目里出现的是**可推导 id**，则本通道的 id 必须在其中（可推导 id 是 P4 的
+                   产出形态，出现即说明这份台账用的是新命名，就必须互指）。
+               v1 手写命名下「台账列了别的名字」这一情形无法机器区分「助记名」与「挂错」，
+               故不做断言 —— 残余风险记录在此，由 P4 的对拍断言（producer 侧）兜住。 */
+            const ids = l.channelIds || [];
+            if (ids.length === 0) {
+                push(new ContractViolation(`${path}.lanes`,
+                    `车道 ${k} 的 channelIds 为空，但通道 ${id} 声明占着它（互逆判据②：台账必须列出占用者）`,
+                    { laneKey: k, channelId: id }));
+            } else if (ids.some(x => derivableIds.has(x)) && !ids.includes(id)) {
+                push(new ContractViolation(`${path}.lanes`,
+                    `车道 ${k} 用的是可推导 id，却不包含声明占用它的通道 ${id}（互逆判据②：新命名下通道与台账必须互指）`,
+                    { laneKey: k, channelIds: ids, channelId: id }));
+            }
+        });
+        for (const l of report.lanes) {
+            const k = l.column === null ? keyOf("row", l.row) : keyOf("col", l.column);
+            for (const id of l.channelIds || []) {
+                // ③ 只在 id **确实指向一条真实通道**时判：v1 手写 fixture 用「chB」这类助记 id，
+                //    与 channelIdOf 的可推导形态不同 —— 那不是僵尸 id，是另一套命名，不该被判死。
+                //    判据因此收窄成「若这个 id 可被推导出来，它指向的通道就必须真的占这条车道」，
+                //    仍然挡住真正危险的形态（台账把一条真实通道挂到它没占的车道上）。
+                if (!derivableIds.has(id)) continue;
+                if (occupying.get(id) !== k) {
+                    push(new ContractViolation(`${path}.lanes`,
+                        `车道 ${k} 挂了 id "${id}"，但该通道并未占这条车道（互逆判据③：台账不许把真实通道挂错车道 —— 会让 V6 的同行判重看错对象）`,
+                        { laneKey: k, channelId: id, actual: occupying.get(id) ?? null }));
+                }
+            }
+        }
     } catch (e) { push(e); }
 
     if (errs.length) { const f = errs[0]; for (let i = 1; i < errs.length; i++) f.add(errs[i]); throw f; }
@@ -1027,6 +1148,51 @@ if (process.argv[1] && process.argv[1].replace(/\\/g, "/").endsWith("compiler/ty
         eq(assertLayoutReport(JSON.parse(JSON.stringify(lay)), "layout(rt)"), lay, "report-layout round-trip 恒等");
         ok(lay.channels.length > 0, "report-layout 有 channels（P4 的输入）");
         ok(lay.cornerCount > 0, "report-layout 是双分支汇合（必有拐角）");
+        // LANE_SCHEMA_VERSION=2 的**向后兼容**：v1 fixture 的 `{row:3, channelIds}` 仍合法，
+        // 规范化后 column 为 null；channels[].lane 保持数字（laneAxis 缺省不写，下游按 "row" 读）。
+        eq(lay.lanes.map(l => ({ row: l.row, column: l.column })), [{ row: 3, column: null }],
+            "v1 fixture 的 lanes[] 读成 {row:3, column:null}（column 缺省 = null，向后兼容）");
+        eq(lay.channels[1].lane, 3, "v1 fixture 的 channels[].lane 仍是数字 3（未被改写）");
+
+        /* ── lanes[] / laneAxis 的 v2 契约（column 车道 + 跨轴同号不判重） ── */
+        {
+            const v2 = clone(layRaw);
+            // row=3 与 column=3 是两条**不同**的车道：不得被「同行唯一」判重误伤
+            v2.lanes = [{ row: 3, channelIds: ["chB"] }, { column: 3, channelIds: ["chV"] }];
+            let okCross = true, errCross = "";
+            try { assertLayoutReport(v2, "layout(cross-axis)"); } catch (e) { okCross = false; errCross = (e.allMessages || e.message).slice(0, 200); }
+            ok(okCross, "lanes[] 允许 row:3 与 column:3 并存（车道身份 = (轴, 下标)，不是裸整数）" + (okCross ? "" : "：" + errCross));
+            const v2rt = assertLayoutReport(JSON.parse(JSON.stringify(assertLayoutReport(v2, "layout(cross-axis)"))), "layout(cross-axis-rt)");
+            eq(v2rt.lanes.length, 2, "column 车道经 JSON round-trip 保持（两个轴都在）");
+            // 同一 (轴, 下标) 重复 → 必须拒（陷阱表 #5 的契约面）
+            const dup = clone(v2); dup.lanes = [{ row: 3, channelIds: ["a"] }, { row: 3, channelIds: ["b"] }];
+            throws(() => assertLayoutReport(dup, "layout(dup-row)"), "同一 row 重复 → 拒", "同一 (轴, 下标)");
+            const dupCol = clone(v2); dupCol.lanes = [{ column: 4, channelIds: ["a"] }, { column: 4, channelIds: ["b"] }];
+            throws(() => assertLayoutReport(dupCol, "layout(dup-col)"), "同一 column 重复 → 拒", "同一 (轴, 下标)");
+            // 两个都给 / 都不给 → 拒（车道身份无法确定，不许静默择一）
+            const both = clone(v2); both.lanes = [{ row: 3, column: 4, channelIds: ["a"] }];
+            throws(() => assertLayoutReport(both, "layout(both)"), "lanes[] 条目 row+column 同时给 → 拒（无法确定车道身份）", "恰一个");
+            const neither = clone(v2); neither.lanes = [{ channelIds: ["a"] }];
+            throws(() => assertLayoutReport(neither, "layout(neither)"), "lanes[] 条目 row/column 都不给 → 拒", "恰一个");
+            // channels[].laneAxis 的交叉约束
+            // ⚠️ 这些样例必须**同时**给出匹配的 lanes[] 台账：互逆判据（见 assertLayoutReport 的 ★ 段）
+            //    要求「通道声明占某条车道」⟺「台账里有这条车道」。只改 channels 不改台账，
+            //    现在会被正确判死 —— 那不是测试想要的（它想测 laneAxis 的保留/枚举，不是互逆）。
+            //    用到的是 channels[2]（st->out），其推导 id = "st->out[out]"（slotRole="out"）。
+            const ax = clone(layRaw);
+            ax.channels[2] = { ...ax.channels[2], lane: 7, laneAxis: "col" };
+            ax.lanes = [{ row: 3, channelIds: ["chB"] }, { column: 7, channelIds: ["st->out[out]"] }];
+            const axOK = assertLayoutReport(ax, "layout(axis-col)");
+            eq([axOK.channels[2].lane, axOK.channels[2].laneAxis], [7, "col"], "channels[].laneAxis:\"col\" 被保留（列号）");
+            const axRow = clone(layRaw);
+            axRow.channels[2] = { ...axRow.channels[2], lane: 7, laneAxis: "row" };
+            axRow.lanes = [{ row: 3, channelIds: ["chB"] }, { row: 7, channelIds: ["st->out[out]"] }];
+            eq(assertLayoutReport(axRow, "layout(axis-row)").channels[2].laneAxis, "row", "channels[].laneAxis:\"row\" 被保留");
+            const axBad = clone(layRaw); axBad.channels[2] = { ...axBad.channels[2], lane: 7, laneAxis: "diag" };
+            throws(() => assertLayoutReport(axBad, "layout(axis-bad)"), "laneAxis 枚举外 → 拒", "laneAxis");
+            const axNull = clone(layRaw); axNull.channels[2] = { ...axNull.channels[2], lane: null, laneAxis: "col" };
+            throws(() => assertLayoutReport(axNull, "layout(axis-null)"), "lane===null 却给 laneAxis → 拒（未占车道没有轴）", "laneAxis");
+        }
 
         /* ── report-validator.json ── */
         const valRaw = readJSON("report-validator.json");

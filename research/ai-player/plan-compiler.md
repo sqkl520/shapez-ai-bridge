@@ -269,8 +269,14 @@ P2 是**唯一**读 `src/ai/machine-spec.json` 字段名的地方。归一后的
  *   channels: Array<{from:{nodeId:string, cell:[number,number], slot:DirName, outDir:DirName},
  *                    to:  {nodeId:string, cell:[number,number], slot:DirName, inDir:DirName},
  *                    lane:number|null,   // 车道序号（不同分支必须不同行，陷阱表 #5）
+ *                    laneAxis:"row"|"col"|null, // ← v2 新增：lane 是行号还是列号（缺省按 "row" 读旧报告）
  *                    payload:string}>,   // 该通道承载的 shape shortKey（吞吐/形状验证用）
- *   lanes: Array<{row:number, channelIds:string[]}>,           // 同列通道冲突检测的凭据
+ *   lanes: Array<{row:number|null, column:number|null, channelIds:string[]}>,  // 同轨冲突检测的凭据
+   // ↑ 裁决（LANE_SCHEMA_VERSION 2，本轮）：**恰一个** of row/column 非 null。
+   //   为什么不能只有 row：vlane（两端都水平出/进的通道，如 painter → hub）需要**列**车道。
+   //   为什么不能用「一个整数 + axis」：row=3 与 column=3 是两条正交车道，同意会让
+   //   「同一轨只能挂一条车道」的判重把跨轴同号误判成冲突。判重键因此是 (轴, 下标)。
+   //   向后兼容：v1 报告（只有 row）永远合法。
  *   hubConnection: {entry:[number,number], side:"top"|"right"|"bottom"|"left", dir:0|90|180|270}|null,
    // ↑ 裁决（P5 CONTEST F2，主线程 06:19）：entry = **带子末格**（hub 外的送带最后格，
    //   即 hubEntriesWorld().cell），side = 贴的 hub 边（face），dir = 带子流向角。

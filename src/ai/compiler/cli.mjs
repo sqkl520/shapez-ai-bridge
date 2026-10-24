@@ -22,6 +22,24 @@
  *
  * 退出码：0 = ok:true（且交接件写过）/ 1 = ok:false（结构化失败，仍打印 reason）/ 2 = 用法错误
  * 全程离线（spawnSync 只跑仓库内的 proto/solver.mjs）。
+ *
+ * ── hub 政策（WORKER F；主线程已把它下沉到 compilePlan）────────────────────────────
+ * `--hub` 不是可选的装修：**任何要接 hub 的计划都必须知道 hub 的真实世界坐标**。
+ * 未给 `--hub` 时编译器只能"发明"一个（`anchor + hubDesign`，= `provenance.hubInferred`），
+ * 那条收集带通向一块空地；而 `worldFrameHubCheck` 在无世界 hub 时整段跳过
+ * （`{"ok":true,"skipped":"no-world-hub"}`）——于是 `ok:true` 只证明"排出了一座工厂"，
+ * 不证明"能交付"。这正是 `CrCrCrCr --seed 43391` 曾经假绿的原因（hubInferred=[55,22]，
+ * 真 hub 在 (-2,-2)，相距 62 格）。
+ *
+ * 裁决：**未钉死 hub 的编译一律按失败上报**（exit 1、不写交接件），
+ * 并把"发明出来的 hub 在哪"原样留在 `provenance.hubInferred` 里供诊断 ——
+ * 不假装成功，也不吞掉上游已算出的布局。
+ * 这与 L3 的「无人工坐标」不冲突：坐标应当来自**实机观测**（`obs.hub`），不是人手输入。
+ * `--hub` 是那条观测值的入口，不是人为猜测的入口。
+ *
+ * ⚠️ 这条**不再只在本文件生效**：`cli.mjs` 与库调用方对同一份计划必须给同一个结论，
+ * 否则「两个权威答案」比没有政策更危险（红队 finding 1）。所以政策已下沉进
+ * `compilePlan`（见其 `hubPolicyFailure`）：本 CLI 只是把 `--hub` 转发下去，不再二次改写结果。
  */
 import path from "node:path";
 
@@ -117,7 +135,11 @@ export function render(plan, handoff) {
 		if (plan.failingNode) lines.push(`  failingNode=${JSON.stringify(plan.failingNode)}`);
 		if (plan.class) lines.push(`  class=${plan.class}`);
 		lines.push(`  hint=${plan.hint || "-"}`);
-		if (plan.stages) {
+		if (plan.class === "hub:unpinned") {
+			// 政策失败不是「某一段挂了」——各段其实都过了；挂的是"能交付"这个不变式。
+			lines.push(`  卡在哪：hub 政策（各段都过了，但 hub 未钉死 ⇒ 不产蓝图、不写交接件）`);
+			if (plan.site) lines.push(`  诊断：site.anchor=${JSON.stringify(plan.site.anchor)} hubInferred=${JSON.stringify(plan.provenance && plan.provenance.worldPlacement && plan.provenance.worldPlacement.hubInferred)}`);
+		} else if (plan.stages) {
 			const bad = Object.entries(plan.stages).filter(([, v]) => v && v.ok === false);
 			lines.push(`  卡在第几段：${bad.map(([k, v]) => `${k}(${v.reason})`).join(" ← ") || "（无）"}`);
 			lines.push(`  全部段：${Object.entries(plan.stages).map(([k, v]) => `${k}:${v && v.ok === false ? "✗" : "✓"}`).join(" ")}`);
@@ -126,15 +148,28 @@ export function render(plan, handoff) {
 	return lines.join("\n");
 }
 
+/**
+ * hub 未钉死 ⇒ 编译"成功"也不算数（见文件头的 hub 政策）。
+ * **实现已下沉到 `compile.mjs` 的 `compilePlan`**（那里是唯一权威），本文件保留同名导出只为
+ * 兼容既有 import 与测试；不要在这里再判一次 —— 两处判据漂移就是红队 finding 1 的「两个权威答案」。
+ * @returns {object} 一个 `ok:false` 的结构化失败（把布局留作诊断，不产蓝图）
+ */
+export { hubPolicyFailure } from "./compile.mjs";
+
 export function main(argv = process.argv.slice(2)) {
 	if (argv.includes("--help") || argv.includes("-h")) { console.log(USAGE); return 0; }
 	const parsed = parseArgv(argv);
 	if (parsed.error) { console.error(parsed.error); return 2; }
 	const input = parsed.input;
 	const outDir = input.out || HANDOFF_DIR;
+	// ⚠️ `noHandoff` 必须**先取出再删**：旧代码在 delete 之后再读，`--no-handoff` 是个空操作
+	// （每次调用都写交接件，把 `--out` 指到 scratch 目录才能绕开）。删它只是别把 CLI 开关
+	// 漏进 compilePlan 的入参（那里不认识它）。
+	const noHandoff = input.noHandoff === true;
 	delete input.out; delete input.json; delete input.noHandoff; delete input.site;
+	// hub 政策在 compilePlan 内生效：这里**不再**二次改写结果（同一份计划只有一个结论）
 	const plan = compilePlan(input);
-	const handoff = input.noHandoff ? null : writeHandoff(plan, outDir);
+	const handoff = noHandoff ? null : writeHandoff(plan, outDir);
 	if (argv.includes("--json")) {
 		console.log(JSON.stringify({ ...plan, handoff }, (k, v) => (k === "layout" && v && v.grid ? { ...v, grid: v.grid.split("\n").length + " rows" } : v), 1));
 	} else {

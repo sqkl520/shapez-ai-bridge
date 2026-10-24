@@ -94,6 +94,11 @@ export function mutationCases(F) {
             const p = P();
             p.layout.channels[0].lane = 0;
             p.layout.channels[1].lane = 0;
+            // ⚠️ 台账必须跟着改：互逆判据（P1 的 assertLayoutReport）现在要求
+            // 「通道声明占车道」⟺「lanes[] 里有这条车道」。只在 channels 上写 lane=0 而台账为空，
+            // 会被 P1 在 V6 之前判死（正确行为），于是这条用例就测不到 V6 了。
+            // 这里把两条通道都挂到 row:0 上，让冲突**真的发生在 V6 的同行判重**里。
+            p.layout.lanes = [{ row: 0, channelIds: ["mA->st#0", "mB->st#1"] }];
             return { input: p, opts: off() };
         },
     });

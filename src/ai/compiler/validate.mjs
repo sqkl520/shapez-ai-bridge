@@ -872,17 +872,34 @@ const runV6 = (ctx, checks, errors) => {
         const [x, y] = parseKey(k);
         clashes.push({ cell: [x, y], payloads: [...set], owners: [...owners.get(k)] });
     }
-    // ③ 车道同行（陷阱表 #5）：同一个 lane 号上挂了两条以上、承载不同 payload 的通道。
-    //    两个凭据：通道自己的 lane 字段；LayoutReport.lanes[].channelIds（P3 的车道台账）。
+    // ③ 车道同行/同列（陷阱表 #5）：同一条**轨道**上挂了两条以上、承载不同 payload 的通道。
+    //    轨道的身份 = **(轴, 下标)**，不是裸整数（LANE_SCHEMA_VERSION=2）：
+    //      row=3（水平车道行）与 column=3（竖直车道列）是两条完全不同的轨道，
+    //      P4 现在真的会同时产出它们（vlane 打开后收集带的列号常与某条行车道同号）。
+    //      只按裸整数分组 = 把两条正交的车道误报成「同排穿格」→ 假 crossing。
+    //    轴来源：channels[].laneAxis（缺省/null ⇒ "row"，兼容 v1 报告与 fixture）。
+    //    两个凭据：通道自己的 (laneAxis, lane) 字段；LayoutReport.lanes[] 的台账条目（{row}|{column}）。
+    const laneKeyOf = c => `${c.laneAxis === "col" ? "col" : "row"}:${c.lane}`;
+    /** 人读标签：`row:3` → "lane=3"（行车道沿用旧词，评测/日志兼容）、`col:3` → "column=3"。
+     *  兼容不带轴前缀的键（防御性：只看整数字面量时也不至于打印成空串）。 */
+    const laneLabel = k => {
+        const s = String(k);
+        if (s.startsWith("col:")) return `column=${s.slice(4)}`;
+        if (s.startsWith("row:")) return `lane=${s.slice(4)}`;
+        return `lane=${s}`;
+    };
+    const ledgerKeyOf = l => `${l.column === null || l.column === undefined ? "row" : "col"}:${l.column === null || l.column === undefined ? l.row : l.column}`;
     const laneSeen = new Map();
     (view.layout.channels || []).forEach((c, i) => {
         if (c.lane === null || c.lane === undefined || audit.skip.has(i)) return;
-        if (!laneSeen.has(c.lane)) laneSeen.set(c.lane, []);
-        laneSeen.get(c.lane).push(i);
+        const k = laneKeyOf(c);
+        if (!laneSeen.has(k)) laneSeen.set(k, []);
+        laneSeen.get(k).push(i);
     });
     const dupLane = [...laneSeen].map(([lane, list]) => ({ lane, list, payloads: [...new Set(list.map(i => (view.layout.channels || [])[i].payload))] }))
         .filter(x => x.list.length > 1 && x.payloads.length > 1);
     const ledgerConflict = (view.layout.lanes || []).find(l => (l.channelIds || []).length > 1 && new Set(l.channelIds).size > 1);
+    const ledgerKey = ledgerConflict ? ledgerKeyOf(ledgerConflict) : null;
 
     const hit = clashes[0] || thru[0] || null;
     if (hit) {
@@ -903,14 +920,14 @@ const runV6 = (ctx, checks, errors) => {
         claim(ctx, "V6-crossing", dupLane.length ? dupLane[0].list.map(i => knode(view.layout.channels[i].from.nodeId)) : [knode("lane")]);
         const d = dupLane[0];
         checks.push(check("V6-crossing", "fail", {
-            expected: "不同分支的车道必须不同行（陷阱表 #5）",
-            actual: d ? `lane=${d.lane} 被 ${d.list.length} 条通道共用，承载 ${d.payloads.join(" / ")}`
-                : `lanes 台账行 ${ledgerConflict.row} 上挂了 ${ledgerConflict.channelIds.length} 条车道：${ledgerConflict.channelIds.join(",")}`,
-            note: "同行车道会互相穿格 → 需隧道/立体绕行，v1 拒绝（redteam:150 第 4 条）。对策：加宽行距 + 换 lane 号",
+            expected: "不同分支的车道必须不同行/列（陷阱表 #5；同一轨道 = 同 (轴, 下标)）",
+            actual: d ? `车道 ${laneLabel(d.lane)} 被 ${d.list.length} 条通道共用，承载 ${d.payloads.join(" / ")}`
+                : `lanes 台账行 ${ledgerKey} 上挂了 ${ledgerConflict.channelIds.length} 条车道：${ledgerConflict.channelIds.join(",")}`,
+            note: "同一轨道上的车道会互相穿格 → 需隧道/立体绕行，v1 拒绝（redteam:150 第 4 条）。对策：加宽行距 + 换 lane 号",
         }));
         errors.push(error("V6-crossing", d ? knode(view.layout.channels[d.list[0]].from.nodeId).slice(5) : "", d ? view.layout.channels[d.list[0]].from.cell : null,
-            d ? `lane=${d.lane} 被 ${d.list.length} 条通道共用（${d.payloads.join(" / ")}）→ 同排穿格，需隧道，v1 不支持（陷阱表 #5）`
-                : `车道行 ${ledgerConflict.row} 冲突（${ledgerConflict.channelIds.join(",")}）→ 需隧道，v1 不支持`));
+            d ? `车道 ${laneLabel(d.lane)} 被 ${d.list.length} 条通道共用（${d.payloads.join(" / ")}）→ 同轨穿格，需隧道，v1 不支持（陷阱表 #5）`
+                : `车道 ${ledgerKey} 冲突（${ledgerConflict.channelIds.join(",")}）→ 需隧道，v1 不支持（台账行）`));
         return;
     }
     checks.push(check("V6-crossing", "pass", {
