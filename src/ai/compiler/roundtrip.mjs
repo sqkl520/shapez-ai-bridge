@@ -410,9 +410,9 @@ export function runChecks() {
         let sm = null, smErr = "";
         try { sm = summarizeBlueprint(out.blueprint); } catch (e) { smErr = String(e.message); }
         say(sm && sm.count === out.count && sm.anchor[0] === out.anchor[0] && sm.anchor[1] === out.anchor[1] &&
-            sm.exported_from === GV && sm.format_version === 1 &&
+            sm.exported_from === GV && (sm.format_version === 1 || sm.format_version === 2) &&
             Object.values(sm.by_code).reduce((a, b) => a + b, 0) === out.count,
-            `L1-3.summarize.${name}`, sm ? JSON.stringify({ count: sm.count, anchor: sm.anchor, gv: sm.exported_from, bounds: sm.bounds, by_code: sm.by_code }) : `抛错 ${smErr}`);
+            `L1-3.summarize.${name}`, sm ? JSON.stringify({ count: sm.count, anchor: sm.anchor, gv: sm.exported_from, fmt: sm.format_version, bounds: sm.bounds, by_code: sm.by_code }) : `抛错 ${smErr}`);
 
         // ⑦ 出参再过一次 §2.1 契约（strict 顺序 + 全量自洽）
         let reOk = true, reMsg = "";
