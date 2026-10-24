@@ -8,11 +8,11 @@
  *   P1 contract   research/ai-plan/contract/test.mjs          （94 断言，含全目录 import lint）
  *   P2 data       research/ai-plan/data/run-all.mjs           （637 断言 + 与 gen-resources CLI 逐格对拍）
  *   P0-verify     node --test src/ai/belt-rules.test.mjs      （17 断言；方向真值的唯一权威）
- *   P3 placer     research/ai-plan/placer/test.mjs            （96 断言，含四张金网格逐字节）
+ *   P3 placer     research/ai-plan/placer/test.mjs            （140 断言，含四张金网格逐字节）
  *   P4 router     research/ai-plan/router/test.mjs            （184 断言）
  *   P5 validator  research/ai-plan/validator/test.mjs         （190 断言，含变异矩阵 + 双实现对拍）
  *   P6 emitter    research/ai-plan/emitter/run-all.mjs        （291 断言，含 L1 门 85）
- *   P8 harness    research/ai-plan/harness/test.mjs           （253 断言，本包 L0）
+ *   P8 harness    research/ai-plan/harness/test.mjs           （304 断言，本包 L0）
  *   ── 既有五套回归 ──
  *   mod           test/mod_selftest.mjs                       （25）
  *   blueprint     test/blueprint_selftest.mjs                 （7）
@@ -45,11 +45,11 @@ const SUITES = [
 	{ label: "P1 contract（含 import lint）", argv: ["research/ai-plan/contract/test.mjs"], expect: 94 },
 	{ label: "P2 data（637 + 逐格对拍）", argv: ["research/ai-plan/data/run-all.mjs"], extract: /(\d+) 条断言通过/, extractNum: 1, expect: 637 },
 	{ label: "P0-verify belt-rules（17）", argv: ["--test", "src/ai/belt-rules.test.mjs"], extract: /^ℹ pass (\d+)$/m, extractNum: 1, expect: 17 },
-	{ label: "P3 placer", argv: ["research/ai-plan/placer/test.mjs"], expect: 96 },
+	{ label: "P3 placer", argv: ["research/ai-plan/placer/test.mjs"], expect: 140 },
 	{ label: "P4 router", argv: ["research/ai-plan/router/test.mjs"], expect: 185 },
 	{ label: "P5 validator" + (FAST ? "（--fast 跳过）" : ""), argv: ["research/ai-plan/validator/test.mjs"], expect: 190, skip: FAST },
 	{ label: "P6 emitter（L1 门）" + (FAST ? "（--fast 跳过）" : ""), argv: ["research/ai-plan/emitter/run-all.mjs"], extract: /全包汇总 (\d+) 条断言/, extractNum: 1, expect: 291, skip: FAST },
-	{ label: "★ P8 harness（本包 L0）", argv: ["research/ai-plan/harness/test.mjs"], extract: /P8 harness L0：(\d+) 通过/, extractNum: 1, expect: 252 },
+	{ label: "★ P8 harness（本包 L0）", argv: ["research/ai-plan/harness/test.mjs"], extract: /P8 harness L0：(\d+) 通过/, extractNum: 1, expect: 304 },
 	{ label: "既有：mod 自测（25）", argv: ["test/mod_selftest.mjs"], extract: /ALL (\d+) CHECKS PASSED/, extractNum: 1, expect: 25 },
 	{ label: "既有：blueprint 自测（7）", argv: ["test/blueprint_selftest.mjs"], extract: /ALL (\d+) CHECKS PASSED/, extractNum: 1, expect: 7 },
 	{ label: "既有：rpc 自测（12）", argv: ["test/mod_rpc_selftest.mjs"], extract: /ALL (\d+) CHECKS PASSED/, extractNum: 1, expect: 12 },
