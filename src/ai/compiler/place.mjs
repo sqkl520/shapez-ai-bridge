@@ -40,7 +40,7 @@ import { Grid, cellKey } from "./grid.mjs";
 import { assertLayoutReport, SCOPE_V1, ORDER, OPP, DIRV } from "./types.mjs";
 import { makeFailure, ContractViolation } from "./errors.mjs";
 import { ALL_TEMPLATES, hubEntriesWorld } from "../op-templates.mjs";
-import { findResource, nearestResource, regionAround } from "../world.mjs";
+import { findResource, regionAround } from "../world.mjs";
 
 export const PLACE_VERSION = "0.5.0";
 
@@ -58,15 +58,17 @@ export const LANE_OFF = 1;
 /** hub 占地 4×4（GEOMETRY 表1）*/
 export const HUB_SIZE = 4;
 /**
- * 机器簇顶行与 hub 底缘之间的**净空行数**（B-1 修复，选法 (a)）。
- * 为什么必须 ≥1：hub 的 16 个入口里，底排 4 个落在 `hub.y+HUB_SIZE` 这一行，且它们与 hub 的 acceptor
- * 直接相邻 —— 任何带子格若落在**入口行/列**上，就会把 hub 当"机器邻居"参与 computeBelt，rv 被重算
- * （belt-rules.mjs:8-10 的机器邻居角落漂移），P5 的 V3-belt-fixed-point 必红。
- * 只避开底排不够：左列/右列入口是 `hub.x-1` / `hub.x+HUB_SIZE` 两列，竖直走向的废料带会撞上。
- * 取 2 行 = 1 行净空 + 1 行容错（废料带的侧向让位可能要再占一行，见 trashCandidates）。
+ * 机器簇顶行与 hub 底缘之间的**净空行数**（B-1 修复，选法 (a)：簇整体下移，簇内几何不变）。
+ * 为什么必须留净空：hub 的 16 个入口是贴 4×4 的**正交邻接圈**（顶/底各 4 格、左/右各 4 格），
+ * 任何带子格或**机器**若落在圈上，hub 会被算成"机器邻居"参与 computeBelt → rv 被重算
+ * （belt-rules.mjs:8-10 的机器邻居角落漂移）→ P5 的 V3-belt-fixed-point 必红。
+ * 只避开底排不够：左列/右列入口是 `hub.x-1` / `hub.x+HUB_SIZE` 两列，竖直废料带会撞上 ⇒ 按**整圈**算。
+ * 取 3 的理由（实测 2/3/4 对比）：1 行净空时 cutter 的 trash **机器**恰好落在底排入口格 `(1,4)` 上——
+ *   带子不漂（drift=0）但它永久吃掉一个 hub 入口；3 行时 trash 退到 `(1,5)`、废料带 `(1,6..7)` 全在圈外，
+ *   圈上只剩**收集带末格**（那是它的职责，必须落在入口格）。4 行再多 1 行纯浪费。
  * 无 hub 时该常量不参与任何计算 → 四张金网格逐字节不变。
  */
-export const HUB_CLEAR = 2;
+export const HUB_CLEAR = 3;
 /** trash 沿输出口外推的最大步数（超出 → no-site-large-enough）*/
 export const TRASH_PUSH_MAX = 6;
 /** 单条通道允许的最大带子格数（防御：越界说明列分配崩了，宁拒不猜）*/
@@ -636,18 +638,30 @@ export function pickResourceCells(nodes, input) {
 	if (seed === undefined || seed === null) return { ok: true, table: null };   // 无 seed：矿机当普通节点，不做资源校验
 	const center = input.site ? [input.site.x, input.site.y] : (input.hub ? [input.hub.x, input.hub.y] : [0, 0]);
 	const region = input.region || regionAround(center, input.range === undefined ? 48 : input.range);
+	// 矿机**不能**挖 hub 占着的格（4×4 solid）：那里物理上放不下矿机。世界系里排除掉。
+	const hubW = input.hub && Number.isFinite(input.hub.x) ? [input.hub.x, input.hub.y] : null;
+	const onHub = c => hubW && c[0] >= hubW[0] && c[0] < hubW[0] + HUB_SIZE && c[1] >= hubW[1] && c[1] < hubW[1] + HUB_SIZE;
 	const usedCols = new Set();
 	const table = new Map();
 	for (const n of miners) {
 		const want = n.resource || n.hash;
-		let hit = nearestResource(seed, s => s === want, center, region);
-		if (!hit) return makeFailure("no-resource-in-range", { nodeId: n.id, cell: null, check: "V1-occupancy" },
-			`seed=${seed}、以 ${center.join(",")} 为心半径 ${region.x1 - center[0]} 内没有资源 ${want}`);
-		if (usedCols.has(hit[0])) {
-			const alt = findResource(seed, s => s === want, region)
-				.filter(c => !usedCols.has(c[0]))
-				.sort((a, b) => (Math.hypot(a[0] - center[0], a[1] - center[1]) - Math.hypot(b[0] - center[0], b[1] - center[1])) || cmpStr(a.join(","), b.join(",")))[0];
-			if (alt) hit = [alt[0], alt[1]];
+		const pred = s => s === want;
+		const cands = findResource(seed, pred, region)
+			.filter(c => !onHub(c) && !usedCols.has(c[0]))
+			.sort((a, b) => (Math.hypot(a[0] - center[0], a[1] - center[1]) - Math.hypot(b[0] - center[0], b[1] - center[1]))
+				|| cmpStr(a.join(","), b.join(",")));
+		let hit = cands[0] || null;
+		if (!hit) {
+			// 全被 hub 压住/同列占满 → 退回"最近但不在 hub 上"的一格
+			const any = findResource(seed, pred, region).filter(c => !onHub(c))
+				.sort((a, b) => (Math.hypot(a[0] - center[0], a[1] - center[1]) - Math.hypot(b[0] - center[0], b[1] - center[1]))
+					|| cmpStr(a.join(","), b.join(",")))[0];
+			if (!any) {
+				return makeFailure("no-resource-in-range", { nodeId: n.id, cell: null, check: "V1-occupancy" },
+					`seed=${seed}、以 ${center.join(",")} 为心半径 ${region.x1 - center[0]} 内没有资源 ${want}` +
+					(hubW ? `（hub ${hubW.join(",")} 占住的格已排除）` : ""));
+			}
+			hit = any;
 		}
 		usedCols.add(hit[0]);
 		table.set(n.id, [hit[0], hit[1]]);
@@ -751,8 +765,38 @@ export function place(input = {}) {
 
 	/* (b) 有 hub：把机器簇对齐到 hub 正下方（局部系），消除混框导致的千格收集带。
 	   顶行 → hub 底缘下方 HUB_CLEAR 行；minX → hub 左列（hub 底部 4 个 entry 覆盖 hubLocal.x..x+3）。
-	   无 hub：完全跳过 → 金网格（site/hub 皆缺省）逐字节不变。 */
-	if (hubLocal) {
+	   无 hub：完全跳过 → 金网格（site/hub 皆缺省）逐字节不变。
+
+	   **(a) 有 seed 时优先"矿机压真资源"**（B-4）：矿机是**唯一**必须落在特定世界格上的实体，
+	   其余机器的相对位置由 DAG 决定。所以给了 seed 就先按资源反推机器簇的平移量，
+	   再让收集带从"矿机真所在处"走向 hub —— 而不是硬把簇摆到 hub 下方导致矿机悬空。
+	   （不这样做的话，编译链的 anchor 会被 siteStage 解成「hub 钉死」，矿机必然离资源 → 无产出。）*/
+	let resourceTable = null;
+	const seedIn = input.seed !== undefined && input.seed !== null ? input.seed
+		: (input.world && input.world.seed !== undefined ? input.world.seed : null);
+
+	if (hubLocal && seedIn !== null) {
+		// 资源格按**局部系**算：place() 的输出坐标是 site 相对局部系，origin 已定
+		const rr = pickResourceCells(nodes, { ...input, seed: seedIn });
+		if (rr.ok === false) return rr;
+		resourceTable = rr.table;
+		if (resourceTable && resourceTable.size) {
+			// 用第一台矿机的"资源局部格 − 当前局部格"求平移量 ⇒ 该矿机精确压在资源上
+			let dx = 0, dy = 0;
+			for (const n of nodes) {
+				if (n.op !== "mine") continue;
+				const want = resourceTable.get(n.id);
+				if (!want) continue;
+				dx = want[0] - origin.x - n.x;
+				dy = want[1] - origin.y - n.y;
+				break;
+			}
+			if (dx !== 0 || dy !== 0) {
+				for (const n of nodes) { n.x += dx; n.y += dy; n.row += dy; }
+				for (const r of rows) r.y += dy;
+			}
+		}
+	} else if (hubLocal) {
 		let minX = Infinity, minY = Infinity;
 		for (const n of nodes) { if (n.x < minX) minX = n.x; if (n.y < minY) minY = n.y; }
 		const dx = hubLocal[0] - minX;
@@ -833,7 +877,7 @@ export function place(input = {}) {
 		}
 		for (const b of r.cells) { occupied.add(cellKey(b.cell[0], b.cell[1])); beltCells.push({ ...b, id }); }
 		channels.push(report);
-		return { report, ok: true, kind: r.kind, cornerCount: r.cornerCount };
+		return { report, ok: true, kind: r.kind, cornerCount: r.cornerCount, id };
 	};
 
 	/* 8.1 上游 → 本节点（按槽序；slotRole/ordinal 是给 P4 的定位凭据）*/
@@ -918,11 +962,21 @@ export function place(input = {}) {
 				occupied.add(cellKey(t.x, t.y));
 				const r = route(n, out, t, { role: "discard", dir: cd.acceptor, cx: 0, cy: 0 }, oi, n.hash || "", { slotRole: "discard" });
 				if (r.ok) {
-					grid.occupyRect(t.x, t.y, 1, 1, t.id, { rot: 0, kind: "machine", kindName: "trash" });
-					waste.push({ nodeId: n.id, outIdx: oi, role: out.role, waste: (n.template.wasteRoles || []).includes(out.role) });
-					done = true; break;
+					// B-1 同类（但更窄）：trash 是**机器**，它紧贴**别的通道的拐角带格**时，那一格会因
+					// 机器邻居被 reshuffle（rv 漂移，belt-rules.mjs:8-10）。**只有拐角格**会漂 ——
+					// 直带格相邻是常态（G1 的 trash 一直贴着主链直带，140 断言全绿证明了它没事）。
+					const nb = new Set([[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => cellKey(t.x + dx, t.y + dy)));
+					const touchesForeignCorner = beltCells.some(b =>
+						b.id !== r.id && isCorner(b.inDir, b.outDir) && nb.has(cellKey(b.cell[0], b.cell[1])));
+					if (!touchesForeignCorner) {
+						grid.occupyRect(t.x, t.y, 1, 1, t.id, { rot: 0, kind: "machine", kindName: "trash" });
+						waste.push({ nodeId: n.id, outIdx: oi, role: out.role, waste: (n.template.wasteRoles || []).includes(out.role) });
+						done = true; break;
+					}
+					lastWhy = "trash-touches-foreign-corner";
+				} else {
+					lastWhy = r.why;
 				}
-				lastWhy = r.why;
 				nodes.pop(); restore(snap);                 // 试下一候选：回滚 trash 节点与通道
 			}
 			if (!done) {
@@ -932,12 +986,11 @@ export function place(input = {}) {
 		}
 	}
 
-	/* 8.4 资源格（给 seed 才校验；结果记进 meta.minerCells，供 P8/人读选址）。
+	/* 8.4 资源格已在前面（机器簇定位前）算好；这里只在"无 hub 但有 seed"时补算（仅供 meta 记录）。
 	   ⚠️ 资源搜索是世界系的（world.mjs 按真实地图 seed 找矿），但 (b) 口径下报告整体是局部系 ——
-	   meta.minerCells 一律减去 origin 换算成局部，绝不在局部报告里泄漏世界坐标（与 P5 揪出的 bug 同类）。*/
-	let resourceTable = null;
-	if (input.seed !== undefined && input.seed !== null) {
-		const rr = pickResourceCells(nodes, input);
+	   meta.minerCells 一律减去 origin 换算成局部，绝不在局部报告里泄漏世界坐标。*/
+	if (resourceTable === null && seedIn !== null) {
+		const rr = pickResourceCells(nodes, { ...input, seed: seedIn });
 		if (rr.ok === false) return rr;
 		if (rr.table) {
 			const local = new Map();

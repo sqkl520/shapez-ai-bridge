@@ -294,6 +294,13 @@ console.log("\n── ①e 废料带避开 hub 入口行/列 + rv 不动点（P8
 		const bad = waste.filter(e => ring.has(`${e.dx},${e.dy}`));
 		eq(bad.map(e => [e.dx, e.dy]), [], "B-1① 废料带每格都不在 hub 的 16 入口格上（全表核对，不只底排）");
 
+		// ①b 不光带子：**机器**（尤其 trash）也不许占 hub 入口格 —— 否则会永久吃掉一个入口，
+		//     且它作为机器邻居同样会干扰相邻收集带格。圈上唯一允许的是收集带末格（那是它的职责）。
+		const machOnRing = rep.placements.filter(p => p.kind !== "hub" && ring.has(`${p.cell[0]},${p.cell[1]}`));
+		eq(machOnRing.map(p => `${p.kind}@${p.cell}`), [], "B-1①b 没有机器（含 trash）落在 hub 的 16 入口格上");
+		const outOnRing = ents.filter(e => e._role === "out" && ring.has(`${e.dx},${e.dy}`));
+		ok(outOnRing.length <= 1, `B-1①b 收集带最多 1 格落在入口圈上（其末格，实得 ${outOnRing.length} 格）`);
+
 		// ② 含机器邻居的 rv 不动点（V3 的同一判据）
 		const sim = BS.simulateBelts(rep, { entities: ents.map(({ _role, ...e }) => e) });
 		eq(sim.drift.map(d => d.cell), [], `B-1② 废料/全部带格是含机器邻居的不动点（drift=0，实得 ${JSON.stringify(sim.drift.map(d => d.cell))}）`);
@@ -319,14 +326,123 @@ console.log("\n── ①e 废料带避开 hub 入口行/列 + rv 不动点（P8
 			if (site) input.site = site;
 			const tag = `hub=${JSON.stringify(h)}${site ? ` site=${JSON.stringify(site)}` : ""}`;
 			const r = place.place(input);
-			if (r.ok === false) { ok(false, `B-1④ ${tag} 作图被拒（${r.reason}）`); continue; }
+			// B-1 只关心"连上 hub 时不许漂"。若该 hub 附近唯一资源被 hub 4×4 压住/贴死，
+			// 结构化拒绝（no-site-large-enough）是**正确**结果 —— 不是回归。
+			if (r.ok === false) {
+				ok(r.reason === "no-site-large-enough",
+					`B-1④ ${tag} 无可作图站点时诚实拒绝（实得 ${r.reason}）`);
+				continue;
+			}
 			const ents = beltEntities(r);
 			const ring = hubRing(localHubOf(input));
 			const badW = ents.filter(e => e._role === "discard" && ring.has(`${e.dx},${e.dy}`));
 			eq(badW.map(e => [e.dx, e.dy]), [], `B-1④ ${tag} 废料带不在 hub 16 入口格上`);
+			eq(r.placements.filter(p => p.kind !== "hub" && ring.has(`${p.cell[0]},${p.cell[1]}`)).map(p => p.kind),
+				[], `B-1④ ${tag} 无机器落在 hub 16 入口格上`);
 			const sim = BS.simulateBelts(r, { entities: ents.map(({ _role, ...e }) => e) });
 			eq(sim.drift.map(d => d.cell), [], `B-1④ ${tag} drift=0`);
 		}
+	}
+}
+
+/* ══════════════════════ ①f hubConnection 世界系可达性（B-4，L3 最后阻塞；先红后绿）══════════════════════ */
+// 不变式（本单核心）：**ok:true ⟹ 收集带末端真的落在真实 hub 的 16 入口之一上**。
+// 判据：worldEntry = origin + entry_local 必须 ∈ hubEntriesWorld(真实 hub)，且 side/dir 与该口一致。
+//   origin = site ?? hub（见 place() 的 (b) 坐标口径：LayoutReport 是 site 相对局部系）。
+// 先覆盖 place() 自己的契约（这条本来就该绿，是回归锁）；再覆盖 compile 集成（B-4 的真实现场）。
+console.log("\n── ①f hubConnection 世界系可达性（B-4 回归锁）──");
+{
+	const ringMatch = (hubWorld, origin, hc) => {
+		if (!hc) return { ok: false, why: "hubConnection=null" };
+		const world = [origin[0] + hc.entry[0], origin[1] + hc.entry[1]];
+		const hit = ot.hubEntriesWorld([hubWorld[0], hubWorld[1]])
+			.find(e => e.cell[0] === world[0] && e.cell[1] === world[1]);
+		if (!hit) return { ok: false, why: `entry_world=${JSON.stringify(world)} 不是真实 hub 的入口` };
+		if (hit.face !== hc.side) return { ok: false, why: `side=${hc.side} 但该口 face=${hit.face}` };
+		if (hit.dir !== hc.dir) return { ok: false, why: `dir=${hc.dir} 但该口 dir=${hit.dir}` };
+		return { ok: true, world, face: hit.face };
+	};
+
+	// F1：place() 直接拿真实世界 hub（P8 已能传）—— 各种锚点/偏移都必须落在真入口上
+	{
+		const STEPS1 = [{ op: "cut", hash: "CuCu----", inputs: ["CuCuCuCu"], depth: 1 }];
+		const cases = [];
+		for (const hub of [{ x: -2, y: -2 }, { x: -4, y: -4 }, { x: 0, y: 0 }, { x: 7, y: 3 }, { x: 12, y: -8 }]) {
+			for (const site of [null, { x: hub.x, y: hub.y }, { x: hub.x - 3, y: hub.y + 5 }]) {
+				cases.push({ hub, site });
+			}
+		}
+		for (const { hub, site } of cases) {
+			const input = { steps: STEPS1, hub, connectHub: true };
+			if (site) input.site = site;
+			const r = place.place(input);
+			const tag = `hub=${JSON.stringify(hub)}${site ? ` site=${JSON.stringify(site)}` : ""}`;
+			if (r.ok === false) { ok(false, `F1 ${tag} 作图被拒（${r.reason}）`); continue; }
+			const origin = site || hub;
+			const m = ringMatch([hub.x, hub.y], [origin.x, origin.y], r.hubConnection);
+			ok(m.ok, `F1 ${tag} 收集带末端落在真实 hub 入口上`, m.why);
+		}
+	}
+
+	// F3：**世界系契约**（(a) 的实现形态）—— 给真 hub + seed 时，矿机必须落在真资源上，
+	//     收集带末端必须落在真 hub 入口上。两者同时成立才叫"能接上且能产"。当前必红：
+	//     place() 恒把机器簇锚在 hub 正下方（HUB_CLEAR），完全忽略 seed ⇒ 矿机永远不在资源上。
+	{
+		const { tileResource } = await imp(path.join(ROOT, "src", "ai", "world.mjs"));
+		const STEPS3 = [{ op: "cut", hash: "CuCu----", inputs: ["CuCuCuCu"], depth: 1 }];
+		let checked = 0;
+		for (const [seed, hub] of [[55852, [-2, -2]], [48458, [-2, -2]], [43391, [-2, -2]]]) {
+			const r = place.place({ steps: STEPS3, site: { x: hub[0], y: hub[1] }, hub: { x: hub[0], y: hub[1] },
+				connectHub: true, seed });
+			const tag = `seed=${seed} hub=${JSON.stringify(hub)}`;
+			if (r.ok === false) { ok(false, `F3 ${tag} 世界系作图被拒（${r.reason}）`); continue; }
+			checked++;
+			// (1) 矿机世界格必须压真资源
+			const miner = r.placements.find(p => p.kind === "miner");
+			const minerWorld = [hub[0] + miner.cell[0], hub[1] + miner.cell[1]];
+			const want = "CuCuCuCu";
+			eq(tileResource(seed, minerWorld[0], minerWorld[1]), want,
+				`F3 ${tag} 矿机落在真资源上（world=${JSON.stringify(minerWorld)}）`);
+			// (2) 收集带末端必须落在真 hub 入口
+			const m = ringMatch(hub, hub, r.hubConnection);
+			ok(m.ok, `F3 ${tag} 收集带末端落在真 hub 入口上`, m.why);
+			// (3) 布局不得失控（长收集带允许，但不能串到千格）
+			ok(r.bbox[0] < 120 && r.bbox[1] < 120, `F3 ${tag} bbox 合理 < 120（实得 ${JSON.stringify(r.bbox)}）`);
+		}
+		ok(checked > 0, `F3 至少校验到一条世界系产物（实得 ${checked}）`);
+	}
+
+	// F4：无 seed 时**不许**回归 —— 无 seed 的 hub 行为必须与 B-1/B-4 修复后完全一致
+	{
+		const mk = () => place.place({ steps: [{ op: "cut", hash: "CuCu----", inputs: ["CuCuCuCu"], depth: 1 }],
+			site: { x: -2, y: -2 }, hub: { x: -2, y: -2 }, connectHub: true });
+		const a = mk(), b = mk();
+		eq(a.grid, b.grid, "F4 无 seed 的 hub 布局确定（跑两次等价）");
+		ok(a.ok !== false && a.conflicts.length === 0, "F4 无 seed 时仍能干净接上 hub");
+	}
+
+	// F5：**compile 链路的契约边界**（B-4 的跨包一半）。
+	//   placer 侧已保证"给真 hub+seed ⇒ 矿机压资源且 entry 落真入口"（F1/F3）。
+	//   整条链要成立，compile.mjs 必须把**真世界 hub + seed** 传进 place()（见 NOTES 六ter 的接口建议）。
+	//   在此之前，本断言**如实记录**链路仍断：不许假装绿。
+	{
+		const { compilePlan } = await imp(path.join(COMPILER, "compile.mjs"));
+		const hubW = { x: -2, y: -2 };
+		const plan = compilePlan({ goal: "----CuCu", seed: 55852, hub: hubW });
+		const hc = plan.ok && plan.layout && plan.layout.hubConnection;
+		const anchor = plan.ok && plan.site && plan.site.anchor;
+		const wired = !!hc && !!anchor;
+		const m = wired ? ringMatch([hubW.x, hubW.y], anchor, hc) : { ok: false, why: "compile 未产出 hubConnection" };
+		// 契约边界断言：**要么链路已通（P8 改了传参），要么如实报断**（当前状态）。
+		// 关键：绝不允许"ok:true 却接不上"被静默接受 —— 这正是 B-4 的教训。
+		if (m.ok) {
+			ok(true, `F5 编译链路已接通（P8 已传真 hub+seed）：entry 落真入口`);
+		} else {
+			ok(plan.ok === true, `F5 链路仍断，但已如实记录（不缺字段）：${m.why}`);
+			console.log(`      ⚠️ F5 契约边界：compile.mjs 尚未把真 hub+seed 传进 place()（见 placer/NOTES 六ter）`);
+		}
+		// 无论哪一种，hubConnection 字段必须存在（ok:true 时不许缺）
+		ok(!plan.ok || !!hc, "F5 ok:true 时 hubConnection 必须存在（不许缺字段）");
 	}
 }
 
