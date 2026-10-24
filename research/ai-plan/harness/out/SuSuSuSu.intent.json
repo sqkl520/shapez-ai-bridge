@@ -1,0 +1,214 @@
+{
+ "goal": "SuSuSuSu",
+ "schema": "shapez-ai/handoff-intent@1",
+ "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoC0ALLAAwC68ApsQOxWxyWsvs0C+QA",
+ "anchor": [
+  0,
+  0
+ ],
+ "hub": [
+  -4,
+  -4
+ ],
+ "chargeMode": "false",
+ "gv": null,
+ "count": 2,
+ "stride": 4,
+ "entityOrder": [
+  "n0",
+  "belt@-4,0"
+ ],
+ "entities": [
+  {
+   "code": 7,
+   "dx": 0,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "n0",
+   "instanceIdx": 0,
+   "kind": "miner",
+   "rotationVariant": 0,
+   "inDir": null,
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 0,
+   "rot": 0,
+   "nodeId": "belt@-4,0",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  }
+ ],
+ "beltIntent": null,
+ "stats": {
+  "machines": {
+   "miner": 1
+  },
+  "beltTiles": 1,
+  "trash": 0,
+  "bbox": [
+   1,
+   2
+  ],
+  "corners": 0,
+  "estThroughputPerSec": 0.4,
+  "bottleneck": "miner@0.4",
+  "blueprintCost": 8,
+  "chargeMode": "false"
+ },
+ "scope": {
+  "layers": 1,
+  "wires": false,
+  "tunnels": false,
+  "rotatedMachines": false,
+  "maxFanIn": 2
+ },
+ "validation": {
+  "pass": true,
+  "errors": 0,
+  "failIds": [],
+  "beltSim": {
+   "tilesChecked": 1,
+   "fixedPoints": 1,
+   "drift": [],
+   "includesMachineNeighbors": true
+  },
+  "shapeReplay": [
+   {
+    "nodeId": "nSuSuSuSu",
+    "expectedHash": "SuSuSuSu",
+    "actualHash": "SuSuSuSu",
+    "equal": true
+   }
+  ],
+  "throughput": {
+   "demandPerSec": 0,
+   "bottleneck": {
+    "nodeId": "n0",
+    "ratePerSec": 0.4
+   },
+   "rowsRequired": 1,
+   "rowsPlanned": 1
+  }
+ },
+ "validator": {
+  "pass": true
+ },
+ "roundtrip": {
+  "ok": true,
+  "stride": 4,
+  "decodedCount": 2,
+  "intentCount": 2,
+  "eLength": null,
+  "diff": [],
+  "beltCodeBad": [],
+  "orderBad": [],
+  "summary": {
+   "format_version": 1,
+   "exported_from": "1.5.6",
+   "anchor": [
+    -4,
+    0
+   ],
+   "count": 2,
+   "bounds": [
+    1,
+    2
+   ],
+   "by_code": {
+    "1": 1,
+    "7": 1
+   },
+   "text_length": 68
+  },
+  "summaryErr": null
+ },
+ "provenance": {
+  "harnessVersion": 1,
+  "placeVersion": "0.5.0",
+  "routeSchemaVersion": 1,
+  "validatorVersion": 1,
+  "emittedVia": "strict",
+  "solver": {
+   "argv": [
+    "D:\\Projects\\rea\\Project work\\shapez\\research\\ai-player\\proto\\solver.mjs",
+    "SuSuSuSu",
+    "--no-cutquad",
+    "--json"
+   ],
+   "ops": {
+    "mine": 1
+   },
+   "stats": {
+    "expanded": 0,
+    "generated": 0,
+    "stackPairs": 0,
+    "capped": false
+   },
+   "ms": 1,
+   "known": 4
+  },
+  "seed": 43391,
+  "level": 1,
+  "cutQuadAllowed": false,
+  "channelOrder": "asis",
+  "gapTries": 0,
+  "gap": {
+   "rowGap": 8,
+   "colGap": 3
+  },
+  "minerCells": [
+   {
+    "nodeId": "n0",
+    "cell": [
+     82,
+     -21
+    ],
+    "shape": "SuSuSuSu"
+   }
+  ],
+  "demandPerSec": 0,
+  "cornerCostTiles": 0,
+  "routeAttempts": [
+   {
+    "gap": 0,
+    "rowGap": 8,
+    "colGap": 3,
+    "order": "asis",
+    "ok": true,
+    "reason": null,
+    "laneColumn": 0,
+    "belt": 1,
+    "corners": 0
+   }
+  ],
+  "laneColumnUnresolved": 0,
+  "worldPlacement": {
+   "anchor": [
+    86,
+    -22
+   ],
+   "hub": [
+    82,
+    -26
+   ],
+   "pasteAt": [
+    82,
+    -22
+   ],
+   "designAnchor": [
+    -4,
+    0
+   ],
+   "designHubLocal": [
+    -4,
+    -4
+   ]
+  }
+ }
+}
