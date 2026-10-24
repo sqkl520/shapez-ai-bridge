@@ -448,7 +448,7 @@ export function runChecks() {
         if (say(lay !== null, "L1-3.golden-layout-present", err || "research/ai-plan/fixtures/report-layout.json 读到")) {
             let rep = null, repErr = "";
             try { rep = assertLayoutReport(lay, "golden.layout"); } catch (e) { repErr = (e.allMessages || e.message).split("\n")[0]; }
-            say(rep !== null, "L1-3.golden-layout-decodable", repErr || `cornerCount=${rep.cornerCount} channels=${rep.channels.length} lanes=${JSON.stringify(rep.lanes.map(l => l.row))}`);
+            say(rep !== null, "L1-3.golden-layout-decodable", repErr || `cornerCount=${rep.cornerCount} channels=${rep.channels.length} lanes=${JSON.stringify(rep.lanes.map(l => (l.column == null ? l.row : `col:${l.column}`)))}`);
             // 从它的 placements 造机器 entities，发射一遍（只有机器的蓝图也是合法蓝图；bbox 用 P3 的真值）
             if (rep) {
                 const anchor = [100, -100];

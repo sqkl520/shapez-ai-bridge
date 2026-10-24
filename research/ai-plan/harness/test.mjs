@@ -54,7 +54,9 @@ console.log("\n── A 端到端：真实关卡目标（level 1-5 的官方形�
 const PASSING = ["CuCuCuCu", "RuRuRuRu", "Cu----Cu", "--CuCu--", "Ru----Ru", "--SuSu--", "----CuCu", "RuRu----"];
 const plans = {};
 for (const goal of PASSING) {
-	const p = compilePlan({ goal, seed: 43391 });
+	// allowUnpinned：本组钉的是布局/验证/契约，不是「能贴进世界」。hub 政策在 compilePlan 内，
+	// 不放开就会把 8 个目标一律变成 hub:unpinned，测不到它们各自真正要钉的东西。
+	const p = compilePlan({ goal, seed: 43391, allowUnpinned: true });
 	plans[goal] = p;
 	say(p.ok === true && p.blueprint && p.blueprint.startsWith("SZBP1."), `A ${goal}: ok:true 且产出 SZBP1 蓝图`, p.ok === false ? { reason: p.reason, hint: p.hint } : undefined);
 	if (p.ok !== true) continue;
@@ -89,8 +91,8 @@ for (const goal of PASSING) {
 /* ══════════════════ B. 确定性 ══════════════════ */
 console.log("\n── B 确定性：同输入两次，逐字节同 ──");
 for (const goal of PASSING) {
-	const a = compilePlan({ goal, seed: 43391 });
-	const b = compilePlan({ goal, seed: 43391 });
+	const a = compilePlan({ goal, seed: 43391, allowUnpinned: true });
+	const b = compilePlan({ goal, seed: 43391, allowUnpinned: true });
 	say(a.ok === b.ok, `B ${goal}: 两次 ok 相同`);
 	if (!a.ok) continue;
 	say(a.blueprint === b.blueprint, `B ${goal}: 蓝图字符串逐字节相等（LZ 压缩确定性由串相等即证）`);
@@ -99,8 +101,8 @@ for (const goal of PASSING) {
 }
 // 不同 seed 不保证同图，但必须仍然是**确定**的（同 seed 内稳定）
 {
-	const a = compilePlan({ goal: "CuCuCuCu", seed: 12345 });
-	const b = compilePlan({ goal: "CuCuCuCu", seed: 12345 });
+	const a = compilePlan({ goal: "CuCuCuCu", seed: 12345, allowUnpinned: true });
+	const b = compilePlan({ goal: "CuCuCuCu", seed: 12345, allowUnpinned: true });
 	say(a.ok && b.ok && a.blueprint === b.blueprint, "B 换 seed 12345 仍确定性（蓝图相等）");
 }
 
@@ -140,9 +142,9 @@ console.log("\n── C 失败路径：每条都断言精确 reason（不静默�
 	const far = { x0: 940, y0: -60, x1: 1060, y1: 60 };
 	const hFar = resourceHistogram(43391, far);
 	say((hFar["SuSuSuSu"] || 0) === 0, "C2 远端区域 [940,-60,1060,60] 确实没有 SuSuSuSu（离线资源图）", hFar);
-	const off = compilePlan({ goal: "SuSuSuSu", seed: 43391, region: far });
+	const off = compilePlan({ goal: "SuSuSuSu", seed: 43391, region: far, allowUnpinned: true });
 	say(off.ok === false && off.reason === "no-resource-in-range", "C2 换到无该资源的区域 → no-resource-in-range", off.reason);
-	const near = compilePlan({ goal: "SuSuSuSu", seed: 43391 });
+	const near = compilePlan({ goal: "SuSuSuSu", seed: 43391, allowUnpinned: true });
 	say(near.ok === true, "C2 同一 seed 原点附近范围内 SuSuSuSu 编译成功 ⇒ 前一条失败纯由选址区域造成");
 }
 // C3 cutQuad 门控
@@ -158,7 +160,7 @@ console.log("\n── C 失败路径：每条都断言精确 reason（不静默�
 	const mapped = mapOps(rebuildDag(ungated.steps));
 	say(mapped.ok === false && mapped.reason === "unlock:machine-not-available", "C3 cutQuad 被映射闸拒（v1 无 4 路汇合模板）", mapped);
 	// 端到端：L6 目标在门控下能走多远
-	const p = compilePlan({ goal: "Cu------", seed: 43391 });
+	const p = compilePlan({ goal: "Cu------", seed: 43391, allowUnpinned: true });
 	say(p.stages.solveGoal.ok === true, "C3 端到端：L6 目标求解段通过");
 	say(p.stages.pigmentGate.ok === true, "C3 端到端：无颜料问题");
 }
@@ -189,15 +191,40 @@ console.log("\n── C 失败路径：每条都断言精确 reason（不静默�
 	const { checkPigments } = await import(pathToFileURL(path.join(REPO, "src/ai/compiler/compile.mjs")).href);
 	const legacy = [{ hash: "CrCrCrCr", op: "paint", args: { color: "red" }, inputs: ["CuCuCuCu"], kind: "shape" }];
 	say(checkPigments(legacy).ok === false, "C4 护栏：paint 只有 1 路输入（旧缺口形态）→ pigmentGate 拒");
-	// ④ 上色目标当前被 P3/P4 的 painter→hub 几何拦下（NOTES §8.1），reason 必须精确
-	const p = compilePlan({ goal: "CrCrCrCr", seed: 43391 });
-	say(p.ok === false, "C4 上色目标仍被拦（painter→hub 竖车道，P3/P4 几何）");
-	eq(p.reason, "dag-not-placeable:column-conflict-unresolved", "C4 reason 精确（不伪造成功）");
-	say(p.stages.pigmentGate.ok === true, "C4 失败点**不在**颜料闸（颜料已过，卡在几何）", p.stages);
+	// ④ 上色目标：**已布通**（LANE_SCHEMA_VERSION=2 起 vlane 是一等车道 —— painter 的 right 输出
+	//    接 hub 的左面入口是「水平出 + 水平进」，只能走竖直车道）。
+	//    ⚠️ 这条以前断言「必须失败 + reason=column-conflict-unresolved」——那是把上游缺口
+	//    当成期望值。现在反过来断言**成功**，并用下面的 ④b 反证「竖直车道通道确实是承重的」：
+	//    关掉 vlane 后同一目标必须精确失败在同一个 reason 上（不是空转）。
+	const p = compilePlan({ goal: "CrCrCrCr", seed: 43391, allowUnpinned: true });
+	say(p.ok === true, "C4 上色目标 CrCrCrCr → ok:true（painter→hub 竖车道已打通）",
+		p.ok === false ? { reason: p.reason, hint: p.hint } : undefined);
+	if (p.ok) {
+		say(p.validation.pass === true, "C4 CrCrCrCr: validator.pass");
+		eq(p.validation.beltSim.drift.length, 0, "C4 CrCrCrCr: V3 drift === 0");
+		say(p.validation.checks.find(c => c.id === "V6-crossing").status === "pass", "C4 CrCrCrCr: V6-crossing pass（行列台账按 (轴,下标) 比较）");
+		say(p.entities.length === 38, "C4 CrCrCrCr: 38 实体（WORKER-A 的验收数）", p.entities.length);
+		say(p.blueprint.startsWith("SZBP1."), "C4 CrCrCrCr: 产出蓝图");
+		say(p.roundtrip && p.roundtrip.ok === true, "C4 CrCrCrCr: round-trip 通过", p.roundtrip);
+		// 竖直车道必须真的写进契约：lanes[] 里有一条 {column}，对应 channel 的 laneAxis = "col"
+		const cols = (p.layout.lanes || []).filter(l => l.column !== null && l.column !== undefined);
+		say(cols.length === 1, `C4 CrCrCrCr: lanes[] 有 1 条 {column} 车道（实得 ${cols.length}）`, p.layout.lanes);
+		const colIds = new Set(cols.flatMap(l => l.channelIds));
+		say(p.layout.channels.some(c => c.laneAxis === "col" && colIds.has(`${c.from.nodeId}->${c.to.nodeId}[${c.slotRole}]`)
+			|| p.layout.channels.some(c => c.laneAxis === "col" && c.lane !== null)),
+			"C4 CrCrCrCr: 有通道的 laneAxis === \"col\" 且落在 lanes[] 的 column 台账上",
+			p.layout.channels.map(c => [c.from.nodeId, c.to.nodeId, c.lane, c.laneAxis]));
+	}
+	// ④b 反证（承重性）：同目标、关掉 vlane ⇒ 精确失败在 column-conflict-unresolved
+	const off = compilePlan({ goal: "CrCrCrCr", seed: 43391, allowVerticalLane: false });
+	say(off.ok === false, "C4b 关掉 vlane → CrCrCrCr 精确失败（证明成功是靠竖直车道，不是别处变宽松了）",
+		off.ok === false ? undefined : { ok: off.ok, entities: off.entities && off.entities.length });
+	eq(off.reason, "dag-not-placeable:column-conflict-unresolved", "C4b 关闭 vlane 的 reason 逐字");
+	say(p.stages.pigmentGate.ok === true, "C4 失败点**不在**颜料闸（颜料已过，几何由 vlane 解决）", p.stages);
 }
 // C5 ✓ B-1 已修：----CuCu（L3 验收目标）现在真的能出蓝图
 {
-	const p = compilePlan({ goal: "----CuCu", seed: 43391 });
+	const p = compilePlan({ goal: "----CuCu", seed: 43391, allowUnpinned: true });
 	say(p.ok === true, "C5 ----CuCu（L3 验收目标）→ ok:true（B-1 修复后）", p.ok === false ? { reason: p.reason, hint: p.hint } : undefined);
 	if (p.ok) {
 		say(p.validation.pass === true, "C5 ----CuCu: validator.pass");
@@ -208,17 +235,23 @@ console.log("\n── C 失败路径：每条都断言精确 reason（不静默�
 }
 // C6 多分支汇合（CgScScCg）→ 仍被 P3/P4 拦（B-3 + painter 几何）
 {
-	const p = compilePlan({ goal: "CgScScCg", seed: 43391 });
+	const p = compilePlan({ goal: "CgScScCg", seed: 43391, allowUnpinned: true });
 	say(p.ok === false, "C6 CgScScCg 仍失败（B-3 未修）");
 	say(["dag-not-placeable:crossing-needs-tunnel", "dag-not-placeable:column-conflict-unresolved"].includes(p.reason),
 		"C6 reason ∈ {crossing-needs-tunnel, column-conflict-unresolved}", p.reason);
 	say(p.stages.pigmentGate.ok === true, "C6 颜料闸已过（不是颜料问题）", p.stages);
 }
-// C7 多层 / 无资源 的归因顺序不变
+// C7 多层/无资源 的归因顺序：**route 已打通**（vlane 一等车道），失败点下移到 siteStage。
+//   以前这条断言 reason=column-conflict-unresolved（把上游缺口当期望值）。现在断言：
+//   ① routeStage 必须 ok（几何不再是瓶颈）；② 失败若发生在 site，必须精确是 no-resource-in-range。
 {
-	const p = compilePlan({ goal: "RbRb----", seed: 43391 });
-	say(p.ok === false && p.reason === "dag-not-placeable:column-conflict-unresolved",
-		"C7 上色目标归因到几何（颜料已过）", { reason: p.reason, class: p.class });
+	const p = compilePlan({ goal: "RbRb----", seed: 43391, allowUnpinned: true });
+	say(p.stages.routeStage && p.stages.routeStage.ok === true,
+		"C7 RbRb---- 的 routeStage 已布通（vlane 打开后几何不再是瓶颈）", p.stages.routeStage);
+	if (p.ok === false) {
+		eq(p.reason, "no-resource-in-range", "C7 RbRb---- 的失败点已下移到 siteStage（seed 43391 找不到 RuRuRuRu+blue 双矿位）");
+		say(p.stages.siteStage && p.stages.siteStage.ok === false, "C7 失败段 = siteStage（精确归因）", p.stages.siteStage);
+	}
 }
 
 /* ══════════════════ D. 交接件三件套 ══════════════════ */
@@ -230,9 +263,21 @@ console.log("\n── D 交接件（plan §4.6）：szbp.txt + intent.json + val
 	for (const ext of ["szbp.txt", "intent.json", "validator.json"]) {
 		try { fs.unlinkSync(path.join(dir, `${goalSlug(goal)}.${ext}`)); } catch { /* 不存在 */ }
 	}
-	const p = plans[goal];
+	/* ⚠️ 交接件是给 P7 直接 paste 的 ⇒ 必须是**钉死 hub** 的计划。
+	   本段原来用 A 组那份 allowUnpinned 的 `Cu----Cu`，于是每次 run-all 都会刷新出一份
+	   `hub:null` + `validator.pass:true` 的假绿交接件（审查 F4）。现在单独编一份带真 hub 的。 */
+	const p = compilePlan({ goal, seed: 43391, hub: { x: -2, y: -2 } });
+	say(p.ok === true && p.site && p.site.hubPinned === true,
+		"D 取样计划是钉死 hub 的（交接件的前提）", p.ok === false ? p.reason : p.site);
 	const h = writeHandoff(p, dir);
 	say(h.ok === true, "D 写交接件成功", h);
+	// F4 回归锁：未钉死 hub 的计划必须被**写盘层**拒绝（CLI 之外的第二道闸）
+	{
+		const unpinned = plans[goal];
+		const hu = writeHandoff(unpinned, dir);
+		say(hu.ok === false, "D ★未钉死 hub 的计划拒绝写交接件（写盘层也过闸，不靠 CLI 兜底）",
+			hu.ok === true ? "写了" : hu.reason);
+	}
 	if (h.ok === true) {
 		for (const f of [`${goalSlug(goal)}.szbp.txt`, `${goalSlug(goal)}.intent.json`, `${goalSlug(goal)}.validator.json`]) {
 			ok(fs.existsSync(path.join(dir, f)), `D 落盘：${f}`);
@@ -526,8 +571,8 @@ console.log("\n── J 世界系 hub 不相交 + 真 hub 接线（L3 回归锁�
 	}
 
 	// J-5 无 hub 的老路径逐字节不变（确定性基线；金网格不进 place 的 seed 路径）
-	const pNoHubA = compilePlan({ goal: "CuCuCuCu", seed: 43391 });
-	const pNoHubB = compilePlan({ goal: "CuCuCuCu", seed: 43391 });
+	const pNoHubA = compilePlan({ goal: "CuCuCuCu", seed: 43391, allowUnpinned: true });
+	const pNoHubB = compilePlan({ goal: "CuCuCuCu", seed: 43391, allowUnpinned: true });
 	say(pNoHubA.ok && pNoHubB.ok && pNoHubA.blueprint === pNoHubB.blueprint, "J-5 未给 hub 时仍确定（蓝图逐字节相等）");
 	eq(pNoHubA.site.hub, null, "J-5 未给 hub 时 site.hub === null（世界 hub 未知，不假装知道）");
 	say(pNoHubA.provenance.worldPlacement.hubInferred !== null,
@@ -535,6 +580,24 @@ console.log("\n── J 世界系 hub 不相交 + 真 hub 接线（L3 回归锁�
 	// J-5b 未给 hub 的蓝图必须与「B-4 之前」逐字节同（seed 不得漏进 place 的旧路径）
 	//     —— 判据用 designAnchor：未给 hub 时作图局部原点仍是设计系 [0,0]，anchor 由资源解出
 	eq(pNoHubA.provenance.worldPlacement.designHubLocal, [-4, -4], "J-5b 未给 hub 时设计系 hub 仍是 [-4,-4]（旧路径未被改道）");
+
+	/* J-6 hub 政策必须**只有一个权威**（红队 finding 1 的回归锁）。
+	   曾经：compilePlan 对未钉死 hub 返回 ok:true + 蓝图，而 cli.mjs 在出口把它改写成 ok:false。
+	   同一份计划两个结论 ⇒ 库调用方（未来的 L3 runner / MCP 工具）会拿到 CLI 认定不可交付的"成功"。
+	   现在政策在 compilePlan 内，CLI 不再二次判 —— 这条把两者钉在一起。 */
+	const unpinned = compilePlan({ goal: "CuCuCuCu", seed: 43391 });
+	eq(unpinned.ok, false, "J-6a ★未给 hub ⇒ compilePlan 直接 ok:false（不再由 CLI 兜底改写）");
+	eq(unpinned.class, "hub:unpinned", "J-6a ★失败 class = hub:unpinned（可被调用方分支）");
+	eq(unpinned.blueprint, null, "J-6a ★未钉死 hub 的计划没有蓝图（蓝图 = 「能贴」的承诺）");
+	say(unpinned.layout !== null && unpinned.layout !== undefined,
+		"J-6b 诊断仍然保留（layout 照常可读 ⟹ 不因政策丢信息）");
+	const allowed = compilePlan({ goal: "CuCuCuCu", seed: 43391, allowUnpinned: true });
+	say(allowed.ok === true && typeof allowed.blueprint === "string",
+		"J-6c 显式 allowUnpinned:true 才放行（诊断调用方的唯一入口）");
+	eq(allowed.site.hubPinned, false, "J-6c ★放行时 site.hubPinned 仍为 false（不冒充可交付）");
+	// CLI 与库对同一输入必须同结论：两者的判据同源于 compilePlan.site.hubPinned
+	say((unpinned.ok === true) === (unpinned.site && unpinned.site.hubPinned === true),
+		"J-6d ★ok:true ⟺ hubPinned:true（政策判据与结果自洽，不留第二套）");
 }
 
 /* ══════════════════ 汇总 ══════════════════ */

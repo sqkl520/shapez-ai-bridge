@@ -1,45 +1,70 @@
 {
  "goal": "Ru----Ru",
  "schema": "shapez-ai/handoff-intent@1",
- "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoBMsAtCdgLrwCmxA7LAAyzQCcrsXb0cfAbADM3Enx7ch0ABxSpzCX2zy+GVewAsG6KKXsy+6G32923OfsXm2K-ev3b9hm66EnzcY62oBfIA",
+ "blueprint": "SZBP1.N4IgbiBcBMA0IHMKRARgHQFZ0DYTwHcoBtVWAWmkwF14BTEgdljNQA5YAGWAThZe7dUrWHG7RxsDkP6pmM1ji6yWmZSNQAWdbIDMO1mJXCDvU9JXyVShbDW3tt-bbIyFbN6JYf+3fe09tAN87b08lYNdYZkjlDljuPgSBMJCTZNQ4DP8fKK1UvLUMiNz1GNKheIqWJOqJAuVoVjqs0rg+SSjJQVFGTloQAHsSADsAVwAbCdhxqZnJ6dnpnpXlVfW1gtztyt2tvcid-ePDg6Pgnug+6gBfIA",
  "anchor": [
-  2,
-  -26
+  1,
+  -25
  ],
- "hub": null,
+ "hub": [
+  -2,
+  -2
+ ],
  "chargeMode": "false",
  "gv": null,
- "count": 22,
+ "count": 44,
  "stride": 4,
  "entityOrder": [
   "n0",
   "n1",
   "n2",
   "n1d1",
-  "belt@-4,18",
-  "belt@-4,17",
-  "belt@-4,16",
-  "belt@-4,15",
-  "belt@-4,14",
-  "belt@-4,13",
-  "belt@-4,12",
-  "belt@-4,10",
-  "belt@-4,9",
-  "belt@-4,8",
-  "belt@-4,7",
-  "belt@-4,6",
-  "belt@-4,5",
-  "belt@-4,4",
-  "belt@-4,2",
-  "belt@-4,1",
-  "belt@-4,0",
-  "belt@-3,10"
+  "belt@4,-6",
+  "belt@4,-7",
+  "belt@4,-8",
+  "belt@4,-9",
+  "belt@4,-10",
+  "belt@4,-11",
+  "belt@4,-12",
+  "belt@4,-14",
+  "belt@4,-15",
+  "belt@4,-16",
+  "belt@4,-17",
+  "belt@4,-18",
+  "belt@4,-19",
+  "belt@4,-20",
+  "belt@4,-22",
+  "belt@3,-22",
+  "belt@3,-21",
+  "belt@3,-20",
+  "belt@3,-19",
+  "belt@3,-18",
+  "belt@3,-17",
+  "belt@3,-16",
+  "belt@3,-15",
+  "belt@3,-14",
+  "belt@3,-13",
+  "belt@3,-12",
+  "belt@3,-11",
+  "belt@3,-10",
+  "belt@3,-9",
+  "belt@3,-8",
+  "belt@3,-7",
+  "belt@3,-6",
+  "belt@3,-5",
+  "belt@3,-4",
+  "belt@3,-3",
+  "belt@3,-2",
+  "belt@3,-1",
+  "belt@5,-14",
+  "belt@4,-23",
+  "belt@3,-23"
  ],
  "entities": [
   {
    "code": 7,
-   "dx": 0,
-   "dy": 19,
+   "dx": 1,
+   "dy": 18,
    "rot": 0,
    "nodeId": "n0",
    "instanceIdx": 0,
@@ -50,8 +75,8 @@
   },
   {
    "code": 9,
-   "dx": 0,
-   "dy": 11,
+   "dx": 1,
+   "dy": 10,
    "rot": 0,
    "nodeId": "n1",
    "instanceIdx": 0,
@@ -62,8 +87,8 @@
   },
   {
    "code": 11,
-   "dx": 0,
-   "dy": 3,
+   "dx": 1,
+   "dy": 2,
    "rot": 0,
    "nodeId": "n2",
    "instanceIdx": 0,
@@ -74,8 +99,8 @@
   },
   {
    "code": 20,
-   "dx": 1,
-   "dy": 9,
+   "dx": 2,
+   "dy": 8,
    "rot": 0,
    "nodeId": "n1d1",
    "instanceIdx": 0,
@@ -86,22 +111,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
-   "dy": 18,
-   "rot": 0,
-   "nodeId": "belt@-4,18",
-   "instanceIdx": 0,
-   "kind": "belt",
-   "rotationVariant": 0,
-   "inDir": "bottom",
-   "outDir": "top"
-  },
-  {
-   "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 17,
    "rot": 0,
-   "nodeId": "belt@-4,17",
+   "nodeId": "belt@4,-6",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -110,10 +123,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 16,
    "rot": 0,
-   "nodeId": "belt@-4,16",
+   "nodeId": "belt@4,-7",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -122,10 +135,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 15,
    "rot": 0,
-   "nodeId": "belt@-4,15",
+   "nodeId": "belt@4,-8",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -134,10 +147,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 14,
    "rot": 0,
-   "nodeId": "belt@-4,14",
+   "nodeId": "belt@4,-9",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -146,10 +159,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 13,
    "rot": 0,
-   "nodeId": "belt@-4,13",
+   "nodeId": "belt@4,-10",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -158,10 +171,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 12,
    "rot": 0,
-   "nodeId": "belt@-4,12",
+   "nodeId": "belt@4,-11",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -170,10 +183,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
-   "dy": 10,
+   "dx": 1,
+   "dy": 11,
    "rot": 0,
-   "nodeId": "belt@-4,10",
+   "nodeId": "belt@4,-12",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -182,10 +195,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 9,
    "rot": 0,
-   "nodeId": "belt@-4,9",
+   "nodeId": "belt@4,-14",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -194,10 +207,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 8,
    "rot": 0,
-   "nodeId": "belt@-4,8",
+   "nodeId": "belt@4,-15",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -206,10 +219,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 7,
    "rot": 0,
-   "nodeId": "belt@-4,7",
+   "nodeId": "belt@4,-16",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -218,10 +231,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 6,
    "rot": 0,
-   "nodeId": "belt@-4,6",
+   "nodeId": "belt@4,-17",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -230,10 +243,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 5,
    "rot": 0,
-   "nodeId": "belt@-4,5",
+   "nodeId": "belt@4,-18",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -242,10 +255,10 @@
   },
   {
    "code": 1,
-   "dx": 0,
+   "dx": 1,
    "dy": 4,
    "rot": 0,
-   "nodeId": "belt@-4,4",
+   "nodeId": "belt@4,-19",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -254,10 +267,22 @@
   },
   {
    "code": 1,
-   "dx": 0,
-   "dy": 2,
+   "dx": 1,
+   "dy": 3,
    "rot": 0,
-   "nodeId": "belt@-4,2",
+   "nodeId": "belt@4,-20",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "belt@4,-22",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -268,20 +293,272 @@
    "code": 1,
    "dx": 0,
    "dy": 1,
-   "rot": 0,
-   "nodeId": "belt@-4,1",
+   "rot": 180,
+   "nodeId": "belt@3,-22",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
-   "inDir": "bottom",
-   "outDir": "top"
+   "inDir": "top",
+   "outDir": "bottom"
   },
   {
    "code": 1,
    "dx": 0,
-   "dy": 0,
+   "dy": 2,
+   "rot": 180,
+   "nodeId": "belt@3,-21",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 3,
+   "rot": 180,
+   "nodeId": "belt@3,-20",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 4,
+   "rot": 180,
+   "nodeId": "belt@3,-19",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 5,
+   "rot": 180,
+   "nodeId": "belt@3,-18",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 6,
+   "rot": 180,
+   "nodeId": "belt@3,-17",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 7,
+   "rot": 180,
+   "nodeId": "belt@3,-16",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 8,
+   "rot": 180,
+   "nodeId": "belt@3,-15",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 9,
+   "rot": 180,
+   "nodeId": "belt@3,-14",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 10,
+   "rot": 180,
+   "nodeId": "belt@3,-13",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 11,
+   "rot": 180,
+   "nodeId": "belt@3,-12",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 12,
+   "rot": 180,
+   "nodeId": "belt@3,-11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 13,
+   "rot": 180,
+   "nodeId": "belt@3,-10",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 14,
+   "rot": 180,
+   "nodeId": "belt@3,-9",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 15,
+   "rot": 180,
+   "nodeId": "belt@3,-8",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 16,
+   "rot": 180,
+   "nodeId": "belt@3,-7",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 17,
+   "rot": 180,
+   "nodeId": "belt@3,-6",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 18,
+   "rot": 180,
+   "nodeId": "belt@3,-5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 19,
+   "rot": 180,
+   "nodeId": "belt@3,-4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 20,
+   "rot": 180,
+   "nodeId": "belt@3,-3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 21,
+   "rot": 180,
+   "nodeId": "belt@3,-2",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 22,
+   "rot": 180,
+   "nodeId": "belt@3,-1",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 2,
+   "dy": 9,
    "rot": 0,
-   "nodeId": "belt@-4,0",
+   "nodeId": "belt@5,-14",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -289,16 +566,28 @@
    "outDir": "top"
   },
   {
-   "code": 1,
+   "code": 2,
    "dx": 1,
-   "dy": 10,
+   "dy": 0,
    "rot": 0,
-   "nodeId": "belt@-3,10",
+   "nodeId": "belt@4,-23",
    "instanceIdx": 0,
    "kind": "belt",
-   "rotationVariant": 0,
+   "rotationVariant": 1,
    "inDir": "bottom",
-   "outDir": "top"
+   "outDir": "left"
+  },
+  {
+   "code": 2,
+   "dx": 0,
+   "dy": 0,
+   "rot": 270,
+   "nodeId": "belt@3,-23",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 1,
+   "inDir": "right",
+   "outDir": "bottom"
   }
  ],
  "beltIntent": null,
@@ -309,16 +598,16 @@
    "rotater": 1,
    "trash": 1
   },
-  "beltTiles": 18,
+  "beltTiles": 40,
   "trash": 1,
   "bbox": [
-   2,
-   20
+   3,
+   23
   ],
-  "corners": 0,
+  "corners": 2,
   "estThroughputPerSec": 0.4,
   "bottleneck": "miner@0.4",
-  "blueprintCost": 100,
+  "blueprintCost": 240,
   "chargeMode": "false"
  },
  "scope": {
@@ -333,8 +622,8 @@
   "errors": 0,
   "failIds": [],
   "beltSim": {
-   "tilesChecked": 18,
-   "fixedPoints": 18,
+   "tilesChecked": 40,
+   "fixedPoints": 40,
    "drift": [],
    "includesMachineNeighbors": true
   },
@@ -374,32 +663,33 @@
  "roundtrip": {
   "ok": true,
   "stride": 4,
-  "decodedCount": 22,
-  "intentCount": 22,
+  "decodedCount": 44,
+  "intentCount": 44,
   "eLength": null,
   "diff": [],
   "beltCodeBad": [],
   "orderBad": [],
   "summary": {
-   "format_version": 1,
+   "format_version": 2,
    "exported_from": "1.5.6",
    "anchor": [
-    2,
-    -26
+    1,
+    -25
    ],
-   "count": 22,
+   "count": 44,
    "bounds": [
-    2,
-    20
+    3,
+    23
    ],
    "by_code": {
-    "1": 18,
+    "1": 38,
+    "2": 2,
     "7": 1,
     "9": 1,
     "11": 1,
     "20": 1
    },
-   "text_length": 145
+   "text_length": 293
   },
   "summaryErr": null
  },
@@ -450,7 +740,7 @@
    }
   ],
   "demandPerSec": 0,
-  "cornerCostTiles": 0,
+  "cornerCostTiles": 1.56,
   "routeAttempts": [
    {
     "gap": 0,
@@ -460,39 +750,55 @@
     "ok": true,
     "reason": null,
     "laneColumn": 0,
-    "belt": 18,
-    "corners": 0
+    "belt": 40,
+    "corners": 2
    }
   ],
   "laneColumnUnresolved": 0,
   "worldPlacement": {
    "anchor": [
-    6,
-    -26
+    -2,
+    -2
    ],
-   "hub": null,
+   "hub": [
+    -2,
+    -2
+   ],
    "hubInferred": [
-    2,
-    -30
+    -2,
+    -2
    ],
-   "hubPinned": false,
+   "hubPinned": true,
    "pasteAt": [
-    2,
-    -26
+    1,
+    -25
    ],
    "designAnchor": [
-    -4,
-    0
+    3,
+    -23
    ],
    "designHubLocal": [
     -4,
     -4
    ],
+   "hubLocal": [
+    0,
+    0
+   ],
    "worldFrameV1": {
     "ok": true,
-    "skipped": "no-world-hub",
-    "worldRect": null,
-    "hubRect": null
+    "worldRect": [
+     1,
+     -25,
+     3,
+     -3
+    ],
+    "hubRect": [
+     -2,
+     -2,
+     1,
+     1
+    ]
    }
   }
  }

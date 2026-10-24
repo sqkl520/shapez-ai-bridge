@@ -79,6 +79,26 @@ P3 若给 `straight` 形态留了 `lane:7`，输出报告就成了
    `assertCompiledEntity` + `entityOrderPhase` 自检，真接线在 P8 —— P8 落地时若发现口径不合，
    回来改 P4，不要就地重算方向。
 
+## R-5b【已修 · v2 契约】vlane 从「默认拒绝」升为「契约一等车道」
+
+**原缺口**：`lanes: Array<{row, channelIds}>` 里没有列字段，所以 `assignLanes` 对任何
+**两端都水平**的通道（painter 右出 → hub 左缘，flowOut/goalOut 都是水平）一律判死
+（`allowVerticalLane !== true` ⇒ `unresolvedChannels`）。后果：所有上色目标在上色器这一环
+就断掉 —— 不是几何无解，是**契约装不下**。
+
+**修法**（`LANE_SCHEMA_VERSION 1 → 2`，常量移到 `types.mjs`）：
+- `lanes[]` 条目改成 `{row:number|null, column:number|null, channelIds:string[]}`，**恰一个**非 null；
+  两个都给 / 都不给都是契约错（抛 `ContractViolation`，不静默择一）。
+- `channels[].lane` 仍只装下标，轴由新增的 `channels[].laneAxis:"row"|"col"|null` 给出；
+  **缺省按 `"row"` 读**（v1 报告永远合法），但 P4 的产出总是显式写轴。
+- **判重键改成 `(轴, 下标)`**（`types.mjs` 的 lanes 判重、`validate.mjs` 的 V6 两处）。
+  这是本次唯一的语义陷阱：row=3 与 column=3 是两条**正交**车道，用裸整数判重会把
+  常见形态（收集带列号恰好等于某条水平车道行号）误报成交叉。
+
+**反证**（不是永绿）：把 V6 的键改回裸整数 ⇒ `validator/test.mjs` B25 变红；关掉
+`allowVerticalLane` ⇒ `router/test.mjs` ⑧ 的正面断言变红且背面（显式关闭必须判死）变绿。
+变异锁 `M-20/21/22` 分别抓「写回丢轴」「关闭开关失效」「列号不进台账」，全部被抓。
+
 ## R-6【语义边界（不许越）】
 
 ②节 12 组恒等是 `rotateLocal` 的**左逆自洽**（同一套表自己映回自己），

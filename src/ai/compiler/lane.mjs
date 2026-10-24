@@ -22,24 +22,31 @@
  *   凭据：plan-l1 里 belt(0,3) outDir="top" 的下游 cutter(0,4) inDir="bottom" —— 互为反向
  *   ⇒ inDir 是**槽位方位**（读法 A），不是货流入向量。prior-art §6 的【待验】歧义在此钉死。
  *
- * ── lane 字段口径（NOTES C-1）──
- *   plan §2.3 只写「车道序号」。fixture report-layout.json 里 channels[1].lane=3 与
- *   lanes[0].row=3 同值，且 types.mjs:666 断言 lanes[].row 唯一 ⇒ **lane = 车道行号(row)**。
+ * ── lane 字段口径（NOTES C-1，v2 修订）──
+ *   fixture report-layout.json 里 channels[1].lane=3 与 lanes[0].row=3 同值（v1 的「lane = 行号」）。
+ *   v2 起 `channels[].lane` 仍只是**下标**，轴由 `channels[].laneAxis` 给出：
+ *   `{lane:3, laneAxis:"row"}` ↔ `lanes[]{row:3}`；`{lane:3, laneAxis:"col"}` ↔ `lanes[]{column:3}`。
+ *   旧报告缺 laneAxis ⇒ 按 "row" 读（唯一向后兼容读法，见 types.mjs 的 LayoutChannel 注释）。
  *
- * ── 形状语义：竖直出 + 竖直进 ⇒ 水平车道（hlane，契约 lanes[] 表达）；
- *   水平出 + 水平进 ⇒ 竖直车道（vlane，同轴张开的区间是**行区间**）。
- *   vlane 在 v1 里默认拒绝（契约 lanes[] 只有 row 字段，见 NOTES C-3）→ 让 P3 用 hlane 形态；
- *   显式 opts.allowVerticalLane 才做列 first-fit，且**不进 lanes[]**。
+ * ── 形状语义：竖直出 + 竖直进 ⇒ 水平车道（hlane，契约 lanes[] 的 `{row}`）；
+ *   水平出 + 水平进 ⇒ 竖直车道（vlane，契约 lanes[] 的 `{column}`）。
+ *   **LANE_SCHEMA_VERSION = 2**：lanes[] 的条目是 `{row|null, column|null, channelIds}`，
+ *   恰一个非 null；channels[].lane 只装**下标**，轴由 channels[].laneAxis（"row"|"col"）给出。
+ *   ⇒ vlane 与 hlane 共用整数 3 是两条不同车道，P5 的 V6 与 types 的判重都按 (轴, 下标) 比较。
+ *   vlane 默认参与分配（`opts.allowVerticalLane === false` 可显式关闭，用于「只允许 hlane」的诊断口径）。
  *
- * 零依赖：ESM + node: 内置 + ../belt-rules.mjs + ./grid.mjs + ./errors.mjs。
+ * 零依赖：ESM + node: 内置 + ../belt-rules.mjs + ./grid.mjs + ./errors.mjs + ./types.mjs（只取版本常量）。
  * 禁 import research/ai-player/proto/**（错误副本；判据在 research/ai-plan/contract/lint-imports.mjs）。
  */
 
 import { ORDER, OPP, DIRV } from "../belt-rules.mjs";
 import { cellKey } from "./grid.mjs";
 import { ContractViolation, assertInt, isAngle } from "./errors.mjs";
+import { LANE_SCHEMA_VERSION } from "./types.mjs";
 
-export const LANE_SCHEMA_VERSION = 1;
+/** lanes[] / channels[].laneAxis 的契约版本。**单一来源 = types.mjs**（P1 拥有 §2.3 契约）；
+ *  这里 re-export 只为兼容旧 import（曾经本文件自己声明 v1）。 */
+export { LANE_SCHEMA_VERSION };
 
 /** 通道几何形态（P4 内部枚举，不进 §2.3 契约） */
 export const GEOM_KINDS = Object.freeze([
@@ -400,12 +407,14 @@ export function leftEdge(intervals, opts = {}) {
 /* ───────────────────────────── 主入口 ───────────────────────────── */
 
 /**
- * 给 LayoutReport 分配车道：写回 channels[].lane（= 行号）与 lanes[]（row → channelIds）。
+ * 给 LayoutReport 分配车道：写回 channels[].lane + channels[].laneAxis 与 lanes[]。
+ * lanes[] 的条目 = `{row, column, channelIds}`（恰一个非 null，LANE_SCHEMA_VERSION=2）。
  * 落地顺序（prior-art §8 + §6「cell_footprint 预占 + 串行加障碍」）：
  *   0) 无车道形态（direct/single/straight/elbow）先占格 → 后来的通道看得见这些格
  *   1) P3 预分配 lane 的 hlane 通道先采纳（可行就原样保留，不可行则重排并记 resolvedBy=shift-x）
  *   2) 其余 hlane 按 left-edge 分 row；每分一条就把它的全部格加进占用集 → 下一条看得见
- *   3) vlane：v1 默认拒绝（契约 lanes[] 只有 row）；opts.allowVerticalLane 才做列 first-fit，不进 lanes[]
+ *   3) vlane 按 left-edge 分 col（默认参与；`opts.allowVerticalLane === false` 显式关掉 = 只许 hlane 的诊断口径）。
+ *      col 与 row **各自独立预算**（maxLanes 是每轴上限）：一条竖直车道不挤占水平车道的行数。
  *   4) search 形态留给 route.mjs 的带朝向 Dijkstra（不在这里判死）
  * 任一车道型通道找不到可行轨道 / 任一通道的格压到基座或别的通道 → ok:false +
  *   reason:"dag-not-placeable:column-conflict-unresolved"（占地类）或
@@ -512,6 +521,21 @@ export function assignLanes(report, opts = {}) {
         g, get candidates() { return candidatesFor(this); },
     });
 
+    /* ── 未落轨道的通道：记 lane-column（整条不铺）──
+     * leftEdge 只回答「所有候选轨道都不可行」；本层按 §2.3 的口径记 kind=lane-column
+     * （轨道预算/整页排布问题）。**真交叉不由这里判**：两股流要同一格时，
+     * 先落定的那条把格加进 occ，后一条的候选全部不可行 → 也走到这里（记 lane-column），
+     * 但 route.mjs 的产出锁 counterDirectedCells 与 dijkstra 失败会独立给出
+     * crossing-needs-tunnel —— 两条语义各自可归因，不在这里混为一谈。 */
+    const addUnresolved = iv => {
+        unresolvedChannels.add(iv.id);
+        conflicts.push({
+            kind: CONFLICT_KIND.lane,
+            cells: [[iv.g.cFrom, iv.g.rFrom], [iv.g.cTo, iv.g.rTo]],
+            nodeIds: [iv.g.ch.from.nodeId, iv.g.ch.to.nodeId], resolvedBy: null,
+        });
+    };
+
     /* ── 阶段 1：hlane（水平车道 = row）── */
     const hgeoms = geoms.filter(g => g.kind === "hlane");
     const preTracks = [];
@@ -554,19 +578,19 @@ export function assignLanes(report, opts = {}) {
         },
     });
     trackAxis.set("row", hRes.tracks.length);
-    for (const u of hRes.unresolved) {
-        unresolvedChannels.add(u.iv.id);
-        conflicts.push({
-            kind: CONFLICT_KIND.lane,
-            cells: [[u.iv.g.cFrom, u.iv.g.rFrom], [u.iv.g.cTo, u.iv.g.rTo]],
-            nodeIds: [u.iv.g.ch.from.nodeId, u.iv.g.ch.to.nodeId], resolvedBy: null,
-        });
-    }
+    for (const u of hRes.unresolved) addUnresolved(u.iv);
 
-    /* ── 阶段 2：vlane（竖直车道 = col）── */
-    const colLanesAllowed = geoms.filter(g => g.kind === "vlane");
-    if (colLanesAllowed.length && opts.allowVerticalLane !== true) {
-        for (const g of colLanesAllowed) {
+    /* ── 阶段 2：vlane（竖直车道 = col）──
+     * 默认参与分配（契约 v2 起 lanes[] 能表达 column）。`allowVerticalLane === false` 是
+     * **显式关闭**的诊断口径（只许 hlane）：此时每条 vlane 记 lane-column 冲突并整条跳过，
+     * 让上层看到「这个目标需要竖直车道」而不是偷偷铺出它。
+     * ⚠️ 与阶段 1 的 hlane 一样，**每一步 onAssign 都把格加进 occ 再 rebuild**：
+     *   串行加障碍 ⇒ 后分配的车道看得见先分配的；两股流要同一格时后一条的候选全不可行
+     *   （记 lane-column，整条不铺），而 route.mjs 的产出锁 counterDirectedCells 会独立给出
+     *   crossing-needs-tunnel —— 真交叉绝不被「打开 vlane」抹成成功。 */
+    const vgeoms = geoms.filter(g => g.kind === "vlane");
+    if (vgeoms.length && opts.allowVerticalLane === false) {
+        for (const g of vgeoms) {
             unresolvedChannels.add(g.id);
             conflicts.push({
                 kind: CONFLICT_KIND.lane,
@@ -574,8 +598,8 @@ export function assignLanes(report, opts = {}) {
                 nodeIds: [g.ch.from.nodeId, g.ch.to.nodeId], resolvedBy: null,
             });
         }
-    } else if (colLanesAllowed.length) {
-        const vIvs = colLanesAllowed.map(toInterval);
+    } else if (vgeoms.length) {
+        const vIvs = vgeoms.map(toInterval);
         const vRes = leftEdge(vIvs, {
             maxTracks: maxLanes,
             feasible: (fixed, iv) => feasibleLane(iv, fixed),
@@ -590,32 +614,39 @@ export function assignLanes(report, opts = {}) {
             },
         });
         trackAxis.set("col", vRes.tracks.length);
-        for (const u of vRes.unresolved) {
-            conflicts.push({ kind: CONFLICT_KIND.lane,
-                cells: [[u.iv.g.cFrom, u.iv.g.rFrom], [u.iv.g.cTo, u.iv.g.rTo]],
-                nodeIds: [u.iv.g.ch.from.nodeId, u.iv.g.ch.to.nodeId], resolvedBy: null });
-        }
+        for (const u of vRes.unresolved) addUnresolved(u.iv);
     }
 
-    /* ── 阶段 3：写回 channels[].lane / lanes[]（§2.3）── */
-    const rowToIds = new Map();
+    /* ── 阶段 3：写回 channels[].lane + channels[].laneAxis / lanes[]（§2.3, LANE_SCHEMA_VERSION=2）──
+     * 车道身份 = (轴, 下标)：row 与 col **分开汇总**。row=3 与 column=3 是两条不同车道，
+     * 压进同一个 `lanes[]` 数组但各自带轴字段；判重/比较一律用 "row:3" / "col:3" 的键。 */
+    const rowToIds = new Map(), colToIds = new Map();
     for (const [id, r] of laneRows) { if (!rowToIds.has(r)) rowToIds.set(r, []); rowToIds.get(r).push(id); }
-    const lanes = [...rowToIds.entries()].sort((a, b) => a[0] - b[0])
-        .map(([row, ids]) => ({ row, channelIds: [...ids].sort() }));
+    for (const [id, c] of colLanes) { if (!colToIds.has(c)) colToIds.set(c, []); colToIds.get(c).push(id); }
+    const byIndex = a => a.sort((x, y) => x[0] - y[0]);
+    const lanes = [
+        ...byIndex([...rowToIds.entries()]).map(([row, ids]) => ({ row, column: null, channelIds: [...ids].sort() })),
+        ...byIndex([...colToIds.entries()]).map(([column, ids]) => ({ row: null, column, channelIds: [...ids].sort() })),
+    ];
 
     /**
-     * channels[].lane 的**规范化**（L0 验收 ⑬ 的互逆判据：`channels[].lane !== null`
-     *   ⟺ 该 id 在 lanes[] 某行的 channelIds 里、且 row===该 lane 值）。
-     * 只有**真的占用了一条车道行**的通道才带 lane；P3 给 non-lane 形态
+     * channels[].lane / laneAxis 的**规范化**（L0 验收 ⑬ 的互逆判据：
+     *   `channels[].lane !== null` ⟺ 该 id 在 lanes[] 里有一条车道、下标===lane、轴===laneAxis）。
+     * 只有**真的占用了一条车道**的通道才带 lane/laneAxis；P3 给 non-lane 形态
      * （direct/single/straight/elbow/search）留的 lane 数字是**陈旧值**，原样保留会产出一份
      * 「channels 说有行 7、lanes[] 里没有行 7」的自相矛盾报告（types.mjs 的
      * assertLayoutReport 抓不到，但 P5 的 V4/V6 与 P6 的 lanes 排序凭据会被它喂错）。
-     * ⇒ 未落定的通道一律回写 lane:null（清空陈旧值，不是保留）。
+     * ⇒ 未落定的通道一律回写 lane:null（清空陈旧值，不是保留）+ laneAxis:null。
+     * ⚠️ laneAxis **总是**显式写（占车道的写 "row"|"col"，未占的写 null）：
+     *   「缺省 = row」只对**读**旧报告（v1 fixture）成立；P4 的产出必须自描述，
+     *   否则 `{lane:3}` 让下游只能猜它是行还是列 —— 那正是 v1 契约的漏洞。
      */
     const channels = report.channels.map((ch, i) => {
-        const r = laneRows.get(geoms[i].id);
-        if (r !== undefined) return { ...ch, lane: r };
-        return ch.lane === null ? ch : { ...ch, lane: null };
+        const id = geoms[i].id;
+        const r = laneRows.get(id), c = colLanes.get(id);
+        if (r !== undefined) return { ...ch, lane: r, laneAxis: "row" };
+        if (c !== undefined) return { ...ch, lane: c, laneAxis: "col" };
+        return ch.lane === null && ch.laneAxis === null ? ch : { ...ch, lane: null, laneAxis: null };
     });
 
     /**

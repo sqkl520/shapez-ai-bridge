@@ -1,21 +1,29 @@
 {
  "goal": "CuCuCuCu",
  "schema": "shapez-ai/handoff-intent@1",
- "blueprint": "SZBP1.N4IgbiBcCMA0IHMKRNAdAVjQNhPA7lANoC02sAzALrwCmxA7LAAyUuxysBM7nHv7VsyoBfIA",
+ "blueprint": "SZBP1.N4IgbiBcBMA0IHMKRARgHQFZ0DYTwHcoBtAWgHZZoBdeAUxMoAZYBmWF1Dq7rv2AJyceXIbC7tRwgCzjBwzNxbthLOIqm0QAexIA7AK4AbI9zHmWYlpabUAvkA",
  "anchor": [
-  -6,
-  3
+  -7,
+  2
  ],
- "hub": null,
+ "hub": [
+  -2,
+  -2
+ ],
  "chargeMode": "false",
  "gv": null,
- "count": 4,
+ "count": 9,
  "stride": 4,
  "entityOrder": [
   "n0",
-  "belt@-4,2",
-  "belt@-4,1",
-  "belt@-4,0"
+  "belt@-5,6",
+  "belt@-4,5",
+  "belt@-3,5",
+  "belt@-2,5",
+  "belt@-1,5",
+  "belt@0,4",
+  "belt@-5,5",
+  "belt@0,5"
  ],
  "entities": [
   {
@@ -35,7 +43,7 @@
    "dx": 0,
    "dy": 2,
    "rot": 0,
-   "nodeId": "belt@-4,2",
+   "nodeId": "belt@-5,6",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -44,26 +52,86 @@
   },
   {
    "code": 1,
+   "dx": 1,
+   "dy": 1,
+   "rot": 90,
+   "nodeId": "belt@-4,5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 2,
+   "dy": 1,
+   "rot": 90,
+   "nodeId": "belt@-3,5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 1,
+   "rot": 90,
+   "nodeId": "belt@-2,5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 4,
+   "dy": 1,
+   "rot": 90,
+   "nodeId": "belt@-1,5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 5,
+   "dy": 0,
+   "rot": 0,
+   "nodeId": "belt@0,4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 3,
    "dx": 0,
    "dy": 1,
    "rot": 0,
-   "nodeId": "belt@-4,1",
+   "nodeId": "belt@-5,5",
    "instanceIdx": 0,
    "kind": "belt",
-   "rotationVariant": 0,
+   "rotationVariant": 2,
    "inDir": "bottom",
-   "outDir": "top"
+   "outDir": "right"
   },
   {
-   "code": 1,
-   "dx": 0,
-   "dy": 0,
-   "rot": 0,
-   "nodeId": "belt@-4,0",
+   "code": 2,
+   "dx": 5,
+   "dy": 1,
+   "rot": 90,
+   "nodeId": "belt@0,5",
    "instanceIdx": 0,
    "kind": "belt",
-   "rotationVariant": 0,
-   "inDir": "bottom",
+   "rotationVariant": 1,
+   "inDir": "left",
    "outDir": "top"
   }
  ],
@@ -72,16 +140,16 @@
   "machines": {
    "miner": 1
   },
-  "beltTiles": 3,
+  "beltTiles": 8,
   "trash": 0,
   "bbox": [
-   1,
+   6,
    4
   ],
-  "corners": 0,
+  "corners": 2,
   "estThroughputPerSec": 0.4,
   "bottleneck": "miner@0.4",
-  "blueprintCost": 18,
+  "blueprintCost": 40,
   "chargeMode": "false"
  },
  "scope": {
@@ -96,8 +164,8 @@
   "errors": 0,
   "failIds": [],
   "beltSim": {
-   "tilesChecked": 3,
-   "fixedPoints": 3,
+   "tilesChecked": 8,
+   "fixedPoints": 8,
    "drift": [],
    "includesMachineNeighbors": true
   },
@@ -125,29 +193,31 @@
  "roundtrip": {
   "ok": true,
   "stride": 4,
-  "decodedCount": 4,
-  "intentCount": 4,
+  "decodedCount": 9,
+  "intentCount": 9,
   "eLength": null,
   "diff": [],
   "beltCodeBad": [],
   "orderBad": [],
   "summary": {
-   "format_version": 1,
+   "format_version": 2,
    "exported_from": "1.5.6",
    "anchor": [
-    -6,
-    3
+    -7,
+    2
    ],
-   "count": 4,
+   "count": 9,
    "bounds": [
-    1,
+    6,
     4
    ],
    "by_code": {
-    "1": 3,
+    "1": 6,
+    "2": 1,
+    "3": 1,
     "7": 1
    },
-   "text_length": 78
+   "text_length": 128
   },
   "summaryErr": null
  },
@@ -189,14 +259,14 @@
    {
     "nodeId": "n0",
     "cell": [
-     -6,
-     6
+     -7,
+     5
     ],
     "shape": "CuCuCuCu"
    }
   ],
   "demandPerSec": 0,
-  "cornerCostTiles": 0,
+  "cornerCostTiles": 1.56,
   "routeAttempts": [
    {
     "gap": 0,
@@ -206,39 +276,55 @@
     "ok": true,
     "reason": null,
     "laneColumn": 0,
-    "belt": 3,
-    "corners": 0
+    "belt": 8,
+    "corners": 2
    }
   ],
   "laneColumnUnresolved": 0,
   "worldPlacement": {
    "anchor": [
     -2,
-    3
+    -2
    ],
-   "hub": null,
+   "hub": [
+    -2,
+    -2
+   ],
    "hubInferred": [
-    -6,
-    -1
+    -2,
+    -2
    ],
-   "hubPinned": false,
+   "hubPinned": true,
    "pasteAt": [
-    -6,
-    3
+    -7,
+    2
    ],
    "designAnchor": [
-    -4,
-    0
+    -5,
+    4
    ],
    "designHubLocal": [
     -4,
     -4
    ],
+   "hubLocal": [
+    0,
+    0
+   ],
    "worldFrameV1": {
     "ok": true,
-    "skipped": "no-world-hub",
-    "worldRect": null,
-    "hubRect": null
+    "worldRect": [
+     -7,
+     2,
+     -2,
+     5
+    ],
+    "hubRect": [
+     -2,
+     -2,
+     1,
+     1
+    ]
    }
   }
  }

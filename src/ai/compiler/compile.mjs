@@ -76,6 +76,10 @@ export const MIN_LEVEL_FOR_QUAD = CUTQUAD_MIN_LEVEL;
 
 /** route 失败重试上限（任务书：加宽 rowGap/colGap 重试，上限 N 次，仍败 → 结构化 ok:false） */
 export const ROUTE_RETRY_MAX = 3;
+/** 资源搜索半径缺省（格）。**P3 的矿机对齐与 siteStage 的选址必须同值** ——
+ *  同一个"区域内有没有矿"的判据在两处用了 48/96 两个默认，会产出互相矛盾的 hint
+ *  （P3 说没矿、P8 说区域里有矿）。这里定为唯一来源，两边都取它。 */
+export const DEFAULT_RANGE = 96;
 /** 每次重试的加宽量（P3 NOTES §三：加宽 rowGap/colGap 是 lane-column 的既定自解法） */
 export const GAP_STEP = Object.freeze({ rowGap: 2, colGap: 2 });
 
@@ -593,9 +597,10 @@ export function rebuildDag(steps) {
 				resolved.push(t);
 			} else {
 				if (!byHash.has(h)) {
-					return failReason(UPSTREAM_REASON.SOLVER_DAG_BAD, `n${i}`,
-						`${s.hash} 的形状输入 ${h} 尚未出现（solver 的 steps 不是依赖序）`,
-						{ class: "solver-dag-unreconstructable", step: i });
+					// 曾误写成不存在的 `failReason(...)`（4 参）：一旦触发就是 ReferenceError，
+					// 把本应结构化返回的失败变成抛异常，违反「P8 永不 throw」。用 fail(reason,node,hint)。
+					return fail(UPSTREAM_REASON.SOLVER_DAG_BAD, { nodeId: `n${i}`, cell: null, check: "" },
+						`${s.hash} 的形状输入 ${h} 尚未出现（solver 的 steps 不是依赖序；class=solver-dag-unreconstructable, step=${i}）`);
 				}
 				resolved.push(h);
 			}
@@ -617,9 +622,9 @@ export function rebuildDag(steps) {
 		try { got = compute(s.op, args, shapeParents.slice(0, s.op === "stack" ? 2 : 1)); } catch { /* 下面统一报 */ }
 		const expectShape = got ? SHAPE_OPS.hash(got) : null;
 		if (expectShape !== s.hash) {
-			return failReason(UPSTREAM_REASON.SOLVER_DAG_BAD, `n${i}`,
-				`solver 的 step ${i}（${s.op} ${JSON.stringify(s.args || {})} → ${s.hash}）用形状代数重算得 ${expectShape ?? "(无法重算)"}`,
-				{ class: "solver-dag-unreconstructable", step: i });
+			return fail(UPSTREAM_REASON.SOLVER_DAG_BAD, { nodeId: `n${i}`, cell: null, check: "" },
+				`solver 的 step ${i}（${s.op} ${JSON.stringify(s.args || {})} → ${s.hash}）用形状代数重算得 ${expectShape ?? "(无法重算)"}`
+				+ `（class=solver-dag-unreconstructable, step=${i}）`);
 		}
 		out.push(node);
 	}
@@ -738,6 +743,12 @@ export function placeStage(steps, ctx) {
 		world: hubW ? hubWorldState(hubW, seed) : hubWorldState(ctx.hubDesign, null),
 		// ★ 关键：只有给真 hub 时才把 seed 交给 P3（否则矿机被挪到资源上，会改金网格/确定性基线）
 		...(hubW && seed !== null ? { seed } : {}),
+		// 资源搜索半径：与 siteStage 用同一个 --range（旧代码漏传 ⇒ P3 恒用 48，
+		// `--range 400` 只影响下游选址、不影响矿机对齐，两边口径不一致会给出误导性的 hint）。
+		// 只在 seed 路径（真 hub）传，兼容路径（无 seed）不受影响。
+		// 缺省也由**这里**统一给（= DEFAULT_RANGE），不让 P3 的本地默认与 P8 的默认分叉：
+		// 同一个概念两处默认不同，会出现"P3 说没矿、P8 说区域里有矿"的自相矛盾 hint。
+		...(hubW && seed !== null ? { range: Number.isFinite(ctx.range) ? ctx.range : DEFAULT_RANGE } : {}),
 		rowGap: ctx.rowGap, colGap: ctx.colGap,
 		demandPerSec: ctx.demandPerSec || 0,
 		instanceIdx: 0,
@@ -789,7 +800,13 @@ export function routeStage(placeResult, ctx) {
 			const layout = mode === "asis" ? placed.layout : { ...placed.layout, channels: orderChannels(placed.layout, mode) };
 			let ro;
 			const hubOrigin = Array.isArray(ctx.hubLocal) ? ctx.hubLocal : ctx.hubDesign;
-			try { ro = routeAll(layout, { hubOrigin: hubOrigin.slice(), searchRadius: ctx.searchRadius }); }
+			// allowVerticalLane **不是**逃生口，是契约项：LANE_SCHEMA_VERSION=2 起 lanes[] 能表达
+			// {column}、channels[].laneAxis 能表达轴，vlane 与 hlane 一样是一等车道。
+			// 不打开它 ⇒ painter 的 right 输出 → hub 的左面入口（两条水平腿）永远无解，
+			// 上色目标（CrCrCrCr/RbRb----/CpCpCpCp）在结构上不可能成功。
+			// input.allowVerticalLane === false 是**诊断口径**（只许 hlane）：用来证明「成功确实
+			// 依赖竖直车道」，也是 harness 的反证用例；默认（undefined）= 参与分配。
+			try { ro = routeAll(layout, { hubOrigin: hubOrigin.slice(), searchRadius: ctx.searchRadius, allowVerticalLane: ctx.allowVerticalLane !== false }); }
 			catch (e) { return absorb(e, "route(P4)", { nodeId: "", cell: null, check: "V4-slot-alignment" }, "P4 抛了未收敛的契约错"); }
 			log.push({ gap: g, rowGap, colGap, order: mode, ok: ro.ok, reason: ro.reason, laneColumn: laneColumnConflicts(layout).length, belt: ro.beltTiles, corners: ro.cornerCount });
 			if (ro.ok && ro.closure && ro.closure.ok) {
@@ -958,19 +975,35 @@ export function worldFrameHubCheck(entities, anchor, hubWorld) {
  */
 export function siteStage(layout, ctx) {
 	const miners = [];
+	/* 矿机要匹配的是**世界资源名**，不是通道 payload —— 两者是不同的命名空间：
+	     · 形状矿机：资源名 == 形状 shortKey（世界里就叫 `CuCuCuCu`/`RuRuRuRu`/…），恰好等于 payload；
+	     · 颜料矿机：资源名 == `red`/`blue`/…，而 payload 是 P8 编进形状空间的唯一 token `-r------`
+	       （5 个 '-' + 颜色位，不是资源名；`red` 本身也过不了 8 字符的 shortKey 语法闸）。
+	   所以**不能**从 payload 反推资源名。P3 在 `meta.minerResources` 里显式给出 nodeId → 资源名；
+	   缺这条映射就说明布局与配方脱节，本段结构化拒绝（绝不退回"拿 payload 猜"）。
+	   注：`meta` 不在 `assertLayoutReport` 的契约里（types.mjs 只 requireKeys 顶层十项、不读 meta），
+	   所以加这个键既不破坏契约，也不改变既有字段；它是 P3 → P8 的显式跨包凭据。 */
+	const minerResources = layout.meta && layout.meta.minerResources;
 	for (const p of layout.placements || []) {
 		if (p.kind !== "miner") continue;
+		const res = minerResources ? minerResources[p.nodeId] : undefined;
+		if (typeof res !== "string" || !res) {
+			return fail("no-resource-in-range", { nodeId: p.nodeId, cell: [p.cell[0], p.cell[1]], check: "V1-occupancy" },
+				`矿机 ${p.nodeId} 在 layout.meta.minerResources 里没有资源名（实得 ${JSON.stringify(res)}）`
+				+ `—— 布局与配方脱节：P8 不拿 payload 猜资源名（颜料 payload 是 token，不是世界资源）`);
+		}
+		// 通道 payload 只作为诊断保留（它是形状空间 token，**不参与**资源对拍）
 		const ch = (layout.channels || []).find(c => c.from.nodeId === p.nodeId);
-		miners.push({ nodeId: p.nodeId, cell: [p.cell[0], p.cell[1]], shape: ch ? ch.payload : null });
+		miners.push({ nodeId: p.nodeId, cell: [p.cell[0], p.cell[1]], shape: res, payload: ch ? ch.payload : null });
 	}
 	for (const m of miners) {
-		if (!m.shape || m.shape === "--------") {
+		if (m.shape === "--------") {
 			return fail("no-resource-in-range", { nodeId: m.nodeId, cell: m.cell, check: "V1-occupancy" },
-				`矿机 ${m.nodeId} 没有可校验的资源 payload（通道缺失/空形状）—— 布局与配方脱节，P8 不猜`);
+				`矿机 ${m.nodeId} 的资源名是空形状 "--------"（不是可采资源）—— 布局与配方脱节，P8 不猜`);
 		}
 	}
 	const seed = ctx.seed;
-	const region = ctx.region || regionAround(ctx.origin || [0, 0], ctx.range === undefined ? 96 : ctx.range);
+	const region = ctx.region || regionAround(ctx.origin || [0, 0], ctx.range === undefined ? DEFAULT_RANGE : ctx.range);
 	const cells = resourcesInRegion(seed, region);
 	// 世界系硬约束的两份输入：实体矩形（局部系）+ hub 世界左上角（ctx.hub，世界系）
 	const rect = designEntityRect(layout, ctx.entityRect);
@@ -980,6 +1013,16 @@ export function siteStage(layout, ctx) {
 	/* ⓐ 真 hub 作图档（B-4）：局部原点 = 真 hub ⇒ hubLocal=[0,0]，anchor 唯一 = hubWorld − hubLocal。
 	   不再走资源重扫 —— place() 已经把矿机压在真资源上，重解 anchor 只会把正确的世界坐标再平移一次。 */
 	if (Array.isArray(ctx.hubLocal) && ctx.hubLocal.length === 2 && hubWorldFixed) {
+		/* ★ 净地闸必须在**这一档也**判（F2 回归：本分支曾直接 return，把「不贴进脏区」整个跳过）。
+		   未给 hub 的旧路径在下面的循环里判 worldClear；钉死路径返回得更早，于是带世界快照时
+		   脏区被静默接受 —— 而 `--hub` 正是 README 让用户走的唯一路径。
+		   判据与旧路径同源（regionClear），不新造规则。 */
+		if (!regionClear(ctx)) {
+			return fail("no-site-large-enough", { nodeId: "", cell: null, check: "V1-occupancy" },
+				`世界快照里有既有实体（非 hub）⇒ 这份计划不是「全新址」，v1 不做增量对接（plan §6 R2）。`
+				+ `本闸在钉死 hub 的路径上同样生效 —— 否则 paste 会与既有建筑重叠（C1：带子被静默覆盖）。`
+				+ `处置：换一块空地（新 --hub），或先清掉该区域的实体。`);
+		}
 		const anchor = [hubWorldFixed[0] - ctx.hubLocal[0], hubWorldFixed[1] - ctx.hubLocal[1]];
 		const minersW = miners.map(m => ({ nodeId: m.nodeId, cell: [anchor[0] + m.cell[0], anchor[1] + m.cell[1]], shape: m.shape }));
 		const bad = minersW.filter(m => tileResource(seed, m.cell[0], m.cell[1]) !== m.shape);
@@ -1286,7 +1329,7 @@ function assemblePlan(parts) {
  * @param {{goal:string, seed?:number|string, hub?:string|[number,number]|{x:number,y:number},
  *          world?:object, demandPerSec?:number, range?:number, depth?:number, maxStates?:number,
  *          rowGap?:number, colGap?:number, level?:number, noCutQuad?:boolean, enforceUnlocks?:boolean,
- *          searchRadius?:number}} input
+ *          searchRadius?:number, allowVerticalLane?:boolean}} input
  * @returns {object} CompiledPlan（成功）或 {ok:false,reason,failingNode,hint,...}（失败）
  */
 export function compilePlan(input = {}) {
@@ -1346,11 +1389,16 @@ function compileInner(input) {
 	     siteStage   - 只解 anchor：anchor = hubWorld − hubLocal（不再资源重扫）
 	     P5 world    - hubWorldState(hubLocal, seed)（与 layout.occupancy 同框） */
 	const hubLocal = hubWorldIn.given ? [0, 0] : hubWorldIn.design.slice();
+	// 资源搜索半径：CLI 的 --range（默认 96）。P3 的矿机对齐与 P8 的选址必须用**同一个**半径，
+	// 否则两边对"区域内有没有矿"的判断不一致（旧代码 P3 恒用 48）。
+	const range = isInt(input.range) ? input.range : DEFAULT_RANGE;
 	const ctx = {
 		steps: mp.steps, hubDesign: hubWorldIn.design, hubLocal,
 		hub: hubWorldIn.given ? hubWorldIn.world.slice() : null, seed,
-		rowGap, colGap,
+		rowGap, colGap, range,
 		demandPerSec: input.demandPerSec || 0, searchRadius: input.searchRadius,
+		// 诊断口径：input.allowVerticalLane === false ⇒ 只许 hlane（见 routeStage 的注释）
+		allowVerticalLane: input.allowVerticalLane !== false,
 	};
 	const pl = trace(stages, "placeStage", placeStage(mp.steps, ctx));
 	if (pl.ok === false) return bail({ ...pl, layout: null, entities: null });
@@ -1475,7 +1523,51 @@ function compileInner(input) {
 	};
 	final.roundtrip = roundtripCheck(em.emit);
 	trace(stages, "done", { ok: true });
+
+	/* ★ hub 政策（唯一权威在这里，CLI 不再二次判）★
+	   `ok:true` 的含义是「这份蓝图能贴进世界并真的交付」。未给 `--hub` 时编译器只能**发明**
+	   一个 hub（`anchor + hubDesign`），`worldFrameHubCheck` 整段跳过（`skipped:"no-world-hub"`），
+	   于是 `ok:true` 只证明"排出了一座工厂" —— 这正是 `CrCrCrCr --seed 43391` 曾经假绿的形态
+	   （hubInferred=[55,22]，真 hub 在 (-2,-2)，相距 62 格）。
+	   ⇒ 未钉死 hub 的计划一律 `ok:false`（class=hub:unpinned），布局/凭据留在字段里作诊断。
+	   显式 `allowUnpinned:true` 才放行 —— 只给"我要看这座工厂长什么样"的诊断调用方用，
+	   且出口仍会带 `site.hubPinned:false`，不会冒充可交付。 */
+	if (input.allowUnpinned !== true && site.hubPinned !== true) return hubPolicyFailure(final);
 	return final;
+}
+
+/**
+ * hub 未钉死 ⇒ 编译"成功"也不算数（见 compileInner 尾部的 hub 政策）。
+ * 把已算出的布局/凭据原样留着作诊断，但**不产蓝图** —— 蓝图是"能贴"的承诺。
+ * @param {object} plan 已走完全部 stage 的 CompiledPlan
+ * @returns {object} 一个 `ok:false` 的结构化失败
+ */
+export function hubPolicyFailure(plan) {
+	const inferred = plan && plan.provenance && plan.provenance.worldPlacement
+		? plan.provenance.worldPlacement.hubInferred : null;
+	return {
+		ok: false,
+		goal: plan && plan.goal !== undefined ? plan.goal : null,
+		reason: "no-site-large-enough",
+		class: "hub:unpinned",
+		failingNode: null,
+		hint: `未给 --hub：编译只能"发明"一个 hub${inferred ? `（hubInferred=${JSON.stringify(inferred)}）` : ""}，`
+			+ `收集带通向那个假想位置 —— ok:true 只证明排出了一座工厂，不证明能交付。`
+			+ `世界系 V1 闸在无世界 hub 时必须跳过（skipped:"no-world-hub"），所以这条不能当成功。`
+			+ `处置：把实机观测到的 hub 左上角用 --hub x,y 传进来（L3 的"无人工坐标"= 坐标来自 obs，不是人来猜）。`
+			+ `｜**只保留 layout / provenance / stages 作诊断**（不含 blueprint / entities / stats / validation：`
+			+ `这份计划没有产出物，也没有跑过 emit 之后的判据）。`,
+		// 诊断用：只留确实存在的三项。⚠️ 不要在这里声称 entities 可读 —— 它是 null（审查 F3）。
+		// 本对象**不是** CompiledPlan：缺 validation/stats/scope，`assertCompiledPlan` 会拒。
+		// 这是有意的（失败对象只在 §2.5 的 {ok:false,reason,failingNode,hint} 口径上被消费），
+		// 但调用方若按 CompiledPlan 校验失败路径，需按 class==="hub:unpinned" 分支。
+		site: plan ? plan.site : undefined,
+		provenance: plan ? plan.provenance : undefined,
+		stages: plan ? plan.stages : undefined,
+		blueprint: null,
+		entities: null,
+		layout: plan ? plan.layout : null,
+	};
 }
 
 /**
@@ -1576,6 +1668,16 @@ export function writeHandoff(plan, dir = HANDOFF_DIR) {
 		return fail(plan && plan.reason ? plan.reason : "emit:mismatch",
 			(plan && plan.failingNode) || null,
 			"未过闸的计划不写交接件（P7 拿到的必须是已验证品，plan §4.6）");
+	}
+	/* ★ hub 政策在**写盘这一层**也要判（审查 F4）：CLI 已经被 compilePlan 挡住，但
+	   `writeHandoff` 是导出的，任何绕开 CLI 的调用方（含 harness 的测试段）都能写出
+	   `hub:null` 的交接件 —— 那种文件看上去是已验证品（validator.pass=true），实际接不上 hub。
+	   交接件是给 P7 直接 paste 的，宁可拒写也不要交付一份"看起来对"的假绿。 */
+	if (!(plan.site && plan.site.hubPinned === true)) {
+		return fail("no-site-large-enough", { nodeId: "", cell: null, check: "" },
+			`交接件拒绝写出：hub 未钉死（site.hub=${JSON.stringify(plan.site && plan.site.hub)}）。`
+			+ `P7 会照这份文件 paste，而它的收集带通向一个**发明出来的**坐标 —— 那不是可交付品。`
+			+ `处置：编译时给 --hub/input.hub（实机 obs 观测值）。`);
 	}
 	const rep = plan.validation;
 	const vAudit = auditReport(rep);

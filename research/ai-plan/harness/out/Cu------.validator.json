@@ -7,12 +7,12 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     -4,
-     27
+     -5,
+     7
     ],
     "nodeId": "n0",
     "expected": "落点矩形全空（r=0 包围盒）",
-    "actual": "34 格全空（机器 6 台 + 带子 26 格）",
+    "actual": "56 格全空（机器 6 台 + 带子 48 格）",
     "note": "决策 D1：机器恒 r=0 → 无需旋转包围盒；三态占用与冲突矩阵一律走 P1 的 Grid.placementConflicts"
    }
   },
@@ -32,13 +32,13 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     -4,
-     26
+     -5,
+     6
     ],
-    "nodeId": "belt@-4,26",
+    "nodeId": "belt@-5,6",
     "expected": "computeBelt(含机器邻居) 不动点 = 设计的 (r,rv)",
-    "actual": "26/26 全是不动点；施工顺序合规",
-    "note": "includesMachineNeighbors=true（邻居含机器 14 次、带子 40 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
+    "actual": "48/48 全是不动点；施工顺序合规",
+    "note": "includesMachineNeighbors=true（邻居含机器 14 次、带子 84 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
    }
   },
   {
@@ -48,7 +48,7 @@
     "cell": null,
     "nodeId": null,
     "expected": "端点 ∈ 模板槽位 + 通道走通 + 链闭合 + 出口有 acceptor + 生产槽有供料",
-    "actual": "6 条通道 / 26 带格全对齐",
+    "actual": "6 条通道 / 48 带格全对齐",
     "note": "槽位真值 = P2 OP_TEMPLATES + rotateSlot（v1 机器恒 r=0）；带向真值 = src/ai/belt-rules.mjs（**不 import proto 那份**）"
    }
   },
@@ -71,7 +71,7 @@
     "nodeId": null,
     "expected": "两股流不穿格 + 车道分行 + 不穿机器占地",
     "actual": "0 处",
-    "note": "单通道布局，天然无交叉"
+    "note": "车道分行 → 不需要隧道（v1 无隧道）"
    }
   },
   {
@@ -82,7 +82,7 @@
     "nodeId": "n0",
     "expected": "demandPerSec",
     "actual": "0",
-    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = miner@0.4/s；拐角 0 个 → 有效带长 26.00（derate 1.000，机器限速 ⇒ 只报告不折进判定）"
+    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = miner@0.4/s；拐角 3 个 → 有效带长 47.34（derate 0.986，机器限速 ⇒ 只报告不折进判定）"
    }
   },
   {
@@ -132,8 +132,8 @@
  ],
  "errors": [],
  "beltSim": {
-  "tilesChecked": 26,
-  "fixedPoints": 26,
+  "tilesChecked": 48,
+  "fixedPoints": 48,
   "drift": [],
   "includesMachineNeighbors": true
  },
@@ -184,8 +184,8 @@
    "errors": 0,
    "failIds": [],
    "beltSim": {
-    "tilesChecked": 26,
-    "fixedPoints": 26,
+    "tilesChecked": 48,
+    "fixedPoints": 48,
     "drift": [],
     "includesMachineNeighbors": true
    }
