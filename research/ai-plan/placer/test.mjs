@@ -118,6 +118,12 @@ if (g2.grid) {
 	// 分支 B（upper）走 Z：lane 非 null
 	const upperCh = g2.channels.find(c => c.slotRole === "upper");
 	ok(upperCh && upperCh.lane !== null, "G2 B 分支 B（upper）经车道绕行、lane≠null");
+	// LANE_SCHEMA_VERSION=2：车道轴必须随行写出（竖直出 ⇒ row）。缺它下游只能按「缺省=row」猜，
+	// 而 P3 对**水平出**的通道真的会选列号（见 place.mjs 的 laneAxis 写回）。
+	eq(upperCh && upperCh.laneAxis, "row", "G2 B 分支 B 的 laneAxis === \"row\"（竖直出 ⇒ 水平车道行）");
+	ok(g2.lanes.every(l => (l.row === null) !== (l.column === null)),
+		"G2 B lanes[] 每条恰一个 of row/column 非 null（LANE_SCHEMA_VERSION=2 的条目形状）",
+		JSON.stringify(g2.lanes));
 	// 两支不同列起点：两条竖直腿不重叠（M4 前置条件）
 	ok(g2.conflicts.length === 0, "G2 B 无冲突（两支不同列 ⇒ 不撞）");
 	// cornerCells 与 grid 逐格一致（本包内建同源断言；这里独立复算一次）
@@ -444,6 +450,74 @@ console.log("\n── ①f hubConnection 世界系可达性（B-4 回归锁）�
 		// 无论哪一种，hubConnection 字段必须存在（ok:true 时不许缺）
 		ok(!plan.ok || !!hc, "F5 ok:true 时 hubConnection 必须存在（不许缺字段）");
 	}
+
+	// F6：**多矿机联合对齐**（WORKER F，假绿的根因；回归锁）。
+	//   判据：给真 hub + seed 且 place() 成功 ⇒ **每一台**矿机都压在它自己的资源上。
+	//   旧代码只对齐第一台（循环里 break），`CrCrCrCr` 的颜料矿机落在"Cu 矿机西侧 4 格"，
+	//   那里没有红矿 —— 而 siteStage 未给 hub 时整段跳过资源对拍 ⇒ 编译假绿。
+	//   这里必须同时锁三件事：
+	//     (1) 结构：jointResourceShift 是**联合**的（任一矿机不命中就换下一个候选）；
+	//     (2) 行为：编译链路给真 hub 时，`CrCrCrCr` 的**两台**矿机都在真资源上；
+	//     (3) 诚实：真的没有联合解时，必须是 no-resource-in-range + 带扫地证据的 hint（不静默跳过）。
+	{
+		const { tileResource, regionAround } = await imp(path.join(ROOT, "src", "ai", "world.mjs"));
+		const { place: placeFn, jointResourceShift } = await imp(path.join(COMPILER, "place.mjs"));
+		const { compilePlan } = await imp(path.join(COMPILER, "compile.mjs"));
+
+		// (1) 结构：把第一台矿机放到"有 Cu 但 4 格西边没有红矿"的地方 ⇒ 联合搜索必须拒绝
+		//     （旧实现只对齐第一台，会在这里给出"可行"的错误答案）
+		{
+			const miners = [
+				{ id: "a", resource: "CuCuCuCu", x: 0, y: 0 },
+				{ id: "b", resource: "red", x: -4, y: 0 },
+			];
+			const region = regionAround([-2, -2], 96);
+			const r = jointResourceShift(miners, { seed: 43391, region, center: [-2, -2], hubWorld: [-2, -2] });
+			// 两种结果都合法，但**成功时**必须逐台命中（这是本测的核心）：
+			if (r.ok) {
+				const bad = [...r.cells].filter(([id, c]) => {
+					const m = miners.find(x => x.id === id);
+					return tileResource(43391, c[0], c[1]) !== m.resource;
+				});
+				eq(bad, [], "F6-a 联合对齐成功时**每台**矿机都在自己的资源上");
+			} else {
+				ok(r.reason === "no-resource-in-range", "F6-a 联合不可行时 reason=no-resource-in-range（诚实拒因）", r.reason);
+				say(/扫过 \d+ 个候选/.test(r.hint || ""), "F6-a 不可行 hint 带扫描证据（不静默）", r.hint);
+			}
+		}
+
+		// (2) 行为：`CrCrCrCr`（Cu 矿机 + 颜料矿机，两者相对偏移 -4,0 硬定死）
+		//     ⇒ 给真 hub 时必须两台都压真资源；收集带落真入口。
+		{
+			const hub = [-2, -2];
+			const p = compilePlan({ goal: "CrCrCrCr", seed: 43391, hub: { x: hub[0], y: hub[1] }, range: 96 });
+			say(p.ok === true, "F6-b CrCrCrCr + 真 hub(-2,-2) → ok:true（联合对齐后确实能布）",
+				p.ok === false ? { reason: p.reason, hint: (p.hint || "").slice(0, 300) } : undefined);
+			if (p.ok === true) {
+				const miners = p.provenance.minerCells || [];
+				eq(miners.length, 2, "F6-b 两台矿机都上报（shape + pigment）");
+				const bad = miners.filter(m => tileResource(43391, m.cell[0], m.cell[1]) !== m.shape);
+				eq(bad, [], "F6-b ★两台矿机都压在各自的真资源上（旧实现第二台悬空）");
+				// 两矿必须不同列（M4 前置条件：同列两条竖直通道重叠）
+				const cols = new Set(miners.map(m => m.cell[0]));
+				eq(cols.size, miners.length, "F6-b 矿机不同列（M4：同列会通道重叠）");
+				// 坐标系口径同 J-2：layout.hubConnection.entry 属**作图布局系**，对应 provenance.worldPlacement.anchor
+				// （= 平移前的 site.anchor）。`site.anchor` 是 emit 归一后的 pasteAt，不能拿来配 layout 的局部格。
+				const m = ringMatch(hub, p.provenance.worldPlacement.anchor, p.layout.hubConnection);
+				ok(m.ok, "F6-b 收集带末端落在真 hub 入口上", m.why);
+			}
+		}
+
+		// (3) 诚实：范围小到联合解不存在 ⇒ 必须结构化失败，不许"挑一台对齐就报成功"
+		{
+			const p = compilePlan({ goal: "CrCrCrCr", seed: 43391, hub: { x: -2, y: -2 }, range: 8 });
+			say(p.ok === false, "F6-c 范围过小（联合解不存在）→ ok:false（不报假绿）", p.ok === true ? p.site : undefined);
+			if (p.ok === false) {
+				eq(p.reason, "no-resource-in-range", "F6-c reason=no-resource-in-range");
+				say(/联合|每台|扫过/.test(p.hint || ""), "F6-c hint 说明「没有联合可行解」而非「没矿」", (p.hint || "").slice(0, 240));
+			}
+		}
+	}
 }
 
 /* ══════════════════════ 逐字节稳定（跑两次恒等，无随机）══════════════════════ */
@@ -489,6 +563,68 @@ console.log("\n── ①c planChannel 逐形态 ──");
 	eq([zc.ok, zc.cornerCount], [true, 2], "planChannel Z 型恰 2 拐角（M4 形态）");
 	ok(zc.lane !== null && Number.isInteger(zc.lane), "planChannel Z 给出可行车道行（lane≠null）");
 	ok(chainOk(zc.cells), "planChannel Z 链自洽");
+}
+
+/* ══════════════════════ ①g 层号与 DAG 边矛盾 → 校正（WORKER C 回归锁）══════════════════════ */
+// 复现（先红后绿）：P8 的 rebuildDag 给混色机的 depth 是 0，但它的两条颜料矿机是 1
+// （`buildPigmentCopy(sc, scK, depth + 1)` 把**上游**推到更深一层）。于是 `layerAndOrder` 把 mixer
+// 画到矿机**下面** —— 通道方向变成"上→下"，mixer→上色器的水平车道必须横穿矿机那一行；而
+// `desiredX` 让父列 == 子列，车道区间恰好覆盖矿机那一格 ⇒ 每一行候选都被堵死，P4 报 lane-column。
+// 根因是**层号与 DAG 边矛盾**（不是 rowGap/colGap 调参问题），所以 P3 必须先把层号按 DAG 校正。
+console.log("\n── ①g 层号校正：显式 depth 与 DAG 边矛盾（WORKER C）──");
+{
+	// 与 CpCpCpCp 的 P3 归一化 steps 同形（id/hash/depth 都照抄实际链路）
+	const inverted = [
+		{ id: "-b------", op: "mine", hash: "-b------", inputs: [], depth: 1, color: "blue", kind: "pigment" },
+		{ id: "-r------", op: "mine", hash: "-r------", inputs: [], depth: 1, color: "red", kind: "pigment" },
+		{ id: "-p------", op: "mix", hash: "-p------", inputs: ["-b------", "-r------"], depth: 0, color: "purple", kind: "pigment" },
+		{ id: "n0", op: "mine", hash: "CuCuCuCu", inputs: [], depth: 0 },
+		{ id: "n4", op: "paint", hash: "CpCpCpCp", inputs: ["CuCuCuCu", "-p------"], depth: 1 },
+	];
+	// 同一 DAG，深度按拓扑写对（= 校正后应有的结果）
+	const topological = inverted.map(s => ({ ...s }));
+	{
+		const by = new Map(topological.map(s => [s.hash, s]));
+		const memo = new Map();
+		const dep = s => {
+			if (memo.has(s.hash)) return memo.get(s.hash);
+			const ps = (s.inputs || []).map(h => by.get(h)).filter(Boolean);
+			const v = ps.length ? Math.max(...ps.map(dep)) + 1 : 0;
+			memo.set(s.hash, v); return v;
+		};
+		for (const s of topological) s.depth = dep(s);
+	}
+	const bad = place.place({ steps: inverted, ...noHub });
+	const good = place.place({ steps: topological, ...noHub });
+
+	ok(bad.ok !== false, `①g 层号自相矛盾的输入不再撞 lane-column（实得 ${bad.ok === false ? bad.reason : "ok"}）`);
+	if (bad.ok !== false) {
+		eq(bad.conflicts.map(c => c.kind), [], "①g 矛盾输入作图后零冲突（层号已按 DAG 校正）");
+		eq(bad.grid, good.grid, "①g 矛盾 depth 与拓扑 depth 产出的网格**逐字节相同**（校正彻底，不留残差）");
+		eq(bad.rows.map(r => r.level), good.rows.map(r => r.level), "①g 行号序列一致");
+		// 父必须画在子下方：miner 行的 y > mixer 行 > painter 行（行式布局的方向前提）
+		const yOf = id => bad.placements.find(p => p.nodeId === id).cell[1];
+		ok(yOf("n0") > yOf("-p------") && yOf("-p------") > yOf("n4"),
+			`①g 上游在下、下游在上（miner y=${yOf("n0")} > mixer y=${yOf("-p------")} > painter y=${yOf("n4")}）`);
+	}
+	// 校正凭据：levels 上带 depthNormalized，且列出被纠正的边（不静默改数）
+	const lv = place.layerAndOrder(inverted.map(s => ({ ...s, parents: [] })).map(s => s));
+	ok(Array.isArray(lv.depthNormalized ? lv.depthNormalized.contradictions : []),
+		"①g layerAndOrder 在 levels 上留下校正凭据（depthNormalized.contradictions）");
+	// 本来就拓扑的输入不走校正（四张金网格逐字节不变的前提）
+	const clean = place.place({ steps: topological, ...noHub });
+	// 审查 F5c：校正**一旦发生就是全图重排**，对下游不能是静默的 ⇒ 凭据必须进 report.meta。
+	// 反过来，没发生校正时该字段必须是 null（不凭空造"修过"的假象）。
+	ok(clean.meta && clean.meta.depthNormalized === null,
+		"①g 未校正时 report.meta.depthNormalized === null（不伪造校正痕迹）");
+	const invertedSteps = inverted;
+	const fixed = place.place({ steps: invertedSteps, ...noHub });
+	ok(fixed.meta && fixed.meta.depthNormalized && fixed.meta.depthNormalized.remapped === true,
+		"①g ★发生校正时 report.meta.depthNormalized 带凭据（全图重排对下游可审计）",
+		fixed.meta && fixed.meta.depthNormalized);
+	ok(fixed.meta && Array.isArray(fixed.meta.depthNormalized.contradictions) && fixed.meta.depthNormalized.contradictions.length > 0,
+		"①g 凭据含具体矛盾边（能指出是哪条父→子倒置）",
+		fixed.meta && fixed.meta.depthNormalized && fixed.meta.depthNormalized.contradictions);
 }
 
 /* ══════════════════════ ② 负例 ══════════════════════ */
@@ -651,6 +787,171 @@ if (g2.ok !== false) {
 {
 	const dirty = place.validateWorld({ entities: [{ uid: 1, type: "miner", x: 0, y: 0 }], seed: 1, hub: null });
 	eq(dirty.ok, false, "世界闸：既有非 hub 实体被拒（§6 R2 增量对接未实现）");
+}
+
+/* ══════════════════════ ①h 矿机资源名：payload 是 token，resource 才是世界资源名 ══════════════════════ */
+/* 背景（颜料目标 CrCrCrCr 的 `no-resource-in-range` 根因）：
+   solver 的颜料节点 hash 是 `color:red`；P8 的 rebuildDag/mapOps 必须把它编成**合法 shortKey**
+   （`channels[].payload` 要过 types.mjs 的 8 字符语法闸），于是 red 变成了 token `-r------`。
+   而世界地图上的红颜料资源**叫 `red`**（world.mjs 的 tileResource / findResource 直查不认 token）。
+   三条语义必须严格分开，混用任何两条都会静默出错：
+     channels[].payload   = 形状空间 token（P4/P5/P6 消费；颜料的是 `-r------`）
+     meta.minerResources  = 世界资源名（P8 siteStage 拿它对拍 seed 资源图；颜料的是 `red`）
+     meta.minerCells      = 世界资源**格**（换算到布局局部系的坐标）
+   本节的断言是**可证伪**的：把 place.mjs 的 `n.resource` 改回 `hash`（或不设），
+   "resource === 世界里真名叫 red" 与 "pickResourceCells 找到红矿" 立刻变红。 */
+console.log("\n── ①h 矿机资源名（payload=token / resource=世界名 / meta=映射）──");
+{
+	const { tileResource, findResource } = await imp(path.join(ROOT, "src", "ai", "world.mjs"));
+	const SEED = 43391;
+	const RANGE = 96;
+	const REGION = { x0: -RANGE, y0: -RANGE, x1: RANGE, y1: RANGE };
+
+	// P8 侧的最小颜料 DAG（与 mapOps 的实际出参同形：mine 节点带 kind:"pigment" + color）
+	// paint 的两个槽：shape←left、color←top（见 G3 的槽位核实）；hash 必须是合法 shortKey。
+	const PIG_STEPS = [
+		{ id: "n0", op: "mine", hash: "CuCuCuCu", depth: 0, args: {}, inputs: [], kind: "shape" },
+		{ id: "-r------", op: "mine", hash: "-r------", depth: 0, args: {}, inputs: [], kind: "pigment", color: "red" },
+		{ id: "n2", op: "paint", hash: "CrCrCrCr", depth: 1, args: { color: "red" }, inputs: ["CuCuCuCu", "-r------"], kind: "shape" },
+	];
+
+	// ① 资源名 = 世界名 `red`，**不是** token `-r------`
+	{
+		const dag = place.buildDag(PIG_STEPS, {});
+		ok(dag.ok !== false, `H1 颜料 DAG 归一成功（实得 ${dag.ok === false ? dag.reason : "ok"}）`);
+		if (dag.ok !== false) {
+			const pig = dag.nodes.find(n => n.id === "-r------");
+			eq(pig.resource, "red", "H1 ★颜料矿机的 resource === 世界资源名 `red`（不是 token）");
+			// 反向锁：拿 token 去世界地图查**必然查不到** —— 证明混用会静默失败
+			eq(findResource(SEED, "-r------", REGION).length, 0, "H1 ★世界地图里没有叫 `-r------` 的资源（token 不能当资源名）");
+			ok(findResource(SEED, "red", REGION).length > 0, "H1 世界地图里 `red` 存在（resource 用对了名）");
+			// 形状矿机的 resource 必须等于它的 hash（既有行为不变）
+			eq(dag.nodes.find(n => n.id === "n0").resource, "CuCuCuCu", "H1 形状矿机 resource === 它自己的 hash（既有语义不变）");
+			// 非矿机节点不设 resource（避免下游误读成"它也采资源"）
+			eq(dag.nodes.find(n => n.id === "n2").resource, undefined, "H1 非矿机（paint）不设 resource");
+		}
+	}
+
+	// ② 布局报告：payload 是 token、meta.minerResources 是世界名、minerCells 落在真矿上
+	{
+		const rep = place.place({ steps: PIG_STEPS, ...noHub, seed: SEED, site: { x: 0, y: 0 }, hub: { x: 0, y: 0 } });
+		ok(rep.ok !== false, `H2 颜料 DAG 带 seed 作图成功（实得 ${rep.ok === false ? rep.reason + "｜" + (rep.hint || "").slice(0, 160) : "ok"}）`);
+		if (rep.ok !== false) {
+			const pigCh = rep.channels.find(c => c.from.nodeId === "-r------");
+			ok(!!pigCh, "H2 颜料矿机有出料通道");
+			if (pigCh) eq(pigCh.payload, "-r------", "H2 ★channels[].payload 是形状空间 token `-r------`（过 8 字符语法闸，P4/P5/P6 消费）");
+			// meta 映射：nodeId → 世界资源名
+			eq(rep.meta.minerResources["-r------"], "red", "H2 ★meta.minerResources 给的是世界资源名 `red`（siteStage 的凭据）");
+			eq(rep.meta.minerResources["n0"], "CuCuCuCu", "H2 meta.minerResources 对形状矿机给形状名（既有语义不变）");
+			// minerCells 必须真的落在该类资源上（否则映射对了、位置还是错的）
+			const pigCell = rep.meta.minerCells && rep.meta.minerCells["-r------"];
+			ok(!!pigCell, "H2 meta.minerCells 记了颜料矿机的格");
+			if (pigCell) {
+				// minerCells 是**布局局部系**（origin = site ?? hub）；本场景 origin=[0,0] ⇒ 局部 ≡ 世界
+				eq(tileResource(SEED, pigCell[0], pigCell[1]), "red", "H2 ★颜料矿机压在真的 `red` 资源格上（minerCells 与资源图逐格一致）");
+			}
+			// 负向：payload 绝不能是世界资源名（那会过不了 shortKey 语法闸；且语义混淆）
+			ok(rep.channels.every(c => c.payload !== "red"), "H2 ★没有任何通道用 `red` 当 payload（资源名不是形状 token）");
+		}
+	}
+
+	// ③ pickResourceCells 对颜料矿机必须用世界名匹配（独立于 place() 的直接调用）
+	{
+		const dag = place.buildDag(PIG_STEPS, {});
+		if (dag.ok !== false) {
+			const rr = place.pickResourceCells(dag.nodes, { seed: SEED, site: { x: 0, y: 0 }, hub: { x: 0, y: 0 }, range: RANGE });
+			ok(rr.ok !== false, `H3 pickResourceCells 对颜料 DAG 成功（实得 ${rr.ok === false ? rr.reason : "ok"}）`);
+			if (rr.ok !== false) {
+				const cell = rr.table.get("-r------");
+				ok(!!cell, "H3 pickResourceCells 给颜料矿机选了格");
+				if (cell) eq(tileResource(SEED, cell[0], cell[1]), "red", "H3 ★选出的格真的是 `red` 资源（资源名匹配生效）");
+			}
+		}
+	}
+
+	// ④ 多消费者：同一颜色两份 token ⇒ 两台矿机、**都**拿 `red`、必须不同列
+	//    （mapOps 的契约：共享颜料 = 复制矿机而不是扇出；`-r------` 与 `--r-----` 是两副本）
+	{
+		const MULTI = [
+			{ id: "-g------", op: "mine", hash: "-g------", depth: 0, args: {}, inputs: [], kind: "pigment", color: "green" },
+			{ id: "--g-----", op: "mine", hash: "--g-----", depth: 0, args: {}, inputs: [], kind: "pigment", color: "green" },
+			{ id: "-c------", op: "mix", hash: "-c------", depth: 1, args: { colors: ["green", "green"] }, inputs: ["-g------", "--g-----"], kind: "pigment", color: "cyan" },
+		];
+		const dag = place.buildDag(MULTI, {});
+		ok(dag.ok !== false, `H4 双副本颜料 DAG 归一成功（实得 ${dag.ok === false ? dag.reason : "ok"}）`);
+		if (dag.ok !== false) {
+			const mines = dag.nodes.filter(n => n.op === "mine");
+			eq(mines.map(n => n.id), ["-g------", "--g-----"], "H4 两个副本各自一台矿机（不是扇出）");
+			eq(mines.map(n => n.resource), ["green", "green"], "H4 ★两份副本的 resource 都解析成同一个世界色名 `green`");
+			const rr = place.pickResourceCells(dag.nodes, { seed: SEED, site: { x: 0, y: 0 }, hub: { x: 0, y: 0 }, range: RANGE });
+			ok(rr.ok !== false, `H4 双副本选矿成功（实得 ${rr.ok === false ? rr.reason : "ok"}）`);
+			if (rr.ok !== false) {
+				const cells = mines.map(n => rr.table.get(n.id));
+				eq(cells.map(c => tileResource(SEED, c[0], c[1])), ["green", "green"], "H4 ★两台同色矿机都压在真 `green` 资源上");
+				// M4 前置条件：两矿必须不同列（同列会让两条竖直通道重叠）
+				ok(cells[0][0] !== cells[1][0], `H4 ★两台矿机不同列（col ${cells[0][0]} vs ${cells[1][0]}，M4 前置条件）`);
+			}
+		}
+		// mix 的**产物**颜色（cyan/purple）不能当可采资源：世界地图上没有这种矿
+		const mixNode = dag.ok !== false && dag.nodes.find(n => n.id === "-c------");
+		if (mixNode) {
+			eq(mixNode.resource, undefined, "H4 mix 产物不设 resource（混色不是可采矿）");
+		}
+	}
+
+	// ⑤ 真实配方（CgScScCg）的颜料 token 都映射回世界名，且都不是可采形状
+	//    该配方含 `-b------`(blue) / `-g------`(green 第 1 副本) / `-c------`(cyan，**mix 产物**) /
+	//    `---g----`(green 第 2 副本 —— 同一颜色被两个消费者共享 ⇒ rebuildDag 复制矿机，不是扇出)。
+	//    H5 的关键是：两个 green 副本**各自一台矿机、都叫 `green`**，而混色的 cyan **没有**矿机。
+	{
+		const { rebuildDag, mapOps, solveGoal, inspectGoal } = await imp(path.join(COMPILER, "compile.mjs"));
+		const g = inspectGoal("CgScScCg");
+		const sv = solveGoal(g.goal, { level: g.level });
+		ok(sv.ok !== false, `H5 CgScScCg 求解成功（实得 ${sv.ok === false ? sv.reason : "ok"}）`);
+		if (sv.ok !== false) {
+			const mp = mapOps(rebuildDag(sv.steps));
+			ok(mp.ok !== false, `H5 mapOps 成功（实得 ${mp.ok === false ? mp.reason : "ok"}）`);
+			if (mp.ok !== false) {
+				const dag = place.buildDag(mp.steps, {});
+				ok(dag.ok !== false, `H5 CgScScCg 的 DAG 归一成功（实得 ${dag.ok === false ? dag.reason : "ok"}）`);
+				if (dag.ok !== false) {
+					const mines = dag.nodes.filter(n => n.op === "mine");
+					const res = Object.fromEntries(mines.map(n => [n.id, n.resource]));
+					// 每个 token 的 hash 都必须**不是**世界资源名，而 resource 必须是
+					const tokens = mines.filter(n => /^[-]+[rgbypcuw][-]*$/.test(n.hash) && n.hash !== "--------");
+					ok(tokens.length >= 2, `H5 CgScScCg 至少两台颜料矿机（实得 ${tokens.length}）`);
+					for (const m of tokens) {
+						ok(m.resource !== m.hash, `H5 ★token ${m.hash} 的 resource(${m.resource}) ≠ token 本身（名字空间分离）`);
+						ok(findResource(SEED, m.hash, REGION).length === 0, `H5 ★token ${m.hash} 在世界地图上不可采（证明它只是形状 token）`);
+					}
+					// ★ 多消费者：green 被两个消费者共享 ⇒ rebuildDag 复制成 `-g------` + `---g----`
+					//   两台矿机。断言两份副本**都**解析成世界色名 `green`（这一条正是"扇出 vs 复制"的语义锁）。
+					const greenMines = mines.filter(m => m.resource === "green");
+					eq(greenMines.length, 2, "H5 ★green 有两台矿机（共享颜料 = 复制矿机，不是扇出）");
+					eq(new Set(greenMines.map(m => m.hash)).size, 2, "H5 ★两份 green 副本是**不同** token（P3 的唯一闸 + 各自独立矿位）");
+					ok(greenMines.every(m => m.resource === "green"), "H5 ★两份副本的 resource 都 === `green`（同一个世界资源名）");
+					// 两台同色矿机选位必须不同列（M4 前置条件），且都压在真 green 上
+					const rr = place.pickResourceCells(dag.nodes, { seed: SEED, site: { x: 0, y: 0 }, hub: { x: 0, y: 0 }, range: RANGE });
+					ok(rr.ok !== false, `H5 多色选矿成功（实得 ${rr.ok === false ? rr.reason : "ok"}）`);
+					if (rr.ok !== false) {
+						const gc = greenMines.map(m => rr.table.get(m.id));
+						ok(gc.every(c => c && tileResource(SEED, c[0], c[1]) === "green"),
+							`H5 ★两台 green 矿机都压在真 green 上（实得 ${JSON.stringify(gc)}）`);
+						ok(gc[0][0] !== gc[1][0], `H5 ★两台 green 矿机不同列（col ${gc[0][0]} vs ${gc[1][0]}）`);
+						// 全表不同列（不止 green）：M4 的通用前置条件
+						const cols = [...rr.table.values()].map(c => c[0]);
+						eq(new Set(cols).size, cols.length, "H5 ★全部矿机不同列（usedCols 生效）");
+					}
+					// 混色 token `-c------` 必须**不**是矿机（它是 mix 节点），且不设 resource
+					const cyan = dag.nodes.find(n => n.id === "-c------");
+					if (cyan) {
+						eq(cyan.op, "mix", "H5 `-c------` 是 mix 节点（cyan 由 blue+green 混出）");
+						eq(cyan.resource, undefined, "H5 ★混色节点不设 resource（purple/cyan 不是可采矿）");
+					}
+				}
+			}
+		}
+	}
 }
 
 /* ══════════════════════ ④ import lint ══════════════════════ */

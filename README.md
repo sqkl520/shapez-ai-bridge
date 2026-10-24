@@ -120,29 +120,27 @@ node src/ai/compiler/cli.mjs --goal "CuCuCuCu" --seed 43391 --hub -2,-2 --json
 
 It runs the whole chain with no game running: recipe solver → offline resource map (the world is a pure function of `map.seed`) → row layout → belt routing with explicit `(rotation, rotationVariant)` → ten-check validator → SZBP1 blueprint.
 
-**Verified end to end on a live game** — compile, paste, and the hub's goal counter actually advances:
+**`--hub` is required.** Without it the compiler can only invent a hub location, so the collection belt feeds empty ground. A compile whose hub is not pinned is reported as a failure (`class: "hub:unpinned"`), not a success. Pass the hub's real top-left corner as observed from the game (`obs`), not a guessed coordinate.
 
-```
-compile    ok · 12 entities · validator pass · 113-char blueprint
-dry_run    12/12 apply · 0 blocked · 0 destroy
-paste      applied 12 · 0 drift against intent
-await      hub_delivered_increased met at 1260 ticks · delivered 0→1
-```
+`ok: true` means the plan is internally consistent and reaches the real hub **when pasted onto empty ground**. It does not mean the target area is empty: the compiler is offline and does not read your save, so it cannot see what is already built there. Always `dry_run` the paste first — that is the check that sees the world.
 
-Every stage is offline-checkable before it touches the game, and nothing is pasted until a `dry_run` shows a clean landing.
+The end-to-end live run (compile → `dry_run` → paste → per-cell diff → hub delivery) was verified on an earlier plan shape of this same goal. The current code produces the 9-entity plan shown above; it passes the offline validator, round-trip, and the world-frame hub check (`hubPinned: true`), but **the paste-and-deliver step has not been re-run on this exact blueprint** — the game was in its menu at the time of the last attempt and `new_game` wedges after long uptime. Treat the live delivery as verified for the pipeline, not for this byte-for-byte blueprint.
 
 ### What it handles today
 
 | | |
 |---|---|
-| Goals that build | `CuCuCuCu`, `RuRuRuRu`, `SuSuSuSu`, `----CuCu`, `RuRu----`, `Cu----Cu`, `Cu------`, `--CuCu--`, `Ru----Ru`, `--SuSu--` |
-| Not yet | Painted goals (`CrCrCrCr`, `CgScScCg`, …) — the painter's output runs along +x while the hub needs +y, and the vertical lane collides with the hub body. Multilayer goals are out of scope by design (`scope.layers: 1`). |
+| Goals that build | `CuCuCuCu`, `RuRuRuRu`, `SuSuSuSu`, `----CuCu`, `RuRu----`, `Cu----Cu`, `Cu------`, `--CuCu--`, `Ru----Ru`, `--SuSu--` — and painted goals when the map allows it: `CrCrCrCr` (119 entities), `RbRb----` (262 entities, needs `--range 200`) |
+| Not yet | `CpCpCpCp` and `CgScScCg` — these need three or more miners on one row at fixed spacing, and no such resource pattern exists near the hub on seed 43391 (`no-resource-in-range`, honestly reported). Multilayer goals are out of scope by design (`scope.layers: 1`). |
+
+**Painted goals are map-permitting, not unconditional.** The row layout puts every miner on one row at a fixed pitch, so a painted goal needs the world to offer its ore in exactly that pattern. `CrCrCrCr` needs `Cu` with `red` four cells west; on seed 43391 that pattern occurs twice in a 512×512 window. Other seeds may have none — the compiler says `no-resource-in-range` rather than producing a line that starves. Treat painted goals as "works where the ore lines up", not "works anywhere".
 
 ### Safety rules the compiler enforces
 
 - **Refuses to emit a plan that would land on existing buildings.** Only belts and wires are replaceable in shapez; pasting over one silently destroys it, and pasting over a machine half-builds the line while still reporting success. `paste_blueprint` gained a `dry_run` that reports `would_apply` / `would_delete` / `blocked` before anything happens.
 - **Refuses corners that would flip.** A belt's turn is recomputed from its neighbours, so a corner must be a fixed point of that recomputation; when no original rotation makes it one, the plan fails instead of producing a line that breaks later.
-- **Never pastes into a dirty region.** v1 builds on fresh ground only.
+- **Never pastes into a dirty region.** v1 builds on fresh ground only. The builder refuses a world snapshot that contains non-hub entities, on both the pinned and unpinned paths — but it only sees a world if you hand it one, so `dry_run` remains the authoritative check.
+- **Refuses a plan whose hub is unknown.** Without `--hub` the collector belt would terminate at an invented coordinate. Such a compile returns `ok: false` with `class: "hub:unpinned"` instead of a blueprint.
 
 See [`research/ai-plan/BATCH.md`](research/ai-plan/BATCH.md) for the build ledger and [`research/ai-player/SYNTHESIS.md`](research/ai-player/SYNTHESIS.md) for the research behind it.
 

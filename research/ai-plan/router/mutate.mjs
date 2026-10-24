@@ -117,7 +117,7 @@ const MUTATIONS = [
     {
         id: "M-14", target: "lane.mjs",
         label: "channels[].lane 保留陈旧值（⑬ 互逆被破坏）",
-        search: `        return ch.lane === null ? ch : { ...ch, lane: null };`,
+        search: `        return ch.lane === null && ch.laneAxis === null ? ch : { ...ch, lane: null, laneAxis: null };`,
         replace: `        return ch;`,
     },
     {
@@ -151,6 +151,26 @@ const MUTATIONS = [
         label: "越界声称语义：P4 里塞进 P5 的语义求解器 computeBelt（应被语义边界锁拒）",
         search: `export const ROUTE_SCHEMA_VERSION = 1;`,
         replace: `export const ROUTE_SCHEMA_VERSION = 1; // computeBelt reference (semantic overreach)`,
+    },
+    {
+        id: "M-20", target: "lane.mjs",
+        label: "vlane 写回丢掉轴：列号写进 {row} 且 laneAxis 记成 row（跨轴台账自相矛盾）",
+        // 承重靶心 = ⑧ 的「竖直车道进 lanes[] 用 {column} / laneAxis=\"col\"」两条断言。
+        // 摘掉它，收集带所在列号会被当成一条水平行 —— 下游 P5 的 V6 会把它与真同号行车道混为一谈。
+        search: `        if (c !== undefined) return { ...ch, lane: c, laneAxis: "col" };`,
+        replace: `        if (c !== undefined) return { ...ch, lane: c, laneAxis: "row" };`,
+    },
+    {
+        id: "M-21", target: "lane.mjs",
+        label: "vlane 的显式关闭开关失效（allowVerticalLane:false 仍照铺 = 关闭语义被吞）",
+        search: `    if (vgeoms.length && opts.allowVerticalLane === false) {`,
+        replace: `    if (false && vgeoms.length && opts.allowVerticalLane === false) {`,
+    },
+    {
+        id: "M-22", target: "lane.mjs",
+        label: "vlane 的列号不写进 lanes[] 台账（channels 有 lane/laneAxis、lanes[] 里查无此道）",
+        search: `        ...byIndex([...colToIds.entries()]).map(([column, ids]) => ({ row: null, column, channelIds: [...ids].sort() })),`,
+        replace: `        // MUTANT: column ledger dropped`,
     },
 ];
 

@@ -40,7 +40,7 @@ import { Grid, cellKey } from "./grid.mjs";
 import { assertLayoutReport, SCOPE_V1, ORDER, OPP, DIRV } from "./types.mjs";
 import { makeFailure, ContractViolation } from "./errors.mjs";
 import { ALL_TEMPLATES, hubEntriesWorld } from "../op-templates.mjs";
-import { findResource, regionAround } from "../world.mjs";
+import { findResource, regionAround, tileResource } from "../world.mjs";
 
 export const PLACE_VERSION = "0.5.0";
 
@@ -120,6 +120,8 @@ const add = (c, d) => [c[0] + DIRV[d][0], c[1] + DIRV[d][1]];
 const addN = (c, d, n) => [c[0] + DIRV[d][0] * n, c[1] + DIRV[d][1] * n];
 const sameCell = (a, b) => a[0] === b[0] && a[1] === b[1];
 const isVert = d => DIRV[d][0] === 0;
+/** 车道台账条目的 (轴, 下标) 键（LANE_SCHEMA_VERSION=2）：`row:3` / `col:3` 是两条不同车道。 */
+const laneKeyOfLedger = l => `${l.column === null || l.column === undefined ? "row" : "col"}:${l.column === null || l.column === undefined ? l.row : l.column}`;
 const armKey = (a, b) => [a, b].sort().join("+");
 /** 一格的"臂对"是否为拐角（入口面的反面 !== 出口面 ⇒ 走向改变）*/
 const isCorner = (inDir, outDir) => OPP[inDir] !== outDir;
@@ -242,11 +244,33 @@ export function buildDag(steps, opts = {}) {
 			depth: Number.isInteger(s.depth) && s.depth >= 0 ? s.depth : null,
 			parents: [], consumers: 0, usedOut: new Set(), nextOut: 0, x: 0, y: 0,
 		};
+		// ★ 矿机的**世界资源名**（resource）在这里定一次，是全包唯一真值 ★
+		//   形状矿机：资源名 == hash（世界里就叫 `CuCuCuCu`/`RuRuRuRu`/…）
+		//   颜料矿机：资源名 == step.color（世界里叫 `red`/`blue`/…）
+		//     ⚠️ 它的 hash 是 P8 编进**形状空间**的 token（`-r------`），**不是**世界资源名；
+		//        拿 token 去 findResource 永远查不到 —— 那正是颜料目标 `no-resource-in-range` 的根因。
+		//   判据只用「op === "mine" 且带 color」：mix 节点也带 color，但那是**混出来**的颜色
+		//     （purple 由 red+blue 合成），世界里没有这种矿 ⇒ 绝不能被当成可采资源。
+		//   形状矿机显式写 resource = hash（而非留 undefined）：本字段语义统一为「世界资源名」，
+		//     下游（pickResourceCells / jointResourceShift / meta.minerResources）读它时不必再猜
+		//     `|| n.hash`。对既有形状目标**零可观察差异**（`resource ?? hash` 恒等于 hash）。
+		//   非矿机节点**不设** resource（语义上它们不采任何资源；避免让下游误读）。
+		if (op === "mine") n.resource = typeof s.color === "string" && s.color ? s.color : hash;
 		byHash.set(hash, n);
 		nodes.push(n);
 	});
 
-	// 资源输入 → 合成矿机（一个资源 shortKey 一台矿机；M4 前置条件"两矿不同列"由 pickResourceCells 保证）
+	// 资源输入（未在 steps 里出现的 shortKey）→ 合成矿机。
+	// 只有**可采矿**的 hash 才映射回资源名：颜料 token 靠 steps 里那条 `op:"mine" + color` 的
+	// 上一循环登记；这里处理的是「调用方只给了 token、没给 mine 节点」的兼容路径。
+	// 用**同一条判据**（op === "mine" 且带 color）建立映射，mix 的混色 token 不会混进来。
+	const pigmentOf = new Map();
+	for (const s of steps) {
+		if (s && s.op === "mine" && typeof s.hash === "string" && typeof s.color === "string" && s.color) {
+			pigmentOf.set(s.hash, s.color);
+		}
+	}
+	const resourceNameOf = h => pigmentOf.get(h) || h;
 	const miners = new Map();
 	for (const n of nodes) {
 		n.parents = n.inputs.map(ih => {
@@ -257,7 +281,7 @@ export function buildDag(steps, opts = {}) {
 			if (!mn) {
 				mn = {
 					id: `m${miners.size}`, op: "mine", template: ALL_TEMPLATES.mine, args: {},
-					inputs: [], hash: ih, resource: ih, depth: 0, parents: [], consumers: 0,
+					inputs: [], hash: ih, resource: resourceNameOf(ih), depth: 0, parents: [], consumers: 0,
 					usedOut: new Set(), nextOut: 0, x: 0, y: 0,
 				};
 				miners.set(ih, mn); byHash.set(ih, mn); nodes.push(mn);
@@ -342,12 +366,79 @@ export function buildDag(steps, opts = {}) {
 /* ═══════════════ 2) 拓扑分层 + 层内 barycenter（父子保序）═══════════════ */
 
 /**
+ * 把每个节点的 `depth` 校正成**拓扑层号** = max(父层)+1（无父 = 0）。
+ *
+ * ★ 为什么必须校正（P3 缺陷，先红后绿见 WORKER-C-REPORT）★
+ * 行式布局的**唯一方向前提**是：一条通道从上游（低层，画在下方）走向下游（高层，画在上方）。
+ * 一旦某节点的 depth **小于它自己的父**，该节点就被画到父的**下方** —— 通道变成"上→下"，
+ * 而 `pickLane`/P4 的 hlane 都只解"竖直腿朝向可达"的 Z 型；下→上的腿在目标列上必须穿过
+ * 整条父层的机器行。M4 的堆叠汇合之所以能布，是因为父在本层下方、目标在上方。
+ *
+ * 症状（实测 CpCpCpCp / CgScScCg）：mixer 的 depth 比它的两条颜料矿机小 1 ⇒ mixer 画在矿机
+ * **下方**，mixer→painter 的水平车道必须横穿矿机所在的那一行，且列区间恰好覆盖矿机那一格
+ * （父列 = 子列，因为 `desiredX` 优先"父列直入"）⇒ 每一行候选都被那台矿机堵死，
+ * P4 报 lane-column，整单 abort。这不是排版偏好问题，是**层号与 DAG 边矛盾**。
+ *
+ * 校正口径：只在**检测到矛盾**时整表重算；重算 = 每层取**最小**拓扑层号（无父=0、其余=max(父)+1）。
+ * 显式 depth 只作为**输入提示**，不再作为排版真值 —— 层号是几何约束（"画在第几行"），
+ * 不是配方元数据，不能让上游用错的数把它带歪。
+ *
+ * ⚠️ **重算不是"逐值相同"，它会压缩合法的空隙**（审查 F5a 实测）：若某节点显式 depth=5
+ * 而它只有 depth=1 的父（5 是合法的**非最小**层号，用于额外留白），一旦别处出现一处矛盾触发
+ * 整表重算，该节点会被压回 2。也就是说：**一处矛盾 ⇒ 全图按最小层号重排**，不是"只动坏边"。
+ * 这对当前管线无影响（`assignRows` 只用层号分桶，不依赖绝对间隔；`place.mjs` 也不消费
+ * 上层给的 spacing），但任何"用 depth 控制留白"的调用方必须知道这条 —— 不要依赖显式 depth。
+ *
+ * ⚠️ **自环**：`buildDag` 允许测试用「hash 指向自己」的节点（G7 的脏角度样例）。自环本身不算矛盾
+ * （不参与矛盾扫描）；但**一旦别处有矛盾触发重算**，自环节点也会被重新编号（按"无有效父"⇒ 0），
+ * 行号随之改变。无矛盾时它保持原样。头注早期版本声称"不改变自环节点的排版行为"，那只在无矛盾时成立。
+ *
+ * ⚠️ **`null`/`NaN` depth**：`buildDag` 在调用方给了非整数 depth 时会填 `null`。矛盾扫描
+ * `!(p.depth < n.depth)` 对 `null<null` 为真 ⇒ 会被当成矛盾并触发重算，重算结果恰好正确。
+ * 这是**偶然正确**，不是显式处理（审查 F5b 标 SUSPECTED）；不要在别处依赖它。
+ *
+ * ⚠️ **本函数就地修改 `nodes[].depth`**（导出的 `layerAndOrder` 契约是"传入你的数组"）：
+ * `place()` 传的是 `buildDag` 新建的数组，所以不会污染调用方入参；但直接调用 `layerAndOrder`
+ * 的代码会看到自己的对象被改写。
+ * @returns {{nodes:object[], remapped:boolean, bad:string[]}}
+ */
+export function normalizeDepths(nodes) {
+	const bad = [];
+	for (const n of nodes) {
+		for (const p of n.parents) {
+			if (!p || p === n) continue;               // 自环：不是"父层 ≥ 子层"意义上的层号矛盾
+			// 父子同层 / 父在上（depth 更小）都算矛盾；矿机 depth=0 是恒真下界
+			if (!(p.depth < n.depth)) bad.push(`${p.id}@${p.depth}→${n.id}@${n.depth}`);
+		}
+	}
+	if (!bad.length) return { nodes, remapped: false, bad };
+	const memo = new Map();
+	const visiting = new Set();
+	const depthOf = n => {
+		if (memo.has(n.id)) return memo.get(n.id);
+		if (visiting.has(n.id)) throw new ContractViolation("layerAndOrder.depth", "DAG 必须无环（校正层号时发现回边）", n.id);
+		visiting.add(n.id);
+		const ps = n.parents.filter(p => p && p !== n);   // 自环不参与层号（见头注）
+		const d = ps.length ? Math.max(...ps.map(depthOf)) + 1 : 0;
+		visiting.delete(n.id);
+		memo.set(n.id, d);
+		return d;
+	};
+	for (const n of nodes) n.depth = depthOf(n);
+	return { nodes, remapped: true, bad };
+}
+
+/**
  * routing-prior-art.md §1.3/§8 主干第一步：分层 → 层内 barycenter **且父子保序**。
  * 父子保序是"无纵向约束 ⇒ 无交叉"的充分条件（§1 的 27405 例穷举实测），故 barycenter 之后
  * 强制用"原序"做次键、id 做三键（三重 tie-break ⇒ 完全确定）。
  * level 0 = 矿机层，画在**最下**（y 最大）。
+ *
+ * 入口先过 `normalizeDepths`：显式 depth 与 DAG 边矛盾（父层 ≥ 子层）时以 DAG 为准重算 ——
+ * 见该函数头注的几何理由。矛盾输入不会静默通过：`layerOrder.normalized` 带凭据给 `place()` 上报。
  */
 export function layerAndOrder(nodes) {
+	const norm = normalizeDepths(nodes);
 	const maxDepth = Math.max(...nodes.map(n => n.depth));
 	const levels = Array.from({ length: maxDepth + 1 }, () => []);
 	for (const n of nodes) levels[n.depth].push(n);
@@ -374,6 +465,8 @@ export function layerAndOrder(nodes) {
 			list.forEach((n, i) => rank.set(n.id, i));
 		}
 	}
+	// 层号校正凭据（非数组属性 ⇒ JSON 序列化时自动丢弃，不污染 rows/levels 的既有形状）
+	levels.depthNormalized = norm.remapped ? { remapped: true, contradictions: norm.bad } : null;
 	return levels;
 }
 
@@ -629,6 +722,10 @@ export function placeMachines(grid, nodes) {
 /**
  * 资源格选择（离线 world.mjs）。给 seed 才做；**不同列优先**
  * （M4-SUCCESS 前置条件：两矿同列 ⇒ 两条竖直通道重叠）。找不到 → no-resource-in-range。
+ *
+ * ⚠️ 本函数给的是**每台矿机各自最近的资源格**（相互独立、不保证能同时满足），
+ * 只用于 `meta.minerCells` 的**诊断**。真正决定机器簇平移量的是 `jointResourceShift()`
+ * （它考虑 DAG 硬定的相对偏移，见其头注）。
  * @returns {{ok:true,table:Map|null}|{ok:false,reason,failingNode,hint}}
  */
 export function pickResourceCells(nodes, input) {
@@ -667,6 +764,113 @@ export function pickResourceCells(nodes, input) {
 		table.set(n.id, [hit[0], hit[1]]);
 	}
 	return { ok: true, table };
+}
+
+/* ═══════════════ 5b) 多矿机**联合**对齐（WORKER F：假绿的根因）═══════════════ */
+
+/**
+ * 把整簇矿机**同时**压到真资源上：求平移量 `t` 使**每台**矿机都满足
+ * `tileResource(seed, miner + t) === miner.resource`。
+ *
+ * ★ 为什么不能只对齐第一台（旧的假绿根因）★
+ * 行式布局把矿机的相对位置**硬定死**了（同级按 barycenter + 原序分列、COL_GAP=3），
+ * 例如 `CrCrCrCr` 的颜料矿机恒在 Cu 矿机西侧 4 格、同一行。只按第一台矿机求平移量，
+ * 第二台落在哪完全由这个固定偏移决定 —— 那里可能根本没有红矿。旧代码 `break` 掉循环后
+ * 直接平移，于是"成功"编译出一座喂空地的工厂：`siteStage` 只在 `--hub` 给出时才逐格对拍
+ * 资源图，未给 hub 时这道闸整段跳过（`skipped:"no-world-hub"`），假绿就这么来的。
+ *
+ * 算法（确定、无随机、无「放宽到能过」）：
+ *   ① 枚举**第一台矿机**在区域内的同类资源格 `c`（排序：离 center 近 → 字典序）；
+ *   ② 平移量由 `c` 唯一确定（`t = c − miner0`）—— 不存在"第二自由度"；
+ *   ③ **逐台**验证其余矿机：任一不符号 ⇒ 该候选作废（不是"放宽"，是硬约束）；
+ *   ④ 返回第一个全通过的平移量；一个都没有 ⇒ 结构化失败，hint 带真实扫过的候选数
+ *      与每台矿机缺什么（绝不静默跳过某台矿机的资源检查）。
+ *
+ * 复杂度 O(|cand| × |miners|)：区域 96 时 |cand| 约 130，矿机 ≤ 4 ⇒ 可忽略。
+ * 同输入逐字节同输出（三重 tie-break，无 locale 依赖）。
+ *
+ * @param {{id:string,resource?:string,hash?:string,x:number,y:number}[]} miners 已定好相对位置的矿机
+ * @param {{seed:number,region:object,center:number[],hubWorld?:number[]|null}} ctx
+ * @returns {{ok:true,shift:[number,number],cells:Map<string,number[]>}
+ *          |{ok:false,reason:string,failingNode:object,hint:string}}
+ */
+export function jointResourceShift(miners, ctx) {
+	const { seed, region, center } = ctx;
+	if (!miners.length) return { ok: true, shift: [0, 0], cells: new Map() };
+	const hubW = Array.isArray(ctx.hubWorld) && ctx.hubWorld.length === 2 ? ctx.hubWorld : null;
+	// 矿机不能压在 hub 的 4×4 solid 上（物理上放不下）。与 pickResourceCells 同一条判据。
+	const onHub = c => hubW && c[0] >= hubW[0] && c[0] < hubW[0] + HUB_SIZE && c[1] >= hubW[1] && c[1] < hubW[1] + HUB_SIZE;
+
+	const resOf = m => m.resource || m.hash;
+	const anchorMiner = miners[0];
+	const want0 = resOf(anchorMiner);
+	const distTo = c => Math.hypot(c[0] - center[0], c[1] - center[1]);
+	// ① 第一台矿机的候选资源格（去 hub 占地；排序确定）
+	const cands = findResource(seed, s => s === want0, region)
+		.filter(c => !onHub(c))
+		.sort((a, b) => (distTo(a) - distTo(b)) || cmpStr(a.join(","), b.join(",")));
+
+	if (!cands.length) {
+		return makeFailure("no-resource-in-range", { nodeId: anchorMiner.id, cell: null, check: "V1-occupancy" },
+			`seed=${seed}、以 ${center.join(",")} 为心半径 ${region.x1 - center[0]} 内没有资源 ${want0}` +
+			(hubW ? `（hub ${hubW.join(",")} 占住的格已排除）` : "") + `（矿机 ${anchorMiner.id} 要它）`);
+	}
+
+	// ②+③ 每个候选平移量都要**全部**矿机同时命中；记录最接近的失败作凭据
+	let best = null;                                  // 命中矿机数最多的失败候选（诊断用）
+	let tried = 0;
+	for (const c of cands) {
+		tried++;
+		const t = [c[0] - anchorMiner.x, c[1] - anchorMiner.y];
+		const missing = [];
+		for (const m of miners) {
+			const cx = m.x + t[0], cy = m.y + t[1];
+			const got = tileResource(seed, cx, cy);
+			if (got !== resOf(m)) missing.push({ nodeId: m.id, cell: [cx, cy], want: resOf(m), got });
+			// 第二台起还要排除「压在 hub 上」—— 第一台已在上面的 filter 里排除了
+			if (m !== anchorMiner && onHub([cx, cy])) missing.push({ nodeId: m.id, cell: [cx, cy], want: resOf(m), got: "hub-occupies" });
+		}
+		if (missing.length) {
+			if (!best || missing.length < best.missing.length) best = { t, missing };
+			continue;                                  // 硬约束：不放宽、不跳过
+		}
+		const cells = new Map();
+		for (const m of miners) cells.set(m.id, [m.x + t[0], m.y + t[1]]);
+		/* ★ 两台矿机落在**同一格**不是解：那意味着 paste 会在一格上放两台机器（第三台会「覆盖」第二台，
+		   且两者共用同一份资源）。这里必须显式拒 —— 返回一张自相矛盾的表比返回失败更坏。
+		   （当前 assignRows 不会给两台矿机同偏移，所以此路在 place() 里够不着；但本函数是导出的，
+		     布局一旦变化就会静默产出非法计划 —— 红队 finding F7 / 审查 F7。） */
+		const seen = new Set();
+		const dup = [];
+		for (const [id, c] of cells) {
+			const k = `${c[0]},${c[1]}`;
+			if (seen.has(k)) dup.push({ nodeId: id, cell: c });
+			else seen.add(k);
+		}
+		if (dup.length) {
+			if (!best || dup.length < best.missing.length) {
+				best = { t, missing: dup.map(d => ({ nodeId: d.nodeId, cell: d.cell, want: resOf(miners.find(m => m.id === d.nodeId)), got: "duplicate-cell" })) };
+			}
+			continue;
+		}
+		return { ok: true, shift: t, cells };
+	}
+
+	// ④ 真的没有联合可行解 —— 诚实失败，带上扫过的参数空间
+	const perMiner = miners.map(m => {
+		const its = findResource(seed, s => s === resOf(m), region).filter(c => !onHub(c)).length;
+		const need = resOf(m);
+		return `${m.id}(${need}) 区域内有 ${its} 格`;
+	});
+	return makeFailure("no-resource-in-range",
+		{ nodeId: best && best.missing[0] ? best.missing[0].nodeId : anchorMiner.id,
+			cell: best && best.missing[0] ? best.missing[0].cell : null, check: "V1-occupancy" },
+		`${miners.length} 台矿机在 seed=${seed}、以 ${center.join(",")} 为心半径 ${region.x1 - center[0]} 内`
+		+ `**没有联合可行**的落点：布局把它们的相对位置硬定死（${miners.map(m => `${m.id}@rel(${m.x - anchorMiner.x},${m.y - anchorMiner.y})`).join(" ")}），`
+		+ `逐台都各自有矿（${perMiner.join("；")}），但这些相对偏移无法同时命中。`
+		+ `扫过 ${tried} 个候选（= ${want0} 的每一格）× ${miners.length} 台矿机的逐格对拍。`
+		+ (best ? `最接近的候选 shift=(${best.t.join(",")}) 仍缺：${best.missing.map(x => `${x.nodeId}@${x.cell} 要 ${x.want} 实得 ${x.got}`).join("；")}。` : "")
+		+ `｜这是**几何硬约束**，不是搜索范围问题：扩大 --range 只会加入更多同样不匹配的候选。`);
 }
 
 /* ═══════════════ 6) 未用输出槽 → trash（陷阱表：忘了接就堵死）═══════════════ */
@@ -759,7 +963,10 @@ export function place(input = {}) {
 	const nodes = dag.nodes;
 	const terminals = dag.terminals;
 
-	/* 分层 → 层内 barycenter（父子保序）→ 行式坐标 */
+	/* 分层 → 层内 barycenter（父子保序）→ 行式坐标
+	   ⚠️ layerAndOrder 会先做**层号校正**（normalizeDepths）：显式 depth 与 DAG 边矛盾时以 DAG 为准。
+	   这是**排版几何**的校正（层号 = 画在第几行），不是配方数据改写 —— nodes[].depth 只服务本文件的行分配；
+	   校正凭据挂在返回的 levels 数组上（非数组属性），不进 LayoutReport（§2.3 无此字段，不擅自扩契约）。 */
 	const levels = layerAndOrder(nodes);
 	const { rows } = assignRows(levels, { rowGap: input.rowGap, colGap: input.colGap });
 
@@ -776,26 +983,28 @@ export function place(input = {}) {
 		: (input.world && input.world.seed !== undefined ? input.world.seed : null);
 
 	if (hubLocal && seedIn !== null) {
-		// 资源格按**局部系**算：place() 的输出坐标是 site 相对局部系，origin 已定
-		const rr = pickResourceCells(nodes, { ...input, seed: seedIn });
-		if (rr.ok === false) return rr;
-		resourceTable = rr.table;
-		if (resourceTable && resourceTable.size) {
-			// 用第一台矿机的"资源局部格 − 当前局部格"求平移量 ⇒ 该矿机精确压在资源上
-			let dx = 0, dy = 0;
-			for (const n of nodes) {
-				if (n.op !== "mine") continue;
-				const want = resourceTable.get(n.id);
-				if (!want) continue;
-				dx = want[0] - origin.x - n.x;
-				dy = want[1] - origin.y - n.y;
-				break;
-			}
-			if (dx !== 0 || dy !== 0) {
-				for (const n of nodes) { n.x += dx; n.y += dy; n.row += dy; }
-				for (const r of rows) r.y += dy;
-			}
+		/* ★ 多矿机**联合**对齐（WORKER F）：必须让**每一台**矿机都压到它自己的资源上。
+		   旧代码只对齐第一台矿机（循环里 `break`），其余矿机落在「DAG 硬定的相对偏移」所指的格上
+		   —— 那里可能没有对应资源。`CrCrCrCr` 的颜料矿机恒在 Cu 矿机西侧 4 格同行，只对齐 Cu
+		   就把红矿机丢在没有红矿的地上；而 siteStage 在**未给 hub** 时整段跳过资源对拍，
+		   于是编译"成功"却喂空地（假绿）。详见 jointResourceShift 头注。 */
+		const minerNodes = nodes.filter(n => n.op === "mine");
+		const centerW = [origin.x, origin.y];                     // 世界系搜索中心 = 作图原点（给了 hub 时就是真 hub）
+		const region = input.region || regionAround(centerW, input.range === undefined ? 48 : input.range);
+		// 矿机按**世界系**喂进去：这样返回的 shift 是纯世界系平移量，加到局部坐标上同样成立
+		// （世界 = origin + 局部，平移量两边相同）—— 避免"世界格 − 局部格"的混框。
+		const js = jointResourceShift(
+			minerNodes.map(n => ({ id: n.id, resource: n.resource, hash: n.hash, x: n.x + origin.x, y: n.y + origin.y })),
+			{ seed: seedIn, region, center: centerW, hubWorld: hubLocal ? [origin.x, origin.y] : null });
+		if (js.ok === false) return js;
+		const [dx, dy] = js.shift;
+		if (dx !== 0 || dy !== 0) {
+			for (const n of nodes) { n.x += dx; n.y += dy; n.row += dy; }
+			for (const r of rows) r.y += dy;
 		}
+		// meta.minerCells 记**局部系**（世界 = origin + 局部），与既有口径一致
+		resourceTable = new Map();
+		for (const [id, c] of js.cells) resourceTable.set(id, [c[0] - origin.x, c[1] - origin.y]);
 	} else if (hubLocal) {
 		let minX = Infinity, minY = Infinity;
 		for (const n of nodes) { if (n.x < minX) minX = n.x; if (n.y < minY) minY = n.y; }
@@ -859,7 +1068,12 @@ export function place(input = {}) {
 		}
 		report.lane = r.lane;
 		if (r.lane !== null) {
-			const key = isVert(outSlot.dir) ? `row:${r.lane}` : `col:${r.lane}`;
+			const vert = isVert(outSlot.dir);
+			// LANE_SCHEMA_VERSION=2：车道轴随行写出（row = 水平车道行 / col = 竖直车道列）。
+			// 不写它 ⇒ 下游只能按「缺省 = row」猜，P3 若给水平出向的通道选了列号就会被当成行号
+			// （P4 会重算，但这份报告在 P4 之前已经自相矛盾 —— 见 types.mjs 的 LayoutChannel 注释）。
+			report.laneAxis = vert ? "row" : "col";
+			const key = vert ? `row:${r.lane}` : `col:${r.lane}`;
 			// 不同分支必须不同行（陷阱表 #5 / plan §1.3）：同一 lane 被第二条通道复用 → 上报 lane-column，
 			// 但仍保留几何（车道 left-edge 的最终解法归 P4，本包只标记 + 给出凭据）。
 			if (lanePool.has(key)) {
@@ -871,9 +1085,12 @@ export function place(input = {}) {
 			} else {
 				lanePool.add(key);
 			}
-			const ex = lanes.find(l => l.row === r.lane);
+			// 台账按 (轴, 下标) 记账：row:3 与 col:3 是两条不同车道，不得并进同一条目。
+			// 条目形状按 LANE_SCHEMA_VERSION=2 写全（{row, column} 恰一个非 null），
+			// 不留"缺字段"的写法 —— P1 的 assertLayoutReport 两种都收，但产出侧不应依赖缺省。
+			const ex = lanes.find(l => laneKeyOfLedger(l) === key);
 			if (ex) { if (!ex.channelIds.includes(id)) ex.channelIds.push(id); }
-			else lanes.push({ row: r.lane, channelIds: [id] });
+			else lanes.push(vert ? { row: r.lane, column: null, channelIds: [id] } : { row: null, column: r.lane, channelIds: [id] });
 		}
 		for (const b of r.cells) { occupied.add(cellKey(b.cell[0], b.cell[1])); beltCells.push({ ...b, id }); }
 		channels.push(report);
@@ -890,7 +1107,13 @@ export function place(input = {}) {
 			if (!outSlot) return;
 			p.nextOut++;
 			p.usedOut.add(outSlot.role);
-			route(p, outSlot, n, ins[idx] || ins[0], idx, p.resource || p.hash || "");
+			// payload 必须过 shortKey 语法闸（types.mjs 的 checkShortKeyGrammar）⇒ 一律用 hash，**不用** resource：
+			// 矿机的 resource 是**世界资源名**（颜料是 `red`/`blue`/…，形状是 `CuCuCuCu`）。
+			// 颜料资源名 `red` 只有 3 字符、会被语法闸拒（shortKey 每层必须 8 字符）；
+			// hash 才是那个形状空间 token（`-r------`）。两条语义**绝不能混用**：
+			//   channels[].payload = 形状空间 token（P4/P5/P6 按形状处理）
+			//   meta.minerResources = 世界资源名（siteStage 按资源图对拍）
+			route(p, outSlot, n, ins[idx] || ins[0], idx, p.hash || "");
 		});
 	}
 
@@ -1000,7 +1223,8 @@ export function place(input = {}) {
 	}
 
 	const rep = buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubConnection,
-		occupancy: occupancyLocal, hubLocal, input, waste, resourceTable });
+		occupancy: occupancyLocal, hubLocal, input, waste, resourceTable,
+		depthNormalized: levels.depthNormalized || null });
 	assertLayoutReport(rep, "layout");
 	return rep;
 }
@@ -1019,7 +1243,7 @@ export function place(input = {}) {
  * cornerCount 与渲染**同源**（同一批 beltCells 的臂对判定），并交叉断言
  * "grid 里 7/9/L/J 的个数 === cornerCount"（不一致 = 本包 bug，抛契约错，不许静默）。
  */
-function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubConnection, occupancy, input, waste, resourceTable, hubLocal }) {
+function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubConnection, occupancy, input, waste, resourceTable, hubLocal, depthNormalized = null }) {
 	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 	const touch = c => {
 		if (!c) return;
@@ -1080,7 +1304,19 @@ function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubCo
 		trashCount: nodes.filter(n => n.op === "trash").length,
 		beltTiles: beltCells.length,
 		minerCells: resourceTable ? Object.fromEntries([...resourceTable].map(([k, v]) => [k, [v[0], v[1]]])) : null,
+		// 矿机 → **世界资源名**的显式映射（P8 的 siteStage 拿它对拍 seed 的资源图）。
+		// 为什么必须显式给、不能从 channels[].payload 反推：颜料矿机的 payload 是形状空间 token
+		// （`-r------`），而世界地图上没有叫 `-r------` 的资源，只有 `red`。两者**语义不同**：
+		//   payload        = 形状空间 token，P4/P5/P6 按形状消费（必须过 8 字符语法）
+		//   minerResources = 世界资源名，P8 siteStage 按资源图逐格对拍（`red` 不是 shortKey）
+		// 每台矿机都在 buildDag 里定好了 resource（= 形状 hash 或颜料原色名），这里只做投影。
+		// meta 是 §2.3 的**开放扩展袋**：assertLayoutReport 只 requireKeys 顶层十项，不校验 meta
+		//（types.mjs 的 assertLayoutReport 不读 meta）⇒ 加键不破坏任何契约，也不改变既有字段。
+		minerResources: Object.fromEntries(nodes.filter(n => n.op === "mine").map(n => [n.id, n.resource])),
 		cornerCells: cornerCells.map(b => [b.cell[0], b.cell[1]]),
+		// 层号校正凭据（审查 F5c）：不设它，一次矛盾触发的**全图重排**对下游是完全静默的。
+		// null = 输入层号与 DAG 边一致（未重排）；否则带出矛盾的边，供 P5/P7 审计。
+		depthNormalized,
 	};
 	return {
 		grid, rows, placements, channels, lanes, hubConnection,
