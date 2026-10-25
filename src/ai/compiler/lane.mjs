@@ -450,7 +450,16 @@ export function assignLanes(report, opts = {}) {
             if (!byCh.has(b.channelId)) byCh.set(b.channelId, []);
             byCh.get(b.channelId).push(b);
         }
-        for (const [cid, list] of byCh) if (list.some(b => b.tunnel)) preRouted.add(cid);
+        /* ★ 隧道 + 桥接（bridge）两类通道整条采纳 P3 的路径 ★
+           隧道的理由见下。`bridge` 是 P3 在有既有工厂时用的三拐角绕行：
+           它的可行行**在 band 之外**（Z 形态解不出），P4 重算只会退回 band 内的老路，
+           于是又压到旧建筑上 —— 实测 L4：P3 走 y=-5..-3 绕过去了，
+           P4 重算后仍从 y=-7 穿旧 balancer，validate 报 (10,-7) 冲突。
+
+           判据是 P3 给出的 kind，写在 beltCells 的 `tunnel` 字段上不够用
+           （bridge 没有 sender/receiver），所以用"这条通道的格序列**不是** Z 形态能解释的"
+           来识别：只要 P3 标了 bridge，我们就在下面用一个显式集合记它。 */
+        for (const [cid, list] of byCh) if (list.some(b => b.tunnel || b.bridge)) preRouted.add(cid);
     }
     const conflicts = [];
     const cornerCells = [];
