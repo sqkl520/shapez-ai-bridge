@@ -701,23 +701,58 @@ class Mod extends shapez.Mod {
         try {
             const beltSystem = root.systemMgr && root.systemMgr.systems && root.systemMgr.systems.belt;
             const paths = (beltSystem && beltSystem.beltPaths) || [];
-            for (const p of paths) {
+            for (let pi = 0; pi < paths.length; pi++) {
+                const p = paths[pi];
                 if (!p) continue;
                 // BeltPath 的格子数组叫 `entityPath`（belt_path.js:64-69），不是 comps/components
                 const items = p.items || [];
                 const entPath = p.entityPath || [];
-                for (let i = 0; i < entPath.length; i++) {
-                    const ent = entPath[i];
-                    if (!ent) continue;
-                    const sme = ent.components && ent.components.StaticMapEntity;
-                    if (!sme) continue;
-                    const x = sme.origin.x, y = sme.origin.y;
-                    if (!inR(x, y)) continue;
-                    // items 结构：[distanceToNext, item] 成对
-                    const it = items[i];
-                    if (it !== undefined && it !== null) {
-                        out.belts.push({ cell: [x, y], idx: i, item: key(it), raw: typeof it });
+                // 物品**不是一格一个**。BeltPath 把它们按"距接受端的距离"排布，
+                // 间距是 itemSpacingOnBelts = 0.63 格，所以 7 格直带能塞 11~12 个物品。
+                // 之前按 items[i] ↔ entityPath[i] 硬对，超出格数的物品全部映射成 null，
+                // 于是"带子塞满"看起来像"带子是空的"。要按累计距离反算格子。
+                const items2 = items;
+                let cursor = typeof p.spacingToFirstItem === "number" ? p.spacingToFirstItem : 0;
+                // 每格的有效长度（直带 1.0，转弯 0.78 —— components/belt.js:6,70-72）
+                const cellLens = entPath.map(ent => {
+                    const c = ent && ent.components && ent.components.Belt;
+                    try {
+                        return c && typeof c.getEffectiveLengthTiles === "function" ? c.getEffectiveLengthTiles() : 1;
+                    } catch (e) {
+                        return 1;
                     }
+                });
+                const cellAt = dist => {
+                    let acc = 0;
+                    for (let ci = 0; ci < cellLens.length; ci++) {
+                        if (dist < acc + cellLens[ci]) return ci;
+                        acc += cellLens[ci];
+                    }
+                    return cellLens.length - 1;
+                };
+                for (let i = 0; i < items2.length; i++) {
+                    const pair = items2[i];
+                    if (!pair) continue;
+                    const gap = Array.isArray(pair) ? pair[0] : null;
+                    const it = Array.isArray(pair) ? pair[1] : pair;
+                    if (!it) continue;
+                    const ci = cellAt(cursor);
+                    const ent = entPath[ci];
+                    const sme = ent && ent.components && ent.components.StaticMapEntity;
+                    const cell = sme ? [sme.origin.x, sme.origin.y] : null;
+                    if (cell && !inR(cell[0], cell[1])) {
+                        cursor += typeof gap === "number" ? gap : 0;
+                        continue;
+                    }
+                    out.belts.push({
+                        cell,
+                        path: pi,
+                        idx: i,
+                        pos: Math.round(cursor * 1000) / 1000,
+                        spacing_to_next: typeof gap === "number" ? Math.round(gap * 1000) / 1000 : gap,
+                        item: key(it),
+                    });
+                    cursor += typeof gap === "number" ? gap : 0;
                 }
             }
             out.pathCount = paths.length;
@@ -726,7 +761,9 @@ class Mod extends shapez.Mod {
                     const sme = ent && ent.components && ent.components.StaticMapEntity;
                     return sme ? [sme.origin.x, sme.origin.y] : null;
                 }).filter(Boolean),
-                itemsOnPath: (p.items || []).length,
+                itemsOnPath: Math.floor((p.items || []).length / 2),
+                spacingToFirstItem: typeof p.spacingToFirstItem === "number"
+                    ? Math.round(p.spacingToFirstItem * 1000) / 1000 : null,
                 boundAcceptor: p.boundAcceptor ? (p.boundAcceptor.entity && p.boundAcceptor.entity.components
                     && p.boundAcceptor.entity.components.StaticMapEntity
                     ? [p.boundAcceptor.entity.components.StaticMapEntity.origin.x,
