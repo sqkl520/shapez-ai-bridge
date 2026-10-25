@@ -829,8 +829,15 @@ export function routeStage(placeResult, ctx) {
 			if (ro.ok && ro.closure && ro.closure.ok) {
 				// 取 P4 更新后的报告（lanes/conflicts/cornerCount 已记账），但不接受它残留的 lane-column 冲突
 				const rep = ro.report;
+				/* P4 的 report 是它**自己**装配的，不含 P3 的 meta —— 而 meta 里有
+				   矿机↔资源映射、长主干指标这类跨段凭据。丢掉它会让 siteStage 拿不到
+				   minerResources（B-4 起硬依赖），也会让 stats 里的形状质量指标恒为 null。
+				   这里只补 meta 一个键，不覆盖 P4 的任何记账字段。 */
+				const withMeta = placed.layout && placed.layout.meta
+					? { ...rep, meta: placed.layout.meta }
+					: rep;
 				return {
-					ok: true, layout: rep, route: ro, gapTries: g, orderMode: mode,
+					ok: true, layout: withMeta, route: ro, gapTries: g, orderMode: mode,
 					rowGap, colGap, attempts: log,
 					laneColumnUnresolved: laneColumnConflicts(rep).length,
 				};
@@ -1311,11 +1318,18 @@ function statsOf(entities, layout, beltCount, opts = {}) {
 	// —— 二者不等时，唯一自洽的解法是让 layout 的 bbox 与 entities 一致（NOTES BUG-P3-BBOX-HUB）。
 	// 本包不伪造：显式记录差异，并按**契约可成立**的那一份给出（见 alignBbox）。
 	const bbEnt = [Math.max(...xs) - Math.min(...xs) + 1, Math.max(...ys) - Math.min(...ys) + 1];
+	/* 长主干：连续行/列上"只有 1 格带子"的最长段（place.mjs 的 meta 里算好）。
+	   放在 stats 而不是只在 meta，是因为它是**形状质量指标**，要和 bbox / corners
+	   一起被 bench 和 CI 看见 —— 只藏在 meta 里等于没暴露。
+	   > 10 通常意味着 hub 太远或矿位太散（研究 04 §1）。 */
+	const meta = layout.meta || {};
 	return {
 		machines: byKind, beltTiles: belts.length, trash: trash.length, bbox: bbEnt,
 		corners: corners.length, estThroughputPerSec: opts.estThroughputPerSec,
 		bottleneck: opts.bottleneck, blueprintCost: blueprintCost(entities.length), chargeMode: "false",
 		layoutBbox: layout.bbox, cornerCostTiles: opts.cornerCostTiles,
+		longestSingleBeltRow: meta.longestSingleBeltRow ?? null,
+		longestSingleBeltCol: meta.longestSingleBeltCol ?? null,
 	};
 }
 
@@ -1530,6 +1544,19 @@ function compileInner(input) {
 		validation: vd.report,
 		stages,
 	};
+	/* P6 的出参是按 §2.1 白名单重建的 plan —— 它只带契约要求的字段，于是 P3 的
+	   layout.meta 在这里被丢掉。而 meta 里有矿机↔资源映射（siteStage 的硬依赖）
+	   和长主干指标（形状质量，给 bench/CI 看）。补回去：契约不读 meta，
+	   加键不破坏任何断言，但少了它下游就只能看见"编出来了"，看不见"编得怎么样"。 */
+	if (layout && layout.meta && final.layout) {
+		final.layout = { ...final.layout, meta: layout.meta };
+	}
+	/* 同理：emit 的 stats 也是白名单重建的，形状质量指标要单独补回，
+	   否则 bench 只能看见 bbox 和 corners，看不见"有多少行是空跑主干"。 */
+	if (pre.stats && final.stats) {
+		if (pre.stats.longestSingleBeltRow !== undefined) final.stats.longestSingleBeltRow = pre.stats.longestSingleBeltRow;
+		if (pre.stats.longestSingleBeltCol !== undefined) final.stats.longestSingleBeltCol = pre.stats.longestSingleBeltCol;
+	}
 	delete final._meta;
 	/* §2.1 硬口径：entities[].dx/dy 是**设计系**（相对 emit 归一前的原坐标）；世界格 = site.anchor + dx/dy。
 	   但 P6 会把 dx/dy 平移到 min corner 为零（`anchor` 归一），而 P6 的 `plan.site.anchor` 是**入参原样**
