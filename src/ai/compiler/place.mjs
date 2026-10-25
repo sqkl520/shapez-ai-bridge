@@ -1858,23 +1858,31 @@ export function place(input = {}) {
 						balanceChainIdx: i,
 					});
 				}
-				/* 串成链：bal_i 的 in0 收 m_i，in1 收 bal_{i+1}（或 m_{N-1}）。
-				   最后一个 bal 的 out 给下游。 */
-				for (let i = 0; i < N - 1; i++) {
-					bals[i].parents[0] = n.members[i];
-					n.members[i].consumers = 1;
+				/* ★ 配对式二叉树（不是左倾链）★
+				   左倾链（bal_i 吃 m_i 和 bal_{i+1}）要求 bal_{i+1} 的输出与 m_i **相邻**，
+				   但 bal_{i+1} 在第 i+2 行、m_i 在第 0 行 —— 布局只能纵向拉开，
+				   整棵树摊成 N 行 × rowGap（实测 4 台矿机 24 行高）。
+				   配对式每层减半、水平相邻，高度 = ⌈log2 N⌉，与人存档形态一致：
+				     balA 吃 (m0,m1)、balB 吃 (m2,m3)、balC 吃 (A,B) */
+				let level = n.members.map(m => ({ node: m }));
+				let bi = 0;
+				while (level.length > 1 && bi < bals.length) {
+					const next = [];
+					for (let i = 0; i < level.length; i += 2) {
+						if (i + 1 >= level.length) { next.push(level[i]); continue; }
+						const b = bals[bi++];
+						if (!b) { next.push(level[i]); continue; }
+						b.parents[0] = level[i].node;
+						b.parents[1] = level[i + 1].node;
+						level[i].node.consumers = 1;
+						level[i + 1].node.consumers = 1;
+						next.push({ node: b });
+					}
+					level = next;
 				}
-				for (let i = 0; i < N - 2; i++) {
-					bals[i].parents[1] = bals[i + 1];
-					bals[i + 1].consumers = 1;
-				}
-				if (N >= 2) {
-					bals[N - 2].parents[1] = n.members[N - 1];
-					n.members[N - 1].consumers = 1;
-				}
-				/* 下游的父：从组换成最后一个 balancer */
-				const tail = bals.length ? bals[bals.length - 1] : n.members[0];
+				const tail = level[0] ? level[0].node : n.members[0];
 				tail.consumers = n.consumers;
+				/* 下游的父：从组换成树的根（`tail` 上面已算好） */
 				for (const other of mg.nodes) {
 					if (other.op === "mineGroup") continue;
 					for (let k = 0; k < other.parents.length; k++) {
@@ -1935,6 +1943,47 @@ export function place(input = {}) {
 		}
 	}
 	const { rows } = pass;
+
+	/* ★ balancer 汇流树压紧 ★
+	   通用分层布局按 DAG 层号摆 balancer：每层隔 rowGap（8 行）。
+	   对加工机器是对的，但 balancer 是**纯管道**，整棵 4-矿机树本该只占 3~5 行，
+	   实测却散成 24 行（y -6..-30）—— 真人存档里 balancer 紧贴矿机堆着。
+	   这里按配对式二叉树的**几何**重新赋值：每层步进 2 行（留 1 行给带子拐弯）。
+	   只动 balancer 的 x/y，不动拓扑、不动其他节点。 */
+	if (minerGroups.length) {
+		for (const g of minerGroups) {
+			const mem = g.members;
+			const N = mem.length;
+			if (N < 2) continue;
+			const xs = mem.map(m => m.x).filter(Number.isFinite).sort((a, b) => a - b);
+			if (!xs.length) continue;
+			const baseX = xs[0];
+			const baseY = mem[0].y;
+			/* 矿机重排成连续列（balancer 输入必须相邻两格） */
+			mem.forEach((m, i) => { m.x = baseX + i; m.y = baseY; m.row = baseY; });
+
+			const bals = nodes.filter(n => n.op === "balance" && n.groupOf === g.id);
+			let lvl = mem.map((m, i) => ({ lo: baseX + i, hi: baseX + i, node: m }));
+			let bi = 0, depth = 0;
+			const STEP = 2;                       // 层间留 1 行空隙
+			while (lvl.length > 1 && bi < bals.length) {
+				depth++;
+				const next = [];
+				for (let i = 0; i < lvl.length; i += 2) {
+					if (i + 1 >= lvl.length) { next.push(lvl[i]); continue; }
+					const A = lvl[i], B = lvl[i + 1];
+					if (A.hi + 1 !== B.lo) { next.push(A); continue; }
+					const b = bals[bi++];
+					if (!b) { next.push(A); continue; }
+					b.x = A.hi;
+					b.y = baseY - depth * STEP;
+					b.row = b.y;
+					next.push({ lo: A.hi, hi: A.hi + 1, node: b });
+				}
+				lvl = next;
+			}
+		}
+	}
 
 	/* (b) 有 hub：把机器簇对齐到 hub 正下方（局部系），消除混框导致的千格收集带。
 	   顶行 → hub 底缘下方 HUB_CLEAR 行；minX → hub 左列（hub 底部 4 个 entry 覆盖 hubLocal.x..x+3）。
