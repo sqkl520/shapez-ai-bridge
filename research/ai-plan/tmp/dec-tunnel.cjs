@@ -1,0 +1,10 @@
+const { decodeSave } = require('../../../recon/decode_full.cjs');
+const path = process.env.APPDATA + '/shapez.io/saves/savegame-5c96706563c0b74c4d2ce4c7f8bf7a244392de89.bin';
+const r = decodeSave(path);
+const ents = r.obj.entities || [];
+console.log('总实体', ents.length);
+const keys = Object.keys(ents[0] || {});
+console.log('实体字段:', keys.join(','));
+const tun = ents.filter(e => [22,23,24,25].includes(e.code));
+console.log('隧道数', tun.length);
+for (const t of tun.slice(0,6)) console.log(JSON.stringify(t));

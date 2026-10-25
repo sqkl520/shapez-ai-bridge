@@ -1,0 +1,51 @@
+{
+  "at": "2026-10-25T08:33:59.927Z",
+  "level": 3,
+  "shape": "RuRuRuRu",
+  "required": 70,
+  "anchor": [
+    1,
+    -8
+  ],
+  "entities": 9,
+  "dry": {
+    "ok": true,
+    "op": "paste_blueprint",
+    "dry_run": true,
+    "would_apply": 9,
+    "would_delete": 0,
+    "destroys": [],
+    "blocked": [],
+    "unknown_code": [],
+    "count": 9,
+    "bbox": [
+      1,
+      -8,
+      2,
+      -3
+    ],
+    "charge_preview": {
+      "cost": 0,
+      "have": null,
+      "affordable": true
+    },
+    "tunnels": null,
+    "tick": 5752.016566625013
+  },
+  "paste": {
+    "applied": 9,
+    "failed": []
+  },
+  "readback": {
+    "matched": 9,
+    "total": 9,
+    "mismatches": []
+  },
+  "measured": {
+    "storedBefore": 0,
+    "delivered": 18,
+    "ticks": 6000,
+    "finalLevel": 3
+  },
+  "verdict": "PRODUCING"
+}

@@ -1,0 +1,472 @@
+{
+ "entities": [
+  {
+   "code": 7,
+   "dx": 3,
+   "dy": 11,
+   "rot": 0,
+   "nodeId": "n0",
+   "instanceIdx": 0,
+   "kind": "miner",
+   "rotationVariant": 0,
+   "inDir": null,
+   "outDir": "top"
+  },
+  {
+   "code": 9,
+   "dx": 3,
+   "dy": 3,
+   "rot": 0,
+   "nodeId": "n1",
+   "instanceIdx": 0,
+   "kind": "cutter",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 20,
+   "dx": 4,
+   "dy": 0,
+   "rot": 0,
+   "nodeId": "n1d1",
+   "instanceIdx": 0,
+   "kind": "trash",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": null
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 10,
+   "rot": 0,
+   "nodeId": "belt@4,-5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 9,
+   "rot": 0,
+   "nodeId": "belt@4,-6",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 8,
+   "rot": 0,
+   "nodeId": "belt@4,-7",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 7,
+   "rot": 0,
+   "nodeId": "belt@4,-8",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 6,
+   "rot": 0,
+   "nodeId": "belt@4,-9",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 5,
+   "rot": 0,
+   "nodeId": "belt@4,-10",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 4,
+   "rot": 0,
+   "nodeId": "belt@4,-11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 2,
+   "rot": 0,
+   "nodeId": "belt@4,-13",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 2,
+   "dy": 1,
+   "rot": 270,
+   "nodeId": "belt@3,-14",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "right",
+   "outDir": "left"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 1,
+   "rot": 270,
+   "nodeId": "belt@2,-14",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "right",
+   "outDir": "left"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 2,
+   "rot": 180,
+   "nodeId": "belt@1,-13",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 3,
+   "rot": 180,
+   "nodeId": "belt@1,-12",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 4,
+   "rot": 180,
+   "nodeId": "belt@1,-11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 5,
+   "rot": 180,
+   "nodeId": "belt@1,-10",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 6,
+   "rot": 180,
+   "nodeId": "belt@1,-9",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 7,
+   "rot": 180,
+   "nodeId": "belt@1,-8",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 8,
+   "rot": 180,
+   "nodeId": "belt@1,-7",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 9,
+   "rot": 180,
+   "nodeId": "belt@1,-6",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 10,
+   "rot": 180,
+   "nodeId": "belt@1,-5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 11,
+   "rot": 180,
+   "nodeId": "belt@1,-4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 12,
+   "rot": 180,
+   "nodeId": "belt@1,-3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 13,
+   "rot": 180,
+   "nodeId": "belt@1,-2",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 14,
+   "rot": 180,
+   "nodeId": "belt@1,-1",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 4,
+   "dy": 2,
+   "rot": 0,
+   "nodeId": "belt@5,-13",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 4,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "belt@5,-14",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 2,
+   "dx": 3,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "belt@4,-14",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 1,
+   "inDir": "bottom",
+   "outDir": "left"
+  },
+  {
+   "code": 2,
+   "dx": 0,
+   "dy": 1,
+   "rot": 270,
+   "nodeId": "belt@1,-14",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 1,
+   "inDir": "right",
+   "outDir": "bottom"
+  }
+ ],
+ "provenance": {
+  "harnessVersion": 1,
+  "placeVersion": "0.5.0",
+  "routeSchemaVersion": 1,
+  "validatorVersion": 1,
+  "emittedVia": "strict",
+  "solver": {
+   "argv": [
+    "D:\\Projects\\rea\\Project work\\shapez\\research\\ai-player\\proto\\solver.mjs",
+    "RuRu----",
+    "--no-cutquad",
+    "--json"
+   ],
+   "ops": {
+    "mine": 1,
+    "cut": 1
+   },
+   "stats": {
+    "expanded": 2,
+    "generated": 14,
+    "stackPairs": 0,
+    "capped": false
+   },
+   "ms": 4,
+   "known": 15
+  },
+  "seed": 60908,
+  "level": 4,
+  "cutQuadAllowed": false,
+  "channelOrder": "asis",
+  "gapTries": 0,
+  "gap": {
+   "rowGap": 8,
+   "colGap": 3
+  },
+  "minerCells": [
+   {
+    "nodeId": "n0",
+    "cell": [
+     2,
+     -6
+    ],
+    "shape": "RuRuRuRu"
+   }
+  ],
+  "demandPerSec": 0,
+  "cornerCostTiles": 1.56,
+  "routeAttempts": [
+   {
+    "gap": 0,
+    "rowGap": 8,
+    "colGap": 3,
+    "order": "asis",
+    "ok": true,
+    "reason": null,
+    "laneColumn": 0,
+    "belt": 27,
+    "corners": 2
+   }
+  ],
+  "laneColumnUnresolved": 0,
+  "worldPlacement": {
+   "anchor": [
+    -2,
+    -2
+   ],
+   "hub": [
+    -2,
+    -2
+   ],
+   "hubInferred": [
+    -2,
+    -2
+   ],
+   "hubPinned": true,
+   "pasteAt": [
+    -1,
+    -17
+   ],
+   "designAnchor": [
+    1,
+    -15
+   ],
+   "designHubLocal": [
+    -4,
+    -4
+   ],
+   "hubLocal": [
+    0,
+    0
+   ],
+   "worldFrameV1": {
+    "ok": true,
+    "worldRect": [
+     -1,
+     -17,
+     3,
+     -3
+    ],
+    "hubRect": [
+     -2,
+     -2,
+     1,
+     1
+    ]
+   }
+  }
+ }
+}

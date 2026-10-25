@@ -1,0 +1,135 @@
+{
+ "43391/CuCuCuCu": {
+  "ok": true,
+  "n": 9,
+  "h": "3f1b63e77d36"
+ },
+ "43391/----CuCu": {
+  "ok": true,
+  "n": 21,
+  "h": "2e35136310e3"
+ },
+ "43391/RuRu----": {
+  "ok": true,
+  "n": 29,
+  "h": "d5d08b5fdb0e"
+ },
+ "43391/CrCrCrCr": {
+  "ok": true,
+  "n": 117,
+  "h": "9e2e0052c054"
+ },
+ "43391/RbRb----": {
+  "ok": true,
+  "n": 164,
+  "h": "1d7ef35b103f"
+ },
+ "43391/CpCpCpCp": {
+  "ok": false,
+  "reason": "dag-not-placeable:crossing-needs-tunnel"
+ },
+ "43391/CgScScCg": {
+  "ok": false,
+  "reason": "no-resource-in-range"
+ },
+ "60908/CuCuCuCu": {
+  "ok": true,
+  "n": 9,
+  "h": "d563ad0b5c02"
+ },
+ "60908/----CuCu": {
+  "ok": true,
+  "n": 25,
+  "h": "fbeadd268d99"
+ },
+ "60908/RuRu----": {
+  "ok": true,
+  "n": 28,
+  "h": "9fa729d476ce"
+ },
+ "60908/CrCrCrCr": {
+  "ok": false,
+  "reason": "dag-not-placeable:crossing-needs-tunnel"
+ },
+ "60908/RbRb----": {
+  "ok": false,
+  "reason": "no-resource-in-range"
+ },
+ "60908/CpCpCpCp": {
+  "ok": true,
+  "n": 312,
+  "h": "1e8f3f4d6c80"
+ },
+ "60908/CgScScCg": {
+  "ok": false,
+  "reason": "no-resource-in-range"
+ },
+ "77844/CuCuCuCu": {
+  "ok": true,
+  "n": 7,
+  "h": "435af0adb9bb"
+ },
+ "77844/----CuCu": {
+  "ok": true,
+  "n": 21,
+  "h": "458a82aa6b7b"
+ },
+ "77844/RuRu----": {
+  "ok": true,
+  "n": 27,
+  "h": "d34c75c7d024"
+ },
+ "77844/CrCrCrCr": {
+  "ok": true,
+  "n": 99,
+  "h": "658cb353ac00"
+ },
+ "77844/RbRb----": {
+  "ok": true,
+  "n": 119,
+  "h": "fdf759ffd045"
+ },
+ "77844/CpCpCpCp": {
+  "ok": true,
+  "n": 311,
+  "h": "5bee43910493"
+ },
+ "77844/CgScScCg": {
+  "ok": false,
+  "reason": "no-resource-in-range"
+ },
+ "15935/CuCuCuCu": {
+  "ok": true,
+  "n": 12,
+  "h": "677743a1bf85"
+ },
+ "15935/----CuCu": {
+  "ok": true,
+  "n": 26,
+  "h": "2bdb84bee5d7"
+ },
+ "15935/RuRu----": {
+  "ok": true,
+  "n": 27,
+  "h": "d34c75c7d024"
+ },
+ "15935/CrCrCrCr": {
+  "ok": true,
+  "n": 93,
+  "h": "773140e6bac6"
+ },
+ "15935/RbRb----": {
+  "ok": true,
+  "n": 163,
+  "h": "9d8c3edc928e"
+ },
+ "15935/CpCpCpCp": {
+  "ok": true,
+  "n": 404,
+  "h": "58a0c29ae26d"
+ },
+ "15935/CgScScCg": {
+  "ok": false,
+  "reason": "no-resource-in-range"
+ }
+}
