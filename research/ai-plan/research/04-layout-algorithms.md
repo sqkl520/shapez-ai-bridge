@@ -10,13 +10,14 @@
 
 ## 1. TL;DR
 
-**最该换的一个算法：把「一个 DAG 层 = 一行」换成「带 minlen 约束的 rank assignment（Sugiyama 的第 2 阶段，network-simplex / tight-tree），行距按算子类别折叠」。**
+**最该换的一个算法：把「一个 DAG 层 = 一行、每行 8 格」换成「rank assignment（Sugiyama 第 2 阶段）+ 按算子类别的行距（rowPitch）」，并且**先把矿机组收缩成一个超节点再分层**（contract-then-expand）。**
 
-理由不是"文献这么做"，而是我们的数据：
+理由不是"文献这么做"，而是我们的数据（全部【实测】，脚本可复现）：
 
 - 我们的 `assignRows`（`src/ai/compiler/place.mjs:861`）给每个 DAG level 固定 `ROW_H = 8` 行。这不是 Sugiyama 的 layering，是 **longest-path layering + 单位层距**——它把"层号"和"行"当成同一个东西，而层号是**约束**、行是**资源**。
-- 后果可直接量出来：16 台矿机 + 15 个 balancer + 4 个 cutter + hub 的 DAG，网络单纯形给出 **10 个 rank**（`dagre` 实测 39 ms，16 台矿机自动落在同一 rank 上），而"每层一行 × 8"给出 **80 行**。历史上 4 台矿机就已经是 24 行（commit `8fc9f9d` 的原话），压到 5 行后实体数 99 → 20。
-- 我们的两个硬失败也都是"形状病"而不是"布线病"：`CpCpCpCp` 的产线 bbox 宽 **219 格**（`column-conflict-unresolved`），`RbRb----` 高 **200 格**。40 条车道里塞进 220 列宽的扁平带子网，冲突是必然的；把高度压到 12 行、宽度压到 ~40 列，同一份 left-edge 车道分配就能过。
+- **高度差 9 倍**。16 台矿机 + 15 个 balancer + 4 个 cutter + hub：我们 10 个 level × 8 = **80 行**；收缩后 dagre 给 **9 个 rank**（= 1 矿机行 + 4 层 balancer + 4 个 cutter，与理论下界 `1+⌈log₂K⌉+4` **完全相等**）；理想行距（balancer 1 行/级、cutter 8 行/级）约 **1+4+32 = 37 行**。K=4 时我们 64 行 vs 理想 7 行 = **9.1×**；K=64 时 96 行 vs 11 行 = 8.7×。
+- **必须收缩，不能直接喂**。我原本打算直接把矿机当独立节点交给网络单纯形，实测**不行**：K 是 2 的幂时它恰好把矿机放同一 rank，K=3/5/6/7 时会把矿机分到**两个不同 rank**（`allSame=false`）——这直接违反"矿机必须压在自己的矿上"的硬约束。把整组矿机收缩成一个宽 `K` 的超节点后，K=3…20 全部稳定（`MG rank` 唯一）。`minlen:0` 也**不能用**：dagre 3.1.3 对它抛 `TypeError`（三种 ranker 都抛），这条要写进实现笔记。
+- 我们的两个硬失败是"形状病"而不是"布线病"：`CpCpCpCp` 的产线 bbox **219×24**（`column-conflict-unresolved`），`RbRb----` **24×200**。这两个数字来自 `harness/out/*.intent.json` 的 `stats.bbox`，即**我们编译器自己的产物**（`placeVersion 0.5.0`），不是参考蓝图。24 行高的板子里塞 219 列宽的带子网，车道冲突是必然的；高度一旦按 rowPitch 折叠，宽度也会跟着收（`8fc9f9d` 的 4 矿机案例：99 实体 → 20，因为"snaking 回落的带子"消失了）。
 
 次要但同级的第二个改动：**候选点不是"多给"，而是"换评分"**（§7）。我们 9→15 个候选反而变差（commit `2bdef87`），这不是玄学，是"首个可行即接受"的谓词对候选集不单调——文献里对应"最小化线长会在局部制造拥塞热点"（Wang & Sarrafzadeh 1999）。
 
@@ -69,22 +70,37 @@
 
 ### 3.3 【实测】同一张图，两种分层
 
-图：16 台矿机 + 15 个 balancer（配对二叉树）+ 4 个 cutter 串联 + hub = 36 节点、35 边。
+图：16 台矿机 + 15 个 balancer（配对二叉树）+ 4 个 cutter 串联 + hub = 36 节点、35 边。方法：先把矿机组收缩成一个超节点 `MG`，再交给 dagre `network-simplex`。
 
 ```
-dagre network-simplex → 10 个 rank，布局 39 ms（含 x 坐标）
-  y=23.5: m0..m15              ← 16 台矿机自动落在同一 rank
-  y=19.5: b0..b7               ← 8
-  y=15.5: b8..b11              ← 4
-  y=11.5: b12,b13              ← 2
-  y=7.5 : b14                  ← 1
-  y=3.5 : c0..c3               ← 4 个 cutter（各自一级）
-  y=2   : hub
+收缩后 dagre 输出（rank 数 = 9）：
+  rank 0: hub
+  rank 1..4: c3, c2, c1, c0        ← 4 个 cutter 串联，各占一级（必须 8 行/级）
+  rank 5: b14                      ← 最后一级合并
+  rank 6: b12,b13
+  rank 7: b8..b11
+  rank 8: b0..b7                   ← 第一级合并
+  rank 9: MG                       ← 16 台矿机 = 1 个 rank，宽度 16
 ```
 
-我们的规则：`baseY − level × ROW_H`，10 个 level × 8 行 = **80 行**（而 4 台矿机时实测就是 24 行，见 commit `8fc9f9d`：24 行 → 5 行、99 实体 → 20）。
+**rank 数 9 = 理论下界** `1（矿机行）+ ⌈log₂16⌉（4 层 balancer）+ 4（cutter）`。而我们的规则是 `baseY − level × ROW_H`，10 个 level × 8 = **80 行**。
 
-而且 dagre **默认就会把 16 台矿机压在同一 rank 上**（我单独验证过：`miner ranks: [19.5]`, `all same: true`），因为它们在合并树里是同一深度的叶子。这一点很重要——我们一直手工给矿机层做特判，其实网络单纯形天然给出这个结果。
+规模对照（【实测】用 dagre 跑，行数 = rank 数；"我们"= uncontracted 的 level 数 × 8）：
+
+| 矿机数 K | 我们的 level 数 | 我们的行数 | 收缩后 rank 数 | 理论下界 | 我们/下界 |
+|---|---|---|---|---|---|
+| 4 | 8 | **64** | 7 | 7 | **9.1×** |
+| 8 | 9 | **72** | 8 | 8 | 9.0× |
+| 16 | 10 | **80** | 9 | 9 | 8.9× |
+| 32 | 11 | **88** | 10 | 10 | 8.8× |
+| 64 | 12 | **96** | 11 | 11 | 8.7× |
+
+**两条必须写进实现笔记的坑（我踩到了）**：
+
+1. **不能把矿机当独立节点直接喂 dagre**。K=4/8/16 时它碰巧把矿机放在同一 rank；K=3/5/6/7 时**不**（实测 `allSame=false`，矿机被分到两个 rank）。收缩成超节点后 K=3…20 全部稳定。收缩/展开是标准做法（ELK 的 `hierarchyHandling`、dot 的 cluster 都是这个思路）。
+2. **dagre 3.1.3 的 `minlen:0` 会抛异常**。我用 `a→c`、`b→c` + `a→b{minlen:0}` 试了 `network-simplex`/`tight-tree`/`longest-path` 三种 ranker，全部 `TypeError: Cannot read properties of undefined (reading 'forEach')`。所以"同排"只能靠**收缩 + 我们自己的展开规则**表达，不要指望 `minlen:0`。
+
+另外，dagre 的 x 坐标是连续值 + 0.5 偏移（我实测到 `m13@0.5 m12@20.5 …`），**不能直接当格坐标**。只用它的 `y`（rank），x 仍走我们自己的"父子同列零拐角"规则。
 
 ### 3.4 我们该怎么改（具体到函数）
 
@@ -97,13 +113,16 @@ dagre network-simplex → 10 个 rank，布局 39 ms（含 x 坐标）
    rowY(n) = Σ_{r < rank(n)} maxPitch(r)
    ```
 
-   这正是 `8fc9f9d` 对 balancer 做的特判，**把它一般化成数据驱动的 `rowPitch` 表**即可，不必再写第二个特判分支。
+   这正是 `8fc9f9d` 对 balancer 做的特判，**把它一般化成数据驱动的 `rowPitch` 表**即可，不必再写第二个特判分支。按上表：16 矿机 = 1 行矿机 + 4 级 balancer×1 行 + 4 级 cutter×8 行 ≈ **37 行**，而不是 80。
 
-2. **允许同排（minlen=0）**。`minerGroup` 展开后，矿机必须压在自己的矿上（`planMinerColumns`），而 balancer 的第一级必须与矿机相邻——这两件事在 dagre 里用 `minlen: 0` 的边表达（我验证过：8 台矿机 + `minlen:0` 链 → `all same: true`，x 均匀分布）。在我们的代码里就是"同一 `rowY` 允许被多个 rank 共享"。
+2. **收缩矿机组（contract-then-expand）**。这一步是**前置条件**，不是优化：不收缩时 K 非 2 的幂会把矿机拆到两个 rank（§3.3 坑 1）。做法：
+   - 把 `mineGroup` 的 N 台矿机收缩成一个 `{w: N, h: 1}` 的超节点交给 rank assignment；
+   - 展开时把超节点所在 rank 的 `y` 分给全部矿机（它们本来就同 y，`planMinerColumns` 已保证 x）；
+   - balancer 树的每一级作为独立节点参与（它们是真正的 rank 消费者）。
 
 3. **只在需要时才付行距**。判据：这条边是否需要拐弯。`outDir === inDir` 且两机同列 → 1 行；否则 `ROW_H`。
 
-4. **别自己实现 network simplex**。dagre 3.1.3 是 MIT、2026-10-24 还在更新、无重依赖（只依赖 `@dagrejs/graphlib`），我们只用它的 **rank 结果**（`g.node(id).y`），x 坐标仍走我们自己的 `assignRows`（因为我们要"父子同列零拐角"，dagre 的 x 是连续值 + 0.5 偏移，不能直接用）。
+4. **别自己实现 network simplex**。dagre 3.1.3 是 MIT、2026-10-24 还在更新、无重依赖（只依赖 `@dagrejs/graphlib`），我们只用它的 **rank 结果**（`g.node(id).y` 的相对次序），x 坐标仍走我们自己的 `assignRows`。
 
    规模：V=36 → 39 ms；V=800 → 905 ms【实测】。我们到几百个节点都是毫秒级。
 
