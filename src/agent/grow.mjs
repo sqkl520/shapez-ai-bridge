@@ -121,25 +121,37 @@ function routeMinerToHub(miner, outDir, hub, occupied) {
     // ② 一次拐弯：先沿 outDir 走 d 步，再转向目标入口的轴向
     for (const e of entries) {
         const [ex, ey] = e.cell;
-        // 需要进入 e 的带子方向是 e.dir ⇒ 最后一格流向 e.dir
-        // 简化：先走到与 e 同行/同列，再直行
         for (let turnAt = 1; turnAt <= 30; turnAt++) {
             const tx = start[0] + dx * turnAt, ty = start[1] + dy * turnAt;
-            // 从 (tx,ty) 到 e.cell 必须是纯水平或纯竖直
             let seg2 = null;
             if (tx === ex) seg2 = "vertical";
             else if (ty === ey) seg2 = "horizontal";
             if (!seg2) continue;
-            const cells = [];
-            for (let i = 0; i <= turnAt; i++) cells.push([start[0] + dx * i, start[1] + dy * i]);
-            const segDir = seg2 === "vertical" ? (ey > ty ? "bottom" : "top") : (ex > tx ? "right" : "left");
-            const n = seg2 === "vertical" ? Math.abs(ey - ty) : Math.abs(ex - tx);
-            for (let i = 1; i <= n; i++) {
-                cells.push(seg2 === "vertical" ? [tx, ty + (ey > ty ? i : -i)] : [tx + (ex > tx ? i : -i), ty]);
+
+            /* ⚠️ 这里曾经把段1 写成 `start + d*i` 而段2 从 `tx,ty` 接着写 —— 于是
+               当段2 与段1 反向时，路径会**原地折返**（矿机朝 bottom、路径却先 +y 再 -y），
+               生成的自相矛盾带子（同轴同向 ⇒ solve() 无解，或被游戏改写成错误朝向）。
+               实测后果：矿机 (3,-5) 朝 bottom，路径 (3,-4) 却朝回矿机，产量只有 0.3/s。
+               正确做法：段2 必须从 (tx,ty) **继续向前**，不能回头。 */
+            const seg1 = [];
+            for (let i = 0; i <= turnAt; i++) seg1.push([start[0] + dx * i, start[1] + dy * i]);
+
+            const seg2Cells = [];
+            if (seg2 === "vertical") {
+                if (ty === ey) continue;
+                const step = ey > ty ? 1 : -1;
+                for (let y = ty + step; ; y += step) { seg2Cells.push([tx, y]); if (y === ey) break; }
+            } else {
+                if (tx === ex) continue;
+                const step = ex > tx ? 1 : -1;
+                for (let x = tx + step; ; x += step) { seg2Cells.push([x, ty]); if (x === ex) break; }
             }
-            if (!cells.length) continue;
+            // 段1 与段2 不能重叠（除了拐点本身），否则就是折返
+            const seenCells = new Set(seg1.map(([x, y]) => `${x},${y}`));
+            if (seg2Cells.some(([x, y]) => seenCells.has(`${x},${y}`))) continue;
+
+            const cells = [...seg1, ...seg2Cells];
             if (cells.some(([cx, cy]) => occupied.has(`${cx},${cy}`))) continue;
-            // 最后一格流向必须 == e.dir
             const lastDir = seg2 === "vertical" ? (ey > ty ? "bottom" : "top") : (ex > tx ? "right" : "left");
             if (lastDir !== e.dir) continue;
             return { ok: true, kind: "turn", cells, entry: e, turnAt };
@@ -250,17 +262,22 @@ async function execute(plan) {
 /* ───────────── 实测产量 ───────────── */
 async function monitor(shape, seconds) {
     const before = (await rpc("obs", { max_entities: 1, include_hub: true }, 60000)).hub.stored_shapes || {};
-    const ticks = Math.round(seconds * 60);
-    const r = await rpc("act", { op: "step", ticks }, 300000);
-    const after = (await rpc("obs", { max_entities: 1, include_hub: true }, 60000)).hub.stored_shapes || {};
+    /* ⚠️ 时间基准：step 的 `ticks` 是**逻辑 tick**，不是 1/60 秒。
+       实测 `step(3600)` 推进 30 游戏秒 ⇒ 120 ticks = 1 秒。
+       用 ticks/60 算会把吞吐高估一倍 —— 我之前所有"理论 1.2/s、实测 0.6"的对比
+       都因此把结论说错。这里直接读游戏时间，不靠换算。 */
+    const t0 = (await rpc("obs", { max_entities: 1, include_hub: true }, 60000)).tick;
+    const r = await rpc("act", { op: "step", ticks: Math.round(seconds * 120) }, 300000);
+    const after = await rpc("obs", { max_entities: 1, include_hub: true }, 60000);
+    const elapsed = after.tick - t0;                       // 游戏秒（权威）
     const d = {};
-    for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
-        const delta = (after[k] || 0) - (before[k] || 0);
+    for (const k of new Set([...Object.keys(before), ...Object.keys(after.hub.stored_shapes || {})])) {
+        const delta = ((after.hub.stored_shapes || {})[k] || 0) - (before[k] || 0);
         if (delta !== 0) d[k] = delta;
     }
-    console.log(`\n═══ ${seconds}s 内变化 ═══`);
+    console.log(`\n═══ 实测 ${elapsed.toFixed(1)} 游戏秒（step ${r.ticks_run} ticks）═══`);
     if (!Object.keys(d).length) console.log("  (没有任何形状进 hub)");
-    for (const [k, v] of Object.entries(d)) console.log(`  ${k.padEnd(12)} +${v}  (${(v / seconds).toFixed(3)}/s)`);
+    for (const [k, v] of Object.entries(d)) console.log(`  ${k.padEnd(12)} +${v}  (${(v / elapsed).toFixed(3)}/s)`);
     return d;
 }
 
