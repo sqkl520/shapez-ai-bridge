@@ -10,16 +10,18 @@
 
 ## 1. TL;DR
 
-**最该换的一个算法：把「一个 DAG 层 = 一行、每行 8 格」换成「rank assignment（Sugiyama 第 2 阶段）+ 按算子类别的行距（rowPitch）」，并且**先把矿机组收缩成一个超节点再分层**（contract-then-expand）。**
+**最该换的一个算法：`assignRows` 的「每层 8 行固定行距」换成「按算子类别的 rowPitch 表」（`balance=1 / mine=2 / 其余=ROW_H`），并先把矿机组收缩成超节点再分层（contract-then-expand）。**
 
-理由不是"文献这么做"，而是我们的数据（全部【实测】，脚本可复现）：
+排第二的是**候选点评分**（§7）：我们 9→15 个候选反而变差（commit `2bdef87`），这不是玄学，是"首个可行即接受"的谓词对候选集不单调——文献里对应"最小化线长会在局部制造拥塞热点"（Wang & Sarrafzadeh 1999）。
 
-- 我们的 `assignRows`（`src/ai/compiler/place.mjs:861`）给每个 DAG level 固定 `ROW_H = 8` 行。这不是 Sugiyama 的 layering，是 **longest-path layering + 单位层距**——它把"层号"和"行"当成同一个东西，而层号是**约束**、行是**资源**。
-- **高度差 9 倍**。16 台矿机 + 15 个 balancer + 4 个 cutter + hub：我们 10 个 level × 8 = **80 行**；收缩后 dagre 给 **9 个 rank**（= 1 矿机行 + 4 层 balancer + 4 个 cutter，与理论下界 `1+⌈log₂K⌉+4` **完全相等**）；理想行距（balancer 1 行/级、cutter 8 行/级）约 **1+4+32 = 37 行**。K=4 时我们 64 行 vs 理想 7 行 = **9.1×**；K=64 时 96 行 vs 11 行 = 8.7×。
+以下是支撑这个结论的数据（全部【实测】，脚本可复现）：
+
+- 我们的 `assignRows`（`src/ai/compiler/place.mjs:861`）给每个 DAG level 固定 `ROW_H = 8` 行。这不是 Sugiyama 的 layering，是 **longest-path layering + 一个全局常数层距**——它把"层号"和"行"当成同一个东西，而层号是**拓扑约束**、行是**物理资源**，两者不该用同一个常数绑定。
+- **高度差 1.8–2.4 倍（同一量纲：行 vs 行）**。16 台矿机 + 15 个 balancer + 4 个 cutter + hub：我们 10 个 level × 8 = **80 行**；**如果只换 rank 而不改行距**（每个 rank 仍付 8 行），是 9 rank × 8 = **72 行**，只省 10%——所以"换 rank"本身收益有限；真正省的是 `rowPitch`：balancer 1 行/级、矿机 2 行、cutter 8 行 ⇒ **38 行**。K=4 时 64 → 36 行（1.78×），K=64 时 96 → 40 行（2.40×）。
+- **别被"rank 数 = 9"骗了**。rank 数是**约束满足**的结果，不是省行的手段。收缩后 dagre 的 rank 数恰好等于理论下界 `1（矿机行）+ ⌈log₂K⌉（balancer 层数）+ 4（cutter 串联级数）`，这说明**我们现在的 level 数本身没算错**——错的是"每个 level 都付 8 行"。这是本报告最重要的一条修正：**先改 `rowPitch`，rank assignment 是第二步。**
 - **必须收缩，不能直接喂**。我原本打算直接把矿机当独立节点交给网络单纯形，实测**不行**：K 是 2 的幂时它恰好把矿机放同一 rank，K=3/5/6/7 时会把矿机分到**两个不同 rank**（`allSame=false`）——这直接违反"矿机必须压在自己的矿上"的硬约束。把整组矿机收缩成一个宽 `K` 的超节点后，K=3…20 全部稳定（`MG rank` 唯一）。`minlen:0` 也**不能用**：dagre 3.1.3 对它抛 `TypeError`（三种 ranker 都抛），这条要写进实现笔记。
-- 我们的两个硬失败是"形状病"而不是"布线病"：`CpCpCpCp` 的产线 bbox **219×24**（`column-conflict-unresolved`），`RbRb----` **24×200**。这两个数字来自 `harness/out/*.intent.json` 的 `stats.bbox`，即**我们编译器自己的产物**（`placeVersion 0.5.0`），不是参考蓝图。24 行高的板子里塞 219 列宽的带子网，车道冲突是必然的；高度一旦按 rowPitch 折叠，宽度也会跟着收（`8fc9f9d` 的 4 矿机案例：99 实体 → 20，因为"snaking 回落的带子"消失了）。
-
-次要但同级的第二个改动：**候选点不是"多给"，而是"换评分"**（§7）。我们 9→15 个候选反而变差（commit `2bdef87`），这不是玄学，是"首个可行即接受"的谓词对候选集不单调——文献里对应"最小化线长会在局部制造拥塞热点"（Wang & Sarrafzadeh 1999）。
+- 我们的两个硬失败是"形状病"而不是"布线病"：`CpCpCpCp` 的产线 bbox **219×24**（`column-conflict-unresolved`）；`RbRb----` 在 `intent.json` 快照里是 **24×200**，但**当前 HEAD 实测是 23×107**（已从 200 降到 107，仍然过长）。
+  - **但成因不是"层数太多"，而是"横向/纵向距离被拉爆"**：`CpCpCpCp` 的 5 台机器里，同层矿机落在 `dx=0 / 97 / 102`（第 2 台离第 1 台 97 格），于是 3 条 100 格长的收集带各占一行（`dy=0:105 格`、`dy=2:117 格`、`dy=12:100 格`）；`RbRb----` 的 200 行来自 169 格**纯竖直**的 hub 主干（`dy=31..199`、全部 `top>bottom`、同一列 `dx=23`——这是 `intent.json` 快照的分解；当前 HEAD 的 107 行同源，只是 hub 更近了）。**这两种病 rowPitch 治不了**——`CpCpCpCp` 要治的是"矿机 x 被资源位置拉散"（`planMinerColumns` 的目标函数），`RbRb----` 要治的是"hub 选址太远"（`site`/hub 的选择）。这一条必须诚实标注：**P1 不能保证救回这两个 case。**
 
 ---
 
@@ -29,7 +31,7 @@
 
 | 我们的子问题 | 标准名称 | 经典解法 | 复杂度 / 适用规模 |
 |---|---|---|---|
-| 把 DAG 节点分到网格行 | **DAG layering**（Sugiyama 第 2 阶段）/ **rank assignment** | longest-path；**Coffman–Graham**；**network simplex**（dot/dagre/ELK） | longest-path O(V+E)；C-G O(V)；网络单纯形实践 O(V·E) 但常数小。**V<10⁴ 都是毫秒级**【实测：dagre 800 节点 905 ms】 |
+| 把 DAG 节点分到网格行 | **DAG layering**（Sugiyama 第 2 阶段）/ **rank assignment** | longest-path；**Coffman–Graham**；**network simplex**（dot/dagre/ELK） | longest-path O(V+E)；C-G O(V)；网络单纯形实践 O(V·E) 但常数小。**实测 V=50→132 ms、200→219 ms、800→905 ms（dagre）**，V≤10³ 完全够用；V≈10⁴ 未测【推断：外推约 10 s，不可接受】 |
 | 每层内左右排序、少交叉 | **crossing minimization**（Sugiyama 第 3 阶段） | barycenter / median 扫描 | 每轮 O(E)；最优是 **NP-hard**（单侧交叉最小化对稀疏图 NP-hard[1]），我们用启发式即可 |
 | 机器在行内的 x 坐标 | **coordinate assignment**（Sugiyama 第 4 阶段）/ **single-row layout** | Brandes–Köpf；SRFLP 启发式 | SRFLP **NP-hard**；Brandes–Köpf O(V+E) |
 | 多个通道抢同一行/列 | **channel routing / track assignment** | **left-edge**（区间图着色）+ 纵向约束 | O(n log n)；无纵向约束时最优，轨数 = 最大团 |
@@ -87,20 +89,22 @@
 
 规模对照（【实测】用 dagre 跑，行数 = rank 数；"我们"= uncontracted 的 level 数 × 8）：
 
-| 矿机数 K | 我们的 level 数 | 我们的行数 | 收缩后 rank 数 | 理论下界 | 我们/下界 |
-|---|---|---|---|---|---|
-| 4 | 8 | **64** | 7 | 7 | **9.1×** |
-| 8 | 9 | **72** | 8 | 8 | 9.0× |
-| 16 | 10 | **80** | 9 | 9 | 8.9× |
-| 32 | 11 | **88** | 10 | 10 | 8.8× |
-| 64 | 12 | **96** | 11 | 11 | 8.7× |
+| 矿机数 K | 我们的行数（level×8） | 只换 rank（rank×8） | rowPitch 方案（2+⌈log₂K⌉+4×8） | 我们 / rowPitch |
+|---|---|---|---|---|
+| 4 | **64** | 64 | 36 | **1.78×** |
+| 8 | **72** | 72 | 37 | 1.95× |
+| 16 | **80** | 72 | 38 | 2.11× |
+| 32 | **88** | 80 | 39 | 2.26× |
+| 64 | **96** | 88 | 40 | 2.40× |
+
+注意 K=4/8 时"只换 rank"**一行都没省**——两列数字相同。这就是为什么 TL;DR 把 `rowPitch` 排在 rank assignment 之前。
 
 **两条必须写进实现笔记的坑（我踩到了）**：
 
 1. **不能把矿机当独立节点直接喂 dagre**。K=4/8/16 时它碰巧把矿机放在同一 rank；K=3/5/6/7 时**不**（实测 `allSame=false`，矿机被分到两个 rank）。收缩成超节点后 K=3…20 全部稳定。收缩/展开是标准做法（ELK 的 `hierarchyHandling`、dot 的 cluster 都是这个思路）。
 2. **dagre 3.1.3 的 `minlen:0` 会抛异常**。我用 `a→c`、`b→c` + `a→b{minlen:0}` 试了 `network-simplex`/`tight-tree`/`longest-path` 三种 ranker，全部 `TypeError: Cannot read properties of undefined (reading 'forEach')`。所以"同排"只能靠**收缩 + 我们自己的展开规则**表达，不要指望 `minlen:0`。
 
-另外，dagre 的 x 坐标是连续值 + 0.5 偏移（我实测到 `m13@0.5 m12@20.5 …`），**不能直接当格坐标**。只用它的 `y`（rank），x 仍走我们自己的"父子同列零拐角"规则。
+另外，dagre 的 x 坐标是连续值 + 0.5 偏移（我实测到 `m13@0.5 m12@20.5 …`），**不能直接当格坐标**。只用它的 `y`（rank 的相对次序），x 仍走我们自己的"父子同列零拐角"规则。
 
 ### 3.4 我们该怎么改（具体到函数）
 
@@ -144,19 +148,20 @@
 
 ### 4.2 【实测】PathFinder 在我们的规模上到底行不行
 
-我自己写了一个 PathFinder 原型（容量 1/格，成本 = `(1 + history) × (occupancy + 1)`，二叉堆 Dijkstra），跑三组：
+我自己写了一个 PathFinder 原型（容量 1/格，成本 = `(1 + history) × (occupancy + 1)`，二叉堆 Dijkstra，60–100 轮上限），跑四组：
 
 | 实例 | 结果 | 耗时 |
 |---|---|---|
-| 220×26 网格，30 条**单调**（不交叉）net | **1 轮收敛**，总长 780 | 44–71 ms |
+| 220×26 网格，30 条**单调**（同序，不交叉）net | **1 轮收敛**，总长 780 | 44–71 ms |
 | 220×26，30 条**对向交叉** net（源在底排、汇在顶排、顺序相反） | **100 轮不收敛**，overflow 479 | 10.4 s |
 | 220×26，40 条对向交叉 | 100 轮不收敛，overflow 1245 | 18.4 s |
-| 合并树（K=4/8/16） | 1 轮收敛 | 3–5 ms |
+| 合并树（K=4/8/16，真实的 balancer 拓扑） | 1 轮收敛 | 3–5 ms |
 
 结论**非常明确**：
 
-- **可行（可平面化）的实例，PathFinder 一轮就收敛**——协商机制根本没被用上，因为第一次就无冲突。
-- **真交叉的实例，迭代永远不会收敛**。原因不是调参：容量 1 的网格里，K 条互相交叉的 net 需要 K 条不同的行；如果布局没给够行，**再多轮协商也变不出来**。PathFinder 的论文[7]本身也是"balance performance and routability"，它假设布线资源足够、只是分配得不好。
+- **可行（可平面化）的实例，PathFinder 一轮就收敛**——协商机制根本没被用上，因为第一次就无冲突。也就是说：**当布局健康时，我们现有的 left-edge + Dijkstra 已经够用**，引入协商是零收益。
+- **真交叉的实例，迭代不收敛**。原因不是调参：容量 1 的网格里，K 条互相交叉的 net 需要 K 条不同的"行"；如果布局没给够行，**再多轮协商也变不出来**。PathFinder 的论文[7]本身也是"balance performance and routability"，它假设布线资源足够、只是分配得不好。
+- 注意上表的"30 条对向交叉"在一个 26 行高的板子里**本来就无解**（需要 ≥30 行），所以它同时也是"实例本身不可行"的证据，而非"PathFinder 不佳"。我特意保留这一行，因为它正是我们 `CpCpCpCp` 的处境：24 行高的板子 + 219 列宽的网。
 
 所以：**不要把 PathFinder 作为主算法引入**。它的价值只有成本函数（history-based congestion，即"这条边被抢过几次"要涨价）。这正好是 §7 缺的那一项。
 
@@ -176,6 +181,8 @@
 
 **重要推论**：隧道能解决的是"**两条带子必须交叉**"，不能解决"**行数不够**"。`CpCpCpCp --tunnels` 的实测结果是 bbox 168×19 且仍然 `crossing-needs-tunnel`——正是这个原因。所以在实现顺序上，**隧道必须排在行分配之后**（先有足够行，再谈交叉），而不是用来兜底形状问题。
 
+另一个容易忽略的限制：跨 5 格意味着隧道只能跨过**一条窄的障碍**（1–5 格）。我们 `CpCpCpCp` 的冲突带宽是"百格级"，隧道在几何上根本够不着。**这是"隧道不是万能钥匙"的硬理由**，比"v1 不支持"更值得写进设计文档。
+
 ---
 
 ## 5. 汇流树（多矿机合并）：Steiner？还是配对树？
@@ -184,9 +191,9 @@
 
 - 无约束的 RSMT 是 **NP-hard**（Garey & Johnson 1977, *SIAM J. Appl. Math.*, DOI 10.1137/0132071，1125 引用[8]）。
 - 但 RSMT 有一个极强的性质：**Hanan 定理**（Hanan 1966, *SIAM J. Appl. Math.*, DOI 10.1137/0114025，623 引用[9]）——存在一棵最优 RSMT，其所有 Steiner 点都落在"过终端点的水平/竖直线"的交点上（**Hanan 网格**）。所以问题从"平面"降到"由 k 个终端诱导的 ≤ k² 个候选点"。
-- 精确算法：Dreyfus–Wagner 动态规划，`O(3^k·n + 2^k·n²)`；实测口径是 **k ≥ 17 就内存爆炸**（Thomborson et al. 1994[10] 原话："hopelessly I/O-bound for k ≥ 17"）。
+- 精确算法：**Dreyfus–Wagner** 动态规划（1971, *Networks*, DOI 10.1002/net.3230010302[10b]），Steiner 树的经典精确算法；直角版本在 k 个引脚上跑 `O(3^k·n + 2^k·n²)`，实测口径是 **k ≥ 17 就内存爆炸**（Thomborson et al. 1994[10] 原话："hopelessly I/O-bound for k ≥ 17"）。
 - 实用近似：**FLUTE**（Chu & Wong 2007, *IEEE TCAD*, DOI 10.1109/tcad.2007.907068，356 引用[11]）——查表，**degree ≤ 9 时最优**，高 degree 用 net-breaking 拆小，时间"very fast"，可调精度/速度权衡。
-- 精确工业实现：**GeoSteiner**（Warme/Winter/Zachariasen，ANSI C，LP-based，官网可达）——但它解的是"平面上 k 个点"，**不含障碍、不含容量、不含有序**。
+- 精确工业实现：**GeoSteiner**（Warme/Winter/Zachariasen；最新计算研究 Juhl et al. 2018, *Math. Prog. Computation*, DOI 10.1007/s12532-018-0135-8[10c]；官网可达）——但它解的是"平面上 k 个点"，**不含障碍、不含容量、不含有序**。
 
 ### 5.2 我们的真实约束把问题进一步简化：矿机在一行上，带子不能交叉
 
@@ -217,11 +224,13 @@
 | 16 | 高度 4，带长 184 | 高度 15，带长 360 | 1.96× |
 | 32 | 高度 5，带长 656 | 高度 31，带长 1488 | **2.27×** |
 
-### 5.4 结论：我们的"配对式二叉树"是对的，差在两处
+### 5.4 结论：我们的"配对式二叉树"是对的
 
-1. **没有用权重**。等速矿机下配对式已是最优；一旦矿机速率不同（不同矿种、不同 tier、`demandPerSec` 不均），就该用 **Hu–Tucker**（80 行左右，无依赖，O(n log n)）。差距可以到 14%（上表构造例）。
-2. **每级 balancer 仍占一整行**（`8fc9f9d` 之前是 `ROW_H`，之后是 2 行）。真正的上限是"**balancer 是管道不是机器**"——它的输入口和输出口逐格对齐，理论上可以 1 行/级。这一步属于 §3 的 `rowPitch` 表。
-3. **不是 Steiner 问题**。引入 FLUTE/GeoSteiner 在这里是负收益：它们不建模"有序""容量""障碍"，而我们的约束反而让问题更简单。只有在矿机**散布在 2D**（不在同一行）时，才需要考虑 OARSMT（obstacle-avoiding RSMT，Wu/Gao/Wang 2007[14]），那是另一个量级的工作。
+**前提核实（【本项目】）**：`MINERS_PER_LINE = 4`（`place.mjs:643`），矿机速率 `beltSpeedItemsPerSecond / 5 = 2/5 = 0.4 items/s`（`recon/upstream-full/src/js/core/config.js:151`）——**所有矿机等速**。所以当前场景是等权，配对式已是最优（上表 K=4/8/… 的"配对式"列就是最优值）。`Hu–Tucker` 现在**用不上**，它是给将来"混矿种 / 混 tier / 矿机速率不均"准备的。
+
+真正值得做的只有一件事：**每级 balancer 占的行数**（`8fc9f9d` 之前 `ROW_H`、之后 2 行；理论上 1 行/级就够了，因为它的输入口和输出口逐格对齐）。这属于 §3 的 `rowPitch` 表，不属于树形选择。
+
+**不是 Steiner 问题**。引入 FLUTE/GeoSteiner 在这里是负收益：它们不建模"有序""容量""障碍"，而我们的约束反而让问题更简单。只有在矿机**散布在 2D**（不在同一行）时，才需要考虑 OARSMT（obstacle-avoiding RSMT，Wu/Gao/Wang 2007[14]），那是另一个量级的工作。
 
 ---
 
@@ -276,7 +285,7 @@ for (const cd of cands) {
 
 **第二层（为什么"更远"会伤）：最小化线长会制造局部拥塞热点。**
 
-这是最直接对得上的文献。Wang & Sarrafzadeh, "On the behavior of congestion minimization during placement"（ISPD 1999, DOI 10.1145/299996.300044，83 引用[18]）摘要原文：
+这是最直接对得上的文献。Wang & Sarrafzadeh, "On the behavior of congestion minimization during placement"（ISPD 1999, DOI 10.1145/299996.300044[18]）摘要原文：
 
 > "we show that in this model **the wirelength objective is indeed a good measure of congestion** by establishing that a placement with minimum wirelength has minimum total congestion. We show that **minimizing wirelength may (and in general, will) create local congestion** ..."
 
@@ -293,7 +302,7 @@ for (const cd of cands) {
 1. **换评分，不换候选数**（最直接）。`score = α·beltLen + β·lanesDemandedIn(occupiedRows/Cols) + γ·hubEntryContention`。其中 `lanesDemanded` 可以在放置前**预估**：对每条待布 channel，数它需要占几行车道（`ceil(跨度 / rowGap)`），把这个需求摊到候选格所在的行/列上。候选数保持 9——`2bdef87` 已经证明 9 是对的。
 2. **预订走廊（reservation）**。在放 trash **之前**把 hub 收集带要走的列标记为 blocked。这正是 `HUB_CLEAR = 3` 修法的一般化——那个修法有效（把"净空"从 1 调到 3，drift 归零），说明"先预订、后放置"这条路是对的。把它从"hub 一圈"推广到"所有已确定走廊"。
 3. **改顺序：最受约束的先放**（fail-first / MRV）。当前顺序是自下而上（矿机 → 上游），而 **hub 连接是全局最稀缺的资源（16 个入口）**，应该**先定 hub 侧，再往下推**。CSP 的标准结论：最先失败的变量应该最先赋值。
-4. **把"局部搜索"当成修复器而不是主算法**。CRAFT 的成对交换 + 模拟退火（QAP 文献里 SA 是最强的通用启发式[21]）可以用，但只在**已经有一个可行解**之后做微调；不要用它从零构造。
+4. **把"局部搜索"当成修复器而不是主算法**。CRAFT 的成对交换 + 模拟退火可以用，但只在**已经有一个可行解**之后做微调；不要用它从零构造。SA 在 QAP 上是最强的通用启发式之一（Paul 2011 的高效实现比既有实现快 100× 以上，arXiv:1111.1353[21]），但 QAP 的 n 是我们的 383 格带子——**这里只借"邻域+接受准则"的思想，不借它的规模假设**。
 5. **回归锁**：把"15 候选会变差"写成一个**负例测试**（断言 15 候选的结果不优于 9 候选，或者断言评分函数在给定 fixture 上选中第 k 个候选）。`2bdef87` 是靠人肉 A/B 发现的，应该变成 CI。
 
 ---
@@ -304,7 +313,7 @@ for (const cd of cands) {
 
 | 库 | 版本 | License | 维护 | 用途 | 备注 |
 |---|---|---|---|---|---|
-| **@dagrejs/dagre** | 3.1.3 | **MIT** | 2026-10-24 更新 | **只取 rank assignment**（`ranker:'network-simplex'`） | V=36 → 39 ms，V=800 → 905 ms【实测】。注意只用 `node.y`，x 是连续值+0.5，不能直接当格坐标 |
+| **@dagrejs/dagre** | 3.1.3 | **MIT** | 2026-10-24 更新 | **只取 rank assignment**（`ranker:'network-simplex'`） | V=36 → 39 ms，V=800 → 905 ms【实测】。只用 `node.y` 的**相对次序**，x 是连续值+0.5 偏移，不能直接当格坐标；`minlen:0` 会抛异常，同排要靠"收缩超节点"表达 |
 | **@dagrejs/graphlib** | 4.0.7 | MIT | 2026-10-24 | 上面那个的依赖 | 无传递依赖 |
 | 自写 **Hu–Tucker / Garsia–Wachs** | — | — | — | 加权汇流树（§5.4） | **npm 上没有可用的 Hu–Tucker 实现**（我搜过 `hu-tucker`，全是词典包）；Garsia–Wachs 约 80 行 |
 | 自写 **left-edge 车道** | — | — | — | 已有（`lane.mjs`） | 保持 |
@@ -314,8 +323,8 @@ for (const cd of cands) {
 
 | 库 | 版本 | License | 维护 | 用途 | 代价 |
 |---|---|---|---|---|---|
-| **highs**（HiGHS 的 WASM 绑定） | 1.15.4 | **MIT** | 2026-10-16 | 精确的 1D 行/列分配（插入工序时的"最优落点"）、小规模 ILP | 需 `await highsFactory()` 初始化；**LP 解析器会把 `(` `)` 当成变量名**（我实测踩到，必须避免括号）；N=24 机器 / 9628 变量 → 1.2 s【实测】，只适合 n ≤ 24 的子问题 |
-| **elkjs** | 0.12.0 | **EPL-2.0 OR GPL-3.0-or-later** | 2026-07-17 | 只有当我们真的需要"端口约束 + 正交布线"时 | 1.6 MB bundle；EPL-2.0 是文件级 copyleft（不改它本身通常可接受，但 GPL 分支是病毒式）。三种 layering 都有：`NETWORK_SIMPLEX / COFFMAN_GRAHAM / LONGEST_PATH`【实测：686 / 91 / 87 ms @50 节点】 |
+| **highs**（HiGHS 的 WASM 绑定） | 1.15.4 | **MIT** | 2026-10-16 | 精确的 1D 行/列分配（插入工序时的"最优落点"） | **只适合 n ≤ 6 的小子问题**：我建了一个正确的模型（`p_i = Σ s·a_is`，`d_ij ≥ |p_i−p_j|`，all-different），N=6/W=12（87 变量）**耗时 17.3 s**，N=8 在 100 s 内跑不完【实测】。这比一个 20 行的局部搜索差 3 个数量级 → **不推荐用于布局**，只在"离线校验最优值"时用。另：**LP 解析器把 `(` `)` 当变量名**（我实测输出里出现名为 `(` 和 `)` 的列），且 `- (a + b)` 只对首项取负——两个坑都要避开 |
+| **elkjs** | 0.12.0 | **EPL-2.0 OR GPL-3.0-or-later** | 2026-07-17 | 只有当我们真的需要"端口约束 + 正交布线"时 | 1.6 MB bundle；EPL-2.0 是文件级 copyleft（不改它本身通常可接受，但 GPL 分支是病毒式）。三种 layering 都有：`NETWORK_SIMPLEX / COFFMAN_GRAHAM / LONGEST_PATH`【实测 50 节点：686 / 91 / 87 ms】 |
 | **z3-solver** | 5.3.2 | MIT | 2026-10-25 | 只在需要"约束满足"式排布时 | 杀鸡用牛刀；启动/求解开销远大于 dagre |
 
 ### C. 明确不建议
@@ -336,34 +345,62 @@ for (const cd of cands) {
 
 ### P0 · 建立基线（半天）
 
-- **改什么**：不改算法。写一个 `bench-layout.mjs`：对 `research/ai-plan/harness/out/*.intent.json` 的 14 个 goal，批量输出 `{ok, reason, rows, height, width, entities, belts, cornerCount}`。
-- **怎么验证**：把 `CpCpCpCp` 的 `219×24`、`RbRb----` 的 `24×200`、`--SuSu--` 的 `81×39` 钉成基线数字。
-- **预期收益**：把"形状病"变成可回归的指标。没有这一步，后面所有改动都无法证明有效。
+- **改什么**：不改算法。写一个 `bench-layout.mjs`：读 `research/ai-plan/harness/out/*.intent.json`，输出每份的 `{goal, bbox[w,h], belts, machines, corners}`（这些字段 `stats` 里现成）；并用 `cli.mjs --goal X --hub 0,0 --json` 补出 `{ok, reason}`。
+- **怎么验证**：钉住我实测到的这几行基线（`stats.bbox` / `stats.belts` / `stats.corners`）：
 
-### P1 · 换 rank assignment（**核心，1–2 天**）
+  | goal | bbox | belts | corners | 编译结果 |
+  |---|---|---|---|---|
+  | `CpCpCpCp` | 219×24 | 378 | 8 | `dag-not-placeable:column-conflict-unresolved` |
+  | `RbRb----` | 24×200（快照）→ **23×107（当前 HEAD 实测）** | 257 | 6 | ok（仍过长） |
+  | `--SuSu--` | 81×39 | 134 | 2 | ok（39 行全是主干，见 P1c） |
+  | `Cu----Cu` | 7×19 | 34 | 2 | ok |
+  | `Cu------` | 6×27 | 48 | 3 | ok |
+  | `Ru----Ru` | 3×23 | 40 | 2 | ok |
 
-- **改什么**：`layerAndOrder()` 之后新增 `assignRanks()`；引入 dagre 只取 rank；`rowPitch(op)` 表（balance=1、mine=2、其余 `ROW_H`）；`minlen:0` 支持同排。
+  以及 `RuRu----` 的 seed 通过率 1/4（见 P3）。
+- **预期收益**：把"形状病"变成可回归的指标。没有这一步，后面所有改动都无法证明有效。**注意**：`intent.json` 是某一版编译器的快照（`placeVersion 0.5.0`），当前 HEAD 的 `--hub 0,0` 结果可能不同（`CpCpCpCp` 当前仍失败、`RuRu----` 三个 seed 失败），所以基线要**同一次跑**重新采样，不要混用两个来源。
+
+### P1 · rowPitch + rank assignment（**核心，1–2 天**）
+
+- **改什么**（按此顺序，两步可分开提交）：
+  1. **先只改行距**：`assignRows` 里 `const y = baseY - li * rowGap` 换成 `y = baseY - pitchPrefix(li)`，`pitchPrefix` 由每个 level 的 `maxPitch` 累加；`maxPitch(level) = max(rowPitch(op))`，`rowPitch = {balance:1, mine:2, 其他:ROW_H}`。**这一步不动 DAG、不动 rank、不动测试基线结构**，只动 y。
+  2. **再收缩矿机组 + 接 dagre rank**：`mineGroup` → 超节点；用 dagre 的 `node.y` 的**相对序号**当 rank（不要用绝对值）；展开后把 rank 交给第 1 步的 `pitchPrefix`。
+  3. **不要用 `minlen:0`**（会抛异常）。
 - **怎么验证**：
   - 断言"矿机行 = 矿位行"（现有 `planMinerColumns` 的测试不能松）；
-  - 断言 rank 数 = 最长链长度（而不是原来 level 数）；
-  - **高度必须下降**：`RbRb----` 200 → < 40；`CuCuCuCu` 24 → ≤ 6（`8fc9f9d` 已给过 5）；
+  - 断言 rank 数 = `1 + ⌈log₂K⌉ + 下游链长`，**K=3…20 全过**（不能只在 2 的幂上过——§3.3 坑 1 就是在 K=6 暴露的）；
+  - **高度必须下降**：`CuCuCuCu` 24 → ≤ 6（`8fc9f9d` 已给过 5）。
+  - **不要拿 `--SuSu--` 当 P1 的验收对象**：我实测它的 39 行**不是行距造成的**——4 台机器只占 `dy = 2/8/10/18`（4 个 level，其中两个只差 2 行），39 行来自一条 **39 格长的竖直出料主干**（`dy=19..38` 每行 1 格）加一行 80 格的水平总线（`dy=0` 有 80 格）。这是"输出口 → hub 的走线太远"，属于 P1c，不是 rowPitch。
   - 金网格会变 → 必须**重新生成**并逐字节锁，同时保留"拐角数不增加"的断言（`cornerCount` 是 `LayoutReport` 的既有字段）。
-- **预期收益**：按 §3.3 的 80→10 推算，实体数应下降 40–60%（`8fc9f9d` 单改 balancer 就降了 5×）。`CpCpCpCp` 的 `column-conflict-unresolved` 有较大概率直接消失（宽 219 → ~40），因为车道数从"跨 219 列"降到"跨 40 列"。
+- **预期收益**：**不要承诺这两个 case 被修好。** 按 §1 的实测归因，`CpCpCpCp` 的宽度来自"矿机 x 被拉到 0/97/102"，`RbRb----` 的高度来自"hub 实在太远（169 格主干）"——两者都**不是**行距问题。P1 的收益是可量化的部分：`CuCuCuCu` 这类"链 + 少量分支"的形状高度降 5×（已有 `8fc9f9d` 的证据），实体数随之降 40–60%。
 
-### P2 · 汇流树的权重（半天）
+### P1b · 矿机 x 的簇化（1 天，P1 之后）
 
-- **改什么**：`buildBalancerTree`（`place.mjs:1867` 附近）从"等权配对"改成"权重输入 + 保序最优"。等权时退化为配对式（我验证过二者等价），所以**对现有 fixture 零扰动**；只有 `demandPerSec` 不均时才换形。
-- **怎么验证**：对 K ≤ 8 做**全枚举**（我用的 `allTrees` 暴力，代码 20 行）对拍 `Σ w·depth`；对 K=16/32 对拍"不劣于配对式"。
-- **预期收益**：矿机速率不均的场景下带长降 ~14%；等权场景 0 变化（零风险）。
+- **改什么**：`planMinerColumns` 现在让每台矿机压在自己的矿上，资源分散时 x 就被拉散（`CpCpCpCp`: 0 / 97 / 102）。加一个**簇内重排**：在多组可行矿位里，选**跨度最小**的一组（而不是"第一个找到的"）。这是一个小规模指派问题：`minimize (max x − min x)`，候选通常 < 20，枚举或 Hungarian 都行。
+- **怎么验证**：`CpCpCpCp` 的矿机 x 跨度从 102 → < 20；`column-conflict-unresolved` 是否消失。
+- **预期收益**：这是 `CpCpCpCp` 真正的病根。**如果 P1 之后它仍然失败，优先做这个，而不是加隧道/加候选。**
+
+### P1c · hub 选址（半天）
+
+- **改什么**：`RbRb----`、`--SuSu--` 的长主干说明"输出口 → hub"的距离没有被纳入代价。在 `pickSite`/`normalizeHub` 里把"到 hub 的 Manhattan 距离"显式计入（现在是"能连上就行"），并对"整簇平移使 hub 落在簇的中位 x 上方"做一次一维搜索（O(cand)，cand ≈ 簇宽）。
+- **怎么验证**：`RbRb----` 高度 107（当前 HEAD）→ < 40；`--SuSu--` 高度 39 → < 15（它的 39 行全是主干，主干长度应 ≈ |hub.x − 出料口 x|）。
+- **预期收益**：消除这类"离 hub 太远"的退化形状。**这类形状的共同特征是"整行只有 1 格带子"**——可以直接做成一个检测器（`max(beltsPerRow) === 1` 的连续行数 > 10 ⇒ 报"长主干"），比肉眼看 bbox 更可靠。
+
+### P2 · 汇流树（**降级为"先不做"**）
+
+- **结论**：`MINERS_PER_LINE = 4`、所有矿机同速 ⇒ **等权 ⇒ 配对式已是最优**，Hu–Tucker 现在换不出任何收益。这一阶段**推迟**，直到出现"混矿种 / 混 tier"的真实需求。
+- **如果要做**：`buildBalancerTree`（`place.mjs:1867` 附近）改成权重输入 + 保序最优；等权时自动退化为配对式，所以对现有 fixture 零扰动。
+- **怎么验证**：对 K ≤ 8 全枚举对拍 `Σ w·depth`（我用的 `allTrees` 暴力，20 行）；对 K=16/32 对拍"不劣于配对式"。
+- **预期收益**：只有在权重不均时才有 ~14%（我构造的 `[5,1,9,1,5]` 例）。**不要为了"用上算法"而做这一步。**
 
 ### P3 · 候选评分（1 天）
 
 - **改什么**：`trashCandidates` 的消费循环（`place.mjs:2304`）从"首个可行"改成"全部打分取最优"；评分含 `lanesDemanded` 项；候选数**回到 9**；hub 走廊**预先 blocked**。
 - **怎么验证**：
-  - `RuRu----` 在 4 个 seed（43391/60908/77844/15935）上：当前是 1/4 通过，目标 4/4；
-  - 负例锁：断言 15 候选不优于 9 候选（把 `2bdef87` 的教训变成 CI）；
-  - `Cu------`、`Cu----Cu` 的 cornerCount 不得上升。
-- **预期收益**：消除"多给候选反而更差"这一类回归；把"可行性"从运气变成评分。
+  - `RuRu----` 在 4 个 seed 上：我实测当前 **1/4** 通过（仅 `15935` 成功，其余 43391/60908/77844 都是 `no-site-large-enough`）；目标 4/4。
+  - 负例锁：断言 15 候选不优于 9 候选（把 `2bdef87` 的教训变成 CI）。
+  - `Cu------`、`Cu----Cu` 的 cornerCount 不得上升（基线：`Cu------` 3、`Cu----Cu` 2）。
+- **预期收益**：消除"多给候选反而更差"这一类回归；把"可行性"从运气变成评分。**注意**：`RuRu----` 的失败原因 `no-site-large-enough` 是**选址**层面的（找不到足够大的空位放整簇），不完全是 trash 候选问题——P3 可能只改善其中一部分，剩下的要 P1b（矿机簇化）/P1c（hub 选址）。
 
 ### P4 · 增量插入（2–3 天，依赖 P1/P3）
 
@@ -400,13 +437,16 @@ for (const cd of cands) {
 - Yoshimura, *An Efficient Channel Router*, DAC 1984. DOI 10.1109/dac.1984.1585770（left-edge 的改进版，多数实例最优）
 18. Wang & Sarrafzadeh, *On the behavior of congestion minimization during placement*, ISPD 1999. DOI 10.1145/299996.300044
 19. Saab, *A Fast Clustering-Based Min-Cut Placement Algorithm With Simulated-Annealing Performance*, VLSI Design, 1995. DOI 10.1155/1996/58084
-- Murray, Zhong, Betz, *AIR: A Fast but Lazy Timing-Driven FPGA Router*, ASP-DAC 2020. DOI 10.1109/asp-dac47756.2020.9045175
+- Murray, Zhong, Betz, *AIR: A Fast but Lazy Timing-Driven FPGA Router*, ASP-DAC 2020. DOI 10.1109/asp-dac47756.2020.9045175（即正文的 [16]）
+- Wang, *Static and dynamic facility layout problems*, Univ. of Michigan, 1999（DFLP 定义与搬迁成本，正文的 [17]）
 
 **Steiner / 合并树**
 
 8. Garey & Johnson, *The Rectilinear Steiner Tree Problem is NP-Complete*, SIAM J. Appl. Math., 1977. DOI 10.1137/0132071
 9. Hanan, *On Steiner's Problem with Rectilinear Distance*, SIAM J. Appl. Math., 1966. DOI 10.1137/0114025（Hanan 网格定理）
-10. Thomborson, Alpern, Carter, *Rectilinear Steiner tree minimization on a workstation*, DIMACS 1994. DOI 10.1090/dimacs/015/10（Dreyfus–Wagner `O(k²3^k)`，"k ≥ 17 就 I/O 爆炸"）
+10. Thomborson, Alpern, Carter, *Rectilinear Steiner tree minimization on a workstation*, DIMACS 1994. DOI 10.1090/dimacs/015/10（Dreyfus–Wagner 的直角版本 `O(k²3^k)`，"k ≥ 17 就 I/O 爆炸"）
+10b. Dreyfus & Wagner, *The Steiner problem in graphs*, Networks, 1971. DOI 10.1002/net.3230010302
+10c. Juhl, Warme, Winter, Zachariasen, *The GeoSteiner software package for computing Steiner trees in the plane: an updated computational study*, Math. Prog. Computation, 2018. DOI 10.1007/s12532-018-0135-8
 11. Chu & Wong, *FLUTE: Fast Lookup Table Based Rectilinear Steiner Minimal Tree Algorithm for VLSI Design*, IEEE TCAD, 2007. DOI 10.1109/tcad.2007.907068（degree ≤ 9 最优）
 - GeoSteiner 5.3（Warme/Winter/Zachariasen），http://www.geosteiner.com/ （ANSI C，LP-based，解平面上的精确 RSMT）
 14. Wu, Gao, Wang, *A Fast and Stable Algorithm for Obstacle-Avoiding Rectilinear Steiner Minimal Tree Construction*, ASP-DAC 2007. DOI 10.1109/aspdac.2007.357996
@@ -429,6 +469,7 @@ for (const cd of cands) {
 **"多给反而更差"的理论**
 
 20. Fujishige, Goemans, Harks, Peis, Zenklusen, *Matroids are Immune to Braess Paradox*, arXiv:1504.07545, 2015（"bases of matroids are exactly this maximal structure"）
+21. Paul, *An efficient implementation of the simulated annealing heuristic for the quadratic assignment problem*, arXiv:1111.1353, 2011（摘要："performs more than 100 times faster then existing implementations for large problem sizes"）
 - Harvey & Ginsberg, *Limited Discrepancy Search*, AAAI 1995（启发式失败时"少量偏离"重试——可作为 P3 评分失败后的有界回溯骨架）
 - Bertsekas, *Rollout Algorithms for Discrete Optimization: A Survey*, 2013. DOI 10.1007/978-1-4419-7997-1_8（"rollout 的代价不劣于 base heuristic"——这条**保证**正是我们现在的"首个可行"缺的）
 

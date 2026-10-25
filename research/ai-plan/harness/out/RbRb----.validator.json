@@ -7,12 +7,12 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     -19,
-     -182
+     -7,
+     -89
     ],
     "nodeId": "n0",
     "expected": "落点矩形全空（r=0 包围盒）",
-    "actual": "264 格全空（机器 5 台 + 带子 257 格）",
+    "actual": "170 格全空（机器 5 台 + 带子 163 格）",
     "note": "决策 D1：机器恒 r=0 → 无需旋转包围盒；三态占用与冲突矩阵一律走 P1 的 Grid.placementConflicts"
    }
   },
@@ -32,13 +32,13 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     -19,
-     -183
+     -7,
+     -90
     ],
-    "nodeId": "belt@-19,-183",
+    "nodeId": "belt@-7,-90",
     "expected": "computeBelt(含机器邻居) 不动点 = 设计的 (r,rv)",
-    "actual": "257/257 全是不动点；施工顺序合规",
-    "note": "includesMachineNeighbors=true（邻居含机器 11 次、带子 504 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
+    "actual": "163/163 全是不动点；施工顺序合规",
+    "note": "includesMachineNeighbors=true（邻居含机器 11 次、带子 316 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
    }
   },
   {
@@ -48,7 +48,7 @@
     "cell": null,
     "nodeId": null,
     "expected": "端点 ∈ 模板槽位 + 通道走通 + 链闭合 + 出口有 acceptor + 生产槽有供料",
-    "actual": "5 条通道 / 257 带格全对齐",
+    "actual": "5 条通道 / 163 带格全对齐",
     "note": "槽位真值 = P2 OP_TEMPLATES + rotateSlot（v1 机器恒 r=0）；带向真值 = src/ai/belt-rules.mjs（**不 import proto 那份**）"
    }
   },
@@ -82,7 +82,7 @@
     "nodeId": "n3",
     "expected": "demandPerSec",
     "actual": "0",
-    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = painter@0.33/s；拐角 6 个 → 有效带长 255.68（derate 0.995，机器限速 ⇒ 只报告不折进判定）"
+    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = painter@0.33/s；拐角 6 个 → 有效带长 161.68（derate 0.992，机器限速 ⇒ 只报告不折进判定）"
    }
   },
   {
@@ -132,8 +132,8 @@
  ],
  "errors": [],
  "beltSim": {
-  "tilesChecked": 257,
-  "fixedPoints": 257,
+  "tilesChecked": 163,
+  "fixedPoints": 163,
   "drift": [],
   "includesMachineNeighbors": true
  },
@@ -178,8 +178,8 @@
    "errors": 0,
    "failIds": [],
    "beltSim": {
-    "tilesChecked": 257,
-    "fixedPoints": 257,
+    "tilesChecked": 163,
+    "fixedPoints": 163,
     "drift": [],
     "includesMachineNeighbors": true
    }
