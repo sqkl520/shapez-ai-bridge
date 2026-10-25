@@ -44,6 +44,7 @@
  * `compilePlan`（见其 `hubPolicyFailure`）：本 CLI 只是把 `--hub` 转发下去，不再二次改写结果。
  */
 import path from "node:path";
+import fs from "node:fs";
 
 import { compilePlan, writeHandoff, HANDOFF_DIR, REPO_ROOT } from "./compile.mjs";
 
@@ -112,6 +113,24 @@ export function parseArgv(argv) {
 	// 多矿机复制：--miners N（N>=2）。攻略：5 台矿机喂满 1 条带（矿机 0.4/s、带 2/s）。
 	const mn = val(argv, "--miners"); if (mn !== undefined) input.minersPerLine = num(mn, undefined);
 	if (argv.includes("--enforce-unlocks")) input.enforceUnlocks = true;
+	/* --world <file>：读一份**实机观测**（obs 的 entities 数组）当既有占位。
+	   这是"旧产线永不拆"的唯一落地方式 —— 不给它，编译器只能在空地上作图，
+	   于是它会把新线摆到旧矿机上，dry_run 报 solid collision。
+	   文件格式：JSON，或 { entities: [...] }，每项至少要有 {type, x, y}。 */
+	const wf = val(argv, "--world");
+	if (wf !== undefined) {
+		let parsed;
+		try {
+			parsed = JSON.parse(fs.readFileSync(path.resolve(wf), "utf8"));
+		} catch (e) {
+			return { error: `--world 读不了 ${wf}: ${e.message}` };
+		}
+		const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.entities) ? parsed.entities : null);
+		if (!list) return { error: `--world 的文件里找不到 entities 数组（要 JSON 数组或 {entities:[...]}）` };
+		input.worldEntities = list
+			.filter(e => e && typeof e.type === "string" && Number.isFinite(e.x) && Number.isFinite(e.y))
+			.map(e => ({ type: e.type, x: e.x, y: e.y }));
+	}
 	if (val(argv, "--out") !== undefined) input.out = path.resolve(val(argv, "--out"));
 	input.json = argv.includes("--json");
 	input.noHandoff = argv.includes("--no-handoff");
