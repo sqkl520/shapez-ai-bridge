@@ -1094,6 +1094,50 @@ console.log("\n── ⑥ planMinerColumns：矿机 x 由资源决定 ──");
 	}
 }
 
+/* ══════════════════════ ⑥-f 扇出改写（balancer 级联）══════════════════════ */
+/* 背景：`buildDag` 以前遇到「一个输出被 ≥2 个消费者共享」就整段拒绝
+   （`consumers > 1` → crossing-needs-tunnel）。真人存档里 514 个 balancer 说明
+   扇出是常规组网手段，不是特例；`balance` 模板（2 进 2 出、内容不变、轮流发两路）
+   补上了这块。这里测的是**改写本身**，不把布局/路由拖进来。 */
+{
+	const steps = [
+		{ op: "mine", hash: "CuCuCuCu", inputs: [], depth: 0 },
+		{ op: "rotate", hash: "--CuCu--", inputs: ["CuCuCuCu"], depth: 1, args: { dir: "cw" } },
+		{ op: "rotate", hash: "Cu----Cu", inputs: ["CuCuCuCu"], depth: 1, args: { dir: "ccw" } },
+		// 必须有唯一终端：v1 另有「只画一条产出线」的规则，混进来会掩盖要测的东西
+		{ op: "stack", hash: "--CuCu--:Cu----Cu", inputs: ["--CuCu--", "Cu----Cu"], depth: 2 },
+	];
+	const r = place.buildDag(steps.map(s => ({ ...s })));
+	say(r.ok === true, "⑥-f 扇出 2 路：buildDag 成功（旧行为是拒绝）", r.ok === false ? r.reason : undefined);
+	if (r.ok) {
+		const bals = r.nodes.filter(n => n.op === "balance");
+		eq(bals.length, 1, "⑥-f 扇出 2 路 ⇒ 1 个 balancer");
+		const b = bals[0];
+		if (b) {
+			eq(b.hash, "CuCuCuCu", "⑥-f balancer 承载源的 hash（透传，形状不变）");
+			const kids = r.nodes.filter(n => n.op === "rotate");
+			eq(kids.filter(k => k.parents.some(p => p === b)).length, 2, "⑥-f 两个消费者都接到 balancer 上");
+			const src = r.nodes.find(n => n.op === "mine");
+			eq(kids.filter(k => k.parents.some(p => p === src)).length, 0, "⑥-f 源不再直连消费者");
+		}
+	}
+	// 反向对照：关掉改写必须回到原来的拒绝，否则证明不了改写真的发生了
+	const off = place.buildDag(steps.map(s => ({ ...s })), { noFanoutRewrite: true });
+	eq(off.ok, false, "⑥-f 反向对照：noFanoutRewrite ⇒ 扇出仍被拒");
+	if (off.ok === false) eq(off.reason, "dag-not-placeable:crossing-needs-tunnel", "⑥-f 反向对照的拒因是 crossing-needs-tunnel");
+	// 无扇出不插
+	const linear = [
+		{ op: "mine", hash: "CuCuCuCu", inputs: [], depth: 0 },
+		{ op: "rotate", hash: "--CuCu--", inputs: ["CuCuCuCu"], depth: 1, args: { dir: "cw" } },
+	];
+	const lin = place.buildDag(linear.map(s => ({ ...s })));
+	eq(lin.ok === true && lin.nodes.filter(n => n.op === "balance").length, 0, "⑥-f 无扇出：不插 balancer");
+	// 确定性（两次构建 id 与结构必须一致）
+	const again = place.buildDag(steps.map(s => ({ ...s })));
+	eq(r.ok && again.ok ? again.nodes.map(n => n.id).join("|") : null,
+		r.ok ? r.nodes.map(n => n.id).join("|") : null, "⑥-f 同输入两次构建 id 完全一致（确定性）");
+}
+
 /* ══════════════════════ ⑤ node --check ══════════════════════ */
 console.log("\n── ⑤ node --check ──");
 {

@@ -93,9 +93,11 @@ export const GRID_CHARS = Object.freeze({
 /** 角度 → 方位名（0=上 90=右 180=下 270=左；= ORDER 索引 × 90，与 belt-rules.dirToAngle 同表）*/
 export const ANGLE_DIR = Object.freeze(ORDER.reduce((a, d, i) => { a[i * 90] = d; return a; }, {}));
 
-/** v1 可作图的 op（cutQuad/paintQuad/paintDouble 的 4 路形态、wire、隧道一律拒）*/
+/** v1 可作图的 op（cutQuad/paintQuad/paintDouble 的 4 路形态、wire、隧道一律拒）
+ *  `balance` 是布线元件（不是算子）：它不产生新形状，只在扇出点上把流量分成两路。 */
 export const V1_OPS = Object.freeze([
 	"mine", "cut", "rotate", "rotateCCW", "rotate180", "paint", "paintMirrored", "mix", "stack", "trash",
+	"balance",
 ]);
 
 /* ═════════════════ 内部：小工具（P1 没提供的洞在本文件补，不改 grid/types）═════════════════ */
@@ -230,6 +232,8 @@ export function buildDag(steps, opts = {}) {
 	}
 	const byHash = new Map();
 	const nodes = [];
+	/** 被 ≥2 个消费者共享的输出节点（需要插 balancer 级联）。见下方校验段的说明。 */
+	const fanoutNeeds = new Set();
 	steps.forEach((s, i) => {
 		if (!s || typeof s !== "object" || Array.isArray(s)) {
 			throw new ContractViolation(`steps[${i}]`, "{op,args,inputs,hash}", s);
@@ -308,9 +312,19 @@ export function buildDag(steps, opts = {}) {
 			return makeFailure("dag-not-placeable:fanin>2", { nodeId: n.id, cell: null, check: "V5-degree" },
 				`入度 ${inCount} 超过可用输入槽 ${n.template.inputs.length}（v1 maxFanIn=${SCOPE_V1.maxFanIn}）：请先在配方层二化成二叉树`);
 		}
-		if (n.consumers > 1) {
+		if (n.consumers > 1 && !opts.noFanoutRewrite) {
+			/* ★ 扇出 ⇒ 插入 balancer 级联（以前这里直接拒绝）★
+			   旧行为：`consumers > 1` 一律失败，理由是"v1 行式布局无扇出模板"。
+			   现在有了 balance（2 进 2 出、内容不变、轮流发两路），扇出就有了标准解法：
+			     输出 O 被 k 个消费者用 ⇒ 插一棵 balancer 二叉树，叶子接原来的消费者。
+			   balancer 不改 item（item_processor.js:342-362 只做 nextOutputSlot++ % 2），
+			   所以形状在整棵树里保持不变，下游拿到的还是原来的 hash。
+			   改写在 _rewriteFanout() 里做；这里只标记需要改写，真正的插入在全部节点收齐后。 */
+			fanoutNeeds.add(n.id);
+		}
+		if (n.consumers > 1 && opts.noFanoutRewrite) {
 			return makeFailure("dag-not-placeable:crossing-needs-tunnel", { nodeId: n.id, cell: null, check: "V6-crossing" },
-				`扇出 ${n.consumers} > 1：同一输出被多条通道共享，v1 行式布局无扇出模板（需隧道 → scope.tunnels:false）`);
+				`扇出 ${n.consumers} > 1：同一输出被多条通道共享（本调用显式关闭了 balancer 改写）`);
 		}
 		// 多层（scope.layers 的**结构**含义，见 NOTES N-1 / CONTEST）：
 		//   stacker 的单次合成（2 个**非堆叠**上游 → 1 个 2 层形状）是 v1 支持且 M4 实机验证过的，
@@ -361,7 +375,124 @@ export function buildDag(steps, opts = {}) {
 		return makeFailure("out-of-scope:multilayer", { nodeId: terminals[1].id, cell: null, check: "V8-scope" },
 			`产出端 ${terminals.length} 个：v1 只画一条产出线（instanceIdx 恒 0，多行复制归 v1.1，plan §7.1-2）`);
 	}
+
+	/* ★ 扇出改写：把共享输出换成 balancer 级联 ★
+	   放在**最后**做，因为要等所有边都连好才知道谁是扇出点、谁在哪一侧。
+	   改写会新增 balance 节点并改动 edges；节点的 depth 只被设为「父的 depth + 1」，
+	   真正的层号在 layerAndOrder 里按 DAG 重算，所以这里不用纠结。 */
+	if (fanoutNeeds.size) {
+		const rw = rewriteFanout(nodes, byHash);
+		if (rw.ok === false) return rw;
+	}
+
 	return { ok: true, nodes, terminals, byHash };
+}
+
+/**
+ * 把扇出点 O（被 k≥2 个消费者共享）改写成 balancer 二叉树。
+ *
+ *   O.out ──┬── c1          O.out ──► bal1 ──┬── c1
+ *           ├── c2      ⇒                     └── bal2 ──┬── c2
+ *           └── c3                                       └── c3
+ *
+ * balancer 是 2 进 2 出且**不改 item**，所以整棵树里形状不变，叶子收到的仍是原 hash。
+ * 级联而不是并联：balancer 只有两个输出，k 路必须两两分组，k-1 个 balancer 组成树。
+ *
+ * ⚠️ 现实约束（不是实现偷懒）：每多一个 consumer 就多一个 balancer，
+ *    而 balancer 占 2×1 且两个输出都在北面 —— 密集扇出会显著吃空间。
+ *    真实玩家用 514 个 balancer 正是这个原因。
+ *
+ * @returns {{ok:true}|{ok:false,reason:string,failingNode:object,hint:string}}
+ */
+function rewriteFanout(nodes, byHash) {
+	/* 1. 找出每个节点的消费者列表（按先序，确定性） */
+	const consumersOf = new Map();
+	for (const n of nodes) for (const p of n.parents) {
+		if (!p) continue;
+		if (!consumersOf.has(p.id)) consumersOf.set(p.id, []);
+		consumersOf.get(p.id).push(n);
+	}
+
+	/* 2. 自底向上处理扇出点：叶子先接好，父再分组 */
+	const fanouts = nodes.filter(n => (consumersOf.get(n.id) || []).length > 1);
+	if (!fanouts.length) return { ok: true };
+
+	/* 3. 逐点改写。用「连接器」概念：给某个上游挂一个**生产该 hash 的通道端点**。
+	      balancer 的输出槽 a/b 都能发同一个形状，所以每个 balance 节点就是
+	      「一个能发 hash H 的两路分叉器」。 */
+	for (const src of fanouts) {
+		const kids = consumersOf.get(src.id);
+		// 把这个源从所有孩子的 parents 里摘掉，稍后由 balancer 树接回去
+		const slotsToFill = kids.map(k => {
+			const idx = k.parents.findIndex(p => p === src);
+			k.parents[idx] = null;
+			return { kid: k, idx };
+		});
+
+		/* 4. 建树：k 个叶子需要 k-1 个 balancer。
+		      配对顺序按孩子出现的先序 —— 确定性，且让同一父的两个子尽量相邻。 */
+		let level = kids.map(() => null);        // 每个叶子的"来源"，稍后填
+		let pending = [];                        // 待接的 balancer 列表
+		// 从源出发先造一个 balancer（如果 k>=2）
+		const makeBalancer = (depth) => {
+			// id 必须**确定性**：同输入必须产出同结构，否则两次编译的蓝图不可复现。
+			// 用「源 id + 序号」而不是随机串。
+			const seq = nodes.filter(n => n.op === "balance" && n.fanoutOf === src.id).length;
+			const id = `${src.id}#bal${seq}`;
+			const b = {
+				id, op: "balance", template: ALL_TEMPLATES.balance, args: {},
+				inputs: [], hash: src.hash,          // 承载同一个形状（透传）
+				depth: depth === null ? null : depth,
+				parents: [null, null],               // 两个输入，逐个填
+				consumers: 0, usedOut: new Set(), nextOut: 0, x: 0, y: 0,
+				fanoutOf: src.id,
+			};
+			nodes.push(b);
+			byHash.set(id, b);
+			return b;
+		};
+
+		/* 树形：第 0 层一个 balancer 接 src，两个输出各带一组；
+		          组里再要分就再造。这里按 k 直接展开成链 + 末端分叉，够用且简单：
+		          bal1: in0 = src, in1 = (占位), out0 = kid0, out1 = bal2
+		          bal2: in0 = 占位, in1 = 占位, out0 = kid1, out1 = bal3 ...
+		          最后两个 kid 由最后一个 balancer 的两个输出接。 */
+		const chain = [];
+		for (let i = 0; i < kids.length - 1; i++) chain.push(makeBalancer(src.depth === null ? null : src.depth + 1));
+
+		// 把 src 接到第一个 balancer 的 in0
+		chain[0].parents[0] = src;
+		src.consumers += 1;
+
+		// 依次：bal_i 的 out0 给 kid_i；out1 给 bal_{i+1}（或最后一个 kid）
+		for (let i = 0; i < chain.length; i++) {
+			const b = chain[i];
+			const kid = kids[i];
+			// 记录 kid 从 b 的 out0 取货
+			b.outAssign = b.outAssign || [];
+			b.outAssign.push({ role: "primary", to: kid });
+			slotsToFill[i].kid.parents[slotsToFill[i].idx] = b;
+			b.consumers += 1;
+			kid.consumers = (kid.consumers || 0) + 0;   // kid 的消费者不变
+		}
+		// 最后一个 kid 由最后一个 balancer 的 out1 接
+		const lastB = chain[chain.length - 1];
+		const lastKid = kids[kids.length - 1];
+		lastB.outAssign.push({ role: "secondary", to: lastKid });
+		slotsToFill[kids.length - 1].kid.parents[slotsToFill[kids.length - 1].idx] = lastB;
+		lastB.consumers += 1;
+
+		// 链上相邻两个 balancer：bal_i 的 out1 接 bal_{i+1} 的 in0
+		for (let i = 0; i < chain.length - 1; i++) {
+			chain[i + 1].parents[0] = chain[i];
+			chain[i].consumers += 1;
+			chain[i].outAssign.push({ role: "secondary", to: chain[i + 1] });
+		}
+		// 每个 balancer 的 in1 留空 → 后面由「未用输入槽接 trash」兜底（或干脆不接）
+		// 注意：balancer 是 2 进 2 出，只占一个输入也能工作（另一路空着）
+		void pending; void level;
+	}
+	return { ok: true };
 }
 
 /* ═══════════════ 2) 拓扑分层 + 层内 barycenter（父子保序）═══════════════ */
@@ -1506,8 +1637,17 @@ export function trashCandidates(n, outIdx) {
 	const first = beltSide(slot0, out.dir);
 	const cands = [];
 	for (let k = 2; k <= 2 + TRASH_PUSH_MAX; k++) cands.push({ cell: addN(slot0, out.dir, k), acceptor: OPP[out.dir] });
+	/* 侧让：第一格旁边的垂直格。**双输出机器**（cutter）的第二个输出经
+	   常和第一个输出的通道挤在相邻两列，于是这里全撞 —— 实测 `RuRu----`：
+	   hub 占了 left 槽的通道，right 槽的 trash 在 9 个候选里全部 cell-occupied。
+	   所以再加一档：往前推 1~3 格**之后**再侧让，绕开紧贴的那条通道。 */
 	for (const perp of (isVert(out.dir) ? ["left", "right"] : ["top", "bottom"])) {
 		cands.push({ cell: add(first, perp), acceptor: OPP[perp] });
+	}
+	for (const perp of (isVert(out.dir) ? ["left", "right"] : ["top", "bottom"])) {
+		for (let k = 2; k <= 4; k++) {
+			cands.push({ cell: add(addN(slot0, out.dir, k), perp), acceptor: OPP[perp] });
+		}
 	}
 	return cands;
 }
