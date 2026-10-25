@@ -1637,17 +1637,8 @@ export function trashCandidates(n, outIdx) {
 	const first = beltSide(slot0, out.dir);
 	const cands = [];
 	for (let k = 2; k <= 2 + TRASH_PUSH_MAX; k++) cands.push({ cell: addN(slot0, out.dir, k), acceptor: OPP[out.dir] });
-	/* 侧让：第一格旁边的垂直格。**双输出机器**（cutter）的第二个输出经
-	   常和第一个输出的通道挤在相邻两列，于是这里全撞 —— 实测 `RuRu----`：
-	   hub 占了 left 槽的通道，right 槽的 trash 在 9 个候选里全部 cell-occupied。
-	   所以再加一档：往前推 1~3 格**之后**再侧让，绕开紧贴的那条通道。 */
 	for (const perp of (isVert(out.dir) ? ["left", "right"] : ["top", "bottom"])) {
 		cands.push({ cell: add(first, perp), acceptor: OPP[perp] });
-	}
-	for (const perp of (isVert(out.dir) ? ["left", "right"] : ["top", "bottom"])) {
-		for (let k = 2; k <= 4; k++) {
-			cands.push({ cell: add(addN(slot0, out.dir, k), perp), acceptor: OPP[perp] });
-		}
 	}
 	return cands;
 }
