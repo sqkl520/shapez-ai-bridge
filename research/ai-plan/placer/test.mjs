@@ -1138,6 +1138,100 @@ console.log("\n── ⑥ planMinerColumns：矿机 x 由资源决定 ──");
 		r.ok ? r.nodes.map(n => n.id).join("|") : null, "⑥-f 同输入两次构建 id 完全一致（确定性）");
 }
 
+/* ══════════════════════ ⑥-g 多矿机复制（miner replication）══════════════════════ */
+/* 攻略里最硬的一条规则：「5 台矿机喂满 1 条带」（矿机 0.4/s、带 2/s）。
+   但真实 DAG 里**每种形状只有一个 mine 节点** —— 所以"合并已有的多台矿机"这个思路
+   完全不适用（第一版那么写，测试全绿却一个真实目标都影响不到）。正确做法是**复制**。
+   `input.minersPerLine >= 2` 才启用：默认不复制，否则单矿机目标会被撑成 4 矿机 + 3 balancer，
+   通道必然交叉，`CrCrCrCr` 这类目标立刻布不出来。 */
+{
+	const mkMiner = (id, hash, color) => ({
+		id, op: "mine", hash, color,
+		template: { footprint: [1, 1], outputs: [{ cell: [0, 0], dir: "top", role: "out" }], inputs: [] },
+		inputs: [], parents: [], consumers: 1, usedOut: new Set(), nextOut: 0,
+		x: 0, y: 0, depth: 0, resource: color || hash, args: {},
+	});
+	const mkConsumer = (id, parent) => ({
+		id, op: "cut", hash: "RuRu----",
+		template: { footprint: [2, 1], outputs: [], inputs: [{ cell: [0, 0], dir: "bottom", role: "primary" }] },
+		inputs: [], parents: [parent], consumers: 0, usedOut: new Set(), nextOut: 0,
+		x: 0, y: 0, depth: 1, args: {},
+	});
+
+	// 形状矿机被复制，下游仍只看到一个父
+	{
+		const m = mkMiner("n0", "RuRuRuRu");
+		const c = mkConsumer("c0", m);
+		const r = place.replicateMiners([m, c], { perLine: 4 });
+		say(r.ok === true, "⑥-g 复制成功");
+		if (r.ok) {
+			eq(r.groups.length, 1, "⑥-g 产出 1 个组");
+			const g = r.groups[0];
+			eq(g && g.members.length, 4, "⑥-g 组内 4 台矿机");
+			eq(g && g.hash, "RuRuRuRu", "⑥-g 组承载同一形状");
+			say(c.parents[0] === g, "⑥-g 下游父被换成组节点");
+			eq(c.parents.filter(Boolean).length, 1, "⑥-g 下游仍只有 1 个父");
+			eq(g.template.outputs.length, 1, "⑥-g 组对外只有 1 个输出槽（下游布局不用改）");
+			eq(new Set(g.members.map(x => x.id)).size, g.members.length, "⑥-g 成员 id 唯一");
+		}
+	}
+	// 颜料矿机不复制（hash 不同 = 产出不同 item，合并会串味）
+	{
+		const p = mkMiner("p0", "-g------", "green");
+		const c = mkConsumer("c1", p);
+		const r = place.replicateMiners([p, c], { perLine: 4 });
+		say(r.ok === true && r.groups.length === 0, "⑥-g 颜料矿机不复制（多复制会串味）");
+		say(c.parents[0] === p, "⑥-g 颜料矿机的下游父不变");
+	}
+	// 反向对照：perLine=1 ⇒ 零复制
+	{
+		const m = mkMiner("n0", "RuRuRuRu");
+		const c = mkConsumer("c0", m);
+		const r = place.replicateMiners([m, c], { perLine: 1 });
+		say(r.ok === true && r.groups.length === 0, "⑥-g 反向对照：perLine=1 ⇒ 零复制");
+	}
+	// 确定性：成员 id 派生稳定
+	{
+		const build = () => { const m = mkMiner("n0", "RuRuRuRu"); return [m, mkConsumer("c0", m)]; };
+		const a = place.replicateMiners(build(), { perLine: 3 });
+		const b = place.replicateMiners(build(), { perLine: 3 });
+		const sig = r => r.ok ? r.groups.map(g => g.members.map(m => m.id).join("+")).join("|") : "fail";
+		eq(sig(a), sig(b), "⑥-g 同输入两次结果相同");
+		eq(sig(a), "n0+n0#m1+n0#m2", "⑥-g 成员 id 派生规则稳定");
+	}
+	// 端到端：place() 真的把组展开成 N 台矿机 + N-1 个 balancer
+	{
+		const steps2 = [
+			{ op: "mine", hash: "RuRuRuRu", inputs: [], depth: 0 },
+			{ op: "cut", hash: "RuRu----", inputs: ["RuRuRuRu"], depth: 1, args: { half: "left" } },
+		];
+		const lay = place.place({ steps: steps2, site: { x: -2, y: -2 }, hub: { x: -2, y: -2 }, seed: 60908, minersPerLine: 4, tunnels: true });
+		if (lay.ok === false) {
+			say(false, "⑥-g place(minersPerLine=4) 应成功", { reason: lay.reason });
+		} else {
+			const ops = lay.placements.map(p => p.op);
+			const nMiners = ops.filter(o => o === "mine").length;
+			const nBals = ops.filter(o => o === "balance").length;
+			eq(nMiners, 4, "⑥-g place 里真的摆了 4 台矿机");
+			eq(nBals, 3, "⑥-g place 里真的摆了 3 个 balancer（N-1 汇流树）");
+		}
+	}
+	// 默认不复制（既有目标逐字节不变的前提）
+	{
+		const steps2 = [
+			{ op: "mine", hash: "RuRuRuRu", inputs: [], depth: 0 },
+			{ op: "rotate", hash: "--RuRu--", inputs: ["RuRuRuRu"], depth: 1, args: { dir: "cw" } },
+		];
+		const lay = place.place({ steps: steps2, site: { x: -2, y: -2 }, hub: { x: -2, y: -2 }, seed: 60908 });
+		if (lay.ok === false) say(false, "⑥-g 默认路径应成功", { reason: lay.reason });
+		else {
+			const ops = lay.placements.map(p => p.op);
+			eq(ops.filter(o => o === "mine").length, 1, "⑥-g 默认只摆 1 台矿机（不复制）");
+			eq(ops.filter(o => o === "balance").length, 0, "⑥-g 默认不插 balancer");
+		}
+	}
+}
+
 /* ══════════════════════ ⑤ node --check ══════════════════════ */
 console.log("\n── ⑤ node --check ──");
 {
