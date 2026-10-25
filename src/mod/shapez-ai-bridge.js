@@ -417,6 +417,9 @@ class Mod extends shapez.Mod {
                 case "debug_speed_registry":
                     result = this.debugSpeedRegistry();
                     break;
+                case "resources":
+                    result = this.observeResources(params || {});
+                    break;
                 default:
                     this.sendError(id, -32601, "method_not_found", "Unknown method: " + method);
                     return;
@@ -449,6 +452,93 @@ class Mod extends shapez.Mod {
      *   - 同时给 key/value → 写（写后回读，确认真的生效）
      *   - 都不给          → 列出白名单里所有项的当前值
      */
+    /**
+     * 读出地下的**自然资源分布**（矿点）。
+     *
+     * 为什么需要它：`obs` 只报实体（建筑），矿石不是实体 —— 它在地图的下层
+     * （map lower layer）。结果就是 AI 完全看不见地图上有什么可挖的，
+     * 只能按"已知固定坐标"去猜，猜错了就整条线建在空气上。
+     * 真实的规划必须建立在"哪里有矿、有几格"之上，而不是我脑子里的常量表。
+     *
+     * params: { region: [x0,y0,x1,y1] }  省略则用当前相机附近
+     * 返回：按资源键聚合的矿点列表 + 每个资源的总格数
+     */
+    observeResources(params) {
+        const root = this.requireRoot();
+        const p = params || {};
+        let region = p.region;
+        if (!Array.isArray(region) || region.length !== 4) {
+            // 默认：以 hub 为中心 80×80 的方块
+            region = [-40, -40, 40, 40];
+        }
+        const [x0, y0, x1, y1] = region;
+        const ax = Math.min(x0, x1), bx = Math.max(x0, x1);
+        const ay = Math.min(y0, y1), by = Math.max(y0, y1);
+        // 上限保护：一次扫太多会卡住主线程
+        const MAX_TILES = 40000;
+        if ((bx - ax + 1) * (by - ay + 1) > MAX_TILES) {
+            throw this.rpcError(2001, "invalid_action",
+                "region too large (" + ((bx - ax + 1) * (by - ay + 1)) + " tiles, max " + MAX_TILES + ")");
+        }
+        const byResource = {};
+        let total = 0;
+        for (let y = ay; y <= by; ++y) {
+            for (let x = ax; x <= bx; ++x) {
+                let item = null;
+                try {
+                    item = root.map.getLowerLayerContentXY(x, y);
+                } catch (e) {
+                    item = null;
+                }
+                if (!item) continue;
+                let key;
+                try {
+                    key = item.getAsCopyableKey ? item.getAsCopyableKey() : String(item);
+                } catch (e) {
+                    key = "unknown";
+                }
+                if (!byResource[key]) byResource[key] = { key, count: 0, cells: [] };
+                byResource[key].count++;
+                byResource[key].cells.push([x, y]);
+                total++;
+            }
+        }
+        // 每格都列会很大，给每个资源一个紧凑的矩形框 + 每行连续段
+        const out = [];
+        for (const key of Object.keys(byResource)) {
+            const r = byResource[key];
+            let mnx = Infinity, mny = Infinity, mxx = -Infinity, mxy = -Infinity;
+            for (const [x, y] of r.cells) {
+                if (x < mnx) mnx = x; if (x > mxx) mxx = x;
+                if (y < mny) mny = y; if (y > mxy) mxy = y;
+            }
+            // 每行连续段，便于看出"一行有几格可并排"
+            const rows = {};
+            for (const [x, y] of r.cells) (rows[y] = rows[y] || []).push(x);
+            const runs = [];
+            for (const yStr of Object.keys(rows)) {
+                const xs = rows[yStr].sort((a, b) => a - b);
+                let start = xs[0], prev = xs[0];
+                for (let i = 1; i <= xs.length; ++i) {
+                    if (i === xs.length || xs[i] !== prev + 1) {
+                        runs.push({ y: Number(yStr), from: start, to: prev, len: prev - start + 1 });
+                        start = xs[i]; prev = xs[i];
+                    } else {
+                        prev = xs[i];
+                    }
+                }
+            }
+            runs.sort((a, b) => b.y - a.y || a.from - b.from);
+            out.push({ key, count: r.count, bbox: [mnx, mny, mxx, mxy], runs });
+        }
+        out.sort((a, b) => b.count - a.count);
+        return {
+            region: [ax, ay, bx, by],
+            total_resource_tiles: total,
+            resources: out,
+        };
+    }
+
     /**
      * 诊断用：读出**游戏速度**在序列化工厂里的注册情况。
      *
