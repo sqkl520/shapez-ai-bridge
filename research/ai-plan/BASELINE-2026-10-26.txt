@@ -1,16 +1,16 @@
-goal        seed   ok     w     h     belts  corners  reason
---------------------------------------------------------------------------------------------
-CuCuCuCu    43391  ok     6     4     8      1       
-RuRuRuRu    43391  ok     2     9     11     2       
-RuRu----    43391  FAIL   -     -     -      -        no-site-large-enough
-----CuCu    43391  ok     7     11    19     3       
-Cu----Cu    43391  ok     7     19    34     2       
-Cu------    43391  ok     7     28    50     2       
-Ru----Ru    43391  ok     3     25    42     2       
---SuSu--    43391  ok     81    39    134    2       
-CgScScCg    43391  FAIL   -     -     -      -        dag-not-placeable:column-conflict-unresolved
-CpCpCpCp    43391  FAIL   -     -     -      -        dag-not-placeable:column-conflict-unresolved
-RbRb----    43391  ok     23    107   163    6       
+goal        seed   ok     w     h     belts  corners  longR  longC  reason
+------------------------------------------------------------------------------------------------------------
+CuCuCuCu    43391  ok     6     4     8      1        2      5     
+RuRuRuRu    43391  ok     2     9     11     2        7      0     
+RuRu----    43391  FAIL   -     -     -      -        -      -      no-site-large-enough
+----CuCu    43391  ok     7     11    19     3        6      4     
+Cu----Cu    43391  ok     7     19    34     2        6      4     
+Cu------    43391  ok     7     28    50     2        6      4     
+Ru----Ru    43391  ok     3     25    42     2        7      1     
+--SuSu--    43391  ok     81    39    134    2        21     78    
+CgScScCg    43391  FAIL   -     -     -      -        -      -      dag-not-placeable:column-conflict-unresolved
+CpCpCpCp    43391  FAIL   -     -     -      -        -      -      dag-not-placeable:column-conflict-unresolved
+RbRb----    43391  ok     23    107   163    6        89     14    
 
 通过率: goal -> ok/total
   CuCuCuCu    1/1
