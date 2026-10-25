@@ -560,7 +560,15 @@ export function assignLanes(report, opts = {}) {
         const iv = toInterval(g);
         if (opts.preAssign !== false && Number.isInteger(g.ch.lane)) {
             const r = g.ch.lane;
-            const inBand = r >= g.band[0] && r <= g.band[1];
+            /* band 的两端允许是 null（= 该侧无界）。直接 `r >= g.band[0]` 会让 null 参与
+               数值比较（null → 0），于是"下界无界"被当成"下界为 0"：
+               实测 L4 的 chHub 三条腿的可行域是 [null,-6]，lane=-7 被判 inBand=false，
+               于是它被丢进 leftEdge 重排、又因整行都是旧工厂而分配失败 ——
+               P4 最终退回 Dijkstra，铺出一条 (24,-6)→(24,-7) 的断链。
+               判据与 windowFor（第 508 行）保持一致：null 侧视为无穷。 */
+            const lo = Number.isFinite(g.band[0]) ? g.band[0] : -Infinity;
+            const hi = Number.isFinite(g.band[1]) ? g.band[1] : Infinity;
+            const inBand = r >= lo && r <= hi;
             if (inBand && feasibleLane(iv, r) && !laneRows.has(g.id)) {
                 // 采纳 P3 的车道；同 row 若与已采纳者区间重叠 → 由 leftEdge 的 C1 判据兜住
                 preTracks.push({ fixed: r, ivs: [iv] });
