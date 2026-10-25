@@ -1431,7 +1431,64 @@ export function planChannel(first, d1, last, inDir, ctx = {}) {
 		}
 		lane = v; break;
 	}
-	if (lane === null) lane = pickLane(first, d1, last, d2, ctx);   // 兜底：保持旧语义
+	/* ⚠️ `pickLane` 是**纯几何**兜底：它只按 d1/d2 解出的可行区间挑一条，
+	   完全不看 `occupied`（见它自己的头注）。有既有工厂时它的结果可能整行压着旧建筑 ——
+	   实测 L4：candsLane 全被旧钌线占掉后用 pickLane 拿到 y=-7，那一行正好是旧 balancer 所在，
+	   而这条路径会一路走到 validate 才报"压到既有 balancer"。
+	   所以这里要**验一遍**：pickLane 给出的行如果被占，就当作没兜住，
+	   交给下面的 bridge 分支（它有逐格 free 检查）。 */
+	if (lane === null) {
+		const tryLane = pickLane(first, d1, last, d2, ctx);
+		if (tryLane !== null) {
+			const aT = isVert(d1) ? [first[0], tryLane] : [tryLane, first[1]];
+			const bT = isVert(d1) ? [last[0], tryLane] : [tryLane, last[1]];
+			const segT = [...lineCells(first, aT), ...lineCells(aT, bT), ...lineCells(bT, last)];
+			if (!blocked || !segT.some(blocked)) lane = tryLane;
+		}
+	}
+	/* ★ 桥接兜底：只有"存在既有世界占位"时才启用 ★
+	   Z 形态的可行车道由端点方向解出（band），但在有旧工厂的地图上，
+	   band 内的每一行可能都被占，而 band 外的行（例如更靠近 hub 的几行）是空的。
+	   实测 L4：band=[-14,-7] 全被旧钌线堵死，而 y=-5..-3 完全空闲。
+
+	   启用条件刻意收得很窄：`ctx.occupied` 非空（= 有既有工厂）且 Z 全失败。
+	   没有既有占位的图（金网格、所有既有 fixture）永远走不到这里，逐字节不变。
+	   —— 上一版把它放在无条件位置，结果让"本该冲突"的负例通过了
+	      （B-1④ 与 rowGap=3 两条回归），所以这次收窄到只服务增量扩建。
+
+	   形态：first 先沿 d1 走若干格到某行 v，横穿，再沿 d2 走到 last。
+	   三段的每一格都必须 free（不碰机器/旧带子/hub）。 */
+	if (lane === null && ctx.bridgeOnObstacle === true) {
+		const r0 = isVert(d1) ? 1 : 0;
+		const probe = [];
+		for (let k = 1; k <= 40; k++) probe.push(first[r0] + DIRV[d1][r0] * k);
+		for (const v of probe) {
+			const a2 = isVert(d1) ? [first[0], v] : [v, first[1]];
+			const b2 = isVert(d2) ? [last[0], v] : [v, last[1]];
+			if (sameCell(a2, b2)) continue;
+			const seg1 = lineCells(first, a2);
+			const seg2 = lineCells(a2, b2);
+			const seg3 = lineCells(b2, last);
+			const all = [...seg1, ...seg2.slice(1), ...seg3.slice(1)];
+			if (all.some(blocked)) continue;
+			/* 逐格方向：中间一律按实际相邻重算；首格入向来自 d1、末格出向是 d2。
+			   beltGlyph 要求 inDir !== outDir，所以彻底依赖实际相邻而不是端点常量。 */
+			const dirs = [];
+			for (let i = 0; i < all.length; i++) {
+				const prev = i > 0 ? all[i - 1] : null;
+				const next = i < all.length - 1 ? all[i + 1] : null;
+				const dIn = prev ? dirToward(prev, all[i]) : null;
+				const dOut = next ? dirToward(all[i], next) : null;
+				const inDir = dIn ? OPP[dIn] : OPP[d1];
+				const outDir = dOut ? dOut : d2;
+				if (inDir === outDir) { dirs.length = 0; break; }
+				dirs.push({ cell: all[i], inDir, outDir });
+			}
+			if (dirs.length !== all.length) continue;
+			const cc = dirs.filter(x => isCorner(x.inDir, x.outDir)).length;
+			return { ok: true, kind: "bridge", lane: v, cornerCount: cc, cells: dirs };
+		}
+	}
 	if (lane === null) return { ok: false, why: "column-conflict", at: first };
 	const a = isVert(d1) ? [first[0], lane] : [lane, first[1]];
 	const b = isVert(d1) ? [last[0], lane] : [lane, last[1]];
@@ -2262,7 +2319,13 @@ export function place(input = {}) {
 		const last = beltSide(toCell, inSlot.dir);
 		const id = o.id || `ch${seq}`;
 		const r = planChannel(first, outSlot.dir, last, inSlot.dir,
-			{ occupied, lanePool, strictLane: o.strictLane === true, tunnels: input.tunnels === true });
+			{ occupied, lanePool, strictLane: o.strictLane === true, tunnels: input.tunnels === true,
+			  /* 桥接兜底的开关：只有真正的**既有工厂**才打开。
+			     `occupancyLocal` 里既有 hub 也有旧建筑 —— hub 永远是"占位"的一部分，
+			     但一台 hub 不构成"路被堵死"，只会让 band 计算收紧。
+			     拿 occupied.size 当判据会把纯 hub 的图也放进来（实测 B-1④ 与 rowGap=3
+			     两条负例因此变绿，说明兜底在它们那里不该生效）。 */
+			  bridgeOnObstacle: occupancyLocal.some(o => o.who !== "hub" && o.kind !== "hub") });
 		const report = {
 			/* ★ 显式 id：与 P4 的 `channelIdOf` 对齐 ★
 			   P3 内部用 `ch<n>`（序号）标识通道，而 P4 在没有显式 id 时会自己推
@@ -2316,7 +2379,10 @@ export function place(input = {}) {
 			/* 隧道格（sender/receiver）占格；被"穿过"的格**不**占 —— 那是隧道的语义
 			   （别的东西可以从它上方/下方经过）。 */
 			occupied.add(cellKey(b.cell[0], b.cell[1]));
-			beltCells.push({ ...b, id });
+			/* `bridge`：P3 在有既有工厂时用的三拐角绕行。标记出来让 P4 整条采纳 ——
+			   它的可行行在 Z 形态的 band 之外，P4 重算只会退回 band 内的老路。
+			   （隧道靠 sender/receiver 标记，桥梁没有这种结构，所以要显式打标。） */
+			beltCells.push({ ...b, id, bridge: r.kind === "bridge" ? true : undefined });
 		}
 		/* ★ 但"被穿过的格"必须记进一份**独立的隧道占用表** ★
 		   它们对普通带子是空闲的（这正是隧道存在的理由），可对**另一条隧道**必须可见 ——
