@@ -15,6 +15,7 @@
  *   --depth/--max-states <n> solver 预算
  *   --allow-cutquad         强制开 cutQuad（默认：level<16 关，见 compile.mjs CUTQUAD_MIN_LEVEL）
  *   --tunnels               允许用隧道跨过必然相交的通道（默认关；v1 的纯带布局不需要它）
+ *   --miners <n>            把每台形状矿机复制成 n 台并用 balancer 汇流（默认 1 = 不复制）
  *   --enforce-unlocks       让 V10 从「报告」升级成「阻断」（默认 god-mode 口径，plan §6 R4）
  *   --json                  输出完整 CompiledPlan JSON（默认只给人读摘要）
  *   --out DIR               交接件目录（默认 research/ai-plan/harness/out）
@@ -58,7 +59,7 @@ export const USAGE = `用法：node src/ai/compiler/cli.mjs --goal <shortKey> [-
  *  （solver.mjs 也用同一条判据）。所以只排除「本身就是已知 flag 名」的值，不排除 `--` 前缀。 */
 const KNOWN_FLAGS = new Set(["--seed", "--hub", "--site", "--range", "--demand", "--level", "--row-gap",
 	"--col-gap", "--depth", "--max-states", "--out", "--goal", "--json", "--no-handoff",
-	"--allow-cutquad", "--enforce-unlocks", "--tunnels", "--help", "-h"]);
+	"--allow-cutquad", "--enforce-unlocks", "--tunnels", "--miners", "--help", "-h"]);
 function val(argv, key, dflt = undefined) {
 	const i = argv.indexOf(key);
 	if (i < 0 || i + 1 >= argv.length) return dflt;
@@ -108,6 +109,8 @@ export function parseArgv(argv) {
 	const ms = val(argv, "--max-states"); if (ms !== undefined) input.maxStates = num(ms, undefined);
 	if (argv.includes("--allow-cutquad")) input.noCutQuad = false;
 	if (argv.includes("--tunnels")) input.tunnels = true;
+	// 多矿机复制：--miners N（N>=2）。攻略：5 台矿机喂满 1 条带（矿机 0.4/s、带 2/s）。
+	const mn = val(argv, "--miners"); if (mn !== undefined) input.minersPerLine = num(mn, undefined);
 	if (argv.includes("--enforce-unlocks")) input.enforceUnlocks = true;
 	if (val(argv, "--out") !== undefined) input.out = path.resolve(val(argv, "--out"));
 	input.json = argv.includes("--json");
