@@ -1,0 +1,88 @@
+{
+  "at": "2026-10-25T06:52:27.313Z",
+  "rig": {
+    "miner": [
+      -11,
+      10
+    ],
+    "rowY": 10,
+    "tunnel": {
+      "sender": [
+        -9,
+        10
+      ],
+      "receiver": [
+        -5,
+        10
+      ]
+    },
+    "gap": [
+      [
+        -8,
+        10
+      ],
+      [
+        -7,
+        10
+      ],
+      [
+        -6,
+        10
+      ]
+    ],
+    "cornerX": -2,
+    "dropY": 2
+  },
+  "negative": {
+    "delivered": 0,
+    "ticksRun": 4200
+  },
+  "pasteOverBelts": {
+    "delivered": 8,
+    "ticksRun": 3900,
+    "paste": {
+      "applied": 15,
+      "tunnels": {
+        "in_plan": 2,
+        "smartplace_suspended": true
+      }
+    },
+    "gapBefore": 3,
+    "gapAfter": 3,
+    "gapSurvived": true
+  },
+  "unprotected": {
+    "gapBefore": 3,
+    "gapAfter": 0,
+    "deleted": true,
+    "codes": [
+      {
+        "cell": [
+          -9,
+          10
+        ],
+        "at": {
+          "code": 22,
+          "type": "underground_belt",
+          "rv": 0
+        }
+      },
+      {
+        "cell": [
+          -5,
+          10
+        ],
+        "at": {
+          "code": 23,
+          "type": "underground_belt",
+          "rv": 1
+        }
+      }
+    ]
+  },
+  "verdicts": {
+    "negativeControlOk": true,
+    "pasteProtects": true,
+    "unProtectedDeletes": true
+  }
+}
