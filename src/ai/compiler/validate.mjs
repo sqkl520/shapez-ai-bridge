@@ -78,13 +78,19 @@ export const CHECK_ORDER = Object.freeze([...CHECK_IDS]);
  */
 export const CURVED_EFFICIENCY = 0.78;
 
-/** v1 范围外的建筑 kind（V8）。 */
+/** v1 范围外的建筑 kind（V8）。
+ *  ⚠️ `balancer` 曾是成员 —— 理由是"v1 无扇出模板"。现在有了：
+ *     `rewriteFanout` 用 balancer 改写扇出、`replicateMiners` 用 balancer 汇流多台矿机，
+ *     两者都实机验证过（level-11 存档 514 个 balancer）。移出范围外表。 */
 export const OUT_OF_SCOPE_KINDS = Object.freeze([
-    "wire", "underground_belt", "balancer", "storage", "reader", "filter", "display",
+    "wire", "underground_belt", "storage", "reader", "filter", "display",
     "lever", "logic_gate", "constant_signal", "virtual_processor", "item_producer", "block",
 ]);
 /** v1 可产出的 kind（plan §2.2 迁移路径 5 + op-templates isV1Emittable 的编译器侧口径）。 */
-export const V1_KINDS = Object.freeze(["miner", "belt", "cutter", "rotater", "painter", "stacker", "mixer", "trash", "hub"]);
+export const V1_KINDS = Object.freeze(["miner", "belt", "cutter", "rotater", "painter", "stacker", "mixer", "trash", "hub",
+    /* balancer：布线元件，不产生新形状。扇出改写（rewriteFanout）与多矿机汇流
+       （replicateMiners）都靠它，是 v1 范围内的合法建筑。code 4，level 3 解锁。 */
+    "balancer"]);
 
 /** 通道走格上限（防御无限环；超过即认定路由不闭合）。 */
 const MAX_WALK = 256;

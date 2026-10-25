@@ -144,7 +144,9 @@ import {
 /* 实体 kind 枚举。`underground_belt` 是 scope.tunnels=true 时才出现的合法 kind
    （code 22=sender / 23=receiver）。它不在 V1_KINDS 里 —— 那是 P5 用来判"越界"的另一份表，
    两份表的差异正是"契约允许表达" vs "v1 默认允许使用"。 */
-export const ENTITY_KINDS = Object.freeze(["miner", "belt", "cutter", "rotater", "painter", "stacker", "mixer", "trash", "hub", "underground_belt"]);
+export const ENTITY_KINDS = Object.freeze(["miner", "belt", "cutter", "rotater", "painter", "stacker", "mixer", "trash", "hub", "underground_belt",
+    /* balancer：布线元件（code 4）。扇出改写与多矿机汇流都产出它。 */
+    "balancer"]);
 /** 非带子的实体（= 三态里的 solid） */
 export const SOLID_KINDS = Object.freeze(ENTITY_KINDS.filter(k => k !== "belt"));
 
@@ -336,12 +338,18 @@ export function assertCompiledEntity(e, path = "entities[0]", opts = {}) {
             throw new ContractViolation(`${path}.rot`, `0（决策 D1 / scope.rotatedMachines:false：v1 不旋转任何机器，旋转需求由 belt 拐弯 solveTurn 实现）`, out.rot);
         }
         /* 隧道码 22/23 不在"机器码 7..20"区间里：它是 underground_belt 家族
-           （op-templates 的 MACHINE_CODES：default=22、rv=1→23），实机存档已确认。 */
-        const codeLo = isTunnel ? 22 : 7, codeHi = isTunnel ? 23 : 20;
+           （op-templates 的 MACHINE_CODES：default=22、rv=1→23），实机存档已确认。
+           balancer 的 code 是 **4**（balancer.js:37 internalId），同样在 7..20 之外 ——
+           它是布线元件不是加工机器，与 belt 的 1/2/3 同属"基础设施"码段。 */
+        const isBalancer = out.kind === "balancer";
+        const codeLo = isTunnel ? 22 : isBalancer ? 4 : 7;
+        const codeHi = isTunnel ? 23 : isBalancer ? 4 : 20;
         if (out.code < codeLo || out.code > codeHi) {
             throw new ContractViolation(`${path}.code`, isTunnel
                 ? `隧道的 code ∈ 22(sender)|23(receiver)（underground_belt.js:45-48，实机存档确认）`
-                : `非 belt 实体用建筑码 7..20（facts/building-codes-live.json）`, out.code);
+                : isBalancer
+                    ? `balancer 的 code 恒为 4（balancer.js:37 internalId，level-11 存档 514 例确认）`
+                    : `非 belt 实体用建筑码 7..20（facts/building-codes-live.json）`, out.code);
         }
         if (out.kind === "trash" || out.kind === "hub") {
             if (out.outDir !== null) throw new ContractViolation(`${path}.outDir`, `${out.kind} 无输出（outDir 必须 null，GEOMETRY 表1）`, out.outDir);

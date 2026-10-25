@@ -919,6 +919,18 @@ export function assignRows(levels, opts = {}) {
 			   世界系并原样返回世界系 x ⇒ 这里减回去由调用方负责（minerX 里存的直接是局部 x）。 */
 			if (li === 0 && minerX && minerX.has(n.id)) x = minerX.get(n.id)[0] - (opts.originX || 0);
 			else if (multiX && multiX.has(n.id)) x = multiX.get(n.id);
+			else if (n.op === "balance") {
+				/* ★ balancer 必须**阶梯错开列**，不能和上游共列 ★
+				   它的两个输入槽在相邻两列（local (0,0) 和 (1,0)），两个输出同理。
+				   若按 `desiredX` 把 balancer 拉到父的出料口正下方，整条汇流链会落在同一列 ——
+				   于是 `m0 → bal0` 的竖直通道要**穿过中间所有 balancer**，
+				   P4 报 crossing（实测 ch0 与 ch2 在 (4,-18..-20) 同格相交）。
+				   规则：每个后继 balancer 向右偏 2 列（比 1 列多一格余量给竖直腿）。
+				   `nextOut` 顺序天然给出链上的序号，用它做偏移量即可。 */
+				const want = desiredX(n);
+				const idx = n.balanceChainIdx === undefined ? 0 : n.balanceChainIdx;
+				x = (want === undefined ? cursor : want) + idx * 2;
+			}
 			else if (li > 0) {
 				const want = desiredX(n);
 				/* ★ 不能用 `Math.max(cursor, want)` ★
@@ -1057,8 +1069,7 @@ function anchorFromParent(n, p, s) {
 	const feeds = pOut.find(o => (p.usedOut ? !p.usedOut.has(o.role) : true)) || pOut[0] || null;
 	const beltCol = feeds
 		? p.x + feeds.cx + (feeds.dir === "right" ? 1 : feeds.dir === "left" ? -1 : 0)
-		: p.x;
-	if (s.dir === "left") return beltCol + 1 - s.cx;   // 带子在本机进料面外一格 ⇒ 锚点 = 带子列 + 1 - cx
+		: p.x;	if (s.dir === "left") return beltCol + 1 - s.cx;   // 带子在本机进料面外一格 ⇒ 锚点 = 带子列 + 1 - cx
 	if (s.dir === "right") return beltCol - 1 - s.cx;
 	return beltCol - s.cx;                             // bottom/top：带子列 == 进料槽列
 }
@@ -1842,6 +1853,9 @@ export function place(input = {}) {
 						consumers: 0, usedOut: new Set(), nextOut: 0,
 						x: 0, y: 0, depth: n.depth, args: {},
 						groupOf: n.id,
+						/* 链内序号：布局时用它错开列（见 assignRows 的 balance 分支）。
+						   第 0 个 balancer 直接接第一台矿机，不需要偏移；后面的逐个右移。 */
+						balanceChainIdx: i,
 					});
 				}
 				/* 串成链：bal_i 的 in0 收 m_i，in1 收 bal_{i+1}（或 m_{N-1}）。
