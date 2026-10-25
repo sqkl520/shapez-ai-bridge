@@ -787,10 +787,21 @@ if (g2.ok !== false) {
 	}
 }
 
-// 世界闸：既有非 hub 实体 → 增量对接 v1 不做（结构化拒因）
+/* 世界闸：既有实体 = 占位（P1-4 增量对接）
+ *
+ * 旧契约是"世界里有任何非 hub 实体就整段拒绝"（v1 只支持全新址）。实测 level 4 时
+ * 编译器选中了 level 3 矿机所在的格子，靠 paste 的 dry_run 才拦下 —— 而玩家要的是
+ * "在旁边接一条线"，不是"存档一旦有东西就永远不能长大"。
+ * 新契约：既有实体**照收**，按 solid/replaceable 铺占位，让落位真正避开它们。 */
 {
 	const dirty = place.validateWorld({ entities: [{ uid: 1, type: "miner", x: 0, y: 0 }], seed: 1, hub: null });
-	eq(dirty.ok, false, "世界闸：既有非 hub 实体被拒（§6 R2 增量对接未实现）");
+	eq(dirty.ok, true, "世界闸：既有非 hub 实体不再被拒（P1-4 增量对接）");
+	const cells = (dirty.occupancy || []).map(o => `${o.cell[0]},${o.cell[1]}:${o.state}`);
+	eq(cells, ["0,0:solid"], "世界闸：矿机铺成 solid 占位");
+	// 带子是可覆盖的：与 dry_run 的 destroys 语义一致
+	const withBelt = place.validateWorld({ entities: [{ uid: 2, type: "belt", x: 5, y: 5 }], seed: 1, hub: null });
+	eq(withBelt.ok, true, "世界闸：带子也不被拒");
+	eq((withBelt.occupancy || []).map(o => o.state), ["replaceable"], "世界闸：带子铺成 replaceable（通道可覆盖）");
 }
 
 /* ══════════════════════ ①h 矿机资源名：payload 是 token，resource 才是世界资源名 ══════════════════════ */

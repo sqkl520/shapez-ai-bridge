@@ -566,6 +566,12 @@ export function rebuildDag(steps) {
 			case "mine": return SHAPE_OPS.parse(args.__hash);
 			case "cut": {
 				const h = SHAPE_OPS.cutHalf(parentShapes[0]);
+				/* `cutHalf` 返回 [quads(2,3), quads(0,1)]；solver 把 [0] 叫 "left"、[1] 叫 "right"。
+				   这与游戏槽位一致：slot0 = quads(2,3)、slot1 = quads(0,1)。
+				   ⚠️ 我曾以为这里取反并改动 —— 误判。改后 `rebuildDag` 立刻报 validate:S1
+				   （"cut half=right → 期望 SuSu----，重算得 ----SuSu"），证明原映射是对的。
+				   真正的缺陷在别处：布局把**非目标槽**（slot0）接到了 hub，
+				   见下方 8.3 的到达判定。 */
 				return args.half === "left" ? h[0] : h[1];
 			}
 			case "cutQuad": return SHAPE_OPS.cutQuad(parentShapes[0])[args.quad | 0];
@@ -733,6 +739,11 @@ export function placeStage(steps, ctx) {
 	const hubW = Array.isArray(ctx.hub) && ctx.hub.length === 2 && ctx.hub.every(Number.isFinite)
 		? [Math.trunc(ctx.hub[0]), Math.trunc(ctx.hub[1])] : null;
 	const seed = Number.isFinite(ctx.seed) ? ctx.seed : null;
+	/* 既有工厂（实机观测）直接按世界系交给 place()：它减 origin（= 真 hub）后正好落在
+	   与机器相同的坐标框架里（hub 在局部 (0,0)）。不需要额外平移 —— 实测证明这条：
+	   既有矿机在 (2,-6)、hub 在 (-2,-2)，P3 报"期望占地 4,-4 与既有 occupancy 冲突"，
+	   两个坐标对得上，说明占位确实生效了。 */
+	const worldEntities = Array.isArray(ctx.worldEntities) ? ctx.worldEntities : null;
 	const input = {
 		steps: clone(steps),
 		// ⓐ 原点 = 真 hub（世界系）；ⓑ 原点 = [0,0]（设计系，兼容路径）
@@ -740,7 +751,8 @@ export function placeStage(steps, ctx) {
 		hub: hubW ? { x: hubW[0], y: hubW[1] } : { x: ctx.hubDesign[0], y: ctx.hubDesign[1] },
 		// world 一律给**世界系**（place 自己减 origin）：ⓐ 真 hub 处 ⇒ 局部 occupancy=(0,0)；
 		// ⓑ 设计系 hub ⇒ 与旧行为逐字节相同（seed:null）。
-		world: hubW ? hubWorldState(hubW, seed) : hubWorldState(ctx.hubDesign, null),
+		// `ctx.worldEntities`（可选）= 实机观测到的既有工厂 ⇒ 一并灌进去当占位（P1-4）。
+		world: hubW ? hubWorldState(hubW, seed, worldEntities) : hubWorldState(ctx.hubDesign, null, worldEntities),
 		// ★ 关键：只有给真 hub 时才把 seed 交给 P3（否则矿机被挪到资源上，会改金网格/确定性基线）
 		...(hubW && seed !== null ? { seed } : {}),
 		// 资源搜索半径：与 siteStage 用同一个 --range（旧代码漏传 ⇒ P3 恒用 48，
@@ -1147,11 +1159,19 @@ function regionClear(ctx) {
  *   hub 4×4 错位 ⇒ 假 fail / 假 pass 都会出现（NOTES.md 坐标口径）。
  * @param {[number,number]} hubLocal @param {number|null} seed
  */
-export function hubWorldState(hubLocal, seed) {
+export function hubWorldState(hubLocal, seed, entities) {
+	/* `entities`（可选）：既有工厂的实机观测。给了就**照抄**进来 —— place() 会把它们铺成
+	   占位，新产线于是真的避开它们（P1-4 增量对接）。
+	   不给则维持"只有一台 hub"的旧世界，逐字节兼容既有基线。
+	   ⚠️ 世界里有既有实体时必须同时给 `siteAnchor`（见 placeStage）：
+	   否则 graph 的整体摆放会与 place 的局部原点错位 N 格。 */
+	const ents = Array.isArray(entities) && entities.length
+		? entities.map(e => ({ ...e }))
+		: [{ uid: 10000, type: "hub", x: hubLocal[0], y: hubLocal[1], r: 0, variant: "default", rotationVariant: 0, code: 26, layer: "regular" }];
 	return {
 		tick: 0, seed: seed === undefined ? null : seed, hub: { x: hubLocal[0], y: hubLocal[1] },
 		goal: null, upgradeLevels: { belt: 1, miner: 1, processors: 1, painting: 1 },
-		entities: [{ uid: 10000, type: "hub", x: hubLocal[0], y: hubLocal[1], r: 0, variant: "default", rotationVariant: 0, code: 26, layer: "regular" }],
+		entities: ents,
 		resources: [], replaceableBeltCells: [],
 	};
 }
@@ -1420,6 +1440,8 @@ function compileInner(input) {
 		allowVerticalLane: input.allowVerticalLane !== false,
 		// 隧道：显式开启时 P3 才能用它跨过必然相交的通道（默认关 ⇒ 既有目标逐字节不变）
 		tunnels: input.tunnels === true,
+		// 既有工厂（实机观测）：给了就让新产线避开它们（P1-4 增量对接）
+		worldEntities: Array.isArray(input.worldEntities) ? input.worldEntities : null,
 	};
 	const pl = trace(stages, "placeStage", placeStage(mp.steps, ctx));
 	if (pl.ok === false) return bail({ ...pl, layout: null, entities: null });
