@@ -131,13 +131,26 @@ ObsRequest：
 | `paste_blueprint` | `text, x, y, charge?="auto"` | 粘贴蓝图（§6）。`charge`:`"auto"`=按游戏规则扣费；`false`=免费（沙盒） | 2001 格式错；2006 蓝图版本不符；2002 位置非法/材料不足 |
 | `paste_blueprint`（`dry_run:true`） | `text, x, y, dry_run:true` | **只预检不落地**。返回 `{would_apply, would_delete, destroys:[{uid,cell,type}], blocked:[{cell,occupant,reason,duplicateInPlan}], unknown_code, bbox, charge_preview, count}`。**必用的理由**：真粘贴落在既有 belt/wire 上=静默销毁替换（旧 uid 消失、`failed:[]`、零报告——实机取证 `live/results/belt-silent-overwrite.json`）；落在既有机器上=逐条目拒但其它照放（半建线）。**先 dry_run 核对，再真贴**。局限：plan 内重复只查条目 origin 格（`duplicateInPlan`），多格机器在 plan 内互叠由编译器 V1 保证（蓝图自洽性在发射前，mod 不兜底） | 2001/2006 同左（解码与版本校验在预检之前） |
 | `export_blueprint` | `region:[x0,y0,x1,y1]` | 导出该区域为蓝图字符串 | 2001 区域为空 |
-| `set_speed` | `speed:"paused"\|"regular"\|"fast_forward"` | 设置游戏速度 | 2001 |
-| `step` | `ticks:int(1..20000), collect?:bool` | **无渲染同步快进 N 逻辑 tick**（实现：复刻 puzzle 校验循环 `time.performTicks`）。`collect:true` 返回末尾观测 | 2003 引擎拒绝 |
+| `set_speed` | `speed:"regular"` | 设置游戏速度。**1.5.6 只有 `regular` 可用**：`initGameSpeedRegistry()` 只注册了它，`paused`/`fast-forward` 在序列化工厂里不存在。`fast_forward` 还有第二个坑 —— `globalConfig.fastForwardSpeed` 从未定义，乘数是 `undefined`，会把 `logicTimeBudget` 污染成 `NaN`，逻辑时钟永久停摆（切回 regular 也救不回来）。两者现在都被 `2002` 拒绝。要快进用 `step`/`await` | 2001 非法值；2002 该速度未注册或乘数无效 |
+| `step` | `ticks:int(1..20000), collect?:bool` | **无渲染同步快进 N 逻辑 tick**（实现：复刻 puzzle 校验循环 `time.performTicks`）。`collect:true` 返回末尾观测。**推进 0 tick 会抛 `2002`**，不再返回 `ok` —— 否则"世界死了"会被伪装成"命令成功" | 2002 世界未推进（时钟停摆）；2003 引擎拒绝 |
 | `await` | `until:"hub_delivered_increased"\|"level_increased"\|"entities_changed", timeout_ticks:int, chunk?:int=60, collect?:bool` | 快进直到条件满足或超时；返回 `{met, ticks_run, timeout}`。**必有超时** | 2003 |
 | `camera` | `x, y, zoom?` | 镜头跳转（观测默认跟相机无关，但截图用） | — |
 | `save` | — | = `save_now`（桥接层做快照） | — |
 | `load` | `internal_id` | = `load_save` | — |
 | `new_game` | `game_mode?` | 新开局（【待验】） | 2003 |
+
+## 5b. 诊断与修复（只读 / 显式写）
+
+这些方法不参与常规玩法，用来回答"世界到底怎么了"。每一个都对应一次真实的误判。
+
+| 方法 | 参数 | 用途 |
+|---|---|---|
+| `debug_loop` | — | 读游戏主循环的每个门控条件：`speed` / `time_multiplier` / `logic_budget_ms` / `tick_rate` / `app_renderable` / `hud_should_pause_game` / `manual_tick_returned`。**`tick` 不动时先看这里**，能把「窗口失焦 / 页面不可见 / updateLogic 返回 false / tickrate=0 / 预算 NaN」一次分开 |
+| `debug_log` | `level?:"error"\|"warn"\|"all", lines?=100, grep?:string` | 读回被截获的游戏 console 输出（环形缓冲，300 条）。游戏把几乎全部失败都写进 console，反序列化失败的原因就在这里 —— 原本只能靠外部观察反推 |
+| `debug_speed_registry` | — | `gGameSpeedRegistry` 里到底注册了哪些速度（1.5.6 只有 `regular`），以及当前速度的乘数与预算是否有限 |
+| `debug_items` | `region:[x0,y0,x1,y1]` | 带子上的物品、机器 ejector 槽、隧道 pending、每条 beltPath 的 `boundAcceptor`。**"矿机在产吗 / 货堵在哪一格"只能靠它** |
+| `repair_save` | `internal_id, dry_run?:bool` | 把存档里**未注册的速度 id** 改回 `regular` 并重新走游戏自己的序列化（`compressObject` + CRC + LZString），**先写备份**。症状：读档报 `Invalid class id: fast-forward (factory is gamespeed)`，界面只说"存档损坏"。数据没坏，只是类型没注册 |
+| `resources` | `region:[x0,y0,x1,y1]` | 读地下自然资源分布：按资源键聚合的 `count` / `bbox` / 每行连续段（`runs`，能直接看出"一行有几格可并排"）。**规划的第一手数据** —— `obs` 只报建筑，矿石不是实体 |
 
 ActionResult：
 ```jsonc
