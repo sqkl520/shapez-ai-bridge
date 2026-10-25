@@ -217,7 +217,9 @@ for (const op of Object.keys(OP_TEMPLATES)) {
 eq("op 枚举覆盖 plan §2.2", Object.keys(OP_TEMPLATES).sort(),
     ["cut", "cutQuad", "mix", "mine", "paint", "paintMirrored", "rotate", "rotate180", "rotateCCW", "stack"].sort());
 eq("AUX 覆盖非 op 但必须的实体（含 hub：P6 反查 code→kind 要覆盖 hub）", Object.keys(AUX_TEMPLATES).sort(),
-    ["belt", "hub", "mineChainable", "paintDouble", "paintQuad", "trash"]);
+    // balance 不是算子（它不产生新形状），是布线元件：扇出改写的产物。
+    // 加它之后 P6 才能反查 code 4 → kind "balancer"，蓝图里才画得出来。
+    ["balance", "belt", "hub", "mineChainable", "paintDouble", "paintQuad", "trash"]);
 eq("code 全局唯一（反查不歧义）",
     new Set(Object.values(ALL_TEMPLATES).map(t => t.code)).size, Object.values(ALL_TEMPLATES).length);
 for (const c of [1, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) {

@@ -392,6 +392,42 @@ const AUX = [
         verifiedOnLive: true,             // ✅ M1b + exp-rv-fix3
         kind: "belt",
     },
+    /* balancer：2 进 2 出，**内容不变**、只改流向（见下方 note）。
+     *
+     * 几何来自 buildings/balancer.js:178-196（default variant）：
+     *   输入  local (0,0) ← bottom、local (1,0) ← bottom
+     *   输出  local (0,0) → top   、local (1,0) → top
+     * 占地在 balancer.js:60-62 = Vector(2,1)。
+     *
+     * 语义（systems/item_processor.js:342-362 process_BALANCER）：把收到的每一件依次塞进
+     * `nextOutputSlot++ % availableSlots` —— 即**轮流发到两个输出槽**，从不改动 item 本身。
+     * 所以它是编译器里的**透传节点**：进去什么形状，出来还是什么形状，只是分成两路。
+     *
+     * 这正是"一个输出喂多个消费者"（扇出）缺的那块：以前 place() 一遇到扇出就整段拒绝
+     * （place.mjs 的 `n.consumers > 1` 分支）。真人存档 514 个 balancer（level-11 那个）
+     * 也印证它是常规组网手段，不是特例。
+     *
+     * 解锁：level 3 → reward_balancer（modes/levels.js:41「RuRuRuRu × 30」）。
+     */
+    {
+        op: "balance", building: "balancer", variant: "default", code: 4,
+        unlockLevel: 3,
+        footprint: [2, 1],
+        // role 必须落在 types.mjs 的 slotRole 枚举里（primary/secondary/…/out/discard），
+        // "a"/"b" 会被契约闸拒。两路都用 primary：balancer 的两路是等价的。
+        inputs: [slot([0, 0], "bottom", "primary"), slot([1, 0], "bottom", "secondary")],
+        outputs: [slot([0, 0], "top", "primary"), slot([1, 0], "top", "secondary")],
+        // 不设速率瓶颈：它只是把上游的流量分成两路，两路合计仍受上游限制。
+        // 取 null（非数字）而不是 0 —— 0 会被 bottleneckOf 当成"零产能"而误判成卡口。
+        ratePerSec: null,
+        mustDiscardUnused: false, wasteRoles: [],
+        verifiedOnLive: false,            // ⬜ 几何源码核证；实机未单测
+        codeVerifiedOnLive: true,         // ← level-11 存档直读 code=4 × 514
+        kind: "balancer",
+        passthrough: true,                // ← 形状不变：编译器可以把它当"分叉点"处理
+        note: "process_BALANCER 只做 nextOutputSlot++ % 2，不改 item ⇒ 透传。"
+            + "扇出改写要插的就是这个节点。",
+    },
     {
         op: "mineChainable", building: "miner", variant: "chainable", code: 8,
         unlockLevel: UNLOCK_LEVEL_FALLBACK.mineChainable, footprint: [1, 1],
