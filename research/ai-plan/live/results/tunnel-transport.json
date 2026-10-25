@@ -1,0 +1,87 @@
+{
+  "at": "2026-10-25T06:51:06.758Z",
+  "game_version": "1.5.6",
+  "hub": [
+    -2,
+    -2
+  ],
+  "rig": {
+    "miner": [
+      -11,
+      10
+    ],
+    "rowY": 10,
+    "tunnel": {
+      "sender": [
+        -9,
+        10
+      ],
+      "receiver": [
+        -5,
+        10
+      ]
+    },
+    "cornerX": -2,
+    "dropY": 2
+  },
+  "armA": {
+    "delivered": 8,
+    "ticksRun": 3900,
+    "cellsPlanned": 15,
+    "cellsMatched": 15,
+    "mismatches": [],
+    "gapEmpty": true,
+    "paste": {
+      "applied": 15,
+      "failed": [],
+      "tunnels": {
+        "in_plan": 2,
+        "smartplace_suspended": true
+      }
+    },
+    "dry": {
+      "would_apply": 15,
+      "blocked": [],
+      "tunnels": {
+        "in_plan": 2,
+        "will_disable_smartplace": true,
+        "note": "粘贴期间会临时关闭 enableTunnelSmartplace，结束后恢复原值"
+      }
+    }
+  },
+  "armB": {
+    "delivered": 8,
+    "ticksRun": 3900,
+    "cellsPlanned": 18,
+    "cellsMatched": 18,
+    "mismatches": [],
+    "gapEmpty": null,
+    "paste": {
+      "applied": 18,
+      "failed": [],
+      "tunnels": null
+    },
+    "dry": {
+      "would_apply": 18,
+      "blocked": [],
+      "tunnels": null
+    }
+  },
+  "settings": {
+    "before": {
+      "enableTunnelSmartplace": true,
+      "alwaysMultiplace": false,
+      "disableCutDeleteWarnings": false
+    },
+    "after": {
+      "enableTunnelSmartplace": true,
+      "alwaysMultiplace": false,
+      "disableCutDeleteWarnings": false
+    },
+    "restored": true
+  },
+  "controlOk": true,
+  "tunnelOk": true,
+  "verdict": "TUNNEL-WORKS",
+  "why": "items crossed a 3-cell gap that no belt could have spanned"
+}
