@@ -1,14 +1,14 @@
 {
  "goal": "CuCuCuCu",
  "schema": "shapez-ai/handoff-intent@1",
- "blueprint": "SZBP1.N4IgbiBcBMA0IHMKRARgHQFZ0DYTwHcoBtAWgHZZoBdeAUxMoAZYBmWF1Dq7rv2AJyceXIbC7tRwgCzjBwzNxbthLOIqm0QAexIA7AK4AbI9zHmWYlpabUAvkA",
+ "blueprint": "SZBP1.N4IgbiBcBMA0IHMKRARgHQFZ0DYTwHcoBtAWh1gGYBdeAUxIHZYAGK12VDuNr3jrn1gBOfjxH9KHUZ1gAWaf0yL2bNbRAB7EgDsArgBsDHNjLOmLragF8gA",
  "anchor": [
-  -7,
-  2
+  -6,
+  3
  ],
  "hub": [
-  -2,
-  -2
+  0,
+  0
  ],
  "chargeMode": "false",
  "gv": null,
@@ -16,14 +16,14 @@
  "stride": 4,
  "entityOrder": [
   "n0",
-  "belt@-5,6",
-  "belt@-4,5",
-  "belt@-3,5",
-  "belt@-2,5",
-  "belt@-1,5",
-  "belt@0,4",
-  "belt@-5,5",
-  "belt@0,5"
+  "belt@-6,5",
+  "belt@-6,4",
+  "belt@-5,3",
+  "belt@-4,3",
+  "belt@-3,3",
+  "belt@-2,3",
+  "belt@-1,3",
+  "belt@-6,3"
  ],
  "entities": [
   {
@@ -43,7 +43,19 @@
    "dx": 0,
    "dy": 2,
    "rot": 0,
-   "nodeId": "belt@-5,6",
+   "nodeId": "belt@-6,5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "belt@-6,4",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -53,9 +65,9 @@
   {
    "code": 1,
    "dx": 1,
-   "dy": 1,
+   "dy": 0,
    "rot": 90,
-   "nodeId": "belt@-4,5",
+   "nodeId": "belt@-5,3",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -65,9 +77,9 @@
   {
    "code": 1,
    "dx": 2,
-   "dy": 1,
+   "dy": 0,
    "rot": 90,
-   "nodeId": "belt@-3,5",
+   "nodeId": "belt@-4,3",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -77,9 +89,9 @@
   {
    "code": 1,
    "dx": 3,
-   "dy": 1,
+   "dy": 0,
    "rot": 90,
-   "nodeId": "belt@-2,5",
+   "nodeId": "belt@-3,3",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -89,9 +101,9 @@
   {
    "code": 1,
    "dx": 4,
-   "dy": 1,
+   "dy": 0,
    "rot": 90,
-   "nodeId": "belt@-1,5",
+   "nodeId": "belt@-2,3",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -102,37 +114,25 @@
    "code": 1,
    "dx": 5,
    "dy": 0,
-   "rot": 0,
-   "nodeId": "belt@0,4",
+   "rot": 90,
+   "nodeId": "belt@-1,3",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
-   "inDir": "bottom",
-   "outDir": "top"
+   "inDir": "left",
+   "outDir": "right"
   },
   {
    "code": 3,
    "dx": 0,
-   "dy": 1,
+   "dy": 0,
    "rot": 0,
-   "nodeId": "belt@-5,5",
+   "nodeId": "belt@-6,3",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 2,
    "inDir": "bottom",
    "outDir": "right"
-  },
-  {
-   "code": 2,
-   "dx": 5,
-   "dy": 1,
-   "rot": 90,
-   "nodeId": "belt@0,5",
-   "instanceIdx": 0,
-   "kind": "belt",
-   "rotationVariant": 1,
-   "inDir": "left",
-   "outDir": "top"
   }
  ],
  "beltIntent": null,
@@ -146,7 +146,7 @@
    6,
    4
   ],
-  "corners": 2,
+  "corners": 1,
   "estThroughputPerSec": 0.4,
   "bottleneck": "miner@0.4",
   "blueprintCost": 40,
@@ -203,8 +203,8 @@
    "format_version": 2,
    "exported_from": "1.5.6",
    "anchor": [
-    -7,
-    2
+    -6,
+    3
    ],
    "count": 9,
    "bounds": [
@@ -212,12 +212,11 @@
     4
    ],
    "by_code": {
-    "1": 6,
-    "2": 1,
+    "1": 7,
     "3": 1,
     "7": 1
    },
-   "text_length": 128
+   "text_length": 125
   },
   "summaryErr": null
  },
@@ -243,7 +242,7 @@
     "stackPairs": 0,
     "capped": false
    },
-   "ms": 1,
+   "ms": 2,
    "known": 4
   },
   "seed": 43391,
@@ -259,14 +258,14 @@
    {
     "nodeId": "n0",
     "cell": [
-     -7,
-     5
+     -6,
+     6
     ],
     "shape": "CuCuCuCu"
    }
   ],
   "demandPerSec": 0,
-  "cornerCostTiles": 1.56,
+  "cornerCostTiles": 0.78,
   "routeAttempts": [
    {
     "gap": 0,
@@ -277,31 +276,31 @@
     "reason": null,
     "laneColumn": 0,
     "belt": 8,
-    "corners": 2
+    "corners": 1
    }
   ],
   "laneColumnUnresolved": 0,
   "worldPlacement": {
    "anchor": [
-    -2,
-    -2
+    0,
+    0
    ],
    "hub": [
-    -2,
-    -2
+    0,
+    0
    ],
    "hubInferred": [
-    -2,
-    -2
+    0,
+    0
    ],
    "hubPinned": true,
    "pasteAt": [
-    -7,
-    2
+    -6,
+    3
    ],
    "designAnchor": [
-    -5,
-    4
+    -6,
+    3
    ],
    "designHubLocal": [
     -4,
@@ -314,16 +313,16 @@
    "worldFrameV1": {
     "ok": true,
     "worldRect": [
-     -7,
-     2,
-     -2,
-     5
+     -6,
+     3,
+     -1,
+     6
     ],
     "hubRect": [
-     -2,
-     -2,
-     1,
-     1
+     0,
+     0,
+     3,
+     3
     ]
    }
   }

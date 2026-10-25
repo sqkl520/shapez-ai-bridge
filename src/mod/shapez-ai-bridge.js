@@ -109,8 +109,77 @@ class Mod extends shapez.Mod {
 
     init() {
         this.log("mod initialized; bridge url =", this.settings.ws_url, "; game version:", this.gameVersion());
+        this.installLogCapture();
         this.hookGameLifecycle();
         this.connect();
+    }
+
+    /**
+     * 把游戏的 console 输出抄一份到环形缓冲里。
+     *
+     * 为什么需要它：游戏把几乎所有失败都写进 console —— 反序列化失败、资源加载失败、
+     * 系统崩溃 —— 但渲染进程的 console 对 Mod 来说是只写不读的。于是"存档损坏"这类
+     * 问题只能靠外部观察（截图、逐个解码存档）反推，代价极高。
+     * 这里包一层 console.log/warn/error，只记录、不改行为、不改返回值，
+     * 并限制条数与单条长度，避免长期运行把内存撑爆。
+     */
+    installLogCapture() {
+        if (this._logCaptureInstalled) return;
+        this._logCaptureInstalled = true;
+        this._logRing = [];
+        const MAX = 300;
+        const wrapper = (level, original) => {
+            const self = this;
+            return function (...args) {
+                try {
+                    if (self._logRing) {
+                        const line = args
+                            .map(a => {
+                                if (typeof a === "string") return a;
+                                if (a instanceof Error) return a.message + "\n" + (a.stack || "");
+                                try {
+                                    return JSON.stringify(a);
+                                } catch (e) {
+                                    return String(a);
+                                }
+                            })
+                            .join(" ");
+                        self._logRing.push({ level, at: Math.round(performance.now()), line: line.slice(0, 2000) });
+                        if (self._logRing.length > MAX) self._logRing.splice(0, self._logRing.length - MAX);
+                    }
+                } catch (e) {
+                    /* 采集本身绝不能影响游戏 */
+                }
+                return original.apply(this, args);
+            };
+        };
+        try {
+            console.log = wrapper("log", console.log);
+            console.warn = wrapper("warn", console.warn);
+            console.error = wrapper("error", console.error);
+        } catch (e) {
+            this.warn("failed to install log capture:", e);
+        }
+    }
+
+    /**
+     * 诊断用：读回被截获的游戏日志。
+     * params: { level?: "error"|"warn"|"all", lines?: number, grep?: string }
+     */
+    debugLog(params) {
+        const p = params || {};
+        const level = p.level || "all";
+        const limit = Math.max(1, Math.min(300, Number.isInteger(p.lines) ? p.lines : 100));
+        const grep = typeof p.grep === "string" && p.grep ? p.grep : null;
+        let list = (this._logRing || []).slice();
+        if (level !== "all") list = list.filter(e => e.level === level);
+        if (grep) list = list.filter(e => e.line.toLowerCase().includes(grep.toLowerCase()));
+        return {
+            total_captured: (this._logRing || []).length,
+            installed: !!this._logCaptureInstalled,
+            returned: Math.min(list.length, limit),
+            entries: list.slice(-limit),
+        };
     }
 
     /** 运行中游戏的真实版本（读游戏的构建元数据，只解析一次）。 */
@@ -303,6 +372,15 @@ class Mod extends shapez.Mod {
                 case "obs":
                     result = this.observe(params || {});
                     break;
+                case "debug_items":
+                    result = this.debugItems(params || {});
+                    break;
+                case "debug_loop":
+                    result = this.debugLoop();
+                    break;
+                case "debug_log":
+                    result = this.debugLog(params || {});
+                    break;
                 case "act":
                     result = await this.performAction(params || {});
                     break;
@@ -332,6 +410,12 @@ class Mod extends shapez.Mod {
                     break;
                 case "delete_save":
                     result = await this.deleteSave(params || {});
+                    break;
+                case "repair_save":
+                    result = await this.repairSave(params || {});
+                    break;
+                case "debug_speed_registry":
+                    result = this.debugSpeedRegistry();
                     break;
                 default:
                     this.sendError(id, -32601, "method_not_found", "Unknown method: " + method);
@@ -365,6 +449,208 @@ class Mod extends shapez.Mod {
      *   - 同时给 key/value → 写（写后回读，确认真的生效）
      *   - 都不给          → 列出白名单里所有项的当前值
      */
+    /**
+     * 诊断用：读出**游戏速度**在序列化工厂里的注册情况。
+     *
+     * 为什么需要它：1.5.6 的发布包里 `initGameSpeedRegistry()` 只有一行 ——
+     * `gGameSpeedRegistry.register(RegularGameSpeed)`，paused 与 fast-forward
+     * 都「disabled for now」。后果是：一旦这两个 id 被写进存档（例如通过
+     * set_speed），`SavegameSerializer.deserialize` 会报
+     * `Invalid class id: fast-forward (factory is gamespeed)`，
+     * 游戏随即判定「存档损坏、无法恢复」。这不是数据坏了，是**类型没注册**。
+     *
+     * 这里把注册表的状态如实读出来，让调用方在写 speed 之前就能知道风险。
+     * 只读。
+     */
+    debugSpeedRegistry() {
+        const shapez = /** @type {any} */ (window).shapez;
+        const reg = shapez && shapez.gGameSpeedRegistry;
+        const out = { registry_available: !!reg };
+        if (!reg) return out;
+        try {
+            out.registered_ids = Array.isArray(reg.entryIds) ? reg.entryIds.slice() : null;
+        } catch (e) {
+            out.registered_ids = null;
+        }
+        out.has_regular = typeof reg.hasId === "function" ? reg.hasId("regular") : null;
+        out.has_paused = typeof reg.hasId === "function" ? reg.hasId("paused") : null;
+        out.has_fast_forward = typeof reg.hasId === "function" ? reg.hasId("fast-forward") : null;
+        const time = this.root ? this.root.time : null;
+        if (time) {
+            try {
+                out.current_speed = this.speedIdToName(time.getSpeed().getId());
+                out.current_multiplier = time.getSpeed().getTimeMultiplier();
+                out.budget_finite = Number.isFinite(time.logicTimeBudget);
+            } catch (e) {
+                out.time_error = String(e && e.message ? e.message : e);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 诊断用：读出游戏主循环的实时状态。
+     *
+     * 为什么需要它：整条产线"看着在跑其实不动"时，`obs.tick` 停在同一个值上，
+     * `act.step` 返回 `ticks_run: 0`，而 `place`/`delete` 依旧成功。
+     * 这三种现象组合起来至少有四个候选原因（窗口失焦、页面不可见、
+     * `updateLogic` 返回 false、tickrate 被调成 0），从外部无法区分。
+     * 这里把每个门控条件单独读出来，一次定位。
+     *
+     * 只读：不改任何状态。
+     */
+    debugLoop() {
+        const root = this.requireRoot();
+        const app = this.app;
+        const dt = root.dynamicTickrate;
+        const hud = root.hud;
+        const out = {};
+        try {
+            out.tick = root.time.now();
+            out.realtime = root.time.realtimeNow();
+            out.speed = this.speedIdToName(root.time.getSpeed().getId());
+            out.time_multiplier = root.time.getSpeed().getTimeMultiplier();
+            out.logic_budget_ms = root.time.logicTimeBudget;
+        } catch (e) {
+            out.time_error = String(e && e.message ? e.message : e);
+        }
+        try {
+            out.tick_rate = dt.currentTickRate;
+            out.delta_ms = dt.deltaMs;
+            out.average_fps = dt.averageFps;
+            out.captured_ticks = (dt.capturedTicks || []).length;
+        } catch (e) {
+            out.tickrate_error = String(e && e.message ? e.message : e);
+        }
+        try {
+            out.app_visible = app ? !!app.pageVisible : null;
+            out.app_renderable = app && typeof app.isRenderable === "function" ? app.isRenderable() : null;
+            out.app_focused = app ? !!app.focused : null;
+            out.doc_hidden = typeof document !== "undefined" ? !!document.hidden : null;
+        } catch (e) {
+            out.app_error = String(e && e.message ? e.message : e);
+        }
+        try {
+            out.hud_should_pause_game = hud.shouldPauseGame();
+            out.hud_should_pause_render = hud.shouldPauseRendering();
+            out.modal_open = hud.getIsAnyDialogOpen ? hud.getIsAnyDialogOpen() : null;
+        } catch (e) {
+            out.hud_error = String(e && e.message ? e.message : e);
+        }
+        try {
+            const core = root.gameState && root.gameState.core;
+            out.core_exists = !!core;
+            out.core_has_bound_tick = !!(core && core.boundInternalTick);
+            out.core_during_logic_update = core ? !!core.duringLogicUpdate : null;
+        } catch (e) {
+            out.core_error = String(e && e.message ? e.message : e);
+        }
+        // 直接跑一次 updateLogic，看返回值和 tick 增量 —— 这条能区分
+        // "循环停了" 和 "循环在跑但时间不累加"。
+        try {
+            const core = root.gameState && root.gameState.core;
+            if (core && typeof core.boundInternalTick === "function") {
+                const t0 = root.time.now();
+                const r = core.boundInternalTick();
+                out.manual_tick_returned = r;
+                out.manual_tick_advanced = root.time.now() - t0;
+            }
+        } catch (e) {
+            out.manual_tick_error = String(e && e.message ? e.stack : e);
+        }
+        return out;
+    }
+
+    /**
+     * 诊断用：读出某个区域里**带子上的物品**与**机器 ejector 槽里的物品**。
+     *
+     * 为什么需要它：`obs` 只报实体，看不到物品。于是"矿机在产吗"、"货堵在哪一格"
+     * 这类问题只能靠猜 —— 我这一轮就因此把时间基准搞错、把没产出的线当成产出来分析。
+     * 物品不走实体表：带子上的物品存在 `beltPaths` 的 `item` 字段里，
+     * 机器的是 `ItemEjector.slots[].item`。这里两处都读。
+     *
+     * params: { region: [x0,y0,x1,y1] }
+     */
+    debugItems(params) {
+        const root = this.requireRoot();
+        const region = params.region;
+        if (!Array.isArray(region) || region.length !== 4) {
+            throw this.rpcError(2001, "invalid_action", "region must be [x0,y0,x1,y1]");
+        }
+        const inR = (x, y) => x >= region[0] && x <= region[2] && y >= region[1] && y <= region[3];
+        const key = it => {
+            try { return it && typeof it.getAsCopyableKey === "function" ? it.getAsCopyableKey() : null; }
+            catch (e) { return null; }
+        };
+
+        const out = { belts: [], ejectors: [], underground: [], pending: [] };
+
+        // 机器 ejector 槽
+        for (const e of root.entityMgr.entities) {
+            if (!e || e.queuedForDestroy || e.destroyed) continue;
+            const sme = e.components && e.components.StaticMapEntity;
+            if (!sme) continue;
+            const ox = sme.origin.x, oy = sme.origin.y;
+            if (!inR(ox, oy)) continue;
+
+            const ej = e.components.ItemEjector;
+            if (ej && ej.slots) {
+                for (let i = 0; i < ej.slots.length; i++) {
+                    const s = ej.slots[i];
+                    if (!s || !s.item) continue;
+                    out.ejectors.push({ cell: [ox, oy], slot: i, item: key(s.item), progress: s.progress });
+                }
+            }
+            const ub = e.components.UndergroundBelt;
+            if (ub && ub.pendingItems && ub.pendingItems.length) {
+                out.pending.push({ cell: [ox, oy], mode: ub.mode, n: ub.pendingItems.length });
+            }
+        }
+
+        // 带子上的物品（beltPaths 挂在 systems.belt 上，不是 root —— 见 systems/belt.js:67）
+        try {
+            const beltSystem = root.systemMgr && root.systemMgr.systems && root.systemMgr.systems.belt;
+            const paths = (beltSystem && beltSystem.beltPaths) || [];
+            for (const p of paths) {
+                if (!p) continue;
+                // BeltPath 的格子数组叫 `entityPath`（belt_path.js:64-69），不是 comps/components
+                const items = p.items || [];
+                const entPath = p.entityPath || [];
+                for (let i = 0; i < entPath.length; i++) {
+                    const ent = entPath[i];
+                    if (!ent) continue;
+                    const sme = ent.components && ent.components.StaticMapEntity;
+                    if (!sme) continue;
+                    const x = sme.origin.x, y = sme.origin.y;
+                    if (!inR(x, y)) continue;
+                    // items 结构：[distanceToNext, item] 成对
+                    const it = items[i];
+                    if (it !== undefined && it !== null) {
+                        out.belts.push({ cell: [x, y], idx: i, item: key(it), raw: typeof it });
+                    }
+                }
+            }
+            out.pathCount = paths.length;
+            out.paths = paths.slice(0, 40).map(p => ({
+                cells: (p.entityPath || []).map(ent => {
+                    const sme = ent && ent.components && ent.components.StaticMapEntity;
+                    return sme ? [sme.origin.x, sme.origin.y] : null;
+                }).filter(Boolean),
+                itemsOnPath: (p.items || []).length,
+                boundAcceptor: p.boundAcceptor ? (p.boundAcceptor.entity && p.boundAcceptor.entity.components
+                    && p.boundAcceptor.entity.components.StaticMapEntity
+                    ? [p.boundAcceptor.entity.components.StaticMapEntity.origin.x,
+                       p.boundAcceptor.entity.components.StaticMapEntity.origin.y]
+                    : "yes") : null,
+            }));
+        } catch (e) {
+            out.beltError = String(e && e.message ? e.message : e);
+        }
+
+        out.counts = { belts: out.belts.length, ejectors: out.ejectors.length, pending: out.pending.length };
+        return out;
+    }
+
     /**
      * 读写**升级模块**（游戏里 hub 右上角的 shop）。
      *
@@ -1374,12 +1660,63 @@ class Mod extends shapez.Mod {
             throw this.rpcError(2001, "invalid_action", "speed must be paused|regular|fast_forward");
         }
         if (!Ctor) throw this.rpcError(2003, "mod_error", "speed class not exported: " + want);
-        const current = root.time.getSpeed().getId();
+
         const target = want === "fast_forward" ? "fast-forward" : want;
-        if (current !== target) {
-            root.time.setSpeed(new Ctor(root));
+
+        // 1.5.6 的发布包只把 RegularGameSpeed 注册进序列化工厂
+        // （game_speed_registry.js: "Others are disabled for now"）。
+        // paused / fast-forward 因此**不可序列化**：一旦成为当前速度又存档，
+        // 读档时 SavegameSerializer 报 `Invalid class id: <id> (factory is gamespeed)`，
+        // 整个存档被判「损坏、无法恢复」。这条路不能靠"事后修存档"补救，
+        // 只能不让世界进入该状态。
+        const registry = shapez.gGameSpeedRegistry;
+        if (registry && typeof registry.hasId === "function" && !registry.hasId(target)) {
+            throw this.rpcError(
+                2002,
+                "game_rejected",
+                "speed '" + want + "' is not registered in this build and would make the savegame unreadable",
+                target + " is absent from gGameSpeedRegistry (only 'regular' is registered in 1.5.6). " +
+                    "Saving while in this speed corrupts the save. Use step/await for fast-forwarding."
+            );
         }
-        return { ok: true, op: "set_speed", speed: want, tick: root.time.now() };
+
+        // 1.5.6 的发布包里 `globalConfig.fastForwardSpeed` 从未被定义（只在
+        // FastForwardGameSpeed 里被读取），于是 getTimeMultiplier() 返回 undefined。
+        // game_time.internalAddDeltaToBudget 做 `budget += deltaMs * multiplier`，
+        // undefined 会把预算污染成 NaN，之后 `while (budget >= deltaMs)` 永远为假 ——
+        // 整个游戏的逻辑时钟就此停摆，切回 regular 也救不回来（NaN + 任何数 = NaN）。
+        // 这个 Mod 曾经踩过：一次 set_speed fast_forward 之后所有产线"看着在跑其实不动"。
+        // 所以在应用之前先把乘数验一遍，不合法就拒绝，而不是把世界弄坏再报错。
+        const probe = new Ctor(root);
+        const mult = probe.getTimeMultiplier();
+        if (!Number.isFinite(mult) || mult <= 0) {
+            throw this.rpcError(
+                2002,
+                "game_rejected",
+                "speed '" + want + "' has an invalid time multiplier (" + String(mult) + ")",
+                want === "fast_forward"
+                    ? "This build has no globalConfig.fastForwardSpeed, so fast_forward would freeze the game clock. Use step/await instead."
+                    : "Pick regular."
+            );
+        }
+
+        const current = root.time.getSpeed().getId();
+        if (current !== target) {
+            root.time.setSpeed(probe);
+        }
+        // 预算若已是非有限值（被更早的一次坏速度污染过），乘数校验救不了它 ——
+        // 显式归零一次，让下一次 internalAddDeltaToBudget 从干净的数字重新累加。
+        const budget = root.time.logicTimeBudget;
+        const repaired = !Number.isFinite(budget);
+        if (repaired) root.time.logicTimeBudget = 0;
+        return {
+            ok: true,
+            op: "set_speed",
+            speed: want,
+            time_multiplier: mult,
+            budget_repaired: repaired,
+            tick: root.time.now(),
+        };
     }
 
     /**
@@ -1401,6 +1738,12 @@ class Mod extends shapez.Mod {
                 "game logic is paused by an open dialog/overlay; step would not advance",
                 "Close the in-game dialog (or avoid opening menus) and retry"
             );
+        }
+        // 载入一个以 fast-forward 存盘的存档时，预算在第一次 internalAddDeltaToBudget
+        // 里就被 NaN 污染，而根因（空的 fastForwardSpeed）在存档之外。这里在推进前
+        // 先把它归零 —— 否则 step 会一直"成功"地推进 0 tick，调用方无从判断。
+        if (!Number.isFinite(root.time.logicTimeBudget)) {
+            root.time.logicTimeBudget = 0;
         }
         const shapez = /** @type {any} */ (window).shapez;
         const deltaMs = root.dynamicTickrate.deltaMs;
@@ -1429,6 +1772,17 @@ class Mod extends shapez.Mod {
         // fast_forward（×3 时间乘数）时一次调用可推进多个 tick（红队发现）。
         const deltaSeconds = root.dynamicTickrate.deltaSeconds || 1 / 60;
         const actualTicks = Math.round(advanced / deltaSeconds);
+        // 推进了 0 个 tick 却返回 ok，是把"世界坏了"伪装成"命令成功"。
+        // 当初就是这样：产线其实早就死了，而 step 一路报 ok，我据此认定工厂在跑。
+        if (actualTicks <= 0) {
+            const speedId = root.time.getSpeed().getId();
+            throw this.rpcError(
+                2002,
+                "game_rejected",
+                "step advanced 0 ticks (speed=" + speedId + ", budget=" + root.time.logicTimeBudget + ")",
+                "The game clock is not advancing. Check debug_loop for the budget/speed state."
+            );
+        }
         return { ticks_run: actualTicks, ticks_requested: ticks, ticks_advanced_seconds: advanced, wall_ms: Math.round(wallMs) };
     }
 
@@ -2049,6 +2403,113 @@ class Mod extends shapez.Mod {
         await mgr.deleteSavegame(meta);
         this.log("savegame deleted", id);
         return { ok: true, op: "delete_save", deleted: info };
+    }
+
+    /**
+     * 修复因**未注册的游戏速度**而无法读档的存档。
+     *
+     * 症状：载入时报 `Invalid class id: fast-forward (factory is gamespeed)`，
+     * 游戏界面上只说"存档损坏"。
+     * 根因：1.5.6 只注册了 regular 速度，写出 fast-forward 的存档天然读不回来。
+     * 数据本身没坏 —— 只是 dump.time.speed 指着一个工厂里不存在的类型。
+     *
+     * 做法：把该字段改写成 `{"$":"regular","data":{}}`，重新走游戏自己的
+     * 序列化（compressObject + CRC + LZString），并**先备份原文件**。
+     * 绝不能凭空造校验和：这里调用游戏的 compressX64 / computeCrc，
+     * 保证写出的内容与游戏自己写的完全同构。
+     *
+     * params: { internal_id: string, dry_run?: boolean }
+     */
+    async repairSave(p) {
+        this.assertWritable("repair_save");
+        const id = p.internal_id;
+        if (typeof id !== "string" || id.length < 3) {
+            throw this.rpcError(2001, "invalid_action", "internal_id (string) is required");
+        }
+        const mgr = this.app.savegameMgr;
+        const meta = (mgr.getSavegamesMetaData() || []).find(
+            m => (m.internalId !== undefined ? m.internalId : m.internal_id) === id
+        );
+        if (!meta) {
+            throw this.rpcError(2002, "game_rejected", "no savegame with internal_id " + id, "Use list_saves to see available ids");
+        }
+        await mgr.loadSavegameMetaData?.(meta) // no-op if absent
+        const shapez = /** @type {any} */ (window).shapez;
+        // 文件名规则来自 savegame.js: `super(app, "savegame-" + internalId + ".bin")`。
+        // 不依赖 mgr 上是否存在 getSavegameFilename —— 那个方法在 1.5.6 里没有。
+        const filename = "savegame-" + id + ".bin";
+        let raw;
+        try {
+            raw = await this.app.storage.readFileAsync(filename);
+        } catch (e) {
+            throw this.rpcError(2003, "mod_error", "failed to read savegame file: " + e);
+        }
+        const text = typeof raw === "string" ? raw : String(raw);
+        const prefixLen = 1; // compressionPrefix 是单个字符（\x01）
+        const decompressed = shapez.decompressX64(text.substr(prefixLen));
+        if (!decompressed) throw this.rpcError(2003, "mod_error", "savegame decompression failed");
+        const checksum = decompressed.substring(0, 40);
+        const jsonString = decompressed.substr(40);
+        let parsed;
+        try {
+            parsed = JSON.parse(jsonString);
+        } catch (e) {
+            throw this.rpcError(2003, "mod_error", "savegame JSON is not parseable: " + e);
+        }
+        const decoded = shapez.decompressObject(parsed);
+        const speed = decoded && decoded.dump && decoded.dump.time ? decoded.dump.time.speed : null;
+        const speedId = speed && typeof speed === "object" ? speed.$ : null;
+        const needsFix = speedId && speedId !== "regular" && speedId !== "paused";
+        const report = {
+            internal_id: id,
+            current_speed_id: speedId,
+            needs_fix: !!needsFix,
+        };
+        if (!needsFix) {
+            return { ok: true, op: "repair_save", ...report, changed: false };
+        }
+        decoded.dump.time.speed = { $: "regular", data: {} };
+        // 复用游戏自己的写入路径：compressObject → JSON → CRC → LZString
+        const recompressed = shapez.compressObject(decoded);
+        const newJson = JSON.stringify(recompressed);
+        const newChecksum = shapez.computeCrc(newJson + this.savegameSalt());
+        const out = shapez.compressionPrefix + shapez.compressX64(newChecksum + newJson);
+        report.old_checksum = checksum;
+        report.new_checksum = newChecksum;
+        report.bytes_before = text.length;
+        report.bytes_after = out.length;
+        if (p.dry_run === true) {
+            return { ok: true, op: "repair_save", ...report, dry_run: true, changed: false };
+        }
+        // 备份：绝不覆盖唯一副本
+        const backupName = filename + ".pre-speed-repair-" + new Date().toISOString().replace(/[:.]/g, "-");
+        try {
+            await this.app.storage.writeFileAsync(backupName, text);
+        } catch (e) {
+            throw this.rpcError(2003, "mod_error", "failed to write backup before repair: " + e);
+        }
+        try {
+            await this.app.storage.writeFileAsync(filename, out);
+        } catch (e) {
+            throw this.rpcError(2003, "mod_error", "failed to write repaired savegame: " + e);
+        }
+        this.log("savegame repaired:", id, backupName);
+        return { ok: true, op: "repair_save", ...report, changed: true, backup: backupName };
+    }
+
+    /** 存档校验用的 salt（config.info.file，与 read_write_proxy 同源）。 */
+    savegameSalt() {
+        if (this._savegameSalt !== undefined) return this._savegameSalt;
+        try {
+            const shapez = /** @type {any} */ (window).shapez;
+            // read_write_proxy 用的是 accessNestedPropertyReverse(globalConfig, ["file","info"])，
+            // 这个 helper 从数组尾部往回走 —— 所以路径是 globalConfig.info.file，
+            // 不是 globalConfig.file.info.file（写错一个层级就会得到一个永不对的校验和）。
+            this._savegameSalt = shapez.globalConfig.info.file;
+        } catch (e) {
+            this._savegameSalt = null;
+        }
+        return this._savegameSalt;
     }
 
     async loadSave(p) {

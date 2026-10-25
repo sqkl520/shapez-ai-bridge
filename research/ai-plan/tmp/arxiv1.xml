@@ -1,0 +1,33 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/Iel6kjScvwTgEH2gTs1oxaM1FGw</id>
+  <title>arXiv Query: search_query=&amp;id_list=2310.01505&amp;start=0&amp;max_results=10</title>
+  <updated>2026-10-25T18:43:34Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=&amp;start=0&amp;max_results=10&amp;id_list=2310.01505" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>10</opensearch:itemsPerPage>
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2310.01505v1</id>
+    <title>Towards Automatic Design of Factorio Blueprints</title>
+    <updated>2023-10-02T18:01:43Z</updated>
+    <link href="https://arxiv.org/abs/2310.01505v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2310.01505v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Factorio is a 2D construction and management simulation video game about building automated factories to produce items of increasing complexity. A core feature of the game is its blueprint system, which allows players to easily save and replicate parts of their designs. Blueprints can reproduce any layout of objects in the game, but are typically used to encapsulate a complex behaviour, such as the production of a non-basic object. Once created, these blueprints are then used as basic building blocks, allowing the player to create a layer of abstraction. The usage of blueprints not only eases the expansion of the factory but also allows the sharing of designs with the game's community. The layout in a blueprint can be optimised using various criteria, such as the total space used or the final production throughput. The design of an optimal blueprint is a hard combinatorial problem, interleaving elements of many well-studied problems such as bin-packing, routing or network design. This work presents a new challenging problem and explores the feasibility of a constraint model to optimise Factorio blueprints, balancing correctness, optimality, and performance.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2023-10-02T18:01:43Z</published>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Sean Patterson</name>
+    </author>
+    <author>
+      <name>Joan Espasa</name>
+    </author>
+    <author>
+      <name>Mun See Chang</name>
+    </author>
+    <author>
+      <name>Ruth Hoffmann</name>
+    </author>
+  </entry>
+</feed>

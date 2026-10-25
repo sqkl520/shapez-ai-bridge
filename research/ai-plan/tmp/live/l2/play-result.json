@@ -1,0 +1,80 @@
+{
+  "at": "2026-10-25T15:49:40.420Z",
+  "level": 2,
+  "shape": "----CuCu",
+  "required": 40,
+  "anchor": [
+    -8,
+    -15
+  ],
+  "entities": 46,
+  "dry": {
+    "ok": true,
+    "op": "paste_blueprint",
+    "dry_run": true,
+    "would_apply": 46,
+    "would_delete": 3,
+    "destroys": [
+      {
+        "uid": 10025,
+        "cell": [
+          -8,
+          -3
+        ],
+        "type": "belt"
+      },
+      {
+        "uid": 10026,
+        "cell": [
+          -7,
+          -3
+        ],
+        "type": "belt"
+      },
+      {
+        "uid": 10031,
+        "cell": [
+          -2,
+          -3
+        ],
+        "type": "belt"
+      }
+    ],
+    "blocked": [],
+    "unknown_code": [],
+    "count": 46,
+    "bbox": [
+      -8,
+      -15,
+      -2,
+      5
+    ],
+    "charge_preview": {
+      "cost": 0,
+      "have": null,
+      "affordable": true
+    },
+    "tunnels": {
+      "in_plan": 2,
+      "will_disable_smartplace": true,
+      "note": "粘贴期间会临时关闭 enableTunnelSmartplace，结束后恢复原值"
+    },
+    "tick": 2118.1333333347166
+  },
+  "paste": {
+    "applied": 46,
+    "failed": []
+  },
+  "readback": {
+    "matched": 46,
+    "total": 46,
+    "mismatches": []
+  },
+  "measured": {
+    "storedBefore": 0,
+    "delivered": 16,
+    "ticks": 6000,
+    "finalLevel": 2
+  },
+  "verdict": "PRODUCING"
+}

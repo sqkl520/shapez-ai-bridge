@@ -7,8 +7,8 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     -5,
-     7
+     -6,
+     6
     ],
     "nodeId": "n0",
     "expected": "落点矩形全空（r=0 包围盒）",
@@ -32,10 +32,10 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     -5,
-     6
+     -6,
+     5
     ],
-    "nodeId": "belt@-5,6",
+    "nodeId": "belt@-6,5",
     "expected": "computeBelt(含机器邻居) 不动点 = 设计的 (r,rv)",
     "actual": "8/8 全是不动点；施工顺序合规",
     "note": "includesMachineNeighbors=true（邻居含机器 2 次、带子 14 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
@@ -71,7 +71,7 @@
     "nodeId": null,
     "expected": "两股流不穿格 + 车道分行 + 不穿机器占地",
     "actual": "0 处",
-    "note": "车道分行 → 不需要隧道（v1 无隧道）"
+    "note": "单通道布局，天然无交叉"
    }
   },
   {
@@ -82,7 +82,7 @@
     "nodeId": "n0",
     "expected": "demandPerSec",
     "actual": "0",
-    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = miner@0.4/s；拐角 2 个 → 有效带长 7.56（derate 0.945，机器限速 ⇒ 只报告不折进判定）"
+    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = miner@0.4/s；拐角 1 个 → 有效带长 7.78（derate 0.973，机器限速 ⇒ 只报告不折进判定）"
    }
   },
   {
