@@ -1483,8 +1483,25 @@ export function planChannel(first, d1, last, inDir, ctx = {}) {
 				if (tun.crossed) crossedAll.push(...tun.crossed);
 			}
 			if (used > 0 && out.length && sameCell(out[out.length - 1].cell, last)) {
-				const cc = out.filter(x => isCorner(x.inDir, x.outDir)).length;
-				return { ok: true, kind: "tunnel", lane, cornerCount: cc, cells: out, tunnels: used, tunnelSpanCells: crossedAll };
+				/* 隧道替换删掉了若干格 ⇒ 相邻关系变了，必须按**最终序列**重算方向。
+				   这与 elbow 分支的处理是同一件事（那边早已调用 recomputeDirs，Z 分支漏了）。
+				   症状：chHub 的 (24,-7) 报 in=right（横向进入），而它实际是从 (24,-6)
+				   竖直下来的 —— 链条在 P4 那里必然断（exit(top) 接 entry(right)）。
+				   tunDir 给隧道格一个方向：取它前后最近普通格给出的走向。 */
+				const tunDir = (idx) => {
+					for (let j = idx - 1; j >= 0; j--) {
+						const s = dirToward(out[j].cell, out[idx].cell);
+						if (s) return s;
+					}
+					for (let j = idx + 1; j < out.length; j++) {
+						const s = dirToward(out[idx].cell, out[j].cell);
+						if (s) return s;
+					}
+					return d1;
+				};
+				const fixedCells = recomputeDirs(out, d1, d2, tunDir);
+				const cc = fixedCells.filter(x => isCorner(x.inDir, x.outDir)).length;
+				return { ok: true, kind: "tunnel", lane, cornerCount: cc, cells: fixedCells, tunnels: used, tunnelSpanCells: crossedAll };
 			}
 		}
 		return { ok: false, why: "cell-occupied", at: raw.find(blocked) };
@@ -1678,6 +1695,15 @@ export function jointResourceShift(miners, ctx) {
 			if (got !== resOf(m)) missing.push({ nodeId: m.id, cell: [cx, cy], want: resOf(m), got });
 			// 第二台起还要排除「压在 hub 上」—— 第一台已在上面的 filter 里排除了
 			if (m !== anchorMiner && onHub([cx, cy])) missing.push({ nodeId: m.id, cell: [cx, cy], want: resOf(m), got: "hub-occupies" });
+			/* ★ 既有工厂占住的格同样要逐台排除 ★
+			   原代码只在 ① 里对**第一台**做了 freeOfPlant 过滤，第 2..N 台只检查
+			   tileResource + onHub。于是"1 号位空着、2..5 号位全被旧矿机占着"也能通过，
+			   产出一份必然 paste 失败的蓝图。
+			   实测：L4 的 4 台钌矿机被整体平移到 (2..5,-9) —— 正是 L3 旧线 5 台矿机所在的行，
+			   而 ① 里这条平移因第一台命中而从未被 freeOfPlant 挡下。 */
+			if (m !== anchorMiner && occW && !freeOfPlant([cx, cy])) {
+				missing.push({ nodeId: m.id, cell: [cx, cy], want: resOf(m), got: "plant-occupies" });
+			}
 		}
 		if (missing.length) {
 			if (!best || missing.length < best.missing.length) best = { t, missing };
@@ -1838,6 +1864,14 @@ export function hubEntries(hubOrigin) {
 	return hubEntriesWorld(hubOrigin).map((e, i) => {
 		const dir = assertQuadrantAngle(e.dir, `hubEntriesWorld()[${i}].dir`);
 		const flow = ANGLE_DIR[dir];
+		/* 两个不同的格，别再混用：
+		     `cell`     = 带子**最后一格**（hub 外缘），hubEntriesWorld 给的就是它
+		     `slotCell` = 带子**喷向的目标**（hub 内部接收点）= cell + flow，
+		                  也是 op-templates 里 hub 模板 inputs[].cell 的口径
+		   place 铺通道时要用 slotCell 当终点（带子必须喷进 hub 内部那一格），
+		   而"这一格是否被旧工厂占住"要查 cell（外缘），因为 hub 内部永远是 hub 自己。
+		   历史上这两个概念在代码里只叫 slotCell，于是"查占用"和"铺终点"用同一个值，
+		   有旧工厂时就会既查错格、又在 P4 那边接不上链。 */
 		return {
 			i, cell: [e.cell[0], e.cell[1]], face: e.face, dir, flow,
 			inDir: e.face,
@@ -2106,10 +2140,15 @@ export function place(input = {}) {
 		const region = input.region || regionAround(centerW, input.range === undefined ? 48 : input.range);
 		/* 既有工厂占住的格（world 系）—— 刚性/独立两条路都必须避开。
 		   直接从 occupancyLocal（世界 − origin）加回 origin 还原成世界系，
-		   才能与 findResource 返回的资源格比对。 */
+		   才能与 findResource 返回的资源格比对。
+		   ★ 这里必须包含 **replaceable（带子）**，不能只取 solid ★
+		   带子可以被 paste 覆盖，但那是**销毁**既有产线 —— 而"旧产线永不拆"
+		   正是这一整轮的前提。实测：L4 的新矿机被选在 (2,-9)，那里压着
+		   L3 的一条钌带子；place 认为它是 replaceable 所以就"通过"了，
+		   等到契约断言 assertLayoutReport 才报冲突（而且报的是局部坐标，
+		   看起来像是坐标系错了，实际是"矿机压带子"这个语义错误）。 */
 		const occupiedWorld = new Set();
 		for (const o of occupancyLocal) {
-			if (o.state !== "solid") continue;          // 带子可覆盖，不挡矿机
 			occupiedWorld.add(cellKey(o.cell[0] + origin.x, o.cell[1] + origin.y));
 		}
 		// 矿机按**世界系**喂进去：这样返回的 shift 是纯世界系平移量，加到局部坐标上同样成立
@@ -2362,6 +2401,12 @@ export function place(input = {}) {
 				.sort((a, b) => a.d - b.d || a.e.i - b.e.i);
 			let hit = null;
 			for (const { e } of ranked) {
+				/* ★ 查的是 `cell`（带子最后要落的那一格，hub 外缘），不是 `slotCell` ★
+				   slotCell 是 hub **内部**的接收点，那里永远是 hub 自己（必然"被占"），
+				   拿它查占用会把 16 个入口全部误判为不可用。
+				   有旧工厂时外缘可能真的被占（实测 L4：底排 (1,-3) 压着旧钌线的末格）——
+				   那种情况应该跳过这个入口，而不是让 P4 后面报一个看不懂的链断裂。 */
+				if (occupied.has(cellKey(e.cell[0], e.cell[1]))) continue;
 				const snap = { occ: new Set(occupied), ch: channels.length, bl: beltCells.length, ln: lanes.length, cf: conflicts.length, lp: new Set(lanePool) };
 				const r = route(term, out, { id: "hub" }, { role: "primary", dir: e.inDir, cx: 0, cy: 0 }, null,
 					term.hash || "", { id: "chHub", toCell: e.slotCell, slotRole: "out", strictLane: true });
