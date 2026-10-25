@@ -718,12 +718,17 @@ export function replicateMiners(nodes, opts = {}) {
 }
 
 export function planMinerColumns(miners, ctx) {
-	const { seed, region, center } = ctx;
+	const { seed, region, center, blocked } = ctx;
 	if (!miners.length) return null;
+	/* `blocked`：作图局部系的 "x,y" 集合，代表**已经被既有工厂占住**的格。
+	   矿机必须压在自己的资源上，但资源格可能已经被旧产线用掉了 ——
+	   这时正确的做法是换一格，而不是把旧矿机挤掉。 */
+	const isBlocked = (x, y) => !!(blocked && blocked.has(`${x},${y}`));
 	const shapes = miners.map(m => m.resource || m.hash);
 	// 同一行里，每种资源可取的那些 x：y → shape → sorted xs
 	const byRow = new Map();
 	for (const [x, y, s] of resourcesInRegion(seed, region)) {
+		if (isBlocked(x, y)) continue;          // 既有工厂占住的矿格不可用
 		if (!byRow.has(y)) byRow.set(y, new Map());
 		const m = byRow.get(y);
 		if (!m.has(s)) m.set(s, []);
@@ -2007,7 +2012,20 @@ export function place(input = {}) {
 		if (minersInOrder.length > 1) {
 			const centerW = [origin.x, origin.y];
 			const region = input.region || regionAround(centerW, input.range === undefined ? 96 : input.range);
-			minerX = planMinerColumns(minersInOrder, { seed: seedEarly, region, center: centerW });
+			/* 既有工厂占住的格要**避开**，否则新矿机会被摆到旧矿机上
+			   （实测：L4 的 4 台钌矿机正好撞上 L3 留下的 4 台，dry_run 报 solid collision）。
+			   这是"旧产线永不拆"的最低要求：不是拆旧的，是在旁边另起。
+			   坐标口径：worldEntities 是世界系，这里减去 origin 换成作图局部系
+			   （与 occupancy 同框）。 */
+			let blocked = null;
+			if (Array.isArray(input.world) && Array.isArray(input.world.entities) && input.world.entities.length) {
+				blocked = new Set();
+				for (const e of input.world.entities) {
+					if (!e || !Number.isFinite(e.x) || !Number.isFinite(e.y)) continue;
+					blocked.add(`${e.x - origin.x},${e.y - origin.y}`);
+				}
+			}
+			minerX = planMinerColumns(minersInOrder, { seed: seedEarly, region, center: centerW, blocked });
 		}
 	}
 	/* WP2：两轮布局。`planMultiInputRows` 要读上游已定的 x/y，而那些只有 `assignRows`
