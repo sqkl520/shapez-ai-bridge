@@ -1880,14 +1880,12 @@ export function place(input = {}) {
 	if (terminals.length && input.connectHub !== false && hubLocal) {
 		const term = terminals[0];
 		const outs = outSlotsOf(term);
-		/* ★ 选哪个输出槽喂 hub：必须是**产出目标形状**的那个槽 ★
-		   旧代码 `outs.find(o => !term.usedOut.has(o.role))` 取第一个没用的槽。
-		   对 cutter 这种双输出的机器（role = "left" / "right"），它会把 slot0 接给 hub，
-		   而 slot0 出的是**副产品**。实测 `RuRu----`：hub 收到的是 `----RuRu`（一路涨到 152），
-		   目标形状 `RuRu----` 永远 0 —— 而逐格对拍 30/30 全绿，几何完全正确，语义全错。
-		   判据：节点若带 `_solverArgs.half`（= 切割的哪一半），优先选 role 与它相同的槽；
-		   没有这个信息（单输出机器）时退回"第一个未用槽"。 */
-		const wantHalf = term._solverArgs && term._solverArgs.half;
+		/* 判据：节点若带 `args.half`（= 切割的哪一半），优先选 role 与它相同的槽；
+		   没有这个信息（单输出机器）时退回"第一个未用槽"。
+		   ⚠️ 字段是 `args`，不是 `_solverArgs` —— buildDag 只把 solver 的 args 存成 n.args，
+		   `_solverArgs` 留在 mapOps 的 step 上、不进节点。第一版读错了字段，于是这条修复
+		   静默失效：没有报错，只是继续走旧分支，hub 依旧拿到副产物。 */
+		const wantHalf = term.args && term.args.half;
 		const byHalf = wantHalf ? outs.filter(o => o.role === wantHalf) : [];
 		const out = (byHalf.length ? byHalf.find(o => !term.usedOut.has(o.role)) : null)
 			|| outs.find(o => !term.usedOut.has(o.role)) || null;
