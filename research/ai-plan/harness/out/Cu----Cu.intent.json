@@ -1,45 +1,43 @@
 {
  "goal": "Cu----Cu",
  "schema": "shapez-ai/handoff-intent@1",
- "blueprint": "SZBP1.N4IgbiBcBMA0IHMKRARgHQFZ0DYTwHcoBtAWh1lNWgF14BTEgdlgAZZUAON2ATh9Tt2qVDzjtow2NynCWsjhQWpMAgQBY1wgMxaO4jgNEL+CmYfbyLsJddULNC3crXG+Ug7ynP3hx79F7AJtDLikKODDDCl0o0QpNOJDVJIoKVNgWDO4M-gzBDk5wjlEk0VNYHyFKkPYvOhAAexIAOwBXABsO2Hauns7u3u7qkZ5R8bHfLym64SLCucWF5bj51aXq+oBfIA",
+ "blueprint": "SZBP1.N4IgbiBcBMA0IHMKRARgHQFZ0DYTwHcoBtAWgHZZTUBmAXXgFMTKAGWVADlnYE4eO7dqlQC47aMNjcpwthwGocixZhXCALOo41tqcQuGjZsfiZmHY847GUm1JrSd0mbom7ykHPCl6alO-gpq7pxSanBc4bC6UcGwWnGiaiFh8cpJsGqUmWrcuaYcacmCRVKiZjECQlUO-gwgAPYkAHYArgA2HbDtXT2d3b3dNSPVY6OjPlN8wsVzswtlS0nzY550AL5AA",
  "anchor": [
-  -6,
-  -12
+  -7,
+  -13
  ],
  "hub": [
-  0,
-  0
+  -2,
+  -2
  ],
  "chargeMode": "false",
  "gv": null,
- "count": 38,
+ "count": 36,
  "stride": 4,
  "entityOrder": [
   "n0",
   "n1",
   "n2",
   "n1d1",
-  "belt@-6,5",
-  "belt@-6,4",
-  "belt@-6,3",
-  "belt@-6,2",
-  "belt@-6,1",
-  "belt@-6,0",
-  "belt@-6,-1",
-  "belt@-6,-3",
-  "belt@-6,-4",
-  "belt@-6,-5",
-  "belt@-6,-6",
-  "belt@-6,-7",
-  "belt@-6,-8",
-  "belt@-6,-9",
-  "belt@-6,-11",
-  "belt@-5,-12",
-  "belt@-4,-12",
-  "belt@-3,-12",
-  "belt@-2,-12",
-  "belt@-1,-12",
-  "belt@0,-11",
+  "belt@-5,6",
+  "belt@-5,5",
+  "belt@-5,4",
+  "belt@-5,3",
+  "belt@-5,2",
+  "belt@-5,1",
+  "belt@-5,0",
+  "belt@-5,-2",
+  "belt@-5,-3",
+  "belt@-5,-4",
+  "belt@-5,-5",
+  "belt@-5,-6",
+  "belt@-5,-7",
+  "belt@-5,-8",
+  "belt@-5,-10",
+  "belt@-4,-11",
+  "belt@-3,-11",
+  "belt@-2,-11",
+  "belt@-1,-11",
   "belt@0,-10",
   "belt@0,-9",
   "belt@0,-8",
@@ -50,9 +48,9 @@
   "belt@0,-3",
   "belt@0,-2",
   "belt@0,-1",
-  "belt@-5,-3",
-  "belt@-6,-12",
-  "belt@0,-12"
+  "belt@-4,-2",
+  "belt@-5,-11",
+  "belt@0,-11"
  ],
  "entities": [
   {
@@ -108,7 +106,7 @@
    "dx": 0,
    "dy": 17,
    "rot": 0,
-   "nodeId": "belt@-6,5",
+   "nodeId": "belt@-5,6",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -120,7 +118,7 @@
    "dx": 0,
    "dy": 16,
    "rot": 0,
-   "nodeId": "belt@-6,4",
+   "nodeId": "belt@-5,5",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -132,7 +130,7 @@
    "dx": 0,
    "dy": 15,
    "rot": 0,
-   "nodeId": "belt@-6,3",
+   "nodeId": "belt@-5,4",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -144,7 +142,7 @@
    "dx": 0,
    "dy": 14,
    "rot": 0,
-   "nodeId": "belt@-6,2",
+   "nodeId": "belt@-5,3",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -156,7 +154,7 @@
    "dx": 0,
    "dy": 13,
    "rot": 0,
-   "nodeId": "belt@-6,1",
+   "nodeId": "belt@-5,2",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -168,7 +166,7 @@
    "dx": 0,
    "dy": 12,
    "rot": 0,
-   "nodeId": "belt@-6,0",
+   "nodeId": "belt@-5,1",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -180,7 +178,7 @@
    "dx": 0,
    "dy": 11,
    "rot": 0,
-   "nodeId": "belt@-6,-1",
+   "nodeId": "belt@-5,0",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -192,7 +190,7 @@
    "dx": 0,
    "dy": 9,
    "rot": 0,
-   "nodeId": "belt@-6,-3",
+   "nodeId": "belt@-5,-2",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -204,7 +202,7 @@
    "dx": 0,
    "dy": 8,
    "rot": 0,
-   "nodeId": "belt@-6,-4",
+   "nodeId": "belt@-5,-3",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -216,7 +214,7 @@
    "dx": 0,
    "dy": 7,
    "rot": 0,
-   "nodeId": "belt@-6,-5",
+   "nodeId": "belt@-5,-4",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -228,7 +226,7 @@
    "dx": 0,
    "dy": 6,
    "rot": 0,
-   "nodeId": "belt@-6,-6",
+   "nodeId": "belt@-5,-5",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -240,7 +238,7 @@
    "dx": 0,
    "dy": 5,
    "rot": 0,
-   "nodeId": "belt@-6,-7",
+   "nodeId": "belt@-5,-6",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -252,7 +250,7 @@
    "dx": 0,
    "dy": 4,
    "rot": 0,
-   "nodeId": "belt@-6,-8",
+   "nodeId": "belt@-5,-7",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -264,7 +262,7 @@
    "dx": 0,
    "dy": 3,
    "rot": 0,
-   "nodeId": "belt@-6,-9",
+   "nodeId": "belt@-5,-8",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -276,7 +274,7 @@
    "dx": 0,
    "dy": 1,
    "rot": 0,
-   "nodeId": "belt@-6,-11",
+   "nodeId": "belt@-5,-10",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -288,7 +286,7 @@
    "dx": 1,
    "dy": 0,
    "rot": 90,
-   "nodeId": "belt@-5,-12",
+   "nodeId": "belt@-4,-11",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -300,7 +298,7 @@
    "dx": 2,
    "dy": 0,
    "rot": 90,
-   "nodeId": "belt@-4,-12",
+   "nodeId": "belt@-3,-11",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -312,7 +310,7 @@
    "dx": 3,
    "dy": 0,
    "rot": 90,
-   "nodeId": "belt@-3,-12",
+   "nodeId": "belt@-2,-11",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -324,7 +322,7 @@
    "dx": 4,
    "dy": 0,
    "rot": 90,
-   "nodeId": "belt@-2,-12",
+   "nodeId": "belt@-1,-11",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -334,31 +332,7 @@
   {
    "code": 1,
    "dx": 5,
-   "dy": 0,
-   "rot": 90,
-   "nodeId": "belt@-1,-12",
-   "instanceIdx": 0,
-   "kind": "belt",
-   "rotationVariant": 0,
-   "inDir": "left",
-   "outDir": "right"
-  },
-  {
-   "code": 1,
-   "dx": 6,
    "dy": 1,
-   "rot": 180,
-   "nodeId": "belt@0,-11",
-   "instanceIdx": 0,
-   "kind": "belt",
-   "rotationVariant": 0,
-   "inDir": "top",
-   "outDir": "bottom"
-  },
-  {
-   "code": 1,
-   "dx": 6,
-   "dy": 2,
    "rot": 180,
    "nodeId": "belt@0,-10",
    "instanceIdx": 0,
@@ -369,8 +343,8 @@
   },
   {
    "code": 1,
-   "dx": 6,
-   "dy": 3,
+   "dx": 5,
+   "dy": 2,
    "rot": 180,
    "nodeId": "belt@0,-9",
    "instanceIdx": 0,
@@ -381,8 +355,8 @@
   },
   {
    "code": 1,
-   "dx": 6,
-   "dy": 4,
+   "dx": 5,
+   "dy": 3,
    "rot": 180,
    "nodeId": "belt@0,-8",
    "instanceIdx": 0,
@@ -393,8 +367,8 @@
   },
   {
    "code": 1,
-   "dx": 6,
-   "dy": 5,
+   "dx": 5,
+   "dy": 4,
    "rot": 180,
    "nodeId": "belt@0,-7",
    "instanceIdx": 0,
@@ -405,8 +379,8 @@
   },
   {
    "code": 1,
-   "dx": 6,
-   "dy": 6,
+   "dx": 5,
+   "dy": 5,
    "rot": 180,
    "nodeId": "belt@0,-6",
    "instanceIdx": 0,
@@ -417,8 +391,8 @@
   },
   {
    "code": 1,
-   "dx": 6,
-   "dy": 7,
+   "dx": 5,
+   "dy": 6,
    "rot": 180,
    "nodeId": "belt@0,-5",
    "instanceIdx": 0,
@@ -429,8 +403,8 @@
   },
   {
    "code": 1,
-   "dx": 6,
-   "dy": 8,
+   "dx": 5,
+   "dy": 7,
    "rot": 180,
    "nodeId": "belt@0,-4",
    "instanceIdx": 0,
@@ -441,8 +415,8 @@
   },
   {
    "code": 1,
-   "dx": 6,
-   "dy": 9,
+   "dx": 5,
+   "dy": 8,
    "rot": 180,
    "nodeId": "belt@0,-3",
    "instanceIdx": 0,
@@ -453,8 +427,8 @@
   },
   {
    "code": 1,
-   "dx": 6,
-   "dy": 10,
+   "dx": 5,
+   "dy": 9,
    "rot": 180,
    "nodeId": "belt@0,-2",
    "instanceIdx": 0,
@@ -465,8 +439,8 @@
   },
   {
    "code": 1,
-   "dx": 6,
-   "dy": 11,
+   "dx": 5,
+   "dy": 10,
    "rot": 180,
    "nodeId": "belt@0,-1",
    "instanceIdx": 0,
@@ -480,7 +454,7 @@
    "dx": 1,
    "dy": 9,
    "rot": 0,
-   "nodeId": "belt@-5,-3",
+   "nodeId": "belt@-4,-2",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 0,
@@ -492,7 +466,7 @@
    "dx": 0,
    "dy": 0,
    "rot": 0,
-   "nodeId": "belt@-6,-12",
+   "nodeId": "belt@-5,-11",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 2,
@@ -501,10 +475,10 @@
   },
   {
    "code": 3,
-   "dx": 6,
+   "dx": 5,
    "dy": 0,
    "rot": 90,
-   "nodeId": "belt@0,-12",
+   "nodeId": "belt@0,-11",
    "instanceIdx": 0,
    "kind": "belt",
    "rotationVariant": 2,
@@ -520,10 +494,10 @@
    "rotater": 1,
    "trash": 1
   },
-  "beltTiles": 34,
+  "beltTiles": 32,
   "trash": 1,
   "bbox": [
-   7,
+   6,
    19
   ],
   "corners": 2,
@@ -531,8 +505,8 @@
   "bottleneck": "miner@0.4",
   "blueprintCost": 200,
   "chargeMode": "false",
-  "longestSingleBeltRow": 6,
-  "longestSingleBeltCol": 4
+  "longestSingleBeltRow": 8,
+  "longestSingleBeltCol": 3
  },
  "scope": {
   "layers": 1,
@@ -546,8 +520,8 @@
   "errors": 0,
   "failIds": [],
   "beltSim": {
-   "tilesChecked": 34,
-   "fixedPoints": 34,
+   "tilesChecked": 32,
+   "fixedPoints": 32,
    "drift": [],
    "includesMachineNeighbors": true
   },
@@ -587,8 +561,8 @@
  "roundtrip": {
   "ok": true,
   "stride": 4,
-  "decodedCount": 38,
-  "intentCount": 38,
+  "decodedCount": 36,
+  "intentCount": 36,
   "eLength": null,
   "diff": [],
   "beltCodeBad": [],
@@ -597,23 +571,23 @@
    "format_version": 2,
    "exported_from": "1.5.6",
    "anchor": [
-    -6,
-    -12
+    -7,
+    -13
    ],
-   "count": 38,
+   "count": 36,
    "bounds": [
-    7,
+    6,
     19
    ],
    "by_code": {
-    "1": 32,
+    "1": 30,
     "3": 2,
     "7": 1,
     "9": 1,
     "11": 1,
     "20": 1
    },
-   "text_length": 269
+   "text_length": 267
   },
   "summaryErr": null
  },
@@ -641,7 +615,7 @@
     "stackPairs": 1592,
     "capped": false
    },
-   "ms": 47,
+   "ms": 19,
    "known": 1614
   },
   "seed": 43391,
@@ -657,8 +631,8 @@
    {
     "nodeId": "n0",
     "cell": [
-     -6,
-     6
+     -7,
+     5
     ],
     "shape": "CuCuCuCu"
    }
@@ -674,32 +648,32 @@
     "ok": true,
     "reason": null,
     "laneColumn": 0,
-    "belt": 34,
+    "belt": 32,
     "corners": 2
    }
   ],
   "laneColumnUnresolved": 0,
   "worldPlacement": {
    "anchor": [
-    0,
-    0
+    -2,
+    -2
    ],
    "hub": [
-    0,
-    0
+    -2,
+    -2
    ],
    "hubInferred": [
-    0,
-    0
+    -2,
+    -2
    ],
    "hubPinned": true,
    "pasteAt": [
-    -6,
-    -12
+    -7,
+    -13
    ],
    "designAnchor": [
-    -6,
-    -12
+    -5,
+    -11
    ],
    "designHubLocal": [
     -4,
@@ -712,16 +686,16 @@
    "worldFrameV1": {
     "ok": true,
     "worldRect": [
-     -6,
-     -12,
-     0,
-     6
+     -7,
+     -13,
+     -2,
+     5
     ],
     "hubRect": [
-     0,
-     0,
-     3,
-     3
+     -2,
+     -2,
+     1,
+     1
     ]
    }
   }
