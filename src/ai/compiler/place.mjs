@@ -194,11 +194,12 @@ export function validateWorld(world) {
 		return makeFailure("no-resource-in-range", null, "WorldState 必须是对象或 null（§2.6）");
 	}
 	const ents = Array.isArray(world.entities) ? world.entities : [];
-	const others = ents.filter(en => en && en.type !== "hub");
-	if (others.length) {
-		return makeFailure("out-of-scope:rotated-machine", null,
-			`v1 只支持全新址（entities 为空或仅 hub）：既有 ${others.length} 个非 hub 实体 → 增量对接未实现（plan §6 R2）`);
-	}
+	/* ★ 既有实体不再是"拒绝理由"，而是**占位**（P1-4 增量对接）★
+	   旧行为：世界里有任何非 hub 实体就整段拒绝（"v1 只支持全新址"）。
+	   真实存档永远已经有东西 —— 实测 level 4 又选中了 level 3 的矿机所在的格子，
+	   dry_run 拦下了它（很好），但玩家要的是"在旁边接一条"，不是"永远不能长大"。
+	   现在：按实体类型铺占位，state 区分 solid / replaceable，
+	   让 place() 的 occupied 真正挡住机器、让通道可以覆盖 replaceable 的带子。 */
 	const occupancy = [];
 	for (const en of ents) {
 		if (en.type === "hub") {
@@ -1338,15 +1339,21 @@ export function jointResourceShift(miners, ctx) {
 	const anchorMiner = miners[0];
 	const want0 = resOf(anchorMiner);
 	const distTo = c => Math.hypot(c[0] - center[0], c[1] - center[1]);
-	// ① 第一台矿机的候选资源格（去 hub 占地；排序确定）
+	/* 既有工厂占住的格（world 系）：矿机不能建在上面。
+	   注：这里只有"能不能站"的信息，没有推送平移量的能力 —— 即使避开占位后
+	   DAG 相对偏移仍不成立，下面的 ④ 会如实失败，由调用方回落到逐台独立落位。 */
+	const occW = ctx.occupiedWorld instanceof Set ? ctx.occupiedWorld : null;
+	const freeOfPlant = c => !(occW && occW.has(cellKey(c[0], c[1])));
+	// ① 第一台矿机的候选资源格（去 hub 占地；去既有工厂占位；排序确定）
 	const cands = findResource(seed, s => s === want0, region)
-		.filter(c => !onHub(c))
+		.filter(c => !onHub(c) && freeOfPlant(c))
 		.sort((a, b) => (distTo(a) - distTo(b)) || cmpStr(a.join(","), b.join(",")));
 
 	if (!cands.length) {
 		return makeFailure("no-resource-in-range", { nodeId: anchorMiner.id, cell: null, check: "V1-occupancy" },
 			`seed=${seed}、以 ${center.join(",")} 为心半径 ${region.x1 - center[0]} 内没有资源 ${want0}` +
-			(hubW ? `（hub ${hubW.join(",")} 占住的格已排除）` : "") + `（矿机 ${anchorMiner.id} 要它）`);
+			(hubW ? `（hub ${hubW.join(",")} 占住的格已排除）` : "")
+			+ (occW ? `（既有工厂占住的 ${occW.size} 格已排除）` : "") + `（矿机 ${anchorMiner.id} 要它）`);
 	}
 
 	// ②+③ 每个候选平移量都要**全部**矿机同时命中；记录最接近的失败作凭据
@@ -1440,6 +1447,10 @@ export function independentMinerCells(miners, ctx) {
 	const hubW = Array.isArray(ctx.hubWorld) && ctx.hubWorld.length === 2 ? ctx.hubWorld : null;
 	const onHub = c => hubW && c[0] >= hubW[0] && c[0] < hubW[0] + HUB_SIZE && c[1] >= hubW[1] && c[1] < hubW[1] + HUB_SIZE;
 	const resOf = m => m.resource || m.hash;
+	/* 既有工厂占住的格：矿机**不能**建在上面（机器是 solid，压不掉）。
+	   坐标是 world 系 —— 与 findResource 返回的资源格同一系，直接比对即可。 */
+	const taken = ctx.occupiedWorld instanceof Set ? ctx.occupiedWorld : null;
+	const free = c => !(taken && taken.has(cellKey(c[0], c[1])));
 
 	const cells = new Map();
 	const usedCols = new Set();
@@ -1449,14 +1460,14 @@ export function independentMinerCells(miners, ctx) {
 	for (const m of miners) {
 		const want = resOf(m);
 		const cands = findResource(seed, s => s === want, region)
-			.filter(c => !onHub(c) && !usedCells.has(cellKey(c[0], c[1])) && !usedCols.has(c[0]))
+			.filter(c => !onHub(c) && free(c) && !usedCells.has(cellKey(c[0], c[1])) && !usedCols.has(c[0]))
 			.sort((a, b) => (Math.hypot(a[0] - center[0], a[1] - center[1]) - Math.hypot(b[0] - center[0], b[1] - center[1]))
 				|| cmpStr(a.join(","), b.join(",")));
 		const hit = cands[0];
 		if (!hit) {
 			// 该列被占满 / hub 压住：退一步，允许同列但不同格（总比没有好，并如实记账）
 			const relaxed = findResource(seed, s => s === want, region)
-				.filter(c => !onHub(c) && !usedCells.has(cellKey(c[0], c[1])))
+				.filter(c => !onHub(c) && free(c) && !usedCells.has(cellKey(c[0], c[1])))
 				.sort((a, b) => (Math.hypot(a[0] - center[0], a[1] - center[1]) - Math.hypot(b[0] - center[0], b[1] - center[1]))
 					|| cmpStr(a.join(","), b.join(",")))[0];
 			if (!relaxed) { missing.push({ nodeId: m.id, want }); continue; }
@@ -1628,11 +1639,19 @@ export function place(input = {}) {
 		const minerNodes = nodes.filter(n => n.op === "mine");
 		const centerW = [origin.x, origin.y];                     // 世界系搜索中心 = 作图原点（给了 hub 时就是真 hub）
 		const region = input.region || regionAround(centerW, input.range === undefined ? 48 : input.range);
+		/* 既有工厂占住的格（world 系）—— 刚性/独立两条路都必须避开。
+		   直接从 occupancyLocal（世界 − origin）加回 origin 还原成世界系，
+		   才能与 findResource 返回的资源格比对。 */
+		const occupiedWorld = new Set();
+		for (const o of occupancyLocal) {
+			if (o.state !== "solid") continue;          // 带子可覆盖，不挡矿机
+			occupiedWorld.add(cellKey(o.cell[0] + origin.x, o.cell[1] + origin.y));
+		}
 		// 矿机按**世界系**喂进去：这样返回的 shift 是纯世界系平移量，加到局部坐标上同样成立
 		// （世界 = origin + 局部，平移量两边相同）—— 避免"世界格 − 局部格"的混框。
 		const js0 = jointResourceShift(
 			minerNodes.map(n => ({ id: n.id, resource: n.resource, hash: n.hash, x: n.x + origin.x, y: n.y + origin.y })),
-			{ seed: seedIn, region, center: centerW, hubWorld: hubLocal ? [origin.x, origin.y] : null });
+			{ seed: seedIn, region, center: centerW, hubWorld: hubLocal ? [origin.x, origin.y] : null, occupiedWorld });
 		/* ★ P1-3 回落：刚性方案失败时，改成逐台独立落位 ★
 		   刚性方案把矿机的相对偏移锁死在 DAG 布局上，真实矿图几乎不可能满足
 		   （CgScScCg 四个种子全部 0/4）。独立方案让每台矿机各自找矿，通道再用
@@ -1643,7 +1662,7 @@ export function place(input = {}) {
 		if (js.ok === false && minerNodes.length > 1) {
 			const ind = independentMinerCells(
 				minerNodes.map(n => ({ id: n.id, resource: n.resource, hash: n.hash })),
-				{ seed: seedIn, region, center: centerW, hubWorld: hubLocal ? [origin.x, origin.y] : null });
+				{ seed: seedIn, region, center: centerW, hubWorld: hubLocal ? [origin.x, origin.y] : null, occupiedWorld });
 			if (ind.ok !== false) {
 				/* 逐节点落位：每台矿机直接搬到它自己的矿上（世界系 → 局部系）。
 				   非矿机节点不在这里动 —— 它们等到下面 (b)「对齐 hub」再整体摆位。 */
@@ -1708,6 +1727,22 @@ export function place(input = {}) {
 		for (let dy = 0; dy < HUB_SIZE; dy++) for (let dx = 0; dx < HUB_SIZE; dx++) {
 			occupied.add(cellKey(hubLocal[0] + dx, hubLocal[1] + dy));
 		}
+	}
+	/* ★ 既有工厂的占位必须真的挡住新机器（P1-4）★
+	   以前 occupancyLocal 只被抄进报告，**从不参与落位判断** —— 于是编译器选中了 level 3
+	   矿机所在的那一格，靠 paste 的 dry_run 才拦下来。占位数据一直是有的，只是没接线。
+	   state 区分两档，语义与 paste 的 dry_run 一致：
+	     · solid（机器 / hub）→ 挡机器、**也挡通道**（带子穿不过机器）
+	     · replaceable（带子）→ 挡机器（不能把矿机建在带子上），但**通道可以覆盖**
+	       （paste 会销毁旧带铺新带，这正是 dry_run 报告 destroys 的那一类，合法）。
+	   ⚠️ 旧带若被通道覆盖是**有意为之**，但会让旧产线断掉 —— 这是增量对接的真实取舍，
+	   调用方拿到 destroys 清单后自行判断。 */
+	for (const o of occupancyLocal) {
+		const k = cellKey(o.cell[0], o.cell[1]);
+		/* 带子（replaceable）当前一律算占位 —— 覆盖旧带会让既有产线断掉，
+		   在没有"产出不中断"验证之前，保守地绕开才是诚实的。
+		   想放开时把这个分支改成只挡 solid 即可（语义已写好，见上注）。 */
+		occupied.add(k);
 	}
 
 	const channels = [], lanes = [], conflicts = [], beltCells = [];
@@ -1845,7 +1880,17 @@ export function place(input = {}) {
 	if (terminals.length && input.connectHub !== false && hubLocal) {
 		const term = terminals[0];
 		const outs = outSlotsOf(term);
-		const out = outs.find(o => !term.usedOut.has(o.role)) || null;
+		/* ★ 选哪个输出槽喂 hub：必须是**产出目标形状**的那个槽 ★
+		   旧代码 `outs.find(o => !term.usedOut.has(o.role))` 取第一个没用的槽。
+		   对 cutter 这种双输出的机器（role = "left" / "right"），它会把 slot0 接给 hub，
+		   而 slot0 出的是**副产品**。实测 `RuRu----`：hub 收到的是 `----RuRu`（一路涨到 152），
+		   目标形状 `RuRu----` 永远 0 —— 而逐格对拍 30/30 全绿，几何完全正确，语义全错。
+		   判据：节点若带 `_solverArgs.half`（= 切割的哪一半），优先选 role 与它相同的槽；
+		   没有这个信息（单输出机器）时退回"第一个未用槽"。 */
+		const wantHalf = term._solverArgs && term._solverArgs.half;
+		const byHalf = wantHalf ? outs.filter(o => o.role === wantHalf) : [];
+		const out = (byHalf.length ? byHalf.find(o => !term.usedOut.has(o.role)) : null)
+			|| outs.find(o => !term.usedOut.has(o.role)) || null;
 		if (out) {
 			const entries = hubEntries(hubLocal);          // (b) 局部系的 hub 原点 → 入口/占位全在同一框
 			const first = beltSide(slotCell(term, out), out.dir);
