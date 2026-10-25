@@ -1,0 +1,182 @@
+{
+ "goal": "----CuCu",
+ "pass": true,
+ "checks": [
+  {
+   "id": "V1-occupancy",
+   "status": "pass",
+   "evidence": {
+    "cell": [
+     -7,
+     5
+    ],
+    "nodeId": "n0",
+    "expected": "落点矩形全空（r=0 包围盒）",
+    "actual": "25 格全空（机器 3 台 + 带子 21 格）",
+    "note": "决策 D1：机器恒 r=0 → 无需旋转包围盒；三态占用与冲突矩阵一律走 P1 的 Grid.placementConflicts"
+   }
+  },
+  {
+   "id": "V2-no-overwrite-existing-belt",
+   "status": "pass",
+   "evidence": {
+    "cell": null,
+    "nodeId": null,
+    "expected": "规划区 ∩ replaceableBeltCells = ∅",
+    "actual": "0 格重叠（既有可替换格 0 个，全在规划区外）",
+    "note": "破坏半径的最终凭据是 paste dry_run（mod 缺口 → MOD-GAPS.md）；本闸只判零重叠"
+   }
+  },
+  {
+   "id": "V3-belt-fixed-point",
+   "status": "pass",
+   "evidence": {
+    "cell": [
+     -7,
+     4
+    ],
+    "nodeId": "belt@-7,4",
+    "expected": "computeBelt(含机器邻居) 不动点 = 设计的 (r,rv)",
+    "actual": "21/21 全是不动点；施工顺序合规",
+    "note": "includesMachineNeighbors=true（邻居含机器 7 次、带子 36 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
+   }
+  },
+  {
+   "id": "V4-slot-alignment",
+   "status": "pass",
+   "evidence": {
+    "cell": null,
+    "nodeId": null,
+    "expected": "端点 ∈ 模板槽位 + 通道走通 + 链闭合 + 出口有 acceptor + 生产槽有供料",
+    "actual": "3 条通道 / 21 带格全对齐",
+    "note": "槽位真值 = P2 OP_TEMPLATES + rotateSlot（v1 机器恒 r=0）；带向真值 = src/ai/belt-rules.mjs（**不 import proto 那份**）"
+   }
+  },
+  {
+   "id": "V5-degree",
+   "status": "pass",
+   "evidence": {
+    "cell": null,
+    "nodeId": null,
+    "expected": "每节点入度 ≤ 输入槽数（stacker/mixer=2、cutter=1、trash=4）+ 无退化自环",
+    "actual": "3 个落点、3 条通道全满足",
+    "note": "无 N>2 汇合（有的话先二化成树，redteam:147）；quad cutter 的 4 路输出越界 → 归 V8"
+   }
+  },
+  {
+   "id": "V6-crossing",
+   "status": "pass",
+   "evidence": {
+    "cell": null,
+    "nodeId": null,
+    "expected": "两股流不穿格 + 车道分行 + 不穿机器占地",
+    "actual": "0 处",
+    "note": "车道分行 → 不需要隧道（v1 无隧道）"
+   }
+  },
+  {
+   "id": "V7-throughput",
+   "status": "not-applicable",
+   "evidence": {
+    "cell": null,
+    "nodeId": "n0",
+    "expected": "demandPerSec",
+    "actual": "0",
+    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = miner@0.4/s；拐角 3 个 → 有效带长 20.34（derate 0.969，机器限速 ⇒ 只报告不折进判定）"
+   }
+  },
+  {
+   "id": "V8-scope",
+   "status": "pass",
+   "evidence": {
+    "cell": null,
+    "nodeId": null,
+    "expected": "单层/无 wire/无隧道/机器 r=0/入度≤2/全新址",
+    "actual": "6 项全满足",
+    "note": "scope 是契约的一部分（§2.1）。C3 wire 无 immutable 豁免、C4 隧道 smartplace 删带；chargeMode=false ⇒ god-mode 口径（C7）"
+   }
+  },
+  {
+   "id": "V9-unused-outlet",
+   "status": "pass",
+   "evidence": {
+    "cell": null,
+    "nodeId": null,
+    "expected": "每个未接走的输出槽必须有 trash",
+    "actual": "0 个空转输出槽",
+    "note": "被接走的走 V4；这里只管 mustDiscardUnused 机器的剩余槽（陷阱表 #7）"
+   }
+  },
+  {
+   "id": "V10-unlock-report",
+   "status": "pass",
+   "evidence": {
+    "cell": null,
+    "nodeId": "n0",
+    "expected": "当前等级 L2 的可用机器集",
+    "actual": "3 台机器全部在可用集内",
+    "note": "L3 用 level-2 目标 ----CuCu：miner/cutter/trash 在 L1 完成即解锁 ⇒ 两种口径都成立（C7）。solver 默认开 cutQuad ⇒ L11 目标会用到 L16 建筑（redteam:198），清单在此显形"
+   }
+  },
+  {
+   "id": "S1-shape-replay",
+   "status": "pass",
+   "evidence": {
+    "cell": null,
+    "nodeId": "nCuCuCuCu",
+    "expected": "2 个节点 hash 相等",
+    "actual": "2/2 相等",
+    "note": "shape-ops 重放每个节点（DESIGN:93 Level-1）；cut 左右列语义按上游 shape_definition_manager.js:92 与 proto/shape-ops.mjs:103"
+   }
+  }
+ ],
+ "errors": [],
+ "beltSim": {
+  "tilesChecked": 21,
+  "fixedPoints": 21,
+  "drift": [],
+  "includesMachineNeighbors": true
+ },
+ "shapeReplay": [
+  {
+   "nodeId": "nCuCuCuCu",
+   "expectedHash": "CuCuCuCu",
+   "actualHash": "CuCuCuCu",
+   "equal": true
+  },
+  {
+   "nodeId": "n----CuCu",
+   "expectedHash": "----CuCu",
+   "actualHash": "----CuCu",
+   "equal": true
+  }
+ ],
+ "throughput": {
+  "demandPerSec": 0,
+  "bottleneck": {
+   "nodeId": "n0",
+   "ratePerSec": 0.4
+  },
+  "rowsRequired": 1,
+  "rowsPlanned": 1
+ },
+ "suppressed": [],
+ "gate": {
+  "gate": true,
+  "contractOk": true,
+  "problems": [],
+  "gateReasons": [],
+  "summary": {
+   "pass": true,
+   "checks": 11,
+   "errors": 0,
+   "failIds": [],
+   "beltSim": {
+    "tilesChecked": 21,
+    "fixedPoints": 21,
+    "drift": [],
+    "includesMachineNeighbors": true
+   }
+  }
+ }
+}

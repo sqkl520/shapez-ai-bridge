@@ -1,0 +1,210 @@
+diff --git a/src/ai/compiler/place.mjs b/src/ai/compiler/place.mjs
+index df85ff2..118d16e 100644
+--- a/src/ai/compiler/place.mjs
++++ b/src/ai/compiler/place.mjs
+@@ -587,10 +587,80 @@ export function planMinerColumns(miners, ctx) {
+ 	return out;
+ }
+ 
++/**
++ * 给「多输入机器的父」分配行（WP2）：喂较低槽位的父比喂较高槽位的父**高一排**；
++ * 并返回多输入机器自身需要的**最东列**（它的所有 bottom 输入都必须能被上游喂到）。
++ *
++ * 为什么必须分行（实测，PLAN-CGC §0.4）：stacker 的两个 bottom 输入在相邻两列、都朝下，
++ * 而 painter 只能朝 +x 出料。两台上游同在一行时，西侧那台若想喂东侧那个输入槽，
++ * 它的横移段必然穿过东侧那台的本体 —— 扫遍 `(p1.x, p2.x, st.x)` 的组合，**没有一组能两条都通**。
++ * 分到不同行后就都变成 1 拐角 elbow。
++ *
++ * 为什么还要最东列：`planChannel` 对朝下输入要求喂它的带子列 <= 该输入列。若两台 painter
++ * 分别在 -121 与 -39 出料，而 stacker 被 `desiredX`（只看 slot0）摆到 -121，第二台就永远
++ * 喂不进来。所以 stacker 的 x 必须 >= max(所有上游的带子列) - slotOffset。
++ * 这条**不能**放进 `desiredX`：那会改掉 G2 金网格（M4 实机验证过的"一支直入、一支 Z"形态）。
++ * 放在这里、只对 seed 路径的 stack 生效，金网格不受影响。
++ *
++ * ⚠️ 只对 `stack` 生效。`mixer` 的两个输入同位（同一行），靠 WP1 的槽序修正解决；
++ * 矿机不参与（y 由资源行定死）。
++ *
++ * @param {object[]} nodes DAG 节点（已定 x/y）
++ * @param {{rowGap:number}} ctx
++ * @returns {{rowY:Map<string,number>, colX:Map<string,number>}}
++ */
++export function planMultiInputRows(nodes, ctx) {
++	const rowY = new Map(), colX = new Map();
++	const gap = ctx.rowGap;
++	for (const n of nodes) {
++		if (n.op !== "stack") continue;               // 目前只有 stacker 的槽位是「有序 + 相邻列」
++		const slots = inSlotsOf(n);
++		const bottoms = slots.map((s, i) => ({ s, i })).filter(e => e.s.dir === "bottom");
++		if (bottoms.length < 2) continue;
++		const parents = bottoms.map(b => ({ b, p: n.parents[b.i] })).filter(e => e.p);
++		if (parents.length < 2) continue;
++
++		/* ① 列：让每个 bottom 输入都被自己的上游喂到。
++		   上游朝右出料 ⇒ 带子列 = p.x + feeds.cx + 1；本机输入列 = x + slot.cx
++		   要求 带子列 <= 输入列 ⇒ x >= 带子列 − slot.cx。取所有槽里**最靠东**的那条约束。
++		   注意这里是**无条件**写入（不只在 want > n.x 时）：上游在两轮之间会移动，
++		   第二次算出来的约束可能与第一次不同，必须让它覆盖上一次的位置。 */
++		let needX = -Infinity;
++		for (const { b, p } of parents) {
++			if (p.op === "mine") continue;                 // 矿机的 x 由资源定，不参与反推
++			const feeds = outSlotsOf(p)[0];
++			if (!feeds) continue;
++			const dirOff = feeds.dir === "right" ? 1 : feeds.dir === "left" ? -1 : 0;
++			const beltCol = p.x + feeds.cx + dirOff;
++			const want = beltCol - b.s.cx;
++			if (want > needX) needX = want;
++		}
++		if (Number.isFinite(needX)) colX.set(n.id, needX);
++
++		/* ② 行：两台上游同在一行时把 slot1 的父拉开。
++		   方向：**往下**（y 更大）—— 下游 stacker 必须在两台上游的上方，
++		   因为朝下输入要求带子从输入格下方往上走（d2=top），planChannel 的
++		   elbow/startTurn 都要求 first.y > last.y。
++		   ⚠️ 幅度不能用固定的 rowGap：上游这一层与**下一层**（cutter/trash 那层）只隔一个
++		   rowGap，再往下推一整个 rowGap 就会正好压到下层机器上（实测：n9 被推到 y=46，
++		   与 cutter n7@(-42,46) 同格冲突）。取**半个 rowGap** 落在两排之间，既不撞下层，
++		   也保证 first.y > last.y。 */
++		const lowerP = n.parents[bottoms[0].i];
++		const upperP = n.parents[bottoms[1].i];
++		if (!lowerP || !upperP || lowerP === upperP) continue;
++		if (lowerP.op === "mine" || upperP.op === "mine") continue;
++		if (lowerP.y !== upperP.y) continue;
++		rowY.set(upperP.id, lowerP.y + Math.max(1, Math.floor(gap / 2)));
++		// slot0 的父保持原位（它是主通道，走零拐角/最短路径）
++	}
++	return { rowY, colX };
++}
++
+ export function assignRows(levels, opts = {}) {
+ 	const rowGap = opts.rowGap === undefined ? ROW_H : opts.rowGap;
+ 	const colGap = opts.colGap === undefined ? COL_GAP : opts.colGap;
+ 	const minerX = opts.minerX || null;   // 矿机层 nodeId → [x,y]（给了 seed 且多矿机时由 planMinerColumns 求）
++	const multiX = opts.multiX || null;   // 多输入机器 nodeId → x（WP2：必须 >= 所有上游的带子列）
+ 	const occupied = new Map();                       // "y" → Set("x")
+ 	const claim = (n, x0) => {
+ 		for (let dy = 0; dy < n.h; dy++) {
+@@ -608,11 +678,25 @@ export function assignRows(levels, opts = {}) {
+ 	};
+ 	const rows = [];
+ 	const baseY = (levels.length - 1) * rowGap;
++	const rowY = opts.rowY || null;        // nodeId → y 覆盖（给 seed 时由 planMultiInputRows 求）
+ 	levels.forEach((list, li) => {
+ 		const y = baseY - li * rowGap;
+ 		list.forEach(n => { n.row = y; n.y = y; });
+ 		rows.push({ level: li, y, nodeIds: list.map(n => n.id) });
+ 	});
++	/* ★ WP2：多输入机器的**父**可以分到不同行 ★
++	   `assignRows` 默认一层一行，于是同一层的两台机器永远共享同一个 y。对 stacker 来说
++	   这是致命的：它的两个 bottom 输入在相邻两列、都朝下，而上游都朝 +x 出料 ——
++	   两台上游若在同一行，西侧那台的横移必然穿过东侧那台的本体（实测：任何 x 组合都失败）。
++	   验证过的规则（见 PLAN-CGC §0.4）：**喂较低槽位（slot0）的父必须比喂较高槽位（slot1）的父
++	   高一排**（y 更小）。此时两条通道都是 1 拐角 elbow。
++	   只覆盖**非矿机**节点：矿机是资源钉死的（x 已定、y 由资源行定），且 §0.3 已证明
++	   给矿机分行对 mixer 的问题毫无帮助。 */
++	if (rowY) {
++		for (const list of levels) for (const n of list) {
++			if (rowY.has(n.id)) { n.y = rowY.get(n.id); n.row = rowY.get(n.id); }
++		}
++	}
+ 
+ 	// 第一遍：自下而上，先满足父列，撞占用则单向右移（确定性）
+ 	levels.forEach((list, li) => {
+@@ -637,6 +721,7 @@ export function assignRows(levels, opts = {}) {
+ 			   资源给的是世界系，布局用局部系（世界 = origin + 局部），调用方已经把中心换成
+ 			   世界系并原样返回世界系 x ⇒ 这里减回去由调用方负责（minerX 里存的直接是局部 x）。 */
+ 			if (li === 0 && minerX && minerX.has(n.id)) x = minerX.get(n.id)[0] - (opts.originX || 0);
++			else if (multiX && multiX.has(n.id)) { x = multiX.get(n.id); if (process.env.DBG5) console.error("DBG5 set", n.id, x, "row", n.row, "clash", clash(occupied, n.row, x, x+n.w-1, n.h)); }
+ 			else if (li > 0) {
+ 				const want = desiredX(n);
+ 				/* ★ 不能用 `Math.max(cursor, want)` ★
+@@ -680,6 +765,10 @@ export function assignRows(levels, opts = {}) {
+ 			   它只在矿机被钉在 0 起点时才成立。现在矿机 x 由资源决定（可在任意负坐标），
+ 			   矿机层合法地落在 -220；照旧判就把**所有**下游的父列对齐请求全跳过，
+ 			   于是 mix 停在 0、与矿机隔 120 格。负 x 不是非法值，只是坐标。 */
++			/* `multiX` 点名的节点是**联合求解**的结果（必须 >= 所有上游的带子列），
++			   第二遍的 `desiredX` 只看主输入，会把它拉回去 —— 那样第一轮的联合求解就白做了。
++			   所以这些节点在这一遍**跳过**。 */
++			if (multiX && multiX.has(n.id)) continue;
+ 			if (want === undefined || want === n.x) continue;
+ 			if (clash(occupied, n.row, want, want + n.w - 1, n.h)) continue;
+ 			unclaim(n); n.x = want; claim(n, want);
+@@ -748,7 +837,11 @@ export function desiredX(n) {
+ 	   这里逐槽配对，再把"该槽对应的父"代进反推式。 */
+ 	// 主槽 = 第一个竖直进料口（下进上出）；纯水平机器（painter）用第 0 槽
+ 	const mainIdx = Math.max(0, slots.findIndex(s => s.dir === "bottom"));
+-	// 主槽优先；主槽的父没定列时按槽序退回其它可用槽（保持旧行为：不因一个未定的父就不排）
++	/* ⚠️ 这里**不**对多输入机器做联合求解。
++	   想当然的修法（"同时满足所有 bottom 输入、取最靠东"）会改掉 G2 金网格 —— 那是 M4 实机验证过的
++	   「一支竖直直入、一支 Z 绕行」形态，而联合求解会把 stacker 东移到两条都直入的位置，
++	   金网格随即逐字节变化。金网格是 v1 的确定性基线，不能为单个目标改。
++	   多输入机器与上游的错位改由 `planMultiInputRows` 的**行分离**解决（seed 路径、只对 stack 生效）。 */
+ 	const order = [mainIdx, ...slots.map((_, i) => i).filter(i => i !== mainIdx)];
+ 	for (const i of order) {
+ 		const p = ps[i];
+@@ -1213,7 +1306,29 @@ export function place(input = {}) {
+ 			minerX = planMinerColumns(minersInOrder, { seed: seedEarly, region, center: centerW });
+ 		}
+ 	}
+-	const { rows } = assignRows(levels, { rowGap: input.rowGap, colGap: input.colGap, minerX });
++	/* WP2：多输入机器的父分行 + 多输入机器自身的列（只给 seed 时启用 —— 无 seed 的金网格逐字节不变）。
++	   ⚠️ 必须**两轮**：`planMultiInputRows` 要读上游已定的 x/y，而这些只有在 `assignRows` 跑完
++	   第一轮之后才存在。所以先按基线排一次 → 读结果算出行/列约束 → 带上约束重排一次。
++	   两轮都是纯函数、确定，第二轮只覆盖 `rowY`/`multiX` 里点名的节点，其余位置与第一轮相同。 */
++	let layoutOpts = { rowGap: input.rowGap, colGap: input.colGap, minerX };
++	let pass = assignRows(levels, layoutOpts);
++	if (seedEarly !== null) {
++		/* 迭代到不动点：`planMultiInputRows` 读上游位置，而它的输出又改变上游位置
++		   （把 painter 往下挪一排 ⇒ 它的行变了 ⇒ 下一轮的约束也变）。第一轮只做行分离，
++		   第二轮起补上列约束；位置稳定就停。上限 3 轮，稳定判据 = rowY/colX 逐项相同。
++		   每轮都是纯函数、同输入同输出，不会来回震荡（行只会往下、列只会往东，单调）。 */
++		let prevKey = "";
++		for (let iter = 0; iter < 3; iter++) {
++			const rr = planMultiInputRows(nodes, { rowGap: input.rowGap === undefined ? ROW_H : input.rowGap });
++			if (!rr.rowY.size && !rr.colX.size) break;
++			const sig = JSON.stringify([[...rr.rowY.entries()].sort(), [...rr.colX.entries()].sort()]);
++			if (sig === prevKey) break;
++			prevKey = sig;
++			layoutOpts = { ...layoutOpts, rowY: rr.rowY, multiX: rr.colX };
++			pass = assignRows(levels, layoutOpts);
++		}
++	}
++	const { rows } = pass;
+ 
+ 	/* (b) 有 hub：把机器簇对齐到 hub 正下方（局部系），消除混框导致的千格收集带。
+ 	   顶行 → hub 底缘下方 HUB_CLEAR 行；minX → hub 左列（hub 底部 4 个 entry 覆盖 hubLocal.x..x+3）。
+@@ -1337,11 +1452,34 @@ export function place(input = {}) {
+ 			if (ex) { if (!ex.channelIds.includes(id)) ex.channelIds.push(id); }
+ 			else lanes.push(vert ? { row: r.lane, column: null, channelIds: [id] } : { row: null, column: r.lane, channelIds: [id] });
+ 		}
+-		for (const b of r.cells) { occupied.add(cellKey(b.cell[0], b.cell[1])); beltCells.push({ ...b, id }); }
++		for (const b of r.cells) { occupied.add(cellKey(b.cell[0], b.cell[1])); beltCells.push({ ...b, id });
+ 		channels.push(report);
+ 		return { report, ok: true, kind: r.kind, cornerCount: r.cornerCount, id };
+ 	};
+ 
++	/* ★ WP1：可交换多输入机器（只有 mix）的槽序必须与**西→东**一致 ★
++	   `planChannel` 对 bottom 输入的硬律是：喂它的上游列必须 <= 该输入列（直入或 Z），
++	   绝不能更靠东 —— 从东侧绕回来是 4 拐角，v1 无隧道，做不到。
++	   mix 的 slot0 在 mix.x、slot1 在 mix.x+1，所以**两个父必须西→东排列**。
++	   而 `layerAndOrder` 的 barycenter 序是按 DAG 邻接给的，与槽序无关：实测
++	   CgScScCg 的矿机序是 `---g----, -b------, -g------, n0, n6`，
++	   而 mix 的槽序是 `[-b------(blue), -g------(green)]` —— blue 在 -221、green 在 -267，
++	   即 slot0 的父比 slot1 的父更靠**东**。这一条就足以让第二条颜料通道必撞机器。
++	   修法：按父的实际 x 排序 `parents`。
++	   ⚠️ **只对 mix 做**：`stack` 的 slot0/slot1 是**下层/上层**（item_processor.js 的
++	     process_STACKER 按 items.get(0)/get(1) 取），换序会产出 ScScCgCg 而不是 CgScScCg ——
++	     一份**能通过校验但语义错**的蓝图。mix 则是对称的（colors.js 的
++	     bitfieldToColor[i|j] 可交换），换序语义等价。 */
++	for (const n of nodes) {
++		if (n.op !== "mix") continue;
++		const idx = n.parents.map((p, i) => ({ p, i })).filter(e => e.p);
++		if (idx.length < 2) continue;
++		const sorted = idx.slice().sort((a, b) => (a.p.x - b.p.x) || (a.i - b.i));
++		if (sorted.every((e, k) => e.i === idx[k].i)) continue;     // 已符合西→东，不动
++		n.parents = sorted.map(e => e.p);
++		while (n.parents.length < n.template.inputs.length) n.parents.push(null);
++	}
++
+ 	/* 8.1 上游 → 本节点（按槽序；slotRole/ordinal 是给 P4 的定位凭据）*/
+ 	for (const n of nodes) {
+ 		const ins = inSlotsOf(n);

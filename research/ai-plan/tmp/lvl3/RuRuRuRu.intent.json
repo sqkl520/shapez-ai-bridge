@@ -1,0 +1,330 @@
+{
+ "goal": "RuRuRuRu",
+ "schema": "shapez-ai/handoff-intent@1",
+ "blueprint": "SZBP1.N4IgbiBcBMA0IHMKRARgHQFZ0DYTwHcoBtVWAWgA4BdeAUxIHZYy4AGFzsj7ryn2Bzip+nDgGYWo3gBYpAjpnmxhgte3WM2tEAHsSAOwCuAGxNqRPadaschW6gF8gA",
+ "anchor": [
+  1,
+  -8
+ ],
+ "hub": [
+  -2,
+  -2
+ ],
+ "chargeMode": "false",
+ "gv": null,
+ "count": 9,
+ "stride": 4,
+ "entityOrder": [
+  "n0",
+  "belt@4,-5",
+  "belt@3,-5",
+  "belt@3,-4",
+  "belt@3,-3",
+  "belt@3,-2",
+  "belt@3,-1",
+  "belt@4,-6",
+  "belt@3,-6"
+ ],
+ "entities": [
+  {
+   "code": 7,
+   "dx": 1,
+   "dy": 2,
+   "rot": 0,
+   "nodeId": "n0",
+   "instanceIdx": 0,
+   "kind": "miner",
+   "rotationVariant": 0,
+   "inDir": null,
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "belt@4,-5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 1,
+   "rot": 180,
+   "nodeId": "belt@3,-5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 2,
+   "rot": 180,
+   "nodeId": "belt@3,-4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 3,
+   "rot": 180,
+   "nodeId": "belt@3,-3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 4,
+   "rot": 180,
+   "nodeId": "belt@3,-2",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 5,
+   "rot": 180,
+   "nodeId": "belt@3,-1",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 2,
+   "dx": 1,
+   "dy": 0,
+   "rot": 0,
+   "nodeId": "belt@4,-6",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 1,
+   "inDir": "bottom",
+   "outDir": "left"
+  },
+  {
+   "code": 2,
+   "dx": 0,
+   "dy": 0,
+   "rot": 270,
+   "nodeId": "belt@3,-6",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 1,
+   "inDir": "right",
+   "outDir": "bottom"
+  }
+ ],
+ "beltIntent": null,
+ "stats": {
+  "machines": {
+   "miner": 1
+  },
+  "beltTiles": 8,
+  "trash": 0,
+  "bbox": [
+   2,
+   6
+  ],
+  "corners": 2,
+  "estThroughputPerSec": 0.4,
+  "bottleneck": "miner@0.4",
+  "blueprintCost": 40,
+  "chargeMode": "false"
+ },
+ "scope": {
+  "layers": 1,
+  "wires": false,
+  "tunnels": false,
+  "rotatedMachines": false,
+  "maxFanIn": 2
+ },
+ "validation": {
+  "pass": true,
+  "errors": 0,
+  "failIds": [],
+  "beltSim": {
+   "tilesChecked": 8,
+   "fixedPoints": 8,
+   "drift": [],
+   "includesMachineNeighbors": true
+  },
+  "shapeReplay": [
+   {
+    "nodeId": "nRuRuRuRu",
+    "expectedHash": "RuRuRuRu",
+    "actualHash": "RuRuRuRu",
+    "equal": true
+   }
+  ],
+  "throughput": {
+   "demandPerSec": 0,
+   "bottleneck": {
+    "nodeId": "n0",
+    "ratePerSec": 0.4
+   },
+   "rowsRequired": 1,
+   "rowsPlanned": 1
+  }
+ },
+ "validator": {
+  "pass": true
+ },
+ "roundtrip": {
+  "ok": true,
+  "stride": 4,
+  "decodedCount": 9,
+  "intentCount": 9,
+  "eLength": null,
+  "diff": [],
+  "beltCodeBad": [],
+  "orderBad": [],
+  "summary": {
+   "format_version": 2,
+   "exported_from": "1.5.6",
+   "anchor": [
+    1,
+    -8
+   ],
+   "count": 9,
+   "bounds": [
+    2,
+    6
+   ],
+   "by_code": {
+    "1": 6,
+    "2": 2,
+    "7": 1
+   },
+   "text_length": 132
+  },
+  "summaryErr": null
+ },
+ "provenance": {
+  "harnessVersion": 1,
+  "placeVersion": "0.5.0",
+  "routeSchemaVersion": 1,
+  "validatorVersion": 1,
+  "emittedVia": "strict",
+  "solver": {
+   "argv": [
+    "D:\\Projects\\rea\\Project work\\shapez\\research\\ai-player\\proto\\solver.mjs",
+    "RuRuRuRu",
+    "--no-cutquad",
+    "--json"
+   ],
+   "ops": {
+    "mine": 1
+   },
+   "stats": {
+    "expanded": 0,
+    "generated": 0,
+    "stackPairs": 0,
+    "capped": false
+   },
+   "ms": 2,
+   "known": 4
+  },
+  "seed": 60908,
+  "level": 3,
+  "cutQuadAllowed": false,
+  "channelOrder": "asis",
+  "gapTries": 0,
+  "gap": {
+   "rowGap": 8,
+   "colGap": 3
+  },
+  "minerCells": [
+   {
+    "nodeId": "n0",
+    "cell": [
+     2,
+     -6
+    ],
+    "shape": "RuRuRuRu"
+   }
+  ],
+  "demandPerSec": 0,
+  "cornerCostTiles": 1.56,
+  "routeAttempts": [
+   {
+    "gap": 0,
+    "rowGap": 8,
+    "colGap": 3,
+    "order": "asis",
+    "ok": true,
+    "reason": null,
+    "laneColumn": 0,
+    "belt": 8,
+    "corners": 2
+   }
+  ],
+  "laneColumnUnresolved": 0,
+  "worldPlacement": {
+   "anchor": [
+    -2,
+    -2
+   ],
+   "hub": [
+    -2,
+    -2
+   ],
+   "hubInferred": [
+    -2,
+    -2
+   ],
+   "hubPinned": true,
+   "pasteAt": [
+    1,
+    -8
+   ],
+   "designAnchor": [
+    3,
+    -6
+   ],
+   "designHubLocal": [
+    -4,
+    -4
+   ],
+   "hubLocal": [
+    0,
+    0
+   ],
+   "worldFrameV1": {
+    "ok": true,
+    "worldRect": [
+     1,
+     -8,
+     2,
+     -3
+    ],
+    "hubRect": [
+     -2,
+     -2,
+     1,
+     1
+    ]
+   }
+  }
+ }
+}
