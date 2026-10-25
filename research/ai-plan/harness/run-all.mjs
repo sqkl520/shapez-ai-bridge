@@ -45,7 +45,7 @@ const SUITES = [
 	{ label: "P1 contract（含 import lint）", argv: ["research/ai-plan/contract/test.mjs"], expect: 94 },
 	{ label: "P2 data（639 + 逐格对拍）", argv: ["research/ai-plan/data/run-all.mjs"], extract: /(\d+) 条断言通过/, extractNum: 1, expect: 639 },
 	{ label: "P0-verify belt-rules（17）", argv: ["--test", "src/ai/belt-rules.test.mjs"], extract: /^ℹ pass (\d+)$/m, extractNum: 1, expect: 17 },
-	{ label: "P3 placer", argv: ["research/ai-plan/placer/test.mjs"], expect: 252 },
+	{ label: "P3 placer", argv: ["research/ai-plan/placer/test.mjs"], expect: 269 },
 	{ label: "P4 router", argv: ["research/ai-plan/router/test.mjs"], expect: 208 },
 	{ label: "P5 validator" + (FAST ? "（--fast 跳过）" : ""), argv: ["research/ai-plan/validator/test.mjs"], expect: 194, skip: FAST },
 	{ label: "P6 emitter（L1 门）" + (FAST ? "（--fast 跳过）" : ""), argv: ["research/ai-plan/emitter/run-all.mjs"], extract: /全包汇总 (\d+) 条断言/, extractNum: 1, expect: 303, skip: FAST },

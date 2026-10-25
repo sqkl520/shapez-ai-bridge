@@ -767,6 +767,8 @@ export function placeStage(steps, ctx) {
 		// 隧道：只有显式开启时才让 P3 用（默认 false ⇒ 既有目标逐字节不变）。
 		// P3 用隧道跨过的格会出现在 layout.beltCells 里，P4 据此整条采纳（见 route.mjs）。
 		...(ctx.tunnels === true ? { tunnels: true } : {}),
+		// 多矿机复制：只有显式给 N>=2 才启用（见 place() 的说明）
+		...(Number.isInteger(ctx.minersPerLine) && ctx.minersPerLine >= 2 ? { minersPerLine: ctx.minersPerLine } : {}),
 	};
 	let rep;
 	try { rep = place(input); }
@@ -1442,6 +1444,8 @@ function compileInner(input) {
 		tunnels: input.tunnels === true,
 		// 既有工厂（实机观测）：给了就让新产线避开它们（P1-4 增量对接）
 		worldEntities: Array.isArray(input.worldEntities) ? input.worldEntities : null,
+		// 多矿机复制：把单台矿机复制成 N 台 + balancer 汇流（攻略：5 台喂满 1 条带）
+		minersPerLine: Number.isInteger(input.minersPerLine) ? input.minersPerLine : null,
 	};
 	const pl = trace(stages, "placeStage", placeStage(mp.steps, ctx));
 	if (pl.ok === false) return bail({ ...pl, layout: null, entities: null });

@@ -635,6 +635,88 @@ export function layerAndOrder(nodes) {
  * @param {{seed:number, region:object, center:number[]}} ctx
  * @returns {Map<string, number[]>|null} nodeId → [x, y]（世界系）；保序无解时返回 null
  */
+/* ═══════════════ 5a-pre) 多矿机并联（miner fan-in）═══════════════ */
+
+/** 一条带要几台矿机喂满（攻略规则：矿机 0.4/s、带 2/s ⇒ 5 台）。
+ *  这是**默认并联数**。取 4 而不是 5 是因为：hub 只有 16 个入口，
+ *  下一条线还要留位置；且 4 台的 1.6/s 已经能填满 0.8 条带，性价比比第 5 台高。 */
+export const MINERS_PER_LINE = 4;
+
+/**
+ * 把同形状的多个 `mine` 节点合成**一个** `mineGroup`，组内挂 N 台矿机。
+ *
+ * ★ 为什么需要它 ★
+ * 攻略里最硬的一条规则是「5 台矿机喂满 1 条带」：矿机 0.4/s、带 2/s。
+ * 但编译器一直是「一个 mine 节点 = 一台矿机」，于是产线只有一根柱，
+ * 产能被单机 0.4/s 锁死 —— 这正是我建出来的工厂只有 1 台矿机的原因。
+ *
+ * ★ 为什么合并是安全的 ★
+ * 同形状的矿机产出**完全相同**的 item，所以它们可以无条件汇流（不需要过滤器）。
+ * 汇流用 balancer：它 2 进 2 出、内容不变、`preferredSlot` 堵了就退回
+ * `getFirstFreeSlot()`（item_processor.js:147-156）⇒ 天然就是 2→1 合并器。
+ *
+ * ★ 为什么不改变下游 ★
+ * 组节点对外**只有一个输出槽**，所以 cut/stack/paint 的布局代码一行都不用改，
+ * 它们仍然只看到"一个上游"。合并只发生在矿机层。
+ *
+ * @param {object[]} nodes DAG 节点（buildDag 的产物）
+ * @param {{perLine?:number}} opts `perLine` = 每组最多几台（默认 MINERS_PER_LINE）
+ * @returns {{ok:true, nodes:object[], groups:object[]}|{ok:false,reason:string,hint:string}}
+ */
+export function replicateMiners(nodes, opts = {}) {
+	const copies = Number.isInteger(opts.perLine) && opts.perLine >= 1 ? opts.perLine : MINERS_PER_LINE;
+	/* copies === 1 表示**不复制**（反向对照用）。不能把它当成"没给参数"而回落到默认值
+	   —— 那样 perLine=1 会静默变成 4，测试的反向对照就永远变不红。 */
+	if (copies === 1) return { ok: true, nodes: nodes.slice(), groups: [] };
+
+	const groups = [];
+	const newNodes = [];
+	for (const n of nodes) {
+		if (n.op !== "mine" || n.copies) { newNodes.push(n); continue; }
+		/* 形状矿机才复制。颜料矿机的 hash 是形状 token、数量由颜料契约决定
+		   （每台喂不同的消费者），多复制会破坏 checkPigments 的语义。 */
+		const isShapeMiner = !n.color && typeof n.hash === "string" && /^[A-Za-z-]{8}$/.test(n.hash);
+		if (!isShapeMiner) { newNodes.push(n); continue; }
+
+		const members = [];
+		for (let i = 0; i < copies; i++) {
+			members.push({
+				id: i === 0 ? n.id : `${n.id}#m${i}`,
+				op: "mine", hash: n.hash, resource: n.resource || n.hash,
+				template: n.template, inputs: [], parents: [],
+				consumers: 0, usedOut: new Set(), nextOut: 0,
+				x: 0, y: 0, depth: n.depth, args: {},
+				copies: members, copyIdx: i,
+			});
+		}
+		const gid = `mg:${n.hash}`;
+		const g = {
+			id: gid, op: "mineGroup", hash: n.hash,
+			template: {
+				footprint: [1, 1], inputs: [],
+				/* 对外仍是**一个**输出槽 —— 下游无需知道这是几台 */
+				outputs: [{ cell: [0, 0], dir: "top", role: "out" }],
+			},
+			inputs: [], parents: [], consumers: n.consumers, usedOut: new Set(), nextOut: 0,
+			x: 0, y: 0, depth: n.depth,
+			resource: n.resource || n.hash, args: {},
+			members,
+			merged: false,
+		};
+		for (const m of members) { m.copies = members; m.group = g; }
+		// 下游把"原来的那台矿机"换成组
+		for (const other of nodes) {
+			if (other === n) continue;
+			for (let k = 0; k < other.parents.length; k++) {
+				if (other.parents[k] === n) other.parents[k] = g;
+			}
+		}
+		groups.push(g);
+		newNodes.push(g);
+	}
+	return { ok: true, nodes: newNodes, groups };
+}
+
 export function planMinerColumns(miners, ctx) {
 	const { seed, region, center } = ctx;
 	if (!miners.length) return null;
@@ -1709,6 +1791,89 @@ export function place(input = {}) {
 	if (dag.ok === false) return dag;
 	const nodes = dag.nodes;
 	const terminals = dag.terminals;
+
+	/* ★ 多矿机并联：同形状的 mine 节点合成一个 mineGroup ★
+	   攻略里最硬的一条是「5 台矿机喂满 1 条带」。在此之前编译器一个 mine = 一台矿机，
+	   产线只有一根柱、产能被 0.4/s 锁死 —— 我建出来的工厂只有 1 台矿机就是这个原因。
+	   合并只发生在矿机层：组对下游只有一个输出槽，所以后面的布局/路由一行都不用改。
+	   `input.mergeMiners === false` 可关闭（回归对照用）。 */
+	/* ★ 只在**显式开启**时复制矿机 ★
+	   为什么不做默认行为：复制会把单矿机目标变成 4 矿机 + 3 balancer，
+	   布局宽度翻倍、通道必然交叉，`CrCrCrCr` 这类目标立刻布不出来。
+	   "5 台矿机喂满一条带"是**产能优化**，不是布局正确性的前提 ——
+	   它该由调用方（agent 的规则层）按需开启，不该是编译器的默认。
+	   `input.minersPerLine >= 2` 才启用。 */
+	let minerGroups = [];
+	if (input.mergeMiners !== false && Number.isInteger(input.minersPerLine) && input.minersPerLine >= 2) {
+		const mg = replicateMiners(nodes, { perLine: input.minersPerLine });
+		if (mg.ok === false) return mg;
+		if (mg.groups.length === 0) {
+			/* 没复制（perLine=1 或没有可复制的形状矿机）：什么都不做。
+			   ⚠️ 不能用 `mg.nodes` 替换 —— 那是 `nodes.slice()` 的副本，
+			   后面的代码持有 `nodes` 的原引用（如 nodes.length = 0; nodes.push(...)），
+			   换数组会让两边的修改互相看不见。原地不动最安全。 */
+		} else {
+			/* ★ 把组**展开**成真实节点：N 台矿机 + (N-1) 个 balancer ★
+			   为什么在 layout 之前展开而不是 layout 之后：展开后的节点就是普通节点，
+			   后面 assignRows / planChannel / 发射全部原样工作，不需要任何特判。
+			   组的对外输出由**最后一个 balancer** 提供，所以下游拿到的仍是一个上游。
+
+			   拓扑（N=3 为例，全部朝北）：
+			     m0 m1 m2            三台矿机并排
+			      │  │  │
+			      └──┴──┘            各自一格带进 balancer
+			        bal1             （2 进 2 出，堵了会改道）
+			         │ bal2
+			         输出 → 下游 */
+			const expanded = [];
+			/* ⚠️ 要遍历 `mg.nodes`（replicateMiners 的产物，里面是 mineGroup），
+			   不是 `nodes`（原数组，里面还是那台 mine）。
+			   第一版写成了 `for (const n of nodes)`，于是永远匹配不到 mineGroup，
+			   展开循环空转、`expanded` 全是原节点 —— 日志显示 "expanded nodes= mine,cut"。 */
+			for (const n of mg.nodes) {
+				if (n.op !== "mineGroup") { expanded.push(n); continue; }
+				const N = n.members.length;
+				/* 成员矿机：保留原 id（下游可能引用），其余派生 */
+				const bals = [];
+				for (let i = 0; i < N - 1; i++) {
+					bals.push({
+						id: `${n.id}#bal${i}`, op: "balance", hash: n.hash,
+						template: ALL_TEMPLATES.balance, inputs: [], parents: [null, null],
+						consumers: 0, usedOut: new Set(), nextOut: 0,
+						x: 0, y: 0, depth: n.depth, args: {},
+						groupOf: n.id,
+					});
+				}
+				/* 串成链：bal_i 的 in0 收 m_i，in1 收 bal_{i+1}（或 m_{N-1}）。
+				   最后一个 bal 的 out 给下游。 */
+				for (let i = 0; i < N - 1; i++) {
+					bals[i].parents[0] = n.members[i];
+					n.members[i].consumers = 1;
+				}
+				for (let i = 0; i < N - 2; i++) {
+					bals[i].parents[1] = bals[i + 1];
+					bals[i + 1].consumers = 1;
+				}
+				if (N >= 2) {
+					bals[N - 2].parents[1] = n.members[N - 1];
+					n.members[N - 1].consumers = 1;
+				}
+				/* 下游的父：从组换成最后一个 balancer */
+				const tail = bals.length ? bals[bals.length - 1] : n.members[0];
+				tail.consumers = n.consumers;
+				for (const other of mg.nodes) {
+					if (other.op === "mineGroup") continue;
+					for (let k = 0; k < other.parents.length; k++) {
+						if (other.parents[k] === n) other.parents[k] = tail;
+					}
+				}
+				expanded.push(...n.members, ...bals);
+			}
+			nodes.length = 0;
+			nodes.push(...expanded);
+			minerGroups = mg.groups;
+		}
+	}
 
 	/* 分层 → 层内 barycenter（父子保序）→ 行式坐标
 	   ⚠️ layerAndOrder 会先做**层号校正**（normalizeDepths）：显式 depth 与 DAG 边矛盾时以 DAG 为准。
