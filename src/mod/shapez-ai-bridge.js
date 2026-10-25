@@ -420,6 +420,9 @@ class Mod extends shapez.Mod {
                 case "resources":
                     result = this.observeResources(params || {});
                     break;
+                case "production":
+                    result = this.observeProduction(params || {});
+                    break;
                 default:
                     this.sendError(id, -32601, "method_not_found", "Unknown method: " + method);
                     return;
@@ -453,7 +456,77 @@ class Mod extends shapez.Mod {
      *   - 都不给          → 列出白名单里所有项的当前值
      */
     /**
-     * 读出地下的**自然资源分布**（矿点）。
+     * 读出**产线真实吞吐**（不是估算，不是净增量）。
+     *
+     * 为什么需要它：`obs` 只报实体、`hub.stored_shapes` 只报累计库存。
+     * 于是"这条线到底跑不跑得动、慢在哪一段"只能靠整体净增量反推 ——
+     * 而整体增量把多条线的产出混在一起，某个形状涨了也说不清是哪条线贡献的。
+     * 这一整轮我因此在冻结的时钟上做了几小时错误判断。
+     *
+     * 数据源是游戏自带的 productionAnalytics.history：三路时间片
+     * （produced / stored / delivered），每片 analyticsSliceDurationSeconds 秒
+     * （正式版 10 秒），共 statisticsGraphSlices=100 片。
+     * 它由游戏自己维护，不需要我们采样，也不会因为 step 快进而失真。
+     *
+     * params: { slices?: number }  取最近多少片（默认 6 = 最近 60 秒）
+     */
+    observeProduction(params) {
+        const root = this.requireRoot();
+        const p = params || {};
+        const wantSlices = Number.isInteger(p.slices) && p.slices > 0 ? Math.min(p.slices, 100) : 6;
+        const pa = root.productionAnalytics;
+        if (!pa || !pa.history) {
+            throw this.rpcError(2003, "mod_error", "productionAnalytics is not available");
+        }
+        const sliceSecs = 10; // config.analyticsSliceDurationSeconds（正式版；dev 为 1）
+        const grab = key => (pa.history[key] || []).slice(-wantSlices);
+        const produced = grab("produced");
+        const delivered = grab("delivered");
+        const stored = grab("stored");
+
+        // 按形状汇总最近 N 片，换成每秒速率
+        const sum = slices => {
+            const acc = {};
+            for (const slice of slices) {
+                for (const k in slice) acc[k] = (acc[k] || 0) + slice[k];
+            }
+            return acc;
+        };
+        const producedSum = sum(produced);
+        const deliveredSum = sum(delivered);
+        const windowSecs = wantSlices * sliceSecs;
+
+        const toRates = totals => {
+            const out = {};
+            for (const k in totals) out[k] = Math.round((totals[k] / windowSecs) * 1000) / 1000;
+            return out;
+        };
+
+        // 库存是快照而不是增量 —— 取首尾差
+        const storedFirst = stored.length ? stored[0] : {};
+        const storedLast = stored.length ? stored[stored.length - 1] : {};
+        const storedDelta = {};
+        for (const k of new Set([...Object.keys(storedFirst), ...Object.keys(storedLast)])) {
+            storedDelta[k] = (storedLast[k] || 0) - (storedFirst[k] || 0);
+        }
+
+        return {
+            window_seconds: windowSecs,
+            slice_seconds: sliceSecs,
+            slices_returned: produced.length,
+            produced_total: producedSum,
+            produced_per_sec: toRates(producedSum),
+            delivered_total: deliveredSum,
+            delivered_per_sec: toRates(deliveredSum),
+            stored_delta: storedDelta,
+            // 每片原始数据，便于看趋势（某片突然归零 = 那一刻断了）
+            produced_slices: produced,
+            delivered_slices: delivered,
+        };
+    }
+
+    /**
+     * 读出地图上的**自然资源分布**（矿点）。
      *
      * 为什么需要它：`obs` 只报实体（建筑），矿石不是实体 —— 它在地图的下层
      * （map lower layer）。结果就是 AI 完全看不见地图上有什么可挖的，

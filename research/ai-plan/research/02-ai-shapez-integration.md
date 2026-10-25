@@ -56,7 +56,7 @@
 | 弹窗（info / warning / option chooser / loading） | `mod.dialogs` → `HUDModalDialogs.showInfo/showWarning/showOptionChooser/...` | `mod_interface.js:356-364`；`mod_examples/modify_ui.js`——`[有源码可查]` |
 | **读写存档里的自定义数据** | `signals.gameSerialized.add((root, data) => data.modExtraData[id] = ...)`；`signals.gameDeserialized` | `mod_signals.js:31-32`；`mod_examples/storing_data_in_savegame.js`——`[有源码可查]` |
 | **拿全部游戏模块**（可读 `gBuildingVariants`、`logic`、`GameSystem` 基类、`types` 序列化原语等） | `window.shapez` = 全部模块导出的 getter 表 | `modloader.js:107-140`（`require.context("../", true, /\.js$/)`）——`[有源码可查]` |
-| 监听游戏事件（**Signal 就是事件总线**） | `Mod` 上有 `this.signals`（= `MOD_SIGNALS`，10 个）；`root.signals`（~25 个） | 见 §2.4——`[有源码可查]` |
+| 监听游戏事件（**Signal 就是事件总线**） | `Mod` 上有 `this.signals`（= `MOD_SIGNALS`，12 个）；`root.signals`（~26 个） | 见 §2.4——`[有源码可查]` |
 
 ### 2.3 不能做什么（以及为什么）
 
@@ -130,7 +130,7 @@ puzzleComplete
 ✓ 换任何方法 / 加任何类 / 加任何 DOM        ✗ 加"运行时"新 mod（只能启动时）
 ✓ 每 tick 跑自己的逻辑（GameSystem）        ✗ 在网页版跑
 ✓ 读写存档自定义字段                        ✗ 拿 Node / fs / net
-✓ 监听 ~35 个 Signal                       ✗ 官方 mod 门户（mod.io 域名已死）
+✓ 监听 12 个 MOD_SIGNAL + 26 个 root.signal        ✗ 官方 mod 门户（mod.io 域名当前不可达）
 ✓ 拿 window.shapez 全部模块                 ✗ 声明 mod 间依赖
 ✓ 走 UI 放置路径（downPreHandler 等）        ✗ 输入注入的一等 API（只能自己拼）
 ✓ 弹窗 / 键位 / CSS / 翻译                  ✗ 沙箱（mod = 任意代码）
@@ -259,7 +259,7 @@ JSON = { v:1|2, gv:"1.5.6", w:[minx,miny],
 | `Neighbor-Z/shapez-save-editor-flask`（0★，2026-03） | shapez **1** 存档 encode/decode（LZString + 字典 + CRC32/SHA1） | Python | **能抄**，`shapez_parser.py` 是完整移植。**但 README 写 "Base110" 是错的（实为 146）**，代码里用的是 `len(CHARMAP)` 所以实现是对的——`[有源码可查]` |
 | `mrmelon54/go-shapezio-compression`（0★，2021-10） | shapez 1 存档 | Go | **能抄**，常量表齐全（含 `_crcPrefix` / `_charmap` / `_keyStrUriSafe`）——`[有源码可查]` |
 | `LilyRose2798/shapez.io-save-editor`（7★，2024-05） | shapez 1 存档 + GUI | JS/Electron | 直接把游戏那套代码抄了过去，`common.js` 里有完整 `compressInt` / `compressObject`——`[有源码可查]` |
-| `EmeraldBlock/s2bp2s`（3★，2023-06） | shapez **2** 蓝图字符串 → PNG | TypeScript | **能抄容器格式**，`serializer.ts` 20 行看完——`[有源码可查]` |
+| `EmeraldBlock/s2bp2s`（3★，2023-06） | shapez **2** 蓝图字符串 → PNG | TypeScript | **能抄容器格式**，`src/serializer.ts` 约 50 行，`deserialize()` 一眼看完——`[有源码可查]` |
 | `Loupau38/shapez2-python`（5★，2026-08） | shapez 2 形状代数库（PyPI `shapez2`） | Python | 形状运算可参考（`Vystel/shapez2-solver` 的运算逻辑就是从它移植的）——`[文档说明]` |
 | `DontMash/shapez-vortex`（20★，2026-10 活跃） | shapez 2 蓝图查看/分享平台 | Svelte | 前端蓝图渲染可参考——`[文档说明]` |
 | **shapez 1 蓝图字符串库** | — | — | **不存在**。GitHub code search `"SZBP1"` 0 命中；`shapez + blueprint + LZString` 仅 2 条无关命中——`[观测]` |
@@ -399,7 +399,7 @@ JSON = { v:1|2, gv:"1.5.6", w:[minx,miny],
 
 关键设计（`[有源码可查]`，`fle/env/tools/agent/` 与 `fle/env/gym_env/`）：
 
-1. **工具 = Lua + Python 双端**。Lua 端在游戏里跑（能拿到 `game.*` 全部状态），Python 端负责类型/默认值/错误信息清洗（`Tool.get_error_message` 会把 `[string "..."]:148:` 前缀剥掉再回给 LLM）。
+1. **工具通常是 Lua + Python 双端**（`agent/get_entities/` 里就有 `client.py` / `server.lua` / `agent.md` 三件）。Lua 端在游戏里跑（能拿到 `game.*` 全部状态），Python 端负责类型/默认值/错误信息清洗（`Tool.get_error_message` 会把 `[string "..."]:148:` 前缀剥掉再回给 LLM）。
 2. **观察是"格式化文本"，不是原始 JSON**。`BasicObservationFormatter` 输出 5 个固定小节：`Inventory`（按数量降序）/ `Entities`（按类型分组计数）/ `Production Flows`（**输入输出每秒速率**）/ `Task Status`（✅/❌ 逐条判据）/ `Available Functions`（签名 + docstring）。
    → **这一点我们完全没做**：我们给 agent 的是原始 `entities: [{uid,type,x,y,r,...}]`，2000 条就是几万 token，而且没有"速率"。
 3. **动作是 Python 程序**，提示词明确要求「MAXIMUM 50 lines of code」「每段一个明确目的」「不要破坏已有的自动化结构」。
@@ -592,7 +592,7 @@ src/autoLayout/
 | **1.3** | **解锁/奖励的真实状态** | `root.hubGoals.gainedRewards`（`hub_goals.js:83,201-211`）+ `isRewardUnlocked(reward)` + `root.gameMode.getLevelDefinitions()` | 我们现在用**硬编码表**猜解锁等级（`compile.mjs` 的 `CUTQUAD_MIN_LEVEL = 16`、"UNLOCK_LEVEL_FALLBACK 是编译器侧估计"）。猜错 → 生成"看起来对但造不出来"的蓝图。**游戏里就有真值，没理由猜** |
 | **1.4** | **事件推送 mod → bridge** | mod 侧订阅 `root.signals.{level 相关, shapeDelivered, itemProduced, entityDestroyed, storyGoalCompleted, upgradePurchased}` + `hud.parts.dialogs` 的开合；去抖后 `sendRaw({method:"event", params:{type, data}})`。bridge 侧 `broadcastEvent` 已经存在（`bridge.mjs:731`），只需加类型 | 现在 agent 只能轮询。**"等一个事件"比"每 60 tick 查一次"省 10~100 倍调用**；也是"卡住自动告警"的基础 |
 | **1.5** | **paste 的 `replaced/destroyed` 回填 + `place` 的 `rv`** | `MOD-GAPS.md` #1/#4 已写明：`opPasteBlueprint` 的 `applied` 分支要把被覆盖的 uid 列出来；`actionSpecs.place` 加 `rv` 字段（`placeOne` 里 `rotationVariantOverride` 已存在，只差透传） | 静默覆盖是**已发生过的事故**（一次毁 6 条带、一次误删 42 实体）。"成功但偷偷改了别的"比"失败"危险得多 |
-| **1.6** | **`dismiss_overlays` / 弹窗状态** | `root.hud.parts.dialogs.closeDialog(dialog)` / `close()`（`hud/parts/modal_dialogs.js:174-201`）；`root.hud.parts.shop.hide()` | `MOD-GAPS.md` #5：升级弹窗可见时 `step/await` 抛 2002。L3 实机必踩 |
+| **1.6** | **`dismiss_overlays` / 弹窗状态** | `root.hud.parts.dialogs.closeDialog(dialog)` / `close()`（`hud/parts/modal_dialogs.js:174-201`）；`root.hud.parts.shop.close()`（`hud/parts/shop.js:233-237`，注意方法名是 `close()` 不是 `hide()`）；观测加 `hud.parts.{dialogs,shop}.isBlockingOverlay()` | `MOD-GAPS.md` #5：升级弹窗可见时 `step/await` 抛 2002。L3 实机必踩 |
 | **1.7** | **`frames_advancing` / stalled 信号** | `root.signals.gameFrameStarted` 记时间戳；`status` 返回 `last_frame_age_ms` | `MOD-GAPS.md` #6：窗口最小化 → render loop 停 → 所有 world op 返回 1003，看起来像"游戏卡死"。**这是运维级 bug，不是功能缺失** |
 | **1.8** | **相机/视口观测** | `obs.camera` 已有 x/y/zoom；补 `viewport_tiles`（`camera.getVisibleRect()`）+ `currentLayer` | 现在 `obs.layer` 有，但"屏幕上能看到什么"没有。截图/区域观测/人机协同都需要 |
 | **1.9** | **`obs` 精简模式** | 加 `fields: ["type","x","y","r"]` 或 `group_by: "type"` 汇总；对 >500 实体默认给"按类型计数 + bbox"，细节按 region 拉 | `max_entities: 2000` 现在直接吐 2000 条 JSON（几万 token）。FLE 的做法是**永远先给汇总，细节按需**（`observation_formatter.py` 的 `Entities` 小节就是"按类型分组计数"） |
@@ -638,8 +638,8 @@ src/autoLayout/
 |---|---|
 | `src/js/mods/modloader.js` | 装载模型、`$shapez_registerMod`、`new Function`、`exposeExports`、standalone/dev 限制 |
 | `src/js/mods/mod.js` / `mod_interface.js`（684 行） | `Mod` 基类、全部 `register*` / `replaceMethod` / `extendClass` API |
-| `src/js/mods/mod_signals.js` | 10 个 `MOD_SIGNALS` |
-| `src/js/game/root.js:146-195` | ~25 个 `root.signals` |
+| `src/js/mods/mod_signals.js` | 12 个 `MOD_SIGNALS` |
+| `src/js/game/root.js:146-195` | 26 个 `root.signals` |
 | `src/js/core/signal.js` / `input_distributor.js` / `input_receiver.js` | Signal 语义、输入栈、`forwardToReceiver` |
 | `src/js/game/camera.js:87-88, 440-460, 680-750` | `downPreHandler` / `movePreHandler` / `upPostHandler`（模拟点击的底层面） |
 | `src/js/game/key_action_mapper.js:324-348, 550-565` | `Keybinding.signal`、`getBindingById` |
