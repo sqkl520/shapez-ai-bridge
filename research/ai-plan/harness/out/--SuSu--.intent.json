@@ -1830,7 +1830,9 @@
   "estThroughputPerSec": 0.4,
   "bottleneck": "miner@0.4",
   "blueprintCost": 900,
-  "chargeMode": "false"
+  "chargeMode": "false",
+  "longestSingleBeltRow": 21,
+  "longestSingleBeltCol": 78
  },
  "scope": {
   "layers": 1,
@@ -1939,7 +1941,7 @@
     "stackPairs": 1592,
     "capped": false
    },
-   "ms": 37,
+   "ms": 58,
    "known": 1647
   },
   "seed": 43391,

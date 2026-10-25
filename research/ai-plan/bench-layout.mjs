@@ -85,6 +85,8 @@ function summarize(r) {
         belts: s.beltTiles ?? null,
         machines: machineCount || null,
         corners: s.corners ?? null,
+        longRow: s.longestSingleBeltRow ?? null,
+        longCol: s.longestSingleBeltCol ?? null,
         throughput: s.estThroughputPerSec ?? null,
         bottleneck: s.bottleneck ?? null,
     };
@@ -106,13 +108,13 @@ if (asJson) {
     console.log(JSON.stringify({ rows }, null, 2));
 } else {
     const pad = (s, n) => String(s ?? "-").padEnd(n);
-    console.log(`${pad("goal", 11)} ${pad("seed", 6)} ${pad("ok", 6)} ${pad("w", 5)} ${pad("h", 5)} ${pad("belts", 6)} ${pad("corners", 8)} reason`);
-    console.log("-".repeat(92));
+    console.log(`${pad("goal", 11)} ${pad("seed", 6)} ${pad("ok", 6)} ${pad("w", 5)} ${pad("h", 5)} ${pad("belts", 6)} ${pad("corners", 8)} ${pad("longR", 6)} ${pad("longC", 6)} reason`);
+    console.log("-".repeat(108));
     for (const r of rows) {
         if (!r.ok) {
-            console.log(`${pad(r.goal, 11)} ${pad(r.seed, 6)} ${pad("FAIL", 6)} ${pad("-", 5)} ${pad("-", 5)} ${pad("-", 6)} ${pad("-", 8)} ${r.reason}`);
+            console.log(`${pad(r.goal, 11)} ${pad(r.seed, 6)} ${pad("FAIL", 6)} ${pad("-", 5)} ${pad("-", 5)} ${pad("-", 6)} ${pad("-", 8)} ${pad("-", 6)} ${pad("-", 6)} ${r.reason}`);
         } else {
-            console.log(`${pad(r.goal, 11)} ${pad(r.seed, 6)} ${pad("ok", 6)} ${pad(r.w, 5)} ${pad(r.h, 5)} ${pad(r.belts, 6)} ${pad(r.corners, 8)}`);
+            console.log(`${pad(r.goal, 11)} ${pad(r.seed, 6)} ${pad("ok", 6)} ${pad(r.w, 5)} ${pad(r.h, 5)} ${pad(r.belts, 6)} ${pad(r.corners, 8)} ${pad(r.longRow, 6)} ${pad(r.longCol, 6)}`);
         }
     }
     // 每个 goal 的通过率 —— 这是 P4 要盯的那个数

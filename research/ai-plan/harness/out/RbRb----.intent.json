@@ -2220,7 +2220,9 @@
   "estThroughputPerSec": 0.33,
   "bottleneck": "painter@0.33",
   "blueprintCost": 1100,
-  "chargeMode": "false"
+  "chargeMode": "false",
+  "longestSingleBeltRow": 89,
+  "longestSingleBeltCol": 14
  },
  "scope": {
   "layers": 1,
@@ -2331,7 +2333,7 @@
     "stackPairs": 1592,
     "capped": false
    },
-   "ms": 34,
+   "ms": 41,
    "known": 1641
   },
   "seed": 43391,

@@ -189,7 +189,9 @@
   "estThroughputPerSec": 0.4,
   "bottleneck": "miner@0.4",
   "blueprintCost": 60,
-  "chargeMode": "false"
+  "chargeMode": "false",
+  "longestSingleBeltRow": 7,
+  "longestSingleBeltCol": 0
  },
  "scope": {
   "layers": 1,
