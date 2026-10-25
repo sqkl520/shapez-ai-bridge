@@ -508,13 +508,17 @@ console.log("\n── ①f hubConnection 世界系可达性（B-4 回归锁）�
 			}
 		}
 
-		// (3) 诚实：范围小到联合解不存在 ⇒ 必须结构化失败，不许"挑一台对齐就报成功"
+		// (3) 诚实：世界里根本没有的资源 ⇒ 必须结构化失败，不许"挑一台对齐就报成功"
+		/* ⚠️ 这条原先用 `range: 8` 来表达"联合解不存在"。P1-3 加入逐台独立落位后，
+		   range 8 也能找到矿（矿机不再被刚性偏移绑死），于是范围不再是"无解"的构造方式。
+		   改成用**世界里不存在的资源**：WuWuWuWu 在 seed 43391 里一格都没有。
+		   意图不变 —— 真的没矿时必须诚实失败，且 hint 说清楚是资源问题。 */
 		{
-			const p = compilePlan({ goal: "CrCrCrCr", seed: 43391, hub: { x: -2, y: -2 }, range: 8 });
-			say(p.ok === false, "F6-c 范围过小（联合解不存在）→ ok:false（不报假绿）", p.ok === true ? p.site : undefined);
+			const p = compilePlan({ goal: "WuWuWuWu", seed: 43391, hub: { x: -2, y: -2 }, range: 96 });
+			say(p.ok === false, "F6-c 世界无此资源 → ok:false（不报假绿）", p.ok === true ? p.site : undefined);
 			if (p.ok === false) {
 				eq(p.reason, "no-resource-in-range", "F6-c reason=no-resource-in-range");
-				say(/联合|每台|扫过/.test(p.hint || ""), "F6-c hint 说明「没有联合可行解」而非「没矿」", (p.hint || "").slice(0, 240));
+				say(/没有资源|no-resource|没有联合可行|每台|扫过/.test(p.hint || ""), "F6-c hint 说明是资源问题而非别的", (p.hint || "").slice(0, 240));
 			}
 		}
 	}
@@ -1043,6 +1047,39 @@ console.log("\n── ⑥ planMinerColumns：矿机 x 由资源决定 ──");
 			[{ id: "x", resource: "紫色的不存在资源" }],
 			{ seed: 43391, region: { x0: -8, y0: -8, x1: 8, y1: 8 }, center: [0, 0] });
 		eq(r, null, "⑥-d ★不存在的资源 ⇒ 返回 null（不编造列）");
+	}
+	/* ⑥-e 逐台独立落位（P1-3 回落路径）
+	 *
+	 * `planMinerColumns` 只解「同一行」这一档；刚性 `jointResourceShift` 又只给单一平移量。
+	 * 两者叠起来等于把矿机的相对偏移锁死 —— `CgScScCg` 的 5 台矿机因此四个种子全部失败。
+	 * `independentMinerCells` 让每台各自找矿，是那条死路的唯一出口。
+	 * 这条断言锁住"它能真的产出不同的行/列"，否则回落路径等于没写。 */
+	{
+		const miners = [
+			{ id: "s", resource: "SuSuSuSu" },
+			{ id: "b", resource: "blue" },
+			{ id: "g", resource: "green" },
+			{ id: "c", resource: "CuCuCuCu" },
+		];
+		ok(typeof place.independentMinerCells === "function", "⑥-e independentMinerCells 已导出（P1-3 回落路径的唯一入口）");
+		const r = place.independentMinerCells(miners, {
+			seed: 43391, region: { x0: -400, y0: -400, x1: 400, y1: 400 }, center: [0, 0],
+		});
+		say(r.ok === true, "⑥-e 四种不同资源能各自落位", r.ok === false ? r.hint : undefined);
+		if (r.ok === true) {
+			const { tileResource } = await imp(path.join(ROOT, "src", "ai", "world.mjs"));
+			const bad = miners.filter(m => {
+				const c = r.cells.get(m.id);
+				return !c || tileResource(43391, c[0], c[1]) !== m.resource;
+			});
+			eq(bad.map(m => m.id), [], "⑥-e ★每台矿机都压在自己的真资源上");
+			const cells = [...r.cells.values()];
+			const cols = new Set(cells.map(c => c[0]));
+			eq(cols.size, cells.length, "⑥-e 矿机不同列（M4 前置：同列两条竖直通道重叠）");
+			// 这条是它与 planMinerColumns 的关键差别：y 可以不同
+			const ys = new Set(cells.map(c => c[1]));
+			say(ys.size >= 1, `⑥-e 允许不同行（实得 ${ys.size} 个不同 y）—— 这正是刚性方案做不到的`);
+		}
 	}
 }
 

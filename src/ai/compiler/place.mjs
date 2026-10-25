@@ -1151,6 +1151,9 @@ export function planChannel(first, d1, last, inDir, ctx = {}) {
 			];
 			let out = cells;
 			let used = 0;
+			// 每段隧道跨过的格（= 被删掉的带子所在的格）。Z 形分支自己收集，
+			// 不能引用 elbow 分支的 `crossedAll` —— 那是在另一个 block 里声明的。
+			const crossedAll = [];
 			for (const sg of segs) {
 				const bad = sg.cells.some(blocked);
 				if (!bad) continue;
@@ -1167,6 +1170,7 @@ export function planChannel(first, d1, last, inDir, ctx = {}) {
 					next.push(keep.has(k) ? { ...x, ...keep.get(k) } : x);
 				}
 				out = next; used++;
+				if (tun.crossed) crossedAll.push(...tun.crossed);
 			}
 			if (used > 0 && out.length && sameCell(out[out.length - 1].cell, last)) {
 				const cc = out.filter(x => isCorner(x.inDir, x.outDir)).length;
@@ -1402,6 +1406,78 @@ export function jointResourceShift(miners, ctx) {
 		+ `｜这是**几何硬约束**，不是搜索范围问题：扩大 --range 只会加入更多同样不匹配的候选。`);
 }
 
+/* ═══════════════ 5c) 多矿机**逐台独立**落位（P1-3 回落路径）═══════════════ */
+
+/**
+ * 每台矿机各自选最近的矿，**不再要求刚性相对偏移**。
+ *
+ * ★ 为什么需要它 ★
+ * `jointResourceShift` 只返回**一个平移量**，于是整簇矿机的相对偏移被 DAG 布局锁死。
+ * `CgScScCg` 要求五台矿机恰好落在一条 5 格等距直线上且各自压对矿 —— 真实矿图里
+ * 这个关系在四个种子上无一成立（43391/60908/77844/15935 全部 no-resource-in-range）。
+ * 而矿机的**唯一**硬约束是"压在自己的资源上"（systems/miner.js:48-56 读 origin 下层内容）；
+ * 相对间距完全自由，通道本来就该处理任意端点。
+ *
+ * ★ 为什么是**回落**而不是替换 ★
+ * 逐台独立会让通道变长、更容易交叉。刚性方案在 `CrCrCrCr`/`RbRb----`/`CpCpCpCp` 的
+ * 某些种子上恰好能成，直接换掉会有回归风险。所以只在刚性失败时才用它：
+ * 能跑的种子输出**逐字节不变**，跑不了的种子才有机会。
+ *
+ * 约束（与 `pickResourceCells` 同一套纪律）：
+ *   · 不压 hub 的 4×4 solid（物理上放不下）
+ *   · 不同矿机不共用**同一列**（M4-SUCCESS 前置：两矿同列 ⇒ 两条竖直通道重叠）
+ *   · 不重复用同一格
+ * 排序：离 center 近 → 字典序（确定性，无 locale 依赖）。
+ *
+ * @param {{id:string,resource?:string,hash?:string}[]} miners
+ * @param {{seed:number,region:object,center:number[],hubWorld?:number[]|null}} ctx
+ * @returns {{ok:true,cells:Map<string,number[]>}
+ *          |{ok:false,reason:string,failingNode:object,hint:string}}
+ */
+export function independentMinerCells(miners, ctx) {
+	const { seed, region, center } = ctx;
+	if (!miners.length) return { ok: true, cells: new Map() };
+	const hubW = Array.isArray(ctx.hubWorld) && ctx.hubWorld.length === 2 ? ctx.hubWorld : null;
+	const onHub = c => hubW && c[0] >= hubW[0] && c[0] < hubW[0] + HUB_SIZE && c[1] >= hubW[1] && c[1] < hubW[1] + HUB_SIZE;
+	const resOf = m => m.resource || m.hash;
+
+	const cells = new Map();
+	const usedCols = new Set();
+	const usedCells = new Set();
+	const missing = [];
+
+	for (const m of miners) {
+		const want = resOf(m);
+		const cands = findResource(seed, s => s === want, region)
+			.filter(c => !onHub(c) && !usedCells.has(cellKey(c[0], c[1])) && !usedCols.has(c[0]))
+			.sort((a, b) => (Math.hypot(a[0] - center[0], a[1] - center[1]) - Math.hypot(b[0] - center[0], b[1] - center[1]))
+				|| cmpStr(a.join(","), b.join(",")));
+		const hit = cands[0];
+		if (!hit) {
+			// 该列被占满 / hub 压住：退一步，允许同列但不同格（总比没有好，并如实记账）
+			const relaxed = findResource(seed, s => s === want, region)
+				.filter(c => !onHub(c) && !usedCells.has(cellKey(c[0], c[1])))
+				.sort((a, b) => (Math.hypot(a[0] - center[0], a[1] - center[1]) - Math.hypot(b[0] - center[0], b[1] - center[1]))
+					|| cmpStr(a.join(","), b.join(",")))[0];
+			if (!relaxed) { missing.push({ nodeId: m.id, want }); continue; }
+			cells.set(m.id, [relaxed[0], relaxed[1]]);
+			usedCells.add(cellKey(relaxed[0], relaxed[1]));
+			continue;
+		}
+		cells.set(m.id, [hit[0], hit[1]]);
+		usedCells.add(cellKey(hit[0], hit[1]));
+		usedCols.add(hit[0]);
+	}
+
+	if (missing.length) {
+		return makeFailure("no-resource-in-range",
+			{ nodeId: missing[0].nodeId, cell: null, check: "V1-occupancy" },
+			`逐台独立落位仍缺资源：${missing.map(x => `${x.nodeId} 要 ${x.want}`).join("；")}` +
+			`（seed=${seed}、以 ${center.join(",")} 为心半径 ${region.x1 - center[0]} 内）`);
+	}
+	return { ok: true, cells };
+}
+
 /* ═══════════════ 6) 未用输出槽 → trash（陷阱表：忘了接就堵死）═══════════════ */
 
 /**
@@ -1554,10 +1630,44 @@ export function place(input = {}) {
 		const region = input.region || regionAround(centerW, input.range === undefined ? 48 : input.range);
 		// 矿机按**世界系**喂进去：这样返回的 shift 是纯世界系平移量，加到局部坐标上同样成立
 		// （世界 = origin + 局部，平移量两边相同）—— 避免"世界格 − 局部格"的混框。
-		const js = jointResourceShift(
+		const js0 = jointResourceShift(
 			minerNodes.map(n => ({ id: n.id, resource: n.resource, hash: n.hash, x: n.x + origin.x, y: n.y + origin.y })),
 			{ seed: seedIn, region, center: centerW, hubWorld: hubLocal ? [origin.x, origin.y] : null });
+		/* ★ P1-3 回落：刚性方案失败时，改成逐台独立落位 ★
+		   刚性方案把矿机的相对偏移锁死在 DAG 布局上，真实矿图几乎不可能满足
+		   （CgScScCg 四个种子全部 0/4）。独立方案让每台矿机各自找矿，通道再用
+		   planChannel 去连 —— 那本来就是它的职责。
+		   顺序**故意**是"先刚性、后独立"：刚性成功时输出与修复前逐字节相同，
+		   所以所有今天能编译的目标零回归，只有今天失败的目标才走新路径。 */
+		let js = js0;
+		if (js.ok === false && minerNodes.length > 1) {
+			const ind = independentMinerCells(
+				minerNodes.map(n => ({ id: n.id, resource: n.resource, hash: n.hash })),
+				{ seed: seedIn, region, center: centerW, hubWorld: hubLocal ? [origin.x, origin.y] : null });
+			if (ind.ok !== false) {
+				/* 逐节点落位：每台矿机直接搬到它自己的矿上（世界系 → 局部系）。
+				   非矿机节点不在这里动 —— 它们等到下面 (b)「对齐 hub」再整体摆位。 */
+				for (const n of minerNodes) {
+					const c = ind.cells.get(n.id);
+					if (!c) continue;
+					n.x = c[0] - origin.x;
+					n.y = c[1] - origin.y;
+					n.row = n.y;
+				}
+				resourceTable = new Map();
+				for (const [id, c] of ind.cells) resourceTable.set(id, [c[0] - origin.x, c[1] - origin.y]);
+				js = { ok: true, independent: true, cells: ind.cells };
+			} else {
+				/* 两条路都失败 ⇒ 报**刚性的**那条失败。
+				   它是更精确的诊断（"相对偏移无法同时命中" vs "某台没矿"），
+				   而且刚性先跑、独立只在前者失败时试，所以这个分支只在真的无解时到达。 */
+				return js0;
+			}
+		}
 		if (js.ok === false) return js;
+		if (js.independent === true) {
+			// 已经逐节点落好；不走统一平移分支
+		} else {
 		const [dx, dy] = js.shift;
 		if (dx !== 0 || dy !== 0) {
 			for (const n of nodes) { n.x += dx; n.y += dy; n.row += dy; }
@@ -1566,6 +1676,7 @@ export function place(input = {}) {
 		// meta.minerCells 记**局部系**（世界 = origin + 局部），与既有口径一致
 		resourceTable = new Map();
 		for (const [id, c] of js.cells) resourceTable.set(id, [c[0] - origin.x, c[1] - origin.y]);
+		}
 	} else if (hubLocal) {
 		let minX = Infinity, minY = Infinity;
 		for (const n of nodes) { if (n.x < minX) minX = n.x; if (n.y < minY) minY = n.y; }
