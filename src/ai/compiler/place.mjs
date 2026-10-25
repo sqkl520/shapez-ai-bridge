@@ -2506,6 +2506,34 @@ function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubCo
 			`拐角带子格数必须与 grid 里 7/9/L/J 的个数一致（第一原则度量与渲染同源）`, { glyphCorners, cornerCount });
 	}
 
+	/* 长主干检测（研究 04 的 P1 验收指标）。
+	   动机：`--SuSu--` 编出来 39 行高，但真正的工序只占右边一小段，其余 38 行是
+	   一根只有 1 格宽的竖直主干 —— 只因为 hub 在 (0,0) 而矿在 x≈80。
+	   这类"整行/整列只有一格带子"的连续段是纯粹的浪费，而且它是 hub 选址问题的
+	   直接症状。把它算成数，才能在 CI 里看见，而不是靠人盯着 ASCII 图发现。 */
+	const beltPerRow = new Map(), beltPerCol = new Map();
+	for (const b of beltCells) {
+		beltPerRow.set(b.cell[1], (beltPerRow.get(b.cell[1]) || 0) + 1);
+		beltPerCol.set(b.cell[0], (beltPerCol.get(b.cell[0]) || 0) + 1);
+	}
+	const runOfSingle = counts => {
+		// counts: Map<coord, n> → 连续 coord 上 n===1 的最长段长
+		const keys = [...counts.keys()].sort((a, b) => a - b);
+		let best = 0, cur = 0, prev = null;
+		for (const k of keys) {
+			if (counts.get(k) === 1) {
+				cur = prev !== null && k === prev + 1 ? cur + 1 : 1;
+				if (cur > best) best = cur;
+			} else {
+				cur = 0;
+			}
+			prev = k;
+		}
+		return best;
+	};
+	const longestSingleBeltRow = runOfSingle(beltPerRow);
+	const longestSingleBeltCol = runOfSingle(beltPerCol);
+
 	const placements = nodes.map(n => ({
 		nodeId: n.id, op: n.op, kind: n.template.kind || n.op,
 		cell: [n.x, n.y], rot: 0,
@@ -2532,6 +2560,11 @@ function buildReport({ nodes, rows, channels, lanes, conflicts, beltCells, hubCo
 		//（types.mjs 的 assertLayoutReport 不读 meta）⇒ 加键不破坏任何契约，也不改变既有字段。
 		minerResources: Object.fromEntries(nodes.filter(n => n.op === "mine").map(n => [n.id, n.resource])),
 		cornerCells: cornerCells.map(b => [b.cell[0], b.cell[1]]),
+		// 长主干：连续 coord 上"该行/该列只有 1 格带子"的最长段。
+		// 大于 ~10 基本可以断定是 hub 太远或矿位选得太散（研究 04 §1），
+		// 属于"编得出但明显浪费"的形状病，不是失败，所以只报数不报错。
+		longestSingleBeltRow,
+		longestSingleBeltCol,
 		// 层号校正凭据（审查 F5c）：不设它，一次矛盾触发的**全图重排**对下游是完全静默的。
 		// null = 输入层号与 DAG 边一致（未重排）；否则带出矛盾的边，供 P5/P7 审计。
 		depthNormalized,
