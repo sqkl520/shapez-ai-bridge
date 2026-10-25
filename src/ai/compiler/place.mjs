@@ -1886,6 +1886,14 @@ export function place(input = {}) {
 			nodes.length = 0;
 			nodes.push(...expanded);
 			minerGroups = mg.groups;
+			/* ★ terminals 必须跟着重算 ★
+			   `terminals` 是 `dag.terminals` 的**引用**，里面存的是展开前的旧节点。
+			   展开后旧 mine 被替换成 balancer 链尾，但 terminals 还指着旧对象 ——
+			   于是 hub 连接从"一台已经不存在的矿机"出发（实测 `chHub n0→hub [0,0]`，
+			   矿机坐标 (0,0) 根本不是它的输出槽，P5 报 V4）。
+			   重算口径与 buildDag 一致：没有消费者、且不是 trash 的节点。 */
+			terminals.length = 0;
+			terminals.push(...nodes.filter(n => n.consumers === 0 && n.op !== "trash"));
 		}
 	}
 
