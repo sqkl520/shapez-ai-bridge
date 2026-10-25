@@ -1296,7 +1296,12 @@ export function applyOp(ops, opName, args, parents) {
     switch (opName) {
         case "mine": return parents[0];
         case "cut": {
-            const halves = ops.cutHalf(parents[0]);            // → [quads(2,3), quads(0,1)]
+            /* `cutHalf` 返回 [quads(2,3), quads(0,1)]；solver 把 [0] 命名为 "left"、
+               [1] 命名为 "right"。**这是 solver 自己的命名约定，与游戏槽位无关**，
+               两者恰好对得上：solver "left" = cutHalf[0] = 游戏 slot 0。
+               ⚠️ 曾经以为这里取反了并改动它 —— 那是误判：`mapOps` 的形状代数是自洽的，
+                  改它只会让 solver 的重建校验失败（实测 validate:S1）。 */
+            const halves = ops.cutHalf(parents[0]);
             return (args && args.half === "left") ? halves[0] : halves[1];
         }
         case "cutQuad": return ops.cutQuad(parents[0])[(args && args.quad) | 0];
