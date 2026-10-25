@@ -327,6 +327,9 @@ class Mod extends shapez.Mod {
                 case "game_setting":
                     result = this.gameSetting(params || {});
                     break;
+                case "upgrade":
+                    result = this.upgrades(params || {});
+                    break;
                 case "delete_save":
                     result = await this.deleteSave(params || {});
                     break;
@@ -362,6 +365,82 @@ class Mod extends shapez.Mod {
      *   - 同时给 key/value → 写（写后回读，确认真的生效）
      *   - 都不给          → 列出白名单里所有项的当前值
      */
+    /**
+     * 读写**升级模块**（游戏里 hub 右上角的 shop）。
+     *
+     * 为什么需要它：升级是 shapez 的核心成长机制，不是可选装饰 —— 二级带子跑两倍、
+     * 二级矿机挖两倍。手工点十几次既慢又不可复现；AI 应当能把"买哪个、花多少、
+     * 买完变多少"当成结构化决策来做。
+     *
+     * 语义与游戏 `hubGoals.tryUnlockUpgrade(id)` 完全一致（含扣料、广播、存档字段），
+     * 本方法只做校验与报告，不自己改数字。
+     *
+     * params: { id?: string, dry_run?: boolean }
+     *   - 不给 id          → 列出四条升级链的当前档位、下一档要什么、够不够
+     *   - 给 id            → 买下一档（dry_run:true 只报告会扣什么，不真买）
+     *
+     * 返回值永远包含 `before` / `after` 与 `spent`，让调用方能对账，
+     * 不必再发一次 obs 猜"到底买成功没有"。
+     */
+    upgrades(params) {
+        const root = this.requireRoot();
+        const hubGoals = root.hubGoals;
+        const known = Object.keys(root.gameMode.getUpgrades());
+
+        const snapshot = () => {
+            const out = {};
+            for (const id of known) {
+                const tiers = root.gameMode.getUpgrades()[id] || [];
+                const lvl = hubGoals.getUpgradeLevel(id);
+                const next = tiers[lvl] || null;
+                out[id] = {
+                    level: lvl,
+                    maxed: lvl >= tiers.length,
+                    multiplier: hubGoals.upgradeImprovements ? hubGoals.upgradeImprovements[id] : null,
+                    next: next ? { required: next.required || [] } : null,
+                    can_buy: lvl < tiers.length ? !!hubGoals.canUnlockUpgrade(id) : false,
+                };
+            }
+            return out;
+        };
+
+        if (params.id === undefined) {
+            return { ok: true, op: "upgrade", upgrades: snapshot(), stored: { ...(hubGoals.storedShapes || {}) }, level: hubGoals.level };
+        }
+
+        const id = params.id;
+        if (typeof id !== "string" || !known.includes(id)) {
+            throw this.rpcError(2001, "invalid_action", "unknown upgrade id: " + id, "Known: " + known.join(", "));
+        }
+        const before = snapshot();
+        if (before[id].maxed) {
+            return { ok: true, op: "upgrade", id, bought: false, reason: "already-maxed", before: before[id], after: before[id] };
+        }
+        if (!before[id].can_buy) {
+            throw this.rpcError(
+                2002, "game_rejected",
+                `cannot afford upgrade '${id}' tier ${before[id].level + 1}`,
+                "Required: " + JSON.stringify(before[id].next ? before[id].next.required : [])
+            );
+        }
+        const required = before[id].next ? (before[id].next.required || []) : [];
+
+        if (params.dry_run === true) {
+            return { ok: true, op: "upgrade", id, dry_run: true, would_buy: true, would_spend: required, before: before[id] };
+        }
+
+        const bought = hubGoals.tryUnlockUpgrade(id);
+        if (!bought) {
+            throw this.rpcError(2002, "game_rejected", "game refused the upgrade (state changed?)");
+        }
+        const after = snapshot();
+        return {
+            ok: true, op: "upgrade", id, bought: true, spent: required,
+            before: before[id], after: after[id],
+            stored: { ...(hubGoals.storedShapes || {}) },
+        };
+    }
+
     gameSetting(params) {
         const SETTING_WHITELIST = {
             enableTunnelSmartplace: "bool",   // 隧道磁贴自带删除中间带（C4 的根因）
