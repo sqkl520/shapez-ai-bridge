@@ -1,0 +1,108 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/BHOn8cTnCkMFAD6HLMEZ5RWQtDw</id>
+  <title>arXiv Query: search_query=&amp;id_list=2503.09617,2305.16291,2404.02039&amp;start=0&amp;max_results=10</title>
+  <updated>2026-10-25T18:44:45Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=&amp;start=0&amp;max_results=10&amp;id_list=2503.09617,2305.16291,2404.02039" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>10</opensearch:itemsPerPage>
+  <opensearch:totalResults>3</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2503.09617v1</id>
+    <title>Factorio Learning Environment</title>
+    <updated>2025-03-06T20:13:02Z</updated>
+    <link href="https://arxiv.org/abs/2503.09617v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2503.09617v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Large Language Models (LLMs) are rapidly saturating existing benchmarks, necessitating new open-ended evaluations. We introduce the Factorio Learning Environment (FLE), based on the game of Factorio, that tests agents in long-term planning, program synthesis, and resource optimization. FLE provides exponentially scaling challenges -- from basic automation to complex factories processing millions of resource units per second. We provide two settings: (1) lab-play consisting of eight structured tasks with fixed resources, and (2) open-play with the unbounded task of building the largest factory on an procedurally generated map. We demonstrate across both settings that models still lack strong spatial reasoning. In lab-play, we find that LLMs exhibit promising short-horizon skills, yet are unable to operate effectively in constrained environments, reflecting limitations in error analysis. In open-play, while LLMs discover automation strategies that improve growth (e.g electric-powered drilling), they fail to achieve complex automation (e.g electronic-circuit manufacturing).</summary>
+    <category term="cs.MA" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2025-03-06T20:13:02Z</published>
+    <arxiv:primary_category term="cs.MA"/>
+    <author>
+      <name>Jack Hopkins</name>
+    </author>
+    <author>
+      <name>Mart Bakler</name>
+    </author>
+    <author>
+      <name>Akbir Khan</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2305.16291v2</id>
+    <title>Voyager: An Open-Ended Embodied Agent with Large Language Models</title>
+    <updated>2023-10-19T16:27:03Z</updated>
+    <link href="https://arxiv.org/abs/2305.16291v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2305.16291v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>We introduce Voyager, the first LLM-powered embodied lifelong learning agent in Minecraft that continuously explores the world, acquires diverse skills, and makes novel discoveries without human intervention. Voyager consists of three key components: 1) an automatic curriculum that maximizes exploration, 2) an ever-growing skill library of executable code for storing and retrieving complex behaviors, and 3) a new iterative prompting mechanism that incorporates environment feedback, execution errors, and self-verification for program improvement. Voyager interacts with GPT-4 via blackbox queries, which bypasses the need for model parameter fine-tuning. The skills developed by Voyager are temporally extended, interpretable, and compositional, which compounds the agent's abilities rapidly and alleviates catastrophic forgetting. Empirically, Voyager shows strong in-context lifelong learning capability and exhibits exceptional proficiency in playing Minecraft. It obtains 3.3x more unique items, travels 2.3x longer distances, and unlocks key tech tree milestones up to 15.3x faster than prior SOTA. Voyager is able to utilize the learned skill library in a new Minecraft world to solve novel tasks from scratch, while other techniques struggle to generalize. We open-source our full codebase and prompts at https://voyager.minedojo.org/.</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2023-05-25T17:46:38Z</published>
+    <arxiv:comment>Project website and open-source codebase: https://voyager.minedojo.org/</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Guanzhi Wang</name>
+    </author>
+    <author>
+      <name>Yuqi Xie</name>
+    </author>
+    <author>
+      <name>Yunfan Jiang</name>
+    </author>
+    <author>
+      <name>Ajay Mandlekar</name>
+    </author>
+    <author>
+      <name>Chaowei Xiao</name>
+    </author>
+    <author>
+      <name>Yuke Zhu</name>
+    </author>
+    <author>
+      <name>Linxi Fan</name>
+    </author>
+    <author>
+      <name>Anima Anandkumar</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2404.02039v5</id>
+    <title>A Survey on Large Language Model-Based Game Agents</title>
+    <updated>2026-06-08T03:25:04Z</updated>
+    <link href="https://arxiv.org/abs/2404.02039v5" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2404.02039v5" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Game environments provide rich, controllable settings that stimulate many aspects of real-world complexity. As such, game agents offer a valuable testbed for exploring capabilities relevant to Artificial General Intelligence. Recently, the emergence of Large Language Models (LLMs) provides new opportunities to endow these agents with generalizable reasoning, memory, and adaptability in complex game environments. This survey offers an up-to-date review of LLM-based game agents (LLMGAs) through a unified reference architecture. At the single-agent level, we synthesize existing studies around three core components: memory, reasoning, and perception-action interfaces, which jointly characterize how language enables agents to perceive, think, and act. At the multi-agent level, we outline how communication protocols and organizational models support coordination, role differentiation, and large-scale social behaviors. To contextualize these designs, we introduce a challenge-centered taxonomy linking six major game genres to their dominant agent requirements, from low-latency control in action games to open-ended goal formation in sandbox worlds. A curated list of related papers is available at https://github.com/git-disl/awesome-LLM-game-agent-papers</summary>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-04-02T15:34:18Z</published>
+    <arxiv:comment>ACM Computing Surveys, 2026</arxiv:comment>
+    <arxiv:primary_category term="cs.AI"/>
+    <author>
+      <name>Sihao Hu</name>
+    </author>
+    <author>
+      <name>Tiansheng Huang</name>
+    </author>
+    <author>
+      <name>Gaowen Liu</name>
+    </author>
+    <author>
+      <name>Ramana Rao Kompella</name>
+    </author>
+    <author>
+      <name>Fatih Ilhan</name>
+    </author>
+    <author>
+      <name>Selim Furkan Tekin</name>
+    </author>
+    <author>
+      <name>Yichang Xu</name>
+    </author>
+    <author>
+      <name>Zachary Yahn</name>
+    </author>
+    <author>
+      <name>Ling Liu</name>
+    </author>
+  </entry>
+</feed>

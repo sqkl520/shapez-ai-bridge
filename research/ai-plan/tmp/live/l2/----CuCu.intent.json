@@ -1,0 +1,835 @@
+{
+ "goal": "----CuCu",
+ "schema": "shapez-ai/handoff-intent@1",
+ "blueprint": "SZBP1.N4IgbiBcBMA0IHMKRARgHQFZ0DYTwHcoBtAWgA5ZTVMBdeAUxIHZYAGWaDj11T72ABZ2sVHA4BOEcI5dRIjn0VTFI1JVWLWm0TjVrM+xTPmKAzPr6oV8qxtujtD1HtVXDb0SauiLO1EqmogKBNoH2gU6BrkEeQX4OcBKqcEmqFmnywpl8hjmwehbqqnrCxfJ6huV8enrVBbC85CWwlPV6Uu3Bos0VonYtYj0cCeKwFnqZ0HB8o0Wm9CAA9iQAdgCuADabsBvbu1s7e0eHCmcCF+dXlzewyXeSjw-DL9W9b4rvX58C98cH21oAF8gA",
+ "anchor": [
+  -8,
+  -15
+ ],
+ "hub": [
+  -2,
+  -2
+ ],
+ "chargeMode": "false",
+ "gv": null,
+ "count": 46,
+ "stride": 4,
+ "entityOrder": [
+  "n0",
+  "n0#m1",
+  "mg:CuCuCuCu#bal0",
+  "n1",
+  "n1d1",
+  "belt@-6,6",
+  "belt@-6,5",
+  "belt@-6,4",
+  "belt@-6,3",
+  "belt@-6,2",
+  "belt@-6,1",
+  "belt@-6,0",
+  "belt@-5,6",
+  "belt@-5,5",
+  "belt@-5,4",
+  "belt@-5,3",
+  "belt@-5,2",
+  "belt@-5,1",
+  "belt@-5,0",
+  "belt@-6,-2",
+  "belt@-6,-3",
+  "belt@-6,-4",
+  "belt@-6,-5",
+  "belt@-6,-6",
+  "belt@-6,-7",
+  "belt@-6,-8",
+  "belt@-6,-10",
+  "belt@-5,-11",
+  "belt@-4,-11",
+  "belt@-3,-11",
+  "belt@-2,-11",
+  "belt@-1,-11",
+  "belt@0,-10",
+  "belt@0,-9",
+  "belt@0,-8",
+  "belt@0,-7",
+  "belt@0,-6",
+  "belt@0,-5",
+  "belt@0,-4",
+  "belt@0,-3",
+  "belt@0,-2",
+  "belt@0,-1",
+  "belt@-6,-11",
+  "belt@0,-11",
+  "tunnel@-5,-10",
+  "tunnel@-5,-12"
+ ],
+ "entities": [
+  {
+   "code": 7,
+   "dx": 0,
+   "dy": 20,
+   "rot": 0,
+   "nodeId": "n0",
+   "instanceIdx": 0,
+   "kind": "miner",
+   "rotationVariant": 0,
+   "inDir": null,
+   "outDir": "top"
+  },
+  {
+   "code": 7,
+   "dx": 1,
+   "dy": 20,
+   "rot": 0,
+   "nodeId": "n0#m1",
+   "instanceIdx": 0,
+   "kind": "miner",
+   "rotationVariant": 0,
+   "inDir": null,
+   "outDir": "top"
+  },
+  {
+   "code": 4,
+   "dx": 0,
+   "dy": 12,
+   "rot": 0,
+   "nodeId": "mg:CuCuCuCu#bal0",
+   "instanceIdx": 0,
+   "kind": "balancer",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 9,
+   "dx": 0,
+   "dy": 4,
+   "rot": 0,
+   "nodeId": "n1",
+   "instanceIdx": 0,
+   "kind": "cutter",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 20,
+   "dx": 1,
+   "dy": 0,
+   "rot": 0,
+   "nodeId": "n1d1",
+   "instanceIdx": 0,
+   "kind": "trash",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": null
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 19,
+   "rot": 0,
+   "nodeId": "belt@-6,6",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 18,
+   "rot": 0,
+   "nodeId": "belt@-6,5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 17,
+   "rot": 0,
+   "nodeId": "belt@-6,4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 16,
+   "rot": 0,
+   "nodeId": "belt@-6,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 15,
+   "rot": 0,
+   "nodeId": "belt@-6,2",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 14,
+   "rot": 0,
+   "nodeId": "belt@-6,1",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 13,
+   "rot": 0,
+   "nodeId": "belt@-6,0",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 19,
+   "rot": 0,
+   "nodeId": "belt@-5,6",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 18,
+   "rot": 0,
+   "nodeId": "belt@-5,5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 17,
+   "rot": 0,
+   "nodeId": "belt@-5,4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 16,
+   "rot": 0,
+   "nodeId": "belt@-5,3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 15,
+   "rot": 0,
+   "nodeId": "belt@-5,2",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 14,
+   "rot": 0,
+   "nodeId": "belt@-5,1",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 13,
+   "rot": 0,
+   "nodeId": "belt@-5,0",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 11,
+   "rot": 0,
+   "nodeId": "belt@-6,-2",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 10,
+   "rot": 0,
+   "nodeId": "belt@-6,-3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 9,
+   "rot": 0,
+   "nodeId": "belt@-6,-4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 8,
+   "rot": 0,
+   "nodeId": "belt@-6,-5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 7,
+   "rot": 0,
+   "nodeId": "belt@-6,-6",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 6,
+   "rot": 0,
+   "nodeId": "belt@-6,-7",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 5,
+   "rot": 0,
+   "nodeId": "belt@-6,-8",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 3,
+   "rot": 0,
+   "nodeId": "belt@-6,-10",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 2,
+   "rot": 90,
+   "nodeId": "belt@-5,-11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 2,
+   "dy": 2,
+   "rot": 90,
+   "nodeId": "belt@-4,-11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 3,
+   "dy": 2,
+   "rot": 90,
+   "nodeId": "belt@-3,-11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 4,
+   "dy": 2,
+   "rot": 90,
+   "nodeId": "belt@-2,-11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 5,
+   "dy": 2,
+   "rot": 90,
+   "nodeId": "belt@-1,-11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "left",
+   "outDir": "right"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 3,
+   "rot": 180,
+   "nodeId": "belt@0,-10",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 4,
+   "rot": 180,
+   "nodeId": "belt@0,-9",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 5,
+   "rot": 180,
+   "nodeId": "belt@0,-8",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 6,
+   "rot": 180,
+   "nodeId": "belt@0,-7",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 7,
+   "rot": 180,
+   "nodeId": "belt@0,-6",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 8,
+   "rot": 180,
+   "nodeId": "belt@0,-5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 9,
+   "rot": 180,
+   "nodeId": "belt@0,-4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 10,
+   "rot": 180,
+   "nodeId": "belt@0,-3",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 11,
+   "rot": 180,
+   "nodeId": "belt@0,-2",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 1,
+   "dx": 6,
+   "dy": 12,
+   "rot": 180,
+   "nodeId": "belt@0,-1",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": "bottom"
+  },
+  {
+   "code": 3,
+   "dx": 0,
+   "dy": 2,
+   "rot": 0,
+   "nodeId": "belt@-6,-11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 2,
+   "inDir": "bottom",
+   "outDir": "right"
+  },
+  {
+   "code": 3,
+   "dx": 6,
+   "dy": 2,
+   "rot": 90,
+   "nodeId": "belt@0,-11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 2,
+   "inDir": "left",
+   "outDir": "bottom"
+  },
+  {
+   "code": 22,
+   "dx": 1,
+   "dy": 3,
+   "rot": 0,
+   "nodeId": "tunnel@-5,-10",
+   "instanceIdx": 0,
+   "kind": "underground_belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 23,
+   "dx": 1,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "tunnel@-5,-12",
+   "instanceIdx": 0,
+   "kind": "underground_belt",
+   "rotationVariant": 1,
+   "inDir": "bottom",
+   "outDir": "top"
+  }
+ ],
+ "beltIntent": null,
+ "stats": {
+  "machines": {
+   "miner": 2,
+   "balancer": 1,
+   "cutter": 1,
+   "trash": 1,
+   "underground_belt": 2
+  },
+  "beltTiles": 39,
+  "trash": 1,
+  "bbox": [
+   7,
+   21
+  ],
+  "corners": 2,
+  "estThroughputPerSec": 0.4,
+  "bottleneck": "miner@0.4",
+  "blueprintCost": 260,
+  "chargeMode": "false"
+ },
+ "scope": {
+  "layers": 1,
+  "wires": false,
+  "tunnels": false,
+  "rotatedMachines": false,
+  "maxFanIn": 2
+ },
+ "validation": {
+  "pass": true,
+  "errors": 0,
+  "failIds": [],
+  "beltSim": {
+   "tilesChecked": 39,
+   "fixedPoints": 39,
+   "drift": [],
+   "includesMachineNeighbors": true
+  },
+  "shapeReplay": [
+   {
+    "nodeId": "nCuCuCuCu",
+    "expectedHash": "CuCuCuCu",
+    "actualHash": "CuCuCuCu",
+    "equal": true
+   },
+   {
+    "nodeId": "n----CuCu",
+    "expectedHash": "----CuCu",
+    "actualHash": "----CuCu",
+    "equal": true
+   }
+  ],
+  "throughput": {
+   "demandPerSec": 0,
+   "bottleneck": {
+    "nodeId": "n0",
+    "ratePerSec": 0.4
+   },
+   "rowsRequired": 1,
+   "rowsPlanned": 2
+  }
+ },
+ "validator": {
+  "pass": true
+ },
+ "roundtrip": {
+  "ok": true,
+  "stride": 4,
+  "decodedCount": 46,
+  "intentCount": 46,
+  "eLength": null,
+  "diff": [],
+  "beltCodeBad": [],
+  "orderBad": [],
+  "summary": {
+   "format_version": 2,
+   "exported_from": "1.5.6",
+   "anchor": [
+    -8,
+    -15
+   ],
+   "count": 46,
+   "bounds": [
+    7,
+    21
+   ],
+   "by_code": {
+    "1": 37,
+    "3": 2,
+    "4": 1,
+    "7": 2,
+    "9": 1,
+    "20": 1,
+    "22": 1,
+    "23": 1
+   },
+   "text_length": 323
+  },
+  "summaryErr": null
+ },
+ "provenance": {
+  "harnessVersion": 1,
+  "placeVersion": "0.5.0",
+  "routeSchemaVersion": 1,
+  "validatorVersion": 1,
+  "emittedVia": "strict",
+  "solver": {
+   "argv": [
+    "D:\\Projects\\rea\\Project work\\shapez\\research\\ai-player\\proto\\solver.mjs",
+    "----CuCu",
+    "--no-cutquad",
+    "--json"
+   ],
+   "ops": {
+    "mine": 1,
+    "cut": 1
+   },
+   "stats": {
+    "expanded": 1,
+    "generated": 1,
+    "stackPairs": 0,
+    "capped": false
+   },
+   "ms": 5,
+   "known": 5
+  },
+  "seed": 43391,
+  "level": 2,
+  "cutQuadAllowed": false,
+  "channelOrder": "asis",
+  "gapTries": 0,
+  "gap": {
+   "rowGap": 8,
+   "colGap": 3
+  },
+  "minerCells": [
+   {
+    "nodeId": "n0",
+    "cell": [
+     -8,
+     5
+    ],
+    "shape": "CuCuCuCu"
+   },
+   {
+    "nodeId": "n0#m1",
+    "cell": [
+     -7,
+     5
+    ],
+    "shape": "CuCuCuCu"
+   }
+  ],
+  "demandPerSec": 0,
+  "cornerCostTiles": 1.56,
+  "routeAttempts": [
+   {
+    "gap": 0,
+    "rowGap": 8,
+    "colGap": 3,
+    "order": "asis",
+    "ok": true,
+    "reason": null,
+    "laneColumn": 0,
+    "belt": 41,
+    "corners": 2
+   }
+  ],
+  "laneColumnUnresolved": 0,
+  "worldPlacement": {
+   "anchor": [
+    -2,
+    -2
+   ],
+   "hub": [
+    -2,
+    -2
+   ],
+   "hubInferred": [
+    -2,
+    -2
+   ],
+   "hubPinned": true,
+   "pasteAt": [
+    -8,
+    -15
+   ],
+   "designAnchor": [
+    -6,
+    -13
+   ],
+   "designHubLocal": [
+    -4,
+    -4
+   ],
+   "hubLocal": [
+    0,
+    0
+   ],
+   "worldFrameV1": {
+    "ok": true,
+    "worldRect": [
+     -8,
+     -15,
+     -2,
+     5
+    ],
+    "hubRect": [
+     -2,
+     -2,
+     1,
+     1
+    ]
+   }
+  }
+ }
+}

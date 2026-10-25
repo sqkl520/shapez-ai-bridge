@@ -7,8 +7,8 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     84,
-     -19
+     82,
+     -21
     ],
     "nodeId": "n0",
     "expected": "落点矩形全空（r=0 包围盒）",
@@ -32,10 +32,10 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     84,
-     -20
+     82,
+     -22
     ],
-    "nodeId": "belt@84,-20",
+    "nodeId": "belt@82,-22",
     "expected": "computeBelt(含机器邻居) 不动点 = 设计的 (r,rv)",
     "actual": "134/134 全是不动点；施工顺序合规",
     "note": "includesMachineNeighbors=true（邻居含机器 9 次、带子 260 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
@@ -112,8 +112,8 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     84,
-     -35
+     82,
+     -37
     ],
     "nodeId": "n2",
     "expected": "当前等级 L1 的可用机器集",

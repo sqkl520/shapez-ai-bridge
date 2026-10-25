@@ -7,12 +7,12 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     -5,
-     7
+     -6,
+     6
     ],
     "nodeId": "n0",
     "expected": "落点矩形全空（r=0 包围盒）",
-    "actual": "37 格全空（机器 4 台 + 带子 32 格）",
+    "actual": "39 格全空（机器 4 台 + 带子 34 格）",
     "note": "决策 D1：机器恒 r=0 → 无需旋转包围盒；三态占用与冲突矩阵一律走 P1 的 Grid.placementConflicts"
    }
   },
@@ -32,13 +32,13 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     -5,
-     6
+     -6,
+     5
     ],
-    "nodeId": "belt@-5,6",
+    "nodeId": "belt@-6,5",
     "expected": "computeBelt(含机器邻居) 不动点 = 设计的 (r,rv)",
-    "actual": "32/32 全是不动点；施工顺序合规",
-    "note": "includesMachineNeighbors=true（邻居含机器 9 次、带子 56 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
+    "actual": "34/34 全是不动点；施工顺序合规",
+    "note": "includesMachineNeighbors=true（邻居含机器 9 次、带子 60 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
    }
   },
   {
@@ -48,7 +48,7 @@
     "cell": null,
     "nodeId": null,
     "expected": "端点 ∈ 模板槽位 + 通道走通 + 链闭合 + 出口有 acceptor + 生产槽有供料",
-    "actual": "4 条通道 / 32 带格全对齐",
+    "actual": "4 条通道 / 34 带格全对齐",
     "note": "槽位真值 = P2 OP_TEMPLATES + rotateSlot（v1 机器恒 r=0）；带向真值 = src/ai/belt-rules.mjs（**不 import proto 那份**）"
    }
   },
@@ -82,7 +82,7 @@
     "nodeId": "n0",
     "expected": "demandPerSec",
     "actual": "0",
-    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = miner@0.4/s；拐角 2 个 → 有效带长 31.56（derate 0.986，机器限速 ⇒ 只报告不折进判定）"
+    "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = miner@0.4/s；拐角 2 个 → 有效带长 33.56（derate 0.987，机器限速 ⇒ 只报告不折进判定）"
    }
   },
   {
@@ -132,8 +132,8 @@
  ],
  "errors": [],
  "beltSim": {
-  "tilesChecked": 32,
-  "fixedPoints": 32,
+  "tilesChecked": 34,
+  "fixedPoints": 34,
   "drift": [],
   "includesMachineNeighbors": true
  },
@@ -178,8 +178,8 @@
    "errors": 0,
    "failIds": [],
    "beltSim": {
-    "tilesChecked": 32,
-    "fixedPoints": 32,
+    "tilesChecked": 34,
+    "fixedPoints": 34,
     "drift": [],
     "includesMachineNeighbors": true
    }

@@ -7,7 +7,7 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     4,
+     1,
      -5
     ],
     "nodeId": "n0",
@@ -32,10 +32,10 @@
    "status": "pass",
    "evidence": {
     "cell": [
-     4,
+     1,
      -6
     ],
-    "nodeId": "belt@4,-6",
+    "nodeId": "belt@1,-6",
     "expected": "computeBelt(含机器邻居) 不动点 = 设计的 (r,rv)",
     "actual": "26/26 全是不动点；施工顺序合规",
     "note": "includesMachineNeighbors=true（邻居含机器 6 次、带子 46 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"

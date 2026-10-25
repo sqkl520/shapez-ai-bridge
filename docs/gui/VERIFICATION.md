@@ -362,7 +362,7 @@
 ## 截图与 F3（CDP 交互）
 
 <!-- BEGIN:sec-shots -->
-> 时间: 2026-10-22T02:04:23.937Z
+> 时间: 2026-10-22T09:04:16.673Z
 
 | 项 | 结果 | 判据 / 详情 | 证据 |
 |---|---|---|---|
@@ -371,7 +371,7 @@
 | SHOT/02-env-check | **PASS** | 环境检查步（clicked=true） | shapez · AI / 欢迎 / 控制台 / 设置 / v0.1.0 · mod 0.1.0 / EN / 欢迎 / 环境检查 / 安装 / 配置 / 启动 / 验证 / 环境检查 / 自动检测本机 Node、游戏目录、Mods 目录等。缺什么补什么。 / Node.js 运行时 / v26.12.1 / shapez.io 游戏目录 / D:\Steam\steamapps\common\shapez.io / Mods 目录可写 / C:\Users\Administrator\AppData\Roami… |
 | SHOT/03-install-done | **PASS** | 安装完成态（api install ok=true） | exit_code=0 |
 | SHOT/04-config | **PASS** | 配置页静帧 | shapez · AI / 欢迎 / 控制台 / 设置 / v0.1.0 · mod 0.1.0 / EN / 设置 / 桥接配置写在仓库根 bridge.config.json；保存后桥接在跑且端口/令牌变化时会自动重启。 / 桥接配置 / 桥接端口 / 默认 7777 / AI 与游戏通信的本地端口，仅监听 127.0.0.1 / 访问令牌（高级） / 留空 = 不启用鉴权；≥16 位更安全 / 快照目录 / 默认 ./snaps… |
-| SHOT/05-console-logs | **PASS** | console+日志（bridge start ok=true） | shapez · AI / 欢迎 / 控制台 / 设置 / v0.1.0 · mod 0.1.0 / EN / SHAPEZ.IO · AI BRIDGE / 已启动 / 等待游戏连接… 端口 7896 / 启动游戏 / 停止桥接 / 游戏 / 未运行 / 未连接 / MOD / 等待连接 / 桥接 / healthy :7896 / AI / 可接入 / 桥接服务 / 运行中 / 0:03uptime / 端口 / 7896 / PID / 20424 / 管理模式 / … |
+| SHOT/05-console-logs | **PASS** | console+日志（bridge start ok=true） | shapez · AI / 欢迎 / 控制台 / 设置 / v0.1.0 · mod 0.1.0 / EN / SHAPEZ.IO · AI BRIDGE / 已启动 / 等待游戏连接… 端口 7896 / 启动游戏 / 停止桥接 / 游戏 / 未运行 / 未连接 / MOD / 等待连接 / 桥接 / healthy :7896 / AI / 可接入 / 桥接服务 / 运行中 / 0:04uptime / 端口 / 7896 / PID / 9116 / 管理模式 / G… |
 | F/F3 | **PASS** | 杀后端后 UI 出现断开提示（横幅） | body_text=shapez · AI / 欢迎 / 控制台 / 设置 / v0.1.0 · mod 0.1.0 / EN / ! / 后端已断开 — GUI 后端已停止响应。请确认 gui/server.mjs 仍在运行。 / 重新连接 / SHAPEZ.IO · AI BRIDGE / 未启动 / 桥接未运行 —— 启动后 AI 可操作游戏 / 启动游戏 / 启动桥接 / 游戏 / 未知 / MOD / 未连接 / 桥接 / 未运行 / AI / 离线 / 桥接服务 / 已停止 / —… |
 
 计数: PASS=7 FAIL=0 BLOCKED=0
