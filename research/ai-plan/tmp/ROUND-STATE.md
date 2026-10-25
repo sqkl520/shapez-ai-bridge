@@ -1,81 +1,158 @@
-# 本轮真实状态（2026-10-26）
+# 2026-10-26 · 一轮自我纠错：我的读数全是假的
 
-## 世界现状
+## 一句话
 
-| 项 | 值 |
+这一轮最重要的产出不是新功能，是**发现我过去几小时的所有测量都建立在一个冻结的时钟上**。
+而冻结是我自己造成的。
+
+---
+
+## 1. 事故链
+
+我在测「L3 产线真实吞吐」时调了 `set_speed fast_forward` 想让测试快一点。
+之后 `obs.tick` 永远停在 `10190.8`，`act.step` 返回 `ticks_run: 0`，
+但 `place` / `delete` 都返回 ok。
+
+三种现象组合起来无法从外部区分，我先后猜错四个方向：
+- 窗口最小化 → 恢复窗口，无效
+- 页面不可见 → `pageVisible: true`，无效
+- 有对话框打开 → ESC 关掉一个对话框，仍无效
+- root 已销毁 → 依然能放置实体，不成立
+
+加诊断 RPC 之后一次定位。
+
+## 2. 根因（两层，都在游戏侧）
+
+### 2.1 `globalConfig.fastForwardSpeed` 从未定义
+
+```js
+// recon/upstream-full/src/js/game/time/fast_forward_game_speed.js:10
+getTimeMultiplier() { return globalConfig.fastForwardSpeed; }   // undefined
+```
+
+```js
+// recon/upstream-full/src/js/game/time/game_time.js:94
+this.logicTimeBudget += deltaMs * multiplier;   // NaN
+while (this.logicTimeBudget >= effectiveDelta)  // NaN >= x 恒假
+```
+
+预算变 `NaN` → 逻辑 tick 永远不跑 → `timeSeconds` 冻结。
+切回 `regular` 也救不回来（`NaN + 任何数 = NaN`）。
+
+### 2.2 只有 `regular` 注册进了序列化工厂
+
+```js
+// recon/upstream-full/src/js/game/game_speed_registry.js:4-8
+export function initGameSpeedRegistry() {
+    gGameSpeedRegistry.register(RegularGameSpeed);
+    // Others are disabled for now
+}
+```
+
+`paused` 和 `fast-forward` **不可序列化**。一旦它成为当前速度又被存档，
+读档时报：
+
+```
+serialization verify failed: Invalid class id: fast-forward (factory is gamespeed)
+```
+
+游戏随后判定 `Savegame is corrupt and can not be restored.`
+—— 界面上只说「存档损坏」，数据其实完好。
+
+## 3. 教训：诊断工具撒谎比没有工具更糟
+
+`debug_items` 读带子物品，连续错了两次：
+
+1. `BeltPath.items` 的元素是 `[距离, 物品]` 的 **pair**，不是物品。
+   我把 `items[i]` 直接交给 `getAsCopyableKey()`，返回 null →
+   永远报告「带上一个物品都没有」。
+2. 就算取到 `pair[1]`，也不能按 `items[i] ↔ entityPath[i]` 对应。
+   **物品不是一格一个**：按距接受端的累计距离排布，间距 `itemSpacingOnBelt = 0.63`。
+   7 格直带装 12 个物品是正常状态（=堵死），硬对格子会让超出格数的物品全变 null。
+3. 直带每格有效长度 1.0，转弯 0.78（`components/belt.js:6,70-72`）。
+
+我据「带子是空的」这个假读数，判断过产线正常。
+
+## 4. 修了什么
+
+| 改动 | 作用 |
 |---|---|
-| 关卡 | L4，目标 `RuRu----`，**0/70** |
-| 实体 | **1 个（只有 hub）** |
-| 库存 | CuCuCuCu 12 / ----CuCu 686 / RuRuRuRu 1974 / ----RuRu 4575 |
-| 升级 | belt L1, miner L1, processors L0, painting L0 |
+| `set_speed` 查 `gGameSpeedRegistry.hasId` | 未注册的速度直接 2002 拒绝，世界进不了坏状态 |
+| `set_speed` 校验 `getTimeMultiplier()` 是有限正数 | `NaN` / `0` 也拒绝 |
+| 预算被污染时归零 | 已坏的世界能救回来 |
+| `step` 推进 0 tick 时抛 2002 | 「世界死了」不能再伪装成「命令成功」 |
+| `debug_loop` | 一次读出所有门控条件 |
+| `debug_log` | 截获游戏 console（环形 300 条），反序列化失败的原文在此 |
+| `debug_speed_registry` | 看哪些速度真的注册了 |
+| `repair_save` | 把存档里未注册的速度 id 改回 regular，先备份，走游戏自己的序列化 |
+| `resources` | 读地下矿点分布（格数 / bbox / 每行连续段） |
+| `debug_items` 修正 | pair 解析 + 累计距离反算格子 |
 
-我把世界清空了，因为一直在试错重建，留下了一堆半截产线。
+`repair_save` 还踩了一个：salt 是 `globalConfig.info.file`，
+不是 `globalConfig.file.info.file` —— `read_write_proxy` 用的是
+`accessNestedPropertyReverse(globalConfig, ["file","info"])`，
+从数组尾部往回走。写错一个层级得到的校验和永远对不上。
 
-## 这一轮真正学到的（按价值排）
+## 5. 修好之后的真实读数（这才是第一次实测）
 
-### 1. `debug_items` 诊断改变了什么
+L4 存档 `cf469f75`，8 台矿机：
 
-新增的 RPC 能读出**带子上的物品**和**机器 ejector 槽里的物品**。第一次用就给出了答案：
+| 形状 | 实测 | 理论 | 达成率 |
+|---|---|---|---|
+| `RuRuRuRu`（4 矿机） | 1.20 /s | 1.6 /s | 75% |
+| `----CuCu`（4 矿机经切割） | 0.50 /s | 0.8 /s | 62% |
 
-```json
-miner(2,-8)     slot0 = "RuRuRuRu"  progress=1
-cutter(2,-10)   slot0 = "----RuRu"  progress=1
-                slot1 = "RuRu----"  progress=1
-belts with item: 0
-```
-
-**三台机器都产出完了，货全堵在 ejector 里。** 之前我一直以为"没产出"。
-
-进一步查到 `boundAcceptor: null` 的 path = 末端没有去处 = 货走不下去。
-这才是"要塞堵"的真正判据，以前完全没有这个观测手段。
-
-### 2. 我的时间基准错了 2 倍
-
-`step(3600)` 推进 **30 游戏秒**，不是 60。`root.time.now()` 单位是秒，tick rate 是 120/s。
-
-我按 `ticks/60` 换算，于是所有吞吐数据都高估一倍 —— 整个"两台矿机只跑出一台"的
-故事都是这个错误编出来的。改成直接读游戏时间后，单台矿机实测 **0.616/s**，
-与理论 0.6/s 吻合。
-
-教训：**测量工具本身要先被测量。**
-
-### 3. 切割机朝向的真实约束
-
-- `r=0`：输入南、输出北
-- `r=180`：输入北、输出南 —— **但输出会撞自己的送料带**（同一列，输入格正下方）
-
-所以"把切割机转过来朝向 hub"这个想法行不通。矿在 hub 北边时，
-`r=0` 的输出朝北（背向 hub），`r=180` 自撞。**只能横向绕行，或换矿位。**
-
-这是真实的几何约束，不是我的 bug。
-
-## 框架沉淀（已提交）
-
-| 文件 | 作用 |
-|---|---|
-| `src/agent/rules.mjs` | 攻略规则 + 源码复核（5 条全绿）+ 配比计算 |
-| `src/agent/assess.mjs` | 读局势 → 差距清单 → 按优先级排的动作 |
-| `src/agent/look.mjs` | 实机观测 → assess → 人类可读输出 |
-| `src/agent/grow.mjs` | 逐个矿机建线，第一处失败就停 |
-| `src/agent/build-line.mjs` | 完整产线规划（含验收：每段必须有 acceptor） |
-| mod `debug_items` | 读带子物品 + ejector 槽 + path 的 acceptor |
-
-`look.mjs` 的输出示例（真实数据）：
+**地图上有多少矿？**
 
 ```
-1 台矿机合计 0.6/s，只喂满 0.2 条带，闲置矿簇：RuRuRuRu 1/83
-[P2] add-machine：目标 RuRu---- 需要 cut，但没有任何接在矿机产线上的切割机
-[P3] grow-production：还差 70，约 117s，建议再加 2 台矿机
+CuCuCuCu   54 格
+red        48 格
+RuRuRuRu   44 格
+green      39 格
+总计      185 格
 ```
 
-它把 `add-machine` 排在加矿机**前面**，因为加矿机永远达不成切出来的形状。
+用了 8 台矿机，且全部挤在两小片：
+- 铜 `(-10..-7, 4..5)`
+- 钌 `(2..5, -8)`
 
-## 下一步该做什么
+**这就是用户说的「看起来在玩，其实什么都没建」的量化版本。**
 
-**不是继续手推几何。** 我这一轮在坐标上失败了至少 6 次。
+## 6. 铜线的结构性缺陷
 
-真正该做的是让**编译器**处理这些约束 —— 它已经有 `planChannel` 能解任意端点，
-缺的是"多矿机 + 工序 + 汇流"的组合。而这些恰恰是 `CgScScCg` 那类多矿机目标需要的。
+`boundAcceptor === null` = 这条带子的末端没有出口。实测：
 
-具体切口：`place()` 现在对每个矿机独立求解，没有"这一列放矿机、下一列放切割机"的分层意识。
-补上「按工序分列」的布局规则，比继续手摆格子有价值。
+```
+path 0: len=7 items=6  [-10,3]..[-10,-3]  ← 死路
+path 1: len=7 items=5  [-9,3]..[-9,-3]   ← 死路
+```
+
+`(-10,4)` 和 `(-9,4)` 两台矿机产出的铜永远堆在带子上，进不了 balancer。
+4 台矿机里只有 2 台的产量真正汇流。
+
+对照：
+```
+y= 5   (-8)M (-7)M
+y= 4   (-10)M (-9)M (-8)belt (-7)belt
+y=-3   (-10)belt (-9)belt/3 (-8)BALANCER (-6..-3)belt →
+```
+
+`(-9,-3)` 是 `code=3`（直线），没有转向 → 它继续往上？不，它往上走完了。
+带子是向上的（`r=0`），所以 `(-10,-3)` 和 `(-9,-3)` 的下一格是 `(-10,-4)` / `(-9,-4)`，
+那里什么都没有 → 断头。
+
+而 `(-8,*)` 和 `(-7,*)` 两列正常汇入 balancer `(-8,-3)`。
+
+**所以这 4 台矿机实际上是 2+2 并联，只有 `(-8)` 那一列在给 hub 供货。**
+左边两台是纯粹的浪费。
+
+## 7. 下一步（按重要性）
+
+1. **先别加新东西，先让 L4 这一关真的过。**
+   `RuRu----` 需要把 4 台钌矿机 → 切割机 → hub，现在缺切割机。
+   而现有钌线占了那 4 格矿。做法不是推倒，是**在线上插一个 cutter**。
+2. **增量改造能力**（一直缺的那个）：读出已有拓扑，在第 N 格断开，
+   插入一个工序，再接回去。这是「旧厂永不拆，它是升级供应链」的最低要求。
+3. **让每台矿机都接到主线**：现在编译器会产出死路，说明 `place.mjs`
+   的布线校验没有覆盖「每条带子必须有 acceptor」。
+   这是一个应该能在离线阶段就报错的硬约束，不该等到实机才看出来。
