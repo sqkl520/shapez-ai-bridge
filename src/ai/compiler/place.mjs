@@ -858,9 +858,77 @@ export function planMultiInputRows(nodes, ctx) {
 	return { rowY, colX };
 }
 
+/**
+ * 一层里是否有"需要绕线"的算子（切割/堆叠/上色/旋转）。
+ *
+ * 行距是**给两层之间的走线**留的，不是给单层留的 —— 所以判定必须同时看
+ * 上层和下层。只有两边都是纯管道（矿机 / balancer）时，才能把行距压到最小：
+ * 矿机与 balancer 都是 2×1、输入输出逐格对齐，中间留 1 行就够走直线。
+ * 一旦某一边有切割机这类带废料槽的机器，就必须回到默认 rowGap，
+ * 否则废料带没有地方接 trash（实测：矿机层与 cutter 层只隔 2 行时，
+ * V9-unused-outlet 会因为 9 个候选全被占而失败）。
+ *
+ * @param {Array<any>} list
+ */
+function levelNeedsRouting(list) {
+	for (const n of list) {
+		if (!n) continue;
+		if (n.op === "balance" || n.op === "mine") continue;
+		return true;
+	}
+	return false;
+}
+
+/**
+ * 两层之间的行距。
+ * @param {Array<any>} upper 上面那一层
+ * @param {Array<any>} lower 下面那一层（可能是 undefined = 最后一层）
+ * @param {number} fallback
+ */
+export function rowPitchBetween(upper, lower, fallback) {
+	if (levelNeedsRouting(upper)) return fallback;
+	if (lower && levelNeedsRouting(lower)) return fallback;
+	// 两边都是纯管道：取各自的最小需要（矿机 2，balancer 1），至少 1
+	const a = rowPitchForLevel(upper, 1);
+	const b = lower ? rowPitchForLevel(lower, 1) : 1;
+	return Math.max(1, a, b);
+}
+
+/**
+ * 每一层需要多少行空隙 —— 按该层里"最占空间的算子"决定。
+ *
+ * 注意：本函数只回答"这一层自身至少要多高"，不回答层间距。
+ * 层间距用 `rowPitchBetween`，因为它必须同时看上下两层。
+ *
+ * @param {Array<any>} list 同层节点
+ * @param {number} fallback 该层没有可判定节点时用的默认行距
+ */
+export function rowPitchForLevel(list, fallback) {
+	const pitchOf = n => {
+		if (!n) return null;
+		if (n.op === "balance") return 1;   // 纯管道：只要不重叠，相邻即可
+		if (n.op === "mine") return 2;      // 2×1，上面还要留一格给输出带
+		return null;
+	};
+	let best = null;
+	for (const n of list) {
+		const p = pitchOf(n);
+		if (p !== null && (best === null || p > best)) best = p;
+	}
+	// 一层里只要还有切割/堆叠/上色这类"要绕线"的节点，就必须回到默认行距 ——
+	// 不能用同层别的同类管道节点把它压扁。
+	for (const n of list) {
+		if (n && pitchOf(n) === null) return fallback;
+	}
+	return best === null ? fallback : Math.max(1, best);
+}
+
 export function assignRows(levels, opts = {}) {
 	const rowGap = opts.rowGap === undefined ? ROW_H : opts.rowGap;
 	const colGap = opts.colGap === undefined ? COL_GAP : opts.colGap;
+	/* 按算子类别取行距。`uniformRowGap:true` 可以强制回到"每层都付 rowGap"
+	   的老行为 —— 金网格测试和需要逐字节稳定输出的路径用它锁住旧布局。 */
+	const uniformRows = opts.uniformRowGap === true;
 	const minerX = opts.minerX || null;   // 矿机层 nodeId → [x,y]（给了 seed 且多矿机时由 planMinerColumns 求）
 	const multiX = opts.multiX || null;   // 多输入机器 nodeId → x（WP2：必须 >= 所有上游的带子列）
 	const rowY = opts.rowY || null;       // nodeId → y 覆盖（WP2：把喂 slot1 的父往下让半排）
@@ -880,9 +948,21 @@ export function assignRows(levels, opts = {}) {
 		}
 	};
 	const rows = [];
-	const baseY = (levels.length - 1) * rowGap;
+	/* 层间距：第 li 层与第 li+1 层之间的空隙。
+	   注意这是"两层之间"，所以要同时看上下两层（见 rowPitchBetween 的注释）。 */
+	const pitches = levels.map((list, li) =>
+		uniformRows ? rowGap : rowPitchBetween(list, levels[li + 1], rowGap));
+	const prefix = [];
+	{
+		let acc = 0;
+		for (let i = 0; i < levels.length; i++) {
+			prefix.push(acc);
+			acc += pitches[i];
+		}
+	}
+	const baseY = prefix.length ? prefix[prefix.length - 1] : 0;
 	levels.forEach((list, li) => {
-		const y = baseY - li * rowGap;
+		const y = baseY - prefix[li];
 		list.forEach(n => { n.row = y; n.y = y; });
 		rows.push({ level: li, y, nodeIds: list.map(n => n.id) });
 	});
