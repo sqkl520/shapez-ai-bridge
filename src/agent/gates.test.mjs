@@ -277,48 +277,60 @@ console.log("\n── ⑤ gateG6b：死路判据不能看 itemsOnPath ──");
     ok(/自己报错/.test(g6be.reason), 'beltError 的 reason 明确说「debug_items 自己报错」', g6be.reason);
 }
 
-console.log("\n── ⑥ gateG6：用两次 total 差值算本线速率 ──");
+console.log("\n── ⑥ gateG6：用游戏时间片算速率 ──");
 {
-    /* 签名：(intent, t1, t2, p1, p2, expectedRate)
-       · t 是**游戏时钟**（秒），不是 window_seconds（那是常量，dt 恒 0）
-       · 速率 = (delivered_total[2] - delivered_total[1]) / (t2 - t1)
-         —— 用 total 的差，不用 per_sec 的差，也不用全厂的绝对值。
-         全厂绝对值会被老线掩盖（L4 全厂 4.18/s 恒过阈值而新线零产出）。
-         per_sec 的差会把稳态线（1.0→1.0）判死（差是 0）。 */
-    const mk = (tot, rate) => ({
-        delivered_total: { "RuRu----": tot },
-        delivered_per_sec: { "RuRu----": rate, CuCuCuCu: 999 },
-        produced_per_sec: {},
+    /* 签名：(intent, prod1, prod2, expectedRate)
+     *
+     * ★ 为什么不用 delivered_total / delivered_per_sec ★
+     * 桥里这两个字段是**最近 N 片之和**，不是累计计数器：
+     *   切片轮转时最老的一片掉出去 → 值会下降（实测 55→48）
+     *   最后一片永远在累积 → 窗口里的量偏少
+     * 拿两次的差算速率等于在两个滑动窗口上求斜率。实测后果：
+     * 健康线（真实 1.08/s，阈值 0.32）7 组配对里 6 组判红。
+     *
+     * 正确数据源是 `delivered_slices`：游戏自己的时间片，每片固定 10 秒，
+     * 片内是投递计数。取已完成的片（排除最后那个累积中的）算平均即可。 */
+    const mkSlices = (perShape, nSlices) => ({
+        slice_seconds: 10,
+        delivered_slices: Array.from({ length: nSlices }, () => ({ "RuRu----": perShape })),
+        produced_slices: Array.from({ length: nSlices }, () => ({ "RuRu----": perShape })),
     });
 
-    // 达标：100→160 秒（60s）内交付 60 个 = 1.0/s，理论 0.4 的 80% = 0.32
-    ok(gateG6(intent, 100, 160, mk(0, 0), mk(60, 1.0), 0.4).ok, "60s 内交付 60 个 = 1.0/s ≥ 0.32 → 绿");
+    // 每片 10 个 × 5 片（末片排除）= 4 片 × 10 = 40 个 / 40 秒 = 1.0/s
+    ok(gateG6(intent, mkSlices(10, 6), mkSlices(10, 6), 0.4).ok,
+        "每片 10 个（1.0/s）≥ 阈值 0.32 → 绿");
 
-    // ★ 回归锁：稳态（两次速率相同）必须绿 ★
-    //   旧实现比"速率之差"，1.0→1.0 的差是 0 → 被判死。
-    ok(gateG6(intent, 100, 160, mk(100, 1.0), mk(160, 1.0), 0.4).ok,
-        "稳态交付（per_sec 相同但 total 在涨）→ 绿（回归锁：看 total 不看 per_sec 差）");
+    // ★ 回归锁：稳态「每片数量相同」必须绿 ★
+    //   旧实现比"per_sec 之差"，1.0→1.0 的差是 0 → 被判死。
+    ok(gateG6(intent, mkSlices(10, 6), mkSlices(10, 6), 0.4).ok,
+        "两次采样片值相同（稳态）→ 绿（回归锁：看片内容不看差值）");
 
-    // ★ 回归锁：老线已达标不能掩盖新线零产出 ★
-    //   全厂绝对值口径下，只要 hub 里有人交这个形状就会绿。
-    ok(!gateG6(intent, 100, 160, mk(5000, 5.0), mk(5000, 5.0), 0.4).ok,
-        "老线一直在交（total 不变）→ 红（回归锁：不看全厂绝对值）");
+    // ★ 回归锁：老线在交不能掩盖新线零产出 ★
+    //   全厂绝对值口径下，只要有人交这个形状就会绿。
+    //   这里"零产出"表现为片里没有目标形状的键。
+    const noTarget = {
+        slice_seconds: 10,
+        delivered_slices: Array.from({ length: 6 }, () => ({ CuCuCuCu: 50 })),
+        produced_slices: Array.from({ length: 6 }, () => ({ CuCuCuCu: 50 })),
+    };
+    ok(!gateG6(intent, noTarget, noTarget, 0.4).ok,
+        "片里没有目标形状（老线在交别的）→ 红（回归锁：不看全厂）");
 
-    // 时钟没前进
-    ok(!gateG6(intent, 100, 100, mk(0, 0), mk(60, 1.0), 0.4).ok, "t1===t2（时钟没走）→ 红");
+    // 产量不足：每片 2 个 = 0.2/s < 0.32
+    ok(!gateG6(intent, mkSlices(2, 6), mkSlices(2, 6), 0.4).ok,
+        "每片 2 个（0.2/s）< 0.32 → 红（arm E）");
 
-    // 产量不足：60s 只交 12 个 = 0.2/s
-    ok(!gateG6(intent, 100, 160, mk(0, 0), mk(12, 0.2), 0.4).ok, "0.2/s < 0.32/s 阈值 → 红（arm E）");
+    // 片数不足
+    ok(!gateG6(intent, mkSlices(10, 1), mkSlices(10, 1), 0.4).ok,
+        "只有 1 片（还在累积）→ 红，无法算速率");
 
     // ★ 形状键从未出现 → 不能当成"速率为 0" ★
-    //   intent.goal 与游戏 hash 格式不符时会走到这里，报"速率 0"会指向错误方向。
-    const noKey = { delivered_total: { CuCuCuCu: 10 }, delivered_per_sec: {}, produced_per_sec: {} };
-    const g6x = gateG6(intent, 100, 160, noKey, noKey, 0.4);
-    ok(!g6x.ok, "形状键从未出现 → 红", g6x.reason);
+    const g6x = gateG6(intent, noTarget, noTarget, 0.4);
     ok(/从未出现/.test(g6x.reason), '形状键缺失的 reason 明确说「从未出现」不是「速率 0」', g6x.reason);
 
     // ★ 理论值为 0 时不能 fail-open ★
-    ok(!gateG6(intent, 100, 160, mk(0, 0), mk(60, 1.0), 0).ok, "理论值 0 → 红，不许 fail-open（回归锁）");
+    ok(!gateG6(intent, mkSlices(10, 6), mkSlices(10, 6), 0).ok,
+        "理论值 0 → 红，不许 fail-open（回归锁）");
 }
 
 console.log("\n" + "═".repeat(60));

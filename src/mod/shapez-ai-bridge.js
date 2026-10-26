@@ -829,12 +829,23 @@ class Mod extends shapez.Mod {
                 }
             }
             out.pathCount = paths.length;
+            /* `paths.slice(0, 40)` 会截断。调用方需要知道"我看到的是不是全部"，
+               所以除了 actualPathCount 还给出 truncated 标记 —— 但这里只报数，
+               由调用方决定怎么用（P7 的 G6b 靠 pathCount 判断能否下结论）。 */
+            out.truncatedPaths = paths.length > 40;
             out.paths = paths.slice(0, 40).map(p => ({
                 cells: (p.entityPath || []).map(ent => {
                     const sme = ent && ent.components && ent.components.StaticMapEntity;
                     return sme ? [sme.origin.x, sme.origin.y] : null;
                 }).filter(Boolean),
-                itemsOnPath: Math.floor((p.items || []).length / 2),
+                /* ★ items 的每个元素**已经是一个 [距离, 物品] 二元组** ★
+                   BeltPath 的 schema 是 types.array(types.pair(ufloat, item))，
+                   所以 `items.length` 就是物品个数。
+                   这里曾经写成 `Math.floor(length / 2)` —— 那会把物品数腰斩：
+                   实测 16 条路径里 12 条不一致，path 0 有 12 个物品报 6，
+                   带 1 个物品的路径报 0（"塞满显示成空"的同族症状）。
+                   G6b 刻意不看这个值，但 evidence 会照抄，读它的人会得到错数据。 */
+                itemsOnPath: (p.items || []).length,
                 spacingToFirstItem: typeof p.spacingToFirstItem === "number"
                     ? Math.round(p.spacingToFirstItem * 1000) / 1000 : null,
                 boundAcceptor: p.boundAcceptor ? (p.boundAcceptor.entity && p.boundAcceptor.entity.components
