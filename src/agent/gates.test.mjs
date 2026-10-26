@@ -297,6 +297,16 @@ console.log("\n── ④ gateG4：uid 消失与 code 不符都必须红 ──"
     }).byUid.values()]);
     ok(!gateG4(rich, before, cutterWrongRot).ok, "cutter 的 rot 不符 → 红（保留原 cutter 反例）");
 
+    // ★ 必红：贴后多出来一个实体（数量不符）★
+    /* 红队 §8.2(3)：`added` 的数量从没与 `expected` 比过 —— mutant
+       「新增集合退化为全集」存活。多贴和少贴一样是事故：少贴线不通，
+       多贴凭空多出占位、堵后面的通道。 */
+    const extraEnt = { uid: 999999, x: 100, y: 100, code: 1, type: "belt", r: 0 };
+    const tooMany = mkSnap([oldEnt, ...richAfterOnly.byUid.values(), extraEnt]);
+    const g4extra = gateG4(rich, before, tooMany);
+    ok(!g4extra.ok, "贴后多出蓝图里没有的实体 → 红（数量必须等于 expected）", g4extra.reason);
+    ok(/新增 \d+ 个实体，蓝图只有 \d+ 个/.test(g4extra.reason), "G4 多贴时 reason 说明数量不符", g4extra.reason);
+
     // 反例：既有 uid 消失（A3 静默销毁）
     const vanishedList = rich.entities.map((e, i) => ({
         uid: 100 + i, x: rich.anchor[0] + e.dx, y: rich.anchor[1] + e.dy, code: e.code, type: e.kind, r: e.rot,
@@ -608,6 +618,15 @@ console.log("\n── ⑧ gateG7：游戏 path 的逐格邻接必须等于声明
     ok(ga.evidence.sample.some(v => v.field === "in" && v.got === "disconnected-from-belt"),
         "诊断指出 j1 的上游带子不在同一 path 的 prev（disconnected-from-belt）", ga.evidence.sample);
 
+    /* 必红 1b: **中间格**的 in 声明与 path 的实际 prev 不符。
+       这是 G7 的 in 向中段判据：与"链首是机器"和"not_on_any_path"都不是同一条分支。 */
+    const midIn = JSON.parse(JSON.stringify(rich));
+    midIn.entities.find(e => e.nodeId === "g5").inDir = "bottom";
+    const gmi = gateG7flow(midIn, healthy);
+    ok(!gmi.ok, "G7：中间格声明的 inDir 与 path 的实际 prev 不符 → 红", gmi.reason);
+    ok(gmi.evidence.sample.some(v => v.field === "in" && v.want === "bottom" && v.got === "left"),
+        "诊断指出中间格的入向 want=bottom got=left", gmi.evidence.sample);
+
     // 必红 2: 矿机出口的带子反向（L4 的"机器侧"形态）
     const reversed = JSON.parse(JSON.stringify(rich));
     const g0 = reversed.entities.find(e => e.nodeId === "g0");
@@ -699,6 +718,15 @@ console.log("\n── ⑨ gateG8：蓝图推导的带子链必须与游戏 path 
     const gs = gateG8chains(L4, split);
     ok(!gs.ok, "同一批格子被拆成两条 path → 红（链划分敏感，不只是集合覆盖）", gs.reason);
 
+    /* 必红 2b: 同一批格子、顺序相反。
+       若把链签名做成"集合相等"（排序后 join），这条会假绿 —— 而链的方向正是全部意义所在。 */
+    const reversedPath = {
+        pathCount: 1,
+        paths: [{ cells: healthy.paths[0].cells.slice().reverse(), itemsOnPath: 0, boundAcceptor: [4, 0] }],
+    };
+    const grp = gateG8chains(rich, reversedPath);
+    ok(!grp.ok, "G8：格子集合相同但顺序相反 → 红（链比对对顺序敏感）", grp.reason);
+
     // 必红 3: 缺 inDir/outDir → 不许 fail-open
     const noDir = JSON.parse(JSON.stringify(rich));
     delete noDir.entities.find(e => e.nodeId === "g3").outDir;
@@ -715,6 +743,13 @@ console.log("\n── ⑨ gateG8：蓝图推导的带子链必须与游戏 path 
     const noBelts = { goal: "RuRu----", anchor: [0, 0], entities: [E("miner", 0, 0, 0, 0, 7, null, "top", "m0")] };
     const gb = gateG8chains(noBelts, healthy);
     ok(!gb.ok, "G8：蓝图没有带子 → 红（真空绿保护）", gb.reason);
+
+    /* 必红 5b: 链**尾**缺 outDir —— 链头/中段的方向齐全，只有尾格声明不全。
+       旧实现若在"尾格没有 outDir"时静默把链截断，链仍然能推出来，于是假绿。 */
+    const tailNoOut = JSON.parse(JSON.stringify(rich));
+    delete tailNoOut.entities.find(e => e.nodeId === "g7").outDir;
+    const gtn = gateG8chains(tailNoOut, healthy);
+    ok(!gtn.ok, "G8：链尾格缺 outDir → 红（不许 fail-open 把链截断）", gtn.reason);
 
     // 必红 6: 蓝图里的链闭环 —— 蓝图自身不成立
     const cyc = {
@@ -972,6 +1007,45 @@ const loadFlow = () => import(new URL(`./gates.mjs?flow=${++flowSeq}`, import.me
     eq(calls.filter(c => c.method === "debug_items").length, 0, "--plan 时不采 debug_items");
     ok(out.results.some(r => r.id === "G2'-source" && r.ok), "--plan 也会跑 G2'");
     ok(out.results.some(r => r.id === "G3-clearance" && r.ok), "--plan 跑到 G3");
+}
+
+{
+    /* 流程 5：G7/G8 在 t+0 红 → 立刻回滚，不等 t+60s ★回归锁★
+       事故的真实损失形态不是"没发现"，是"发现了以后线还在那儿"：
+       旧版只有 G4 失败才回滚，G7/G8 红了只记一笔继续跑完 100 游戏秒，
+       于是 108 个实体留在存档里、粗料灌进 hub，ok:false 最后才交出去。
+       这条锁住"t+0 看到流向错就当场收回"。 */
+    const far = mkL4([0, 0]);
+    const { out, calls } = await withMockBridge(async (h, state, snap) => {
+        const old = [{ kind: "belt", dx: 60, dy: 60, code: 1, rot: 0 }];
+        h.obsBefore = snap(far, old);
+        // 忠实贴着（G4 会绿），但游戏把 j0 的方向接错了 —— G7/G8 在 t+0 就该看见
+        h.obsAfter = snap(far, [...old, ...far.entities]);
+        h.prodBefore = { slice_seconds: 10, delivered_slices: Array.from({ length: 6 }, () => ({})), produced_slices: [] };
+        h.prodAfter = h.prodBefore;
+        // items0 = 贴完立刻的拓扑：j0 的出口指向右边而不是声明要的 top
+        const bad0 = l4HealthyItems(far);
+        for (const p of bad0.paths) {
+            const i = (p.cells || []).findIndex(c => c[0] === far.anchor[0] + far.entities.find(e => e.nodeId === "j0").dx
+                && c[1] === far.anchor[1] + far.entities.find(e => e.nodeId === "j0").dy);
+            if (i >= 0 && i + 1 < p.cells.length) {
+                // 把后继挪到右边一格，制造"出向是 right 不是 top"
+                p.cells[i + 1] = [p.cells[i][0] + 1, p.cells[i][1]];
+            }
+        }
+        h.items0 = bad0;
+        h.items1 = bad0;
+        const mod = await loadFlow();
+        return mod.runGates(far, { apply: true });
+    });
+    ok(out.ok === false, "流程：G7/G8 在 t+0 红 → runGates 红");
+    ok(out.results.some(r => (r.id === "G7-flow@t0" || r.id === "G8-chains@t0") && !r.ok),
+        "t+0 就有 G7 或 G8 报了红（不是等到 t+60s）");
+    ok(out.results.some(r => r.id === "rollback" && r.ok), "t+0 红后执行了回滚（不再只记一笔）");
+    ok(!out.results.some(r => r.id === "G6b-connectivity"), "t+0 红后早退，不再等 60 秒跑 G6b");
+    ok(!out.results.some(r => r.id === "G6-behavior"), "t+0 红后早退，不再跑 G6");
+    const del = calls.filter(c => c.method === "act" && c.params.op === "bulk_delete");
+    eq(del.filter(d => !d.params.dry_run).length, 1, "真删只发生一次");
 }
 
 /* ═════════ 汇总 ═════════ */
