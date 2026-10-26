@@ -279,35 +279,36 @@ console.log("\n── ⑤ gateG6b：死路判据不能看 itemsOnPath ──");
 
 console.log("\n── ⑥ gateG6：用游戏时间片算速率 ──");
 {
-    /* 签名：(intent, prod1, prod2, expectedRate)
+    /* ★ 签名：(intent, p1基线, p2采样, expectedRate)
      *
-     * ★ 为什么不用 delivered_total / delivered_per_sec ★
-     * 桥里这两个字段是**最近 N 片之和**，不是累计计数器：
-     *   切片轮转时最老的一片掉出去 → 值会下降（实测 55→48）
-     *   最后一片永远在累积 → 窗口里的量偏少
-     * 拿两次的差算速率等于在两个滑动窗口上求斜率。实测后果：
-     * 健康线（真实 1.08/s，阈值 0.32）7 组配对里 6 组判红。
+     * 两个关键点：
      *
-     * 正确数据源是 `delivered_slices`：游戏自己的时间片，每片固定 10 秒，
-     * 片内是投递计数。取已完成的片（排除最后那个累积中的）算平均即可。 */
+     * 1. 数据源用 `delivered_slices`（每片固定 10 秒的计数），
+     *    不用 `delivered_total` —— 桥里那个是"最近 N 片之和"，会随轮转下降。
+     *
+     * 2. 必须和**贴前基线**比。只看全厂绝对速率会被老线掩盖：
+     *    给同一目标加第二条线时，老线自己的产出就超过阈值，新线没通也绿。
+     *    判据是 rate_after >= max(target, baseline + target*0.5)，
+     *    即"贴后要比贴前明显更高"，否则判"无法归因"。 */
     const mkSlices = (perShape, nSlices) => ({
         slice_seconds: 10,
         delivered_slices: Array.from({ length: nSlices }, () => ({ "RuRu----": perShape })),
         produced_slices: Array.from({ length: nSlices }, () => ({ "RuRu----": perShape })),
     });
+    // 贴前零产出（基线为 0）
+    const zero = mkSlices(0, 6);
 
-    // 每片 10 个 × 5 片（末片排除）= 4 片 × 10 = 40 个 / 40 秒 = 1.0/s
-    ok(gateG6(intent, mkSlices(10, 6), mkSlices(10, 6), 0.4).ok,
-        "每片 10 个（1.0/s）≥ 阈值 0.32 → 绿");
+    // 每片 10 个（1.0/s）≥ 阈值 0.32，且基线是 0 → 绿
+    ok(gateG6(intent, zero, mkSlices(10, 6), 0.4).ok,
+        "每片 10 个（1.0/s）≥ 阈值 0.32，基线为 0 → 绿");
 
-    // ★ 回归锁：稳态「每片数量相同」必须绿 ★
-    //   旧实现比"per_sec 之差"，1.0→1.0 的差是 0 → 被判死。
-    ok(gateG6(intent, mkSlices(10, 6), mkSlices(10, 6), 0.4).ok,
-        "两次采样片值相同（稳态）→ 绿（回归锁：看片内容不看差值）");
+    // ★ 回归锁：稳态「每片数量相同且贴前也是同样」必须红 ★
+    //   贴前就在交、贴后没变化 → 无法证明这条线有贡献。
+    const steady = mkSlices(10, 6);
+    ok(!gateG6(intent, steady, steady, 0.4).ok,
+        "贴前就在交、贴后没变化 → 红（回归锁：不能证明本线有贡献）");
 
-    // ★ 回归锁：老线在交不能掩盖新线零产出 ★
-    //   全厂绝对值口径下，只要有人交这个形状就会绿。
-    //   这里"零产出"表现为片里没有目标形状的键。
+    // ★ 回归锁：老线在交、新线零贡献 → 红 ★
     const noTarget = {
         slice_seconds: 10,
         delivered_slices: Array.from({ length: 6 }, () => ({ CuCuCuCu: 50 })),
@@ -317,19 +318,25 @@ console.log("\n── ⑥ gateG6：用游戏时间片算速率 ──");
         "片里没有目标形状（老线在交别的）→ 红（回归锁：不看全厂）");
 
     // 产量不足：每片 2 个 = 0.2/s < 0.32
-    ok(!gateG6(intent, mkSlices(2, 6), mkSlices(2, 6), 0.4).ok,
+    ok(!gateG6(intent, zero, mkSlices(2, 6), 0.4).ok,
         "每片 2 个（0.2/s）< 0.32 → 红（arm E）");
 
     // 片数不足
-    ok(!gateG6(intent, mkSlices(10, 1), mkSlices(10, 1), 0.4).ok,
+    ok(!gateG6(intent, zero, mkSlices(10, 1), 0.4).ok,
         "只有 1 片（还在累积）→ 红，无法算速率");
+
+    // ★ 刚读档：全空片 → undecidable，不是"零产出" ★
+    const empty = { slice_seconds: 10, delivered_slices: Array.from({ length: 6 }, () => ({})), produced_slices: [] };
+    const g6e = gateG6(intent, empty, empty, 0.4);
+    ok(!g6e.ok, "全空片 → 红", g6e.reason);
+    eq(g6e.undecidable, true, '全空片标 undecidable（不是「零产出」）');
 
     // ★ 形状键从未出现 → 不能当成"速率为 0" ★
     const g6x = gateG6(intent, noTarget, noTarget, 0.4);
     ok(/从未出现/.test(g6x.reason), '形状键缺失的 reason 明确说「从未出现」不是「速率 0」', g6x.reason);
 
     // ★ 理论值为 0 时不能 fail-open ★
-    ok(!gateG6(intent, mkSlices(10, 6), mkSlices(10, 6), 0).ok,
+    ok(!gateG6(intent, zero, mkSlices(10, 6), 0).ok,
         "理论值 0 → 红，不许 fail-open（回归锁）");
 }
 
