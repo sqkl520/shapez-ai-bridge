@@ -2296,10 +2296,22 @@ class Mod extends shapez.Mod {
                 if (info && info.metaInstance && info.metaInstance.getDimensions) {
                     try {
                         const dim = info.metaInstance.getDimensions(info.variant);
-                        const w = it.rot === 90 || it.rot === 270 ? dim.y : dim.x;
-                        const h = it.rot === 90 || it.rot === 270 ? dim.x : dim.y;
+                        const r = ((Number(it.rot) || 0) % 360 + 360) % 360;
+                        const w = r === 90 || r === 270 ? dim.y : dim.x;
+                        const h = r === 90 || r === 270 ? dim.x : dim.y;
+                        /* ★ 180/270 要朝**负方向**长 ★
+                           游戏的 getTileSpaceBounds（static_map_entity.js:127-141）里
+                           origin 是锚点：rot=0 向右下长，rot=180 向左上长。
+                           这里原来无条件 `wx + cx` —— 于是 rot=180/270 的机器
+                           右半/下半格完全不参与占用检查，dry_run 会给假绿。
+                           实测：rot=180 的 cutter 左半格压着既有带子时，
+                           dry_run 报 would_delete=0 / destroys=0，真贴后旧 uid 消失。
+                           （gates.mjs 的 entityCells 从一开始就是负方向，两处模型不一致。） */
+                        const ox = (r === 180 || r === 270) ? -(w - 1) : 0;
+                        const oy = (r === 180 || r === 270) ? -(h - 1) : 0;
                         for (let cx = 0; cx < w; cx++) for (let cy = 0; cy < h; cy++) {
-                            if (!(cx === 0 && cy === 0)) cells.push([wx + cx, wy + cy]);
+                            if (cx === 0 && cy === 0) continue;
+                            cells.push([wx + ox + cx, wy + oy + cy]);
                         }
                     } catch (e) { /* 尺寸拿不到则只查 origin */ }
                 }
