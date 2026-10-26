@@ -232,10 +232,24 @@ export async function gateClock(probeTicks = 600) {
     evidence.tick_after = loop2.tick;
     evidence.tick_delta = +advanced.toFixed(3);
 
-    if (!(advanced > 0)) {
+    /* ★ 下界，不只是 > 0 ★
+       游戏主循环在两次 RPC 之间自己也会走一点点（实测 0.025~0.067 游戏秒）。
+       所以 `advanced > 0` 在 step 完全失效时也能满足 —— 那个下界等于没有。
+       要求至少走完请求量的 60%：正常情况 step(600) 会走满 5 秒，
+       半冻结（只走 0.01）和完全冻结（只走环境 tick）都会被抓出来。 */
+    const expectedSec = probeTicks / 120;              // 120 tick = 1 游戏秒
+    const minSec = expectedSec * 0.6;
+    evidence.expected_seconds = +expectedSec.toFixed(3);
+    evidence.min_seconds = +minSec.toFixed(3);
+
+    if (!(advanced >= minSec)) {
         return {
-            ok: false, reason: `推进了 ${probeTicks} tick 但时间只走了 ${advanced} —— 时钟没有真的在走`,
+            ok: false,
+            reason: `请求推进 ${probeTicks} tick（${expectedSec.toFixed(2)} 游戏秒），`
+                + `实际只走了 ${advanced.toFixed(3)} 秒（低于 ${minSec.toFixed(2)} 的下界）`
+                + ` —— 时钟没有真的在走`,
             evidence,
+            hint: "环境本身的少量 tick 不该被当成推进成功",
         };
     }
     return { ok: true, reason: null, evidence };
