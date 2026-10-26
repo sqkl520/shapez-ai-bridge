@@ -434,14 +434,20 @@ export function gateG6b(intent, items, opts = {}) {
         paths_returned: (items.paths || []).length,
     };
 
-    /* 桥对 paths 做了 `slice(0, 40)`。工厂里路径超过 40 条时，目标线可能根本
-       没被返回 —— 那时"没覆盖"不代表"带子没连上"，而是"我们没看到"。
-       这种情况必须显式说出来，不能当成红，否则会误导去修一条本来没问题的线。 */
-    if (evidence.paths_returned >= 40 && uncovered.length > 0) {
+    /* 桥对 paths 做了 `slice(0, 40)`，但同时给了 `pathCount`（未截断的总数）。
+       两者不等 ⇒ 我们看到的只是前 40 条 ⇒ "没覆盖"不代表"没连上"，
+       而是"我们没看到"。这种情况必须显式说出来，不能当成红 ——
+       否则会误导去修一条本来没问题的线。 */
+    const totalPaths = typeof items.pathCount === "number" ? items.pathCount : null;
+    const truncated = totalPaths !== null && totalPaths > evidence.paths_returned;
+    evidence.total_path_count = totalPaths;
+    evidence.truncated = truncated;
+
+    if (truncated && uncovered.length > 0) {
         return {
             ok: false,
-            reason: `debug_items 返回了 ${evidence.paths_returned} 条路径（已达上限 40），`
-                + `目标线有 ${uncovered.length} 格没出现在其中 —— 可能是被截断了，无法判定`,
+            reason: `debug_items 只返回了 ${evidence.paths_returned}/${totalPaths} 条路径（被截断），`
+                + `目标线有 ${uncovered.length} 格没出现在其中 —— 无法判定`,
             evidence: { ...evidence, sample: uncovered.slice(0, 5) },
             hint: "缩小 debug_items 的 region 到目标线附近再试",
         };

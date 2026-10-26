@@ -174,6 +174,25 @@ console.log("\n── ⑤ gateG6b：死路判据不能看 itemsOnPath ──");
     };
     const g6b2 = gateG6b(intent, uncovered);
     ok(!g6b2.ok, "有带子格没被覆盖 → 红（arm E）", g6b2.reason);
+
+    /* ★ 回归锁：paths 被截断时不能当成"没连上" ★
+       桥对 paths 做 slice(0,40)，但给了 pathCount（未截断总数）。
+       两者不等 = 我们没看到全部 ⇒ 结论必须是"无法判定"，不是"红"。
+       否则会误导去修一条本来没问题的线。 */
+    const truncatedItems = {
+        paths: [{ cells: [[10, 11]], itemsOnPath: 0, boundAcceptor: [10, 13] }],
+        pathCount: 55,                       // 55 条但只返回 1 条
+    };
+    const g6b3 = gateG6b(intent, truncatedItems);
+    ok(!g6b3.ok, 'paths 被截断 → 红（无法判定）', g6b3.reason);
+    ok(/截断/.test(g6b3.reason), '截断的 reason 里明确说「截断」，不是「没连上」', g6b3.reason);
+    eq(g6b3.evidence.truncated, true, "evidence.truncated 为 true");
+
+    // 对照：没截断时同样数据应报"没覆盖"
+    const notTruncated = { ...truncatedItems, pathCount: 1 };
+    const g6b4 = gateG6b(intent, notTruncated);
+    ok(!g6b4.ok, '未截断时 → 红（没覆盖）', g6b4.reason);
+    ok(/没出现在任何路径/.test(g6b4.reason), '未截断的 reason 是「没覆盖」', g6b4.reason);
 }
 
 console.log("\n── ⑥ gateG6：用游戏时钟算时长，比的是速率不是增量 ──");
