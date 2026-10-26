@@ -124,6 +124,42 @@ rot=180 反向: 蓝图压 belt 左半格 → destroys=1                  ✓
 
 ---
 
+## 自查发现的一个逻辑漏洞
+
+自己跑第三轮验收要点时发现：G6b 的截断检查原来是
+
+```js
+if (truncated && uncovered.length > 0) { /* 判无法判定 */ }
+```
+
+当目标线**恰好被覆盖**时它会绿。但截断意味着我们没看到全部路径——
+排在 40 条之外的那段可能属于目标线，而且它的 `boundAcceptor` 也许是 null。
+
+**"恰好看到的部分没问题"不等于"整条线没问题"。**
+
+改成只要 `truncated` 就判 undecidable，不管覆没覆盖。
+
+新增回归锁：
+```
+被截断（但看到的部分全覆盖）→ 红 + undecidable
+```
+
+## 关于 tick_rate 的一个确认
+
+担心"60% 下界 + 动态 tick_rate 会假红"，查了源码：
+
+```js
+// dynamic_tickrate.js:109-114
+// if (this.averageFps > desiredFps * 0.9) {
+//     this.increaseTickRate();
+// } else if (this.averageFps < desiredFps * 0.7) {
+//     this.decreaseTickRate();
+// }
+```
+
+**调用被注释掉了。** 实测 `average_fps` 在 31~36 波动而 `tick_rate` 稳定 120。
+所以在 1.5.6 里 tick_rate 是恒定的，我的判据安全。
+
 ## 三轮验收的评分轨迹
 
 | 轮次 | 评分 | 主要发现 |
