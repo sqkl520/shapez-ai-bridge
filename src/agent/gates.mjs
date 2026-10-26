@@ -65,13 +65,25 @@ async function rpc(method, params = {}, timeoutMs = 120000) {
 
 /* ══════════════════════════ 几何工具（纯函数，可单测） ══════════════════════════ */
 
-/** 各建筑变体的占地。数字来自 op-templates.mjs 的 footprint。 */
+/**
+ * 各建筑变体的占地。数字来自 op-templates.mjs 的 footprint，并经实机核对。
+ *
+ * ⚠️ 与 obs 的关系（这是本文件最容易搞错的一件事）：
+ *   `obs.entities[]` 对每台建筑只报**一条**记录，坐标是它的 origin。
+ *   物理占地是另一回事 —— cutter 2×1 占两格，但 obs 里只有一条。
+ *   实测：cutter@(-8,-11) 在 obs 里只有 uid 10036 一条；往 (-7,-11) 放 belt
+ *   会被游戏拒绝（那里被 cutter 占着），但 obs 里查不到任何实体。
+ *
+ *   所以「按格比对」和「按实体比对」是两个不同的判据，不能混用：
+ *     · 判断"蓝图贴全了没有" → 按**实体**（obs 一条 = 一台）
+ *     · 判断"这块地能不能放" → 按**格**（要问 dry_run，不能只看 obs）
+ */
 const FOOTPRINT = {
     hub: [4, 4],
-    miner: [2, 1],
+    miner: [1, 1],        // ← 实测：四台矿机可以在 (2..5,-8) 相邻共存
     cutter: [2, 1],
     cutter_quad: [4, 1],
-    rotater: [2, 1],
+    rotater: [1, 1],      // ← 继承默认 Vector(1,1)，没有 getDimensions override
     stacker: [2, 1],
     mixer: [2, 1],
     painter: [2, 1],
@@ -243,21 +255,24 @@ export async function gateG3(intent, dryRun) {
 /* ══════════════════════════ G4 落地 ══════════════════════════ */
 
 /**
- * 贴进去的东西必须与蓝图逐格一致，而且**不能有既有的 uid 消失**。
+ * 贴进去的东西必须与蓝图一致，而且**不能有既有的 uid 消失**。
  *
- * 两条判据：
- *   1. 没有任何 uid 消失 —— 这是"静默销毁"的兜底。
- *      paste 落在既有带子上会把带子换成新的，旧的 uid 就没了，
- *      而游戏返回 `failed: []`，零报告。
- *   2. 每个新增实体在它该在的格上、code 与 rot 都对。
+ * ★ 这里必须按**实体**比对，不能按格 ★
  *
- * 刻意**不看** paste 返回的 `applied` / `failed` —— 它们不可信。
+ * `obs.entities[]` 对每台建筑只报一条记录（坐标是 origin），
+ * 而 cutter 2×1、hub 4×4 物理上占多格。按格比对会要求"每一格都有一条 obs"，
+ * 那是游戏永远不会给的东西 —— 任何含 cutter/hub 的蓝图都会被判死。
+ * 实测就是这个错误：忠实模拟的 after（与蓝图完全一致）也被判红，
+ * 理由是"2 个预期格上没有新实体（miner 右半、cutter 右半）"。
+ *
+ * 所以：
+ *   · 实体层面：intent.entities 每条 → after 里必须有一条新实体在同一 origin、同 code
+ *   · 格层面：留给 G3（dry_run 问的是真实世界），这里不做
  */
 export function gateG4(intent, before, after) {
-    const expectCells = expectedCells(intent);
     const evidence = {};
 
-    // 1) 有没有 uid 消失
+    // 1) 有没有 uid 消失 —— A3 静默销毁的兜底
     const gone = [];
     for (const uid of before.byUid.keys()) {
         if (!after.byUid.has(uid)) gone.push(uid);
@@ -276,25 +291,30 @@ export function gateG4(intent, before, after) {
         };
     }
 
-    // 2) 每个预期格上是否有对应的新实体
+    // 2) 按实体比对：蓝图里每一台在 after 里都要有对应的一条新实体
+    const a = intent.anchor;
     const added = [];
     for (const [uid, e] of after.byUid) if (!before.byUid.has(uid)) added.push(e);
     evidence.added_entities = added.length;
+    evidence.expected_entities = (intent.entities || []).length;
 
     const addedByCell = new Map(added.map(e => [`${e.x},${e.y}`, e]));
     const missing = [], wrongCode = [];
-    for (const [k, want] of expectCells) {
-        const got = addedByCell.get(k);
-        if (!got) { missing.push(k); continue; }
-        if (got.code !== want.code) wrongCode.push({ cell: k, want: want.code, got: got.code });
+    for (const ent of intent.entities || []) {
+        const wx = a[0] + ent.dx, wy = a[1] + ent.dy;
+        const got = addedByCell.get(`${wx},${wy}`);
+        if (!got) { missing.push({ cell: [wx, wy], nodeId: ent.nodeId, kind: ent.kind }); continue; }
+        if (got.code !== ent.code) {
+            wrongCode.push({ cell: [wx, wy], nodeId: ent.nodeId, want: ent.code, got: got.code });
+        }
     }
-    evidence.missing_cells = missing.length;
+    evidence.missing_entities = missing.length;
     evidence.wrong_code = wrongCode.length;
 
     if (missing.length) {
         return {
             ok: false,
-            reason: `${missing.length} 个预期格上没有新实体（首处 ${missing[0]}）`,
+            reason: `${missing.length} 台实体没有出现在预期位置（首处 ${JSON.stringify(missing[0])}）`,
             evidence: { ...evidence, sample: missing.slice(0, 5) },
             hint: "蓝图没贴全 —— 可能是 apply 中途失败",
         };
@@ -302,7 +322,7 @@ export function gateG4(intent, before, after) {
     if (wrongCode.length) {
         return {
             ok: false,
-            reason: `${wrongCode.length} 格的 code 与蓝图不符（首处 ${JSON.stringify(wrongCode[0])}）`,
+            reason: `${wrongCode.length} 台的 code 与蓝图不符（首处 ${JSON.stringify(wrongCode[0])}）`,
             evidence: { ...evidence, sample: wrongCode.slice(0, 5) },
         };
     }
@@ -312,38 +332,58 @@ export function gateG4(intent, before, after) {
 /* ══════════════════════════ G6 行为 ══════════════════════════ */
 
 /**
- * 目标形状的交付速率必须达到理论值的 80%。
+ * 目标形状的产出速率必须达到理论值的 80%。
  *
- * 关键：**按形状算增量**，不能用全厂总量。
- * 全厂口径下，一座正在跑的老工厂会把新线的失败完全掩盖 ——
- * 实测 L4 全厂 4.18/s 恒过阈值，而新线一个货都没产出。
+ * ★ 两个实现陷阱，都是实测踩出来的 ★
  *
- * 理论值 = 该线矿机数 × 单台速率（带升级倍率）。
- * 保守起见只用矿机算：矿机是最慢的一环，也是我们唯一能精确数的。
+ * 1. **不能拿 `window_seconds` 算时间差**
+ *    桥的 `observeProduction` 里是 `windowSecs = wantSlices * sliceSecs` —— 常量。
+ *    两次采样拿到的 window_seconds 永远相同，`dt` 恒为 0。
+ *    用它会得到"窗口没前进 → 时钟可能停了"，而那是一条**假红**，
+ *    理由还是错的（G-1 刚刚证明时钟在走）。
+ *    时间差必须用**游戏时钟**：两次 `debug_loop.tick` 之差（单位是游戏秒）。
+ *
+ * 2. **不能拿"速率之差"比"速率阈值"**
+ *    `delivered_per_sec` 已经是速率（每条时间片的稳态值）。
+ *    两条稳态线（1.0 → 1.0）的"差"是 0，会被判死 —— 而它完全正常。
+ *    正确判据是**第二次采样的速率**必须达到阈值，不是它的增量。
+ *
+ * @param {number} t1,t2  两次采样时的游戏时钟（秒）
+ * @param {object} p2     后一次 production（速率已经收敛）
  */
-export function gateG6(intent, prod1, prod2, expectedRatePerSec) {
+export function gateG6(intent, t1, t2, p2, expectedRatePerSec) {
     const shape = intent.goal;
-    const dt = (prod2.window_seconds || 0) - (prod1.window_seconds || 0);
-    const dDelivered = ((prod2.delivered_per_sec || {})[shape] || 0) - ((prod1.delivered_per_sec || {})[shape] || 0);
+    const dt = (t2 || 0) - (t1 || 0);
+    const rate = (p2.delivered_per_sec || {})[shape] || 0;
 
     const evidence = {
-        shape, window_delta_sec: dt,
-        delivered_rate_before: (prod1.delivered_per_sec || {})[shape] || 0,
-        delivered_rate_after: (prod2.delivered_per_sec || {})[shape] || 0,
+        shape,
+        elapsed_sec: +dt.toFixed(2),
+        delivered_rate: rate,
         expected_rate: expectedRatePerSec,
     };
 
     if (!(dt > 0)) {
-        return { ok: false, reason: `两次采样之间窗口没前进（dt=${dt}）—— 时钟可能停了`, evidence };
+        return { ok: false, reason: `两次采样之间游戏时钟没前进（Δt=${dt}）—— 无法判断`, evidence };
     }
-    const target = expectedRatePerSec * 0.8;
-    evidence.threshold = +target.toFixed(3);
-    evidence.actual = +dDelivered.toFixed(3);
-
-    if (dDelivered < target) {
+    if (!(expectedRatePerSec > 0)) {
+        /* 理论值为 0 时不能判绿也不能判红 —— 那是"没有可比基准"，
+           静默 fail-open 会让一道闸变成摆设（0 台矿机的蓝图会永远绿）。 */
         return {
             ok: false,
-            reason: `${shape} 的交付速率 ${dDelivered.toFixed(3)}/s < 阈值 ${target.toFixed(3)}/s`
+            reason: "理论产出为 0（蓝图里没有矿机？）—— 没有可比基准，无法判定行为",
+            evidence,
+            hint: "要么补矿机，要么显式声明该线不产出",
+        };
+    }
+
+    const target = expectedRatePerSec * 0.8;
+    evidence.threshold = +target.toFixed(3);
+
+    if (rate < target) {
+        return {
+            ok: false,
+            reason: `${shape} 的交付速率 ${rate.toFixed(3)}/s < 阈值 ${target.toFixed(3)}/s`
                 + `（理论 ${expectedRatePerSec}/s 的 80%）`,
             evidence,
             hint: "只诊断不回滚：回滚会把可能能跑的线拆掉",
@@ -391,7 +431,21 @@ export function gateG6b(intent, items, opts = {}) {
         uncovered_cells: uncovered.length,
         dead_end_paths: deadEnds.length,
         dead_ends: deadEnds.slice(0, 6),
+        paths_returned: (items.paths || []).length,
     };
+
+    /* 桥对 paths 做了 `slice(0, 40)`。工厂里路径超过 40 条时，目标线可能根本
+       没被返回 —— 那时"没覆盖"不代表"带子没连上"，而是"我们没看到"。
+       这种情况必须显式说出来，不能当成红，否则会误导去修一条本来没问题的线。 */
+    if (evidence.paths_returned >= 40 && uncovered.length > 0) {
+        return {
+            ok: false,
+            reason: `debug_items 返回了 ${evidence.paths_returned} 条路径（已达上限 40），`
+                + `目标线有 ${uncovered.length} 格没出现在其中 —— 可能是被截断了，无法判定`,
+            evidence: { ...evidence, sample: uncovered.slice(0, 5) },
+            hint: "缩小 debug_items 的 region 到目标线附近再试",
+        };
+    }
 
     if (deadEnds.length) {
         const d = deadEnds[0];
@@ -550,12 +604,15 @@ export async function runGates(intent, opts = {}) {
     const g6b = gateG6b(intent, items);
     record("G6b-connectivity", g6b);
 
-    // ── G6 行为（两个窗口）──
-    const prod1 = await rpc("production", { slices: 3 });
+    // ── G6 行为（用**游戏时钟**算时间差，不用 window_seconds）──
+    const loop1 = await rpc("debug_loop", {});
+    const t1 = loop1.tick;
     await rpc("act", { op: "step", ticks: opts.sampleTicks || 3600 }).catch(() => null);
-    const prod2 = await rpc("production", { slices: 3 });
+    const loop2 = await rpc("debug_loop", {});
+    const t2 = loop2.tick;
+    const prod2 = await rpc("production", { slices: 5 });
     const upgrades = (before.goal && before.goal.upgrade_levels) || {};
-    const g6 = gateG6(intent, prod1, prod2, expectedRateOf(intent, upgrades));
+    const g6 = gateG6(intent, t1, t2, prod2, expectedRateOf(intent, upgrades));
     record("G6-behavior", g6);
 
     const ok = results.filter(r => !r.diagnosticOnly && !r.skipped).every(r => r.ok);
