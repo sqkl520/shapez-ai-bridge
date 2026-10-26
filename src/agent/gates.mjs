@@ -234,11 +234,18 @@ export async function gateClock(probeTicks = 600) {
     evidence.tick_delta = +advanced.toFixed(3);
 
     /* ★ 下界，不只是 > 0 ★
-       游戏主循环在两次 RPC 之间自己也会走一点点（实测 0.025~0.067 游戏秒）。
+       游戏主循环在两次 RPC 之间自己也会走一点点（实测 0.025~0.067 游戏秒），
        所以 `advanced > 0` 在 step 完全失效时也能满足 —— 那个下界等于没有。
-       要求至少走完请求量的 60%：正常情况 step(600) 会走满 5 秒，
-       半冻结（只走 0.01）和完全冻结（只走环境 tick）都会被抓出来。 */
-    const expectedSec = probeTicks / 120;              // 120 tick = 1 游戏秒
+       要求至少走完请求量的 60%。
+
+       ⚠️ tickRate 不能硬编码成 120 ★
+       游戏的 refreshRateOptions 是 ["30","60","120","180","240"]（application_settings.js:125）。
+       第一个版本写死 `probeTicks / 120`，在 240Hz 上会把"请求 600 tick"
+       算成"应该走 5 秒"，而实际 240Hz 只需 2.5 秒 —— 健康游戏被判死，
+       然后触发拆线。必须用**游戏自己报告的** tick_rate。 */
+    const tickRate = Number.isFinite(loop.tick_rate) && loop.tick_rate > 0 ? loop.tick_rate : 120;
+    evidence.tick_rate = tickRate;
+    const expectedSec = probeTicks / tickRate;
     const minSec = expectedSec * 0.6;
     evidence.expected_seconds = +expectedSec.toFixed(3);
     evidence.min_seconds = +minSec.toFixed(3);
@@ -246,7 +253,7 @@ export async function gateClock(probeTicks = 600) {
     if (!(advanced >= minSec)) {
         return {
             ok: false,
-            reason: `请求推进 ${probeTicks} tick（${expectedSec.toFixed(2)} 游戏秒），`
+            reason: `请求推进 ${probeTicks} tick（按 ${tickRate}Hz 算应走 ${expectedSec.toFixed(2)} 游戏秒），`
                 + `实际只走了 ${advanced.toFixed(3)} 秒（低于 ${minSec.toFixed(2)} 的下界）`
                 + ` —— 时钟没有真的在走`,
             evidence,
@@ -456,38 +463,33 @@ export function gateG4(intent, before, after) {
 /* ══════════════════════════ G6 行为 ══════════════════════════ */
 
 /**
- * 目标形状的产出必须达到理论值的 80%。
+ * 目标形状的产出必须达到理论值的 80%，**而且必须是这条线带来的**。
  *
- * ★ 为什么不能用 `delivered_total` 或 `delivered_per_sec` ★
+ * ★ 数据源：`delivered_slices` ★
+ * 桥里 `delivered_total` / `delivered_per_sec` 都是"最近 N 片之和"，不是累计计数器：
+ * 切片轮转时最老的一片掉出去 → 值会下降（实测 55→48）；最后一片永远在累积 → 偏少。
+ * 拿两次的差算速率等于在两个滑动窗口上求斜率。实测：健康线 7 组配对里 6 组判红。
  *
- * 桥里这两个字段都是**最近 N 片之和**（`grab = slice(-wantSlices)` 然后 `sum`），
- * 不是累计计数器。名字叫 total 但语义是"滚动窗口和"：
- *   · 每次切片轮转，最老的一片掉出去 → 值会**下降**（实测出现过 55→48）
- *   · 最后一片永远在累积中 → 窗口里的量偏少
- * 拿两次的差算速率，等于在两个都在滑动的窗口上求斜率，噪声全进来了。
- * 实测后果：健康线（真实 1.08/s，阈值 0.32）在 7 组配对里 6 组判红。
+ * `delivered_slices` 是每片固定 `slice_seconds` 的投递计数，直接算平均就与滑窗无关。
  *
- * ★ 正确的数据源是 `delivered_slices` ★
- * 那是游戏自己的时间片，每片固定 `slice_seconds`（正式版 10 秒），
- * 每片里是该片内的**投递计数**。取已完成的片（排除最后那个正在累积的），
- * 直接算平均值就是速率，与窗口滑动无关。
+ * ★ 但光平均还不够 —— 那是全厂口径 ★
+ * 给同一目标加第二条线时，老线自己的产出就超过阈值，新线一根带子都没通也会绿。
+ * 所以必须和**贴前的基线**比：新线要么把速率抬上去，要么本身就在达标线上。
  *
- * @param {object} prod1,prod2  两次 production（用 slices 字段，不用 total）
+ * @param {object} p1  贴前采样的 production（基线；null 表示没取到）
+ * @param {object} p2  采样窗口结束时的 production
  */
-export function gateG6(intent, prod1, prod2, expectedRatePerSec) {
+export function gateG6(intent, p1, p2, expectedRatePerSec) {
     const shape = intent.goal;
     const evidence = { shape, expected_rate: expectedRatePerSec };
 
-    /* 取后一次采样的已完成片（最后一片在累积，排除）。
-       前一次的片用来交叉验证"确实在稳定产出"，但不参与速率计算 ——
-       两片窗口的平均已经足够稳，硬要相减反而引入滑窗噪声。 */
-    const slices = Array.isArray(prod2.delivered_slices) ? prod2.delivered_slices : null;
-    const sliceSecs = prod2.slice_seconds;
+    const slices2 = Array.isArray(p2.delivered_slices) ? p2.delivered_slices : null;
+    const sliceSecs = p2.slice_seconds;
 
-    if (!slices || slices.length < 2) {
+    if (!slices2 || slices2.length < 2) {
         return {
             ok: false,
-            reason: `production 没有足够的 delivered_slices（${slices ? slices.length : 0} 片）—— 无法算速率`,
+            reason: `production 没有足够的 delivered_slices（${slices2 ? slices2.length : 0} 片）—— 无法算速率`,
             evidence,
             hint: "时间片每 10 游戏秒才生成一片，至少等 20 秒再采样",
         };
@@ -497,30 +499,48 @@ export function gateG6(intent, prod1, prod2, expectedRatePerSec) {
     }
 
     // 排除最后一片（还在累积）
-    const done = slices.slice(0, slices.length - 1);
-    const counts = done.map(s => (s || {})[shape] || 0);
-    const total = counts.reduce((a, b) => a + b, 0);
-    const rate = total / (done.length * sliceSecs);
+    const done2 = slices2.slice(0, slices2.length - 1);
 
-    evidence.slices_used = done.length;
+    /* 刚读档：构造时会 push 满 statisticsGraphSlices 个空片，
+       所以 slices.length 永远够，"片数不足"这个保护不会触发。
+       全部片都空 ⇒ 还没跑起来，不是"零产出"，是"没有数据"。 */
+    const anyData = done2.some(s => s && Object.keys(s).length > 0);
+    if (!anyData) {
+        return {
+            ok: false,
+            undecidable: true,
+            reason: `最近 ${done2.length} 片全是空的 —— 游戏刚加载，还没积累到可判定的数据`,
+            evidence,
+            hint: "先推进至少 30 游戏秒让片填满",
+        };
+    }
+
+    const avgRate = (slices) => {
+        const done = slices.slice(0, slices.length - 1);
+        if (!done.length) return null;
+        const counts = done.map(s => (s || {})[shape] || 0);
+        const total = counts.reduce((a, b) => a + b, 0);
+        return { rate: total / (done.length * sliceSecs), total, counts, n: done.length };
+    };
+
+    const after = avgRate(slices2);
+    evidence.slices_used = after.n;
     evidence.slice_seconds = sliceSecs;
-    evidence.counts_per_slice = counts;
-    evidence.total_in_window = total;
-    evidence.rate = +rate.toFixed(3);
+    evidence.counts_per_slice = after.counts;
+    evidence.total_in_window = after.total;
+    evidence.rate = +after.rate.toFixed(3);
 
     /* 形状键从未出现 —— 不能当成"速率为 0"。
        intent.goal 是字符串，production 的键是游戏的 getHash()，
-       两者格式差一点（半格前缀、大小写）查表就是 0，
-       而"线是死的"和"键打错了"要修的地方完全不同。 */
-    const anyKnownShape = done.some(s => s && Object.keys(s).length > 0);
-    const appearsAnywhere = done.some(s => s && shape in s)
-        || (prod2.produced_slices || []).some(s => s && shape in s);
-    if (!appearsAnywhere && anyKnownShape) {
+       两者格式差一点查表就是 0，而"线是死的"和"键打错了"要修的地方完全不同。 */
+    const appears = done2.some(s => s && shape in s)
+        || (p2.produced_slices || []).some(s => s && shape in s);
+    if (!appears) {
         const known = new Set();
-        for (const s of done) for (const k of Object.keys(s || {})) known.add(k);
+        for (const s of done2) for (const k of Object.keys(s || {})) known.add(k);
         return {
             ok: false,
-            reason: `形状 ${shape} 在最近 ${done.length} 片里从未出现过 —— 无法判定`
+            reason: `形状 ${shape} 在最近 ${after.n} 片里从未出现过 —— 无法判定`
                 + `（intent.goal 与游戏 hash 格式不符？片里见过的形状：${[...known].slice(0, 6).join("/") || "无"}）`,
             evidence: { ...evidence, known_shapes: [...known].slice(0, 12) },
             hint: "先确认 intent.goal 与 obs.goal.requirement.shape 是同一个字符串",
@@ -538,10 +558,40 @@ export function gateG6(intent, prod1, prod2, expectedRatePerSec) {
     const target = expectedRatePerSec * 0.8;
     evidence.threshold = +target.toFixed(3);
 
-    if (rate < target) {
+    /* ★ 贴前基线 ★
+       新线要么把全厂速率抬上去（增量），要么全厂本来就在达标线上且这条线不是唯一来源。
+       判据：rate_after >= max(target, baseline + target*0.5)
+         · 基线很低（0）时 → 只要达到 target 即可
+         · 基线已经很高（老线在交）时 → 必须比基线再多出至少半个阈值，
+           否则无法证明新线有贡献，宁可判"被既有产能掩盖"。
+       这在语义上是"不能证明就算没通过"，而不是"看起来达标就通过"。 */
+    let baselineRate = null;
+    if (p1 && Array.isArray(p1.delivered_slices) && p1.delivered_slices.length >= 2) {
+        const b = avgRate(p1.delivered_slices);
+        if (b) baselineRate = b.rate;
+    }
+    evidence.baseline_rate = baselineRate === null ? null : +baselineRate.toFixed(3);
+
+    if (baselineRate !== null) {
+        const mustExceed = Math.max(target, baselineRate + target * 0.5);
+        evidence.must_exceed = +mustExceed.toFixed(3);
+        if (after.rate < mustExceed) {
+            return {
+                ok: false,
+                reason: `贴前全厂已在交 ${baselineRate.toFixed(3)}/s，贴后 ${after.rate.toFixed(3)}/s`
+                    + `（需要至少 ${mustExceed.toFixed(3)}/s 才能证明这条线有贡献）`
+                    + ` —— 被既有产能掩盖，无法归因`,
+                evidence,
+                hint: "老线在交同一个形状时，光看全厂速率说明不了新线通没通；看 G6b 的连通性",
+            };
+        }
+        return { ok: true, reason: null, evidence };
+    }
+
+    if (after.rate < target) {
         return {
             ok: false,
-            reason: `${shape} 最近 ${done.length} 片平均 ${rate.toFixed(3)}/s（共 ${total} 个）`
+            reason: `${shape} 最近 ${after.n} 片平均 ${after.rate.toFixed(3)}/s（共 ${after.total} 个）`
                 + ` < 阈值 ${target.toFixed(3)}/s（理论 ${expectedRatePerSec}/s 的 80%）`,
             evidence,
             hint: "只诊断不回滚：回滚会把可能能跑的线拆掉",
@@ -705,8 +755,14 @@ export async function rollback(before, after, opts = {}) {
     const region = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 
     // 准入校验：region 内不能有贴前就存在的实体
+    /* 准入校验：region 内不能有**仍然活着的**既有实体。
+       ⚠️ 不能拿 before.byUid 直接判 —— A3 场景里那个旧实体已经被 paste 销毁了，
+       但它的记录还在 before 里。把它当 outsider 会导致"回滚计划 ok、执行必拒"，
+       而那正是最需要回滚的场景（新实体恰好覆盖旧实体的格）。
+       判据改成：在 before 里存在 **且** 在 after 里仍然存在。 */
     const outsiders = [];
     for (const [uid, e] of before.byUid) {
+        if (!after.byUid.has(uid)) continue;       // 已被销毁的不算外人
         if (e.x >= region[0] && e.x <= region[2] && e.y >= region[1] && e.y <= region[3]) {
             outsiders.push({ uid, cell: [e.x, e.y], type: e.type });
         }
@@ -845,6 +901,11 @@ export async function runGates(intent, opts = {}) {
     if (!record("G-1-clock", clock)) return { ok: false, results, fatal: true };
 
     const before = await snapshot();
+
+    /* 贴前基线：G6 需要它来区分"这条线带来的产出"和"老线本来就在交"。
+       取不到就用 null，G6 会退回"只看绝对速率"的口径并在 evidence 里标注。 */
+    let baselineProd = null;
+    try { baselineProd = await rpc("production", { slices: 6 }); } catch (e) { /* 新存档可能还没数据 */ }
     if (before.truncated) {
         results.push({ id: "G0-context", ok: false, reason: "obs 被截断（实体超过 max_entities），任何判据都不可靠" });
         return { ok: false, results, fatal: true };
@@ -930,7 +991,18 @@ export async function runGates(intent, opts = {}) {
         });
         return { ok: false, results };
     }
-    const items = await rpc("debug_items", { region: [-80, -80, 80, 80] });
+
+    /* debug_items 的区域要**覆盖 intent 的 bbox**，不能写死。
+       写死 [-80,80]² 时，贴到范围外的蓝图会得到空覆盖 → G6b 假红。 */
+    const ax = intent.anchor[0], ay = intent.anchor[1];
+    const pad = 12;
+    const xs = (intent.entities || []).map(e => ax + e.dx);
+    const ys = (intent.entities || []).map(e => ay + e.dy);
+    const region = [
+        Math.min(ax, ...xs) - pad, Math.min(ay, ...ys) - pad,
+        Math.max(ax, ...xs) + pad, Math.max(ay, ...ys) + pad,
+    ].map(Math.round);
+    const items = await rpc("debug_items", { region });
     const g6b = gateG6b(intent, items);
     record("G6b-connectivity", g6b);
 
@@ -947,9 +1019,8 @@ export async function runGates(intent, opts = {}) {
         return { ok: false, results };
     }
     const prod2 = await rpc("production", { slices: 6 });
-    const prod1 = await rpc("production", { slices: 6 });
     const upgrades = (before.goal && before.goal.upgrade_levels) || {};
-    const g6 = gateG6(intent, prod1, prod2, expectedRateOf(intent, upgrades));
+    const g6 = gateG6(intent, baselineProd, prod2, expectedRateOf(intent, upgrades));
     record("G6-behavior", g6);
 
     const ok = results.filter(r => !r.diagnosticOnly && !r.skipped).every(r => r.ok);
