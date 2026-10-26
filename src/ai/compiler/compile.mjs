@@ -1168,6 +1168,19 @@ function regionClear(ctx) {
  *   hub 4×4 错位 ⇒ 假 fail / 假 pass 都会出现（NOTES.md 坐标口径）。
  * @param {[number,number]} hubLocal @param {number|null} seed
  */
+/**
+ * 把 CLI `--world` 的实体列表包成 siteStage 认得的 `world` 形状。
+ *
+ * 存在的理由见 siteStage 调用点：`input.world` 与 `input.worldEntities` 是同一份
+ * 数据的两个入口，而 siteStage 只认前者。返回 null 表示"没有世界快照"（保持旧行为），
+ * 与"给了一份空的世界"要区分开 —— 空数组按无快照处理，因为 CLI 的过滤可能把
+ * 一条本该识别的观测全滤掉，那时报"世界干净"是错的。
+ */
+function entitiesToWorld(entities) {
+	if (!Array.isArray(entities) || entities.length === 0) return null;
+	return { entities };
+}
+
 export function hubWorldState(hubLocal, seed, entities) {
 	/* `entities`（可选）：既有工厂的实机观测。给了就**照抄**进来 —— place() 会把它们铺成
 	   占位，新产线于是真的避开它们（P1-4 增量对接）。
@@ -1479,7 +1492,15 @@ function compileInner(input) {
 	     ctx.entityRect = entsLocal 的 min/max（局部系）—— 判"落点矩形"用实体跨度，不用 layout.bbox
 	                     （P3 的 bbox 含 hub 16 格 ⇒ 拿它判 hub 相交恒假，见 designEntityRect 头注） */
 	const site = siteStage(layoutLocal, {
-		seed, world: input.world || null, range: input.range, origin: normalizeOrigin(input.origin), region: input.region,
+		// ★ `input.world` 与 `input.worldEntities` 是同一份数据的两条入口：
+		//   · 库调用方习惯传 `world:{entities:[...]}`；
+		//   · CLI 的 `--world` 只填 `worldEntities`（cli.mjs 的 .map 产物）。
+		// 此前这里只读 `input.world`，于是 **CLI 路径下 siteStage 恒收到 world=null**，
+		// `regionClear()` 恒返回 true —— "世界不干净就拒绝" 那道闸在 README 让人走的
+		// 唯一路径上从来没执行过（实测：181 实体的 world 传进去仍然是 no-resource-in-range，
+		// 而不是 no-site-large-enough）。两条入口在这里合流，别再分叉。
+		seed, world: input.world || entitiesToWorld(input.worldEntities),
+		range: input.range, origin: normalizeOrigin(input.origin), region: input.region,
 		hubDesign: hubWorldIn.design, hubLocal, hub: hubWorldIn.world, entityRect: entityRectOf(entsLocal),
 	});
 	if (site.ok === false) { trace(stages, "siteStage", site); return bail(site); }
@@ -1578,6 +1599,9 @@ function compileInner(input) {
 		validatorVersion: VALIDATOR_VERSION, emittedVia: em.emitOpts.label,
 		solver: { argv: sv.argv, ops: sv.ops, stats: sv.stats, ms: sv.ms, known: sv.known },
 		seed, level: g.level, cutQuadAllowed: sv.cutQuadAllowed, channelOrder: rt.orderMode,
+		// 调用方没显式给 seed ⇒ 用的是 level-11 存档的默认值，在本存档上矿位可能是错的。
+		// 这只是个标记，不改编译行为（既有基线逐字节不变），由 CLI 负责把它说给用户听。
+		seedWasDefaulted: input.seedWasDefaulted === true,
 		gapTries: rt.gapTries, gap: { rowGap: rt.rowGap, colGap: rt.colGap },
 		minerCells: site.miners, demandPerSec: input.demandPerSec || 0,
 		cornerCostTiles: rt.route.cornerCostTiles, routeAttempts: rt.attempts,

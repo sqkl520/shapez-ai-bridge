@@ -94,7 +94,12 @@ export function parseArgv(argv) {
 	const input = {};
 	if (!goal) return { error: "缺 --goal（目标 shortKey，例 \"----CuCu\"）\n" + USAGE };
 	input.goal = goal;
+	const explicitSeed = val(argv, "--seed") !== undefined;
 	input.seed = num(val(argv, "--seed"), 43391);
+	// 默认种子是 **level-11 存档**的（DEFAULT_SEED 的来历见 world.mjs:369）。
+	// 在别的存档上用它，矿机会落到空地 —— 实测 current L4 存档的 22 格钌矿里
+	// 43391 只认 8 格，而编译照样 ok:true。所以没显式给 seed 时必须吵一声。
+	if (!explicitSeed) input.seedWasDefaulted = true;
 	const hub = cell(val(argv, "--hub"));
 	if (hub) input.hub = hub;
 	// --site：世界选址的搜索中心（默认原点）。与 --hub 不同：hub 是「已经建好的 hub 在哪」，
@@ -153,6 +158,11 @@ export function render(plan, handoff) {
 		}
 		if (handoff && handoff.ok === true) lines.push(`  交接件 → ${handoff.files.map(f => path.relative(REPO_ROOT, f)).join(", ")}`);
 		if (handoff && handoff.ok === false) lines.push(`  ⚠️ 交接件未写：${handoff.reason} ${handoff.hint || ""}`);
+		// 默认种子是 level-11 的。在别的存档上，矿机会落到空地上而编译照样 ok —— 吵一声。
+		if (plan.provenance && plan.provenance.seedWasDefaulted) {
+			lines.push(`  ⚠️ 用的是默认种子 ${plan.provenance.seed}（level-11 存档的值）。`);
+			lines.push(`     在别的存档上矿位会不对：先跑 mod 的 world_info RPC 拿真实 seed，再 --seed <n> 重编。`);
+		}
 	} else {
 		lines.push(`✗ ${plan.goal || "?"} → ok:false`);
 		lines.push(`  reason=${plan.reason}`);
