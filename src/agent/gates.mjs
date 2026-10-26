@@ -21,17 +21,28 @@
  * 所以这里只用三样东西当 oracle：
  *   · 游戏分配的 uid（G4）
  *   · 游戏自己的产量统计（G6）
- *   · 游戏运行时的实际连接关系（G6b）
+ *   · 游戏运行时的实际连接关系（G6b / G7 / G8）
  *
- * ## 五道闸
+ * ## 八道闸
  *
  *   G-1 时钟    —— 任何采样之前，先确认时钟在走
+ *   G2' 同源    —— paste 的载荷（blueprint）与 G4 的期望（entities）是同一张图（零写入）
  *   G3  净空    —— 落点不压既有实体、不销毁任何东西
  *   G4  落地    —— 贴进去的东西与蓝图逐格一致，且没有 uid 消失
  *   G6  行为    —— 目标形状的交付速率达到理论值的 80%
  *   G6b 连通    —— 目标线上每一段都有去处
+ *   G7  流向    —— 游戏 path 的逐格邻接方向 == 声明的 inDir/outDir（贴后 t+0 与 t+60s）
+ *   G8  链划分  —— 蓝图推出的带子链与游戏 path 逐格同序（贴后 t+0 与 t+60s）
  *
- * G0/G1/G2/G5/G7 降级为诊断信息，因为它们的判据与编译器同源，
+ * ★ 为什么必须有 G2' / G7 / G8 ★
+ * 2026-10-26 的 L4 事故里，G-1/G3/G4/G6b 全绿（G6 要等 100 游戏秒才红）。
+ * 根因是 G4 的期望值与被粘贴的载荷同源于 `plan.entities` —— 编译器把拐角算成直带时，
+ * 两边一起错，G4 拿错的期望去比游戏里忠实落地的错值 ⇒ 恒绿。
+ * G2' 把 blueprint 与 entities 钉在一起，G7/G8 把"蓝图说的图"与"游戏运行时的拓扑"
+ * 分开比 —— 三者中只有 G8 能在"intent 与 blueprint 都自洽但都错"时变红。
+ * 详见 research/ai-plan/M3-REDTEAM-L4.md。
+ *
+ * G0/G1/G2/G5 降级为诊断信息，因为它们的判据与编译器同源，
  * 独立信息量接近零（详见 research/ai-plan/M3-REVIEW.md）。
  *
  * ## 用法
@@ -44,6 +55,8 @@
  * 退出码：0 全绿 / 2 有闸红 / 1 致命（无法继续）
  */
 import fs from "node:fs";
+import { decodeBlueprint } from "../shared/blueprint.mjs";
+import { DIRV, OPP, beltEntry, beltExit, beltCode } from "../ai/belt-rules.mjs";
 
 const BASE = process.env.SHAPEZ_BRIDGE_URL || "http://127.0.0.1:7777";
 let rpcId = 1;
@@ -167,6 +180,26 @@ export function expectedCells(intent) {
     }
     return cells;
 }
+
+/* ══════════════════════════ 方向工具（纯函数，可单测） ══════════════════════════ */
+
+/** 从 from 格指向 to 格的方位面；非正交邻接返回 null。 */
+export function dirOf(from, to) {
+    const dx = to[0] - from[0], dy = to[1] - from[1];
+    if (dx === 0 && dy === -1) return "top";
+    if (dx === 0 && dy === 1) return "bottom";
+    if (dx === -1 && dy === 0) return "left";
+    if (dx === 1 && dy === 0) return "right";
+    return null;
+}
+
+/** 本格 + 方位 → 邻格。 */
+export function stepCell(cell, dir) {
+    const v = DIRV[dir];
+    return v ? [cell[0] + v[0], cell[1] + v[1]] : null;
+}
+
+const cellKey = c => `${c[0]},${c[1]}`;
 
 /* ══════════════════════════ 数据采集 ══════════════════════════ */
 
@@ -743,6 +776,492 @@ export function gateG6b(intent, items, opts = {}) {
     return { ok: true, reason: null, evidence };
 }
 
+/* ══════════════════════════ G2' 同源自洽（贴前，零写入） ══════════════════════════ */
+
+/**
+ * `paste` 用的载荷与 G4 的期望值必须是**同一张图**。
+ *
+ * ★ 这是新增三道闸里最关键的一道 ★
+ *
+ * `runGates` 把 `intent.blueprint` 交给 paste（载荷），G4 却拿 `intent.entities`
+ * 当期望值。两者在编译器里同源于 `plan.entities`（compile.mjs 的 writeHandoff），
+ * 所以**编译器自己算错时，两边一起错** —— G4 拿错的期望去比游戏里忠实落地的错值，
+ * 永远绿。2026-10-26 的 L4 事故就是这么漏掉的。
+ *
+ * G2' 补的是这条腿：decode 一次 blueprint（现有五闸全文一次都没 decode 过），
+ * 逐格比对 (code, rot)，再对每格 belt 断言
+ *     code === 1 + rotationVariant                      （belt-rules 命题 A，1906/1906）
+ *     (rv, rot) 反推的 beltEntry/beltExit === inDir/outDir（belt-rules 命题 B）
+ * 任何一条不满足 ⇒ 红。它纯离线，`--plan`（不 apply）阶段就能跑，零写入。
+ *
+ * 归一化：blueprint 的 `dx/dy` 与 intent 的 `anchor+dx/dy` 可能差一个平移
+ * （实测 L4 交接件两者差的就是 anchor），所以两侧各自按 min corner 归一。
+ *
+ * 它验不了什么（诚实记录）：如果编译器把 in/out 与几何**一起**写错（形态 C），
+ * 内部完全自洽，这道闸会绿 —— 那种情况只有 G8 能抓。
+ *
+ * @param {object} intent
+ * @param {Function} [decode] 注入点（默认 decodeBlueprint），便于单测替换
+ */
+export function gateIntentMatchesBlueprint(intent, decode = decodeBlueprint) {
+    const evidence = {};
+    if (typeof intent.blueprint !== "string" || !intent.blueprint) {
+        return {
+            ok: false,
+            reason: "intent 缺 blueprint 字段 —— paste 会拿到 undefined",
+            evidence,
+        };
+    }
+    let bp;
+    try { bp = decode(intent.blueprint); } catch (e) {
+        return { ok: false, reason: `blueprint 解码失败：${e.message}`, evidence };
+    }
+    if (!Array.isArray(bp.entities) || !bp.entities.length) {
+        return { ok: false, reason: "blueprint 里没有任何实体", evidence };
+    }
+    if (!Array.isArray(intent.entities) || !intent.entities.length) {
+        return { ok: false, reason: "intent.entities 为空", evidence };
+    }
+    const a = intent.anchor;
+    if (!Array.isArray(a) || a.length !== 2) {
+        return { ok: false, reason: "intent.anchor 必须是 [x,y]", evidence };
+    }
+
+    const bxs = bp.entities.map(e => e.dx), bys = bp.entities.map(e => e.dy);
+    const ixs = intent.entities.map(e => a[0] + e.dx), iys = intent.entities.map(e => a[1] + e.dy);
+    const bmx = Math.min(...bxs), bmy = Math.min(...bys);
+    const imx = Math.min(...ixs), imy = Math.min(...iys);
+    const bpMap = new Map(bp.entities.map(e => [cellKey([e.dx - bmx, e.dy - bmy]), e]));
+    const inMap = new Map(intent.entities.map((e, i) => [cellKey([ixs[i] - imx, iys[i] - imy]), e]));
+
+    evidence.blueprint_count = bpMap.size;
+    evidence.intent_count = inMap.size;
+
+    const onlyBp = [...bpMap.keys()].filter(x => !inMap.has(x));
+    const onlyIn = [...inMap.keys()].filter(x => !bpMap.has(x));
+    const fieldDiff = [], dirBad = [];
+
+    for (const [key, b] of bpMap) {
+        const e = inMap.get(key);
+        if (!e) continue;
+        /* 先比 rot 再比 code：rot 错通常意味着"同一个 code、不同的物理占地"，
+           比 code 错更常见也更难从计数上看出来。 */
+        if (((b.rot | 0) % 360) !== ((e.rot | 0) % 360)) {
+            fieldDiff.push({ cell: key, field: "rot", blueprint: b.rot, intent: e.rot });
+            continue;
+        }
+        if (b.code !== e.code) {
+            fieldDiff.push({ cell: key, field: "code", blueprint: b.code, intent: e.code });
+            continue;
+        }
+        if (e.kind !== "belt") continue;
+
+        /* ★ 每格带子都必须有 rv ★
+           缺 rv 时 `| 0` 会把 undefined 变成 0，于是"忘了写"被静默当成直带 ——
+           那正是要抓的形态。 */
+        if (!Number.isInteger(e.rotationVariant)) {
+            dirBad.push({ cell: key, nodeId: e.nodeId, field: "rotationVariant", got: e.rotationVariant });
+            continue;
+        }
+        const wantCode = beltCode(e.rotationVariant);
+        if (b.code !== wantCode || e.code !== wantCode) {
+            fieldDiff.push({
+                cell: key, field: "code-vs-rv",
+                blueprint: b.code, intentCode: e.code, wantCode, rv: e.rotationVariant,
+            });
+            continue;
+        }
+        /* ★ inDir/outDir 必须显式声明，不许 fail-open ★
+           缺失时跳过 = 这道闸对 L4 那种"声明与几何不符"的事故完全失明。 */
+        if (!e.inDir || !e.outDir) {
+            dirBad.push({ cell: key, nodeId: e.nodeId, field: "inDir/outDir", got: { in: e.inDir, out: e.outDir } });
+            continue;
+        }
+        const gi = beltEntry(e.rotationVariant, e.rot);
+        const go = beltExit(e.rotationVariant, e.rot);
+        if (gi !== e.inDir || go !== e.outDir) {
+            dirBad.push({
+                cell: key, nodeId: e.nodeId, rv: e.rotationVariant, rot: e.rot,
+                declared: { in: e.inDir, out: e.outDir },
+                from_rv_rot: { in: gi, out: go },
+            });
+        }
+    }
+
+    Object.assign(evidence, {
+        only_in_blueprint: onlyBp.slice(0, 5),
+        only_in_intent: onlyIn.slice(0, 5),
+        field_diff: fieldDiff.slice(0, 5),
+        direction_inconsistent: dirBad.slice(0, 5),
+        field_diff_count: fieldDiff.length,
+        direction_inconsistent_count: dirBad.length,
+    });
+
+    if (bpMap.size !== inMap.size || onlyBp.length || onlyIn.length) {
+        return {
+            ok: false,
+            reason: `intent.entities 与 blueprint 不是同一张图`
+                + `（蓝图 ${bpMap.size} 格 / intent ${inMap.size} 格，`
+                + `只在蓝图 ${onlyBp.length} 格、只在 intent ${onlyIn.length} 格）`
+                + ` —— paste 用的不是 G4 比的那张图`,
+            evidence,
+            hint: "这是形状 C 的前身：paste 的载荷与期望值不同源，G4 再准也没意义",
+        };
+    }
+    if (fieldDiff.length) {
+        return {
+            ok: false,
+            reason: `${fieldDiff.length} 格在 blueprint 与 intent 之间不一致（首处 ${JSON.stringify(fieldDiff[0])}）`
+                + ` —— paste 的载荷不是编译器推理的那张图`,
+            evidence,
+            hint: "code-vs-rv 说明 rv 与 code 矛盾；rot 不一致说明两侧的旋转不同源",
+        };
+    }
+    if (dirBad.length) {
+        return {
+            ok: false,
+            reason: `${dirBad.length} 格的 (rot,rotationVariant) 与声明的 inDir/outDir 不自洽`
+                + `（首处 ${JSON.stringify(dirBad[0])}）`,
+            evidence,
+            hint: "L4 的形态：intent 里写的是拐角语义，几何字段却是直带",
+        };
+    }
+    return { ok: true, reason: null, evidence };
+}
+
+/* ══════════════════════════ G7 逐格流向 ══════════════════════════ */
+
+/**
+ * 贴后：游戏 `debug_items.paths[].cells` 的**邻接关系**必须与声明的 in/out 一致。
+ *
+ * 与 G4 的根本区别：G4 问"我要求的东西贴准了吗"（期望来自 intent），
+ * G7 问"世界现在真的这么流吗"（期望来自游戏自己的 `entityPath`）。
+ * 事故里游戏把拐角重算成直带后，坐标没变、`code` 也没变（都还是 1），
+ * 变的只有 `rotationVariant` —— 而 `cells` 的邻接是**唯一**能看见这件事的 oracle。
+ *
+ * 判据（每个声明了 inDir/outDir 的带子格）：
+ *   中间格：actualIn  = dirOf(cell, prev)
+ *           actualOut = dirOf(cell, next)                       （链尾用 boundAcceptor）
+ *   链首格：声明的上游若在蓝图内是带子 → 它必须出现在同一 path 的 prev，
+ *           否则是 `disconnected-from-belt`；
+ *           若上游是机器 → 它的 outDir 必须指向本格。
+ *
+ * ★ 不许 fail-open ★
+ *   `not_on_any_path`（格不在任何 path 上）与 `disconnected-from-belt` 都算红。
+ *   只有"链尾且游戏没给接收者"才算不可验证（那是 G6b 的职责）。
+ *
+ * 截断（`pathCount > paths.length`）→ 无法判定，不是绿。
+ */
+export function gateG7flow(intent, items) {
+    const evidence = {};
+    if (!items || typeof items !== "object") {
+        return { ok: false, reason: "debug_items 没有返回任何东西", evidence };
+    }
+    if (items.beltError) {
+        return { ok: false, reason: `debug_items 自己报错（${items.beltError}）—— 无法判定流向`, evidence };
+    }
+    if (!Array.isArray(items.paths)) {
+        return { ok: false, reason: "debug_items 没有返回 paths 数组 —— 无法判定流向", evidence };
+    }
+    const total = typeof items.pathCount === "number" ? items.pathCount : items.paths.length;
+    evidence.paths_returned = items.paths.length;
+    evidence.total_path_count = total;
+    if (total > items.paths.length) {
+        evidence.truncated = true;
+        return {
+            ok: false,
+            undecidable: true,
+            reason: `debug_items 只返回了 ${items.paths.length}/${total} 条路径（被截断）—— 没看到全部，无法判定流向`,
+            evidence,
+            hint: "缩小 debug_items 的 region 到目标线附近再试",
+        };
+    }
+
+    const at = new Map();
+    items.paths.forEach((p, pi) => {
+        (p.cells || []).forEach((c, ci) => {
+            if (!at.has(cellKey(c))) at.set(cellKey(c), { pi, ci });
+        });
+    });
+    evidence.cells_indexed = at.size;
+
+    const a = intent.anchor;
+    const byCell = new Map();
+    for (const e of intent.entities || []) byCell.set(cellKey([a[0] + e.dx, a[1] + e.dy]), e);
+
+    const violations = [];
+    let checkedIn = 0, checkedOut = 0, unverifiableOut = 0;
+    for (const e of intent.entities || []) {
+        if (e.kind !== "belt") continue;
+        const cell = [a[0] + e.dx, a[1] + e.dy];
+        const loc = at.get(cellKey(cell));
+        if (!loc) {
+            violations.push({ cell, nodeId: e.nodeId, field: "path", got: "not_on_any_path" });
+            continue;
+        }
+        const p = items.paths[loc.pi];
+        const cells = p.cells || [];
+
+        if (e.inDir) {
+            if (loc.ci > 0) {
+                const actualIn = dirOf(cell, cells[loc.ci - 1]);
+                checkedIn++;
+                if (actualIn !== e.inDir) {
+                    violations.push({ cell, nodeId: e.nodeId, field: "in", want: e.inDir, got: actualIn, path: loc.pi, idx: loc.ci });
+                }
+            } else {
+                const upCell = stepCell(cell, e.inDir);
+                const up = byCell.get(cellKey(upCell));
+                if (!up) {
+                    violations.push({ cell, nodeId: e.nodeId, field: "in", want: e.inDir, got: "no-upstream-in-blueprint", upstreamCell: upCell });
+                } else if (up.kind === "belt") {
+                    violations.push({ cell, nodeId: e.nodeId, field: "in", want: e.inDir, got: "disconnected-from-belt", upstreamNode: up.nodeId, path: loc.pi });
+                } else if (up.outDir && up.outDir !== OPP[e.inDir]) {
+                    violations.push({ cell, nodeId: e.nodeId, field: "in", want: e.inDir, got: `upstream(${up.nodeId}).outDir=${up.outDir}` });
+                } else {
+                    checkedIn++;
+                }
+            }
+        }
+
+        if (e.outDir) {
+            let actualOut = null, via = null;
+            if (loc.ci < cells.length - 1) {
+                actualOut = dirOf(cell, cells[loc.ci + 1]);
+                via = "next";
+            } else if (Array.isArray(p.boundAcceptor)) {
+                actualOut = dirOf(cell, p.boundAcceptor);
+                via = "boundAcceptor";
+            }
+            if (actualOut === null) {
+                /* 链尾 + 没有接收者：这是 G6b 的判据，G7 不重复判，
+                   但必须记数 —— 静默跳过会让"整条线断头"在 G7 里看起来全绿。 */
+                unverifiableOut++;
+            } else {
+                checkedOut++;
+                if (actualOut !== e.outDir) {
+                    violations.push({ cell, nodeId: e.nodeId, field: "out", want: e.outDir, got: actualOut, via, path: loc.pi, idx: loc.ci });
+                }
+            }
+        }
+    }
+
+    Object.assign(evidence, {
+        violations: violations.length,
+        checked_in: checkedIn,
+        checked_out: checkedOut,
+        unverifiable_out: unverifiableOut,
+    });
+
+    /* 真空绿保护：一条可判的邻接都没比过（比如蓝图里的带子格全不在 path 上，
+       或者根本没声明方向），不能因为 violations=0 就报绿。 */
+    if (checkedIn === 0 && checkedOut === 0) {
+        return {
+            ok: false,
+            reason: "没有任何一格能比出实际流向（checked_in=checked_out=0）—— 真空绿",
+            evidence: { ...evidence, sample: violations.slice(0, 6) },
+            hint: "带子是不是没声明 inDir/outDir？或者 debug_items 的 paths 里没有这条线",
+        };
+    }
+    if (violations.length) {
+        return {
+            ok: false,
+            reason: `${violations.length} 处运行时流向与 intent 声明不符（首处 ${JSON.stringify(violations[0])}）`
+                + ` —— 游戏实际把货送去的方向 ≠ 蓝图说的方向`,
+            evidence: { ...evidence, sample: violations.slice(0, 6) },
+            hint: "L4 的形态：intent/blueprint/粘贴三方自洽，但游戏运行时的拓扑不是那张图",
+        };
+    }
+    return { ok: true, reason: null, evidence };
+}
+
+/* ══════════════════════════ G8 链划分 ══════════════════════════ */
+
+/**
+ * 贴后：**蓝图应当产生的带子链** 必须与 **游戏实际的 path** 逐格同序。
+ *
+ * ★ 这是唯一能在形态 C 下变红的闸 ★
+ * 形态 C：intent 与 blueprint 都自洽地写成直带（G2' 绿）、游戏也忠实贴成直带（G4 绿）、
+ * 每格都有去处（G6b 绿），但货到不了切割机。G8 比的是两个独立来源：
+ *   · 期望：从蓝图自己的 `succ(c) = c + DIRV[outDir]` 推出来的链划分；
+ *   · 实际：游戏 `beltPaths` 连出来的 path（上游→下游序）。
+ * 事故里期望链尾指向切割机，游戏链却接到 82 格绕行、最终进 hub —— 链划分不等。
+ *
+ * 比对是**顺序敏感**的：`[[a,b],[c]]` 与 `[[a],[b,c]]` 不是同一张图。
+ */
+export function gateG8chains(intent, items) {
+    const evidence = {};
+    if (!items || typeof items !== "object") {
+        return { ok: false, reason: "debug_items 没有返回任何东西", evidence };
+    }
+    if (items.beltError) {
+        return { ok: false, reason: `debug_items 自己报错（${items.beltError}）—— 无法判定链划分`, evidence };
+    }
+    if (!Array.isArray(items.paths)) {
+        return { ok: false, reason: "debug_items 没有返回 paths 数组 —— 无法判定链划分", evidence };
+    }
+    const total = typeof items.pathCount === "number" ? items.pathCount : items.paths.length;
+    evidence.paths_returned = items.paths.length;
+    evidence.total_path_count = total;
+    if (total > items.paths.length) {
+        evidence.truncated = true;
+        return {
+            ok: false,
+            undecidable: true,
+            reason: `debug_items 只返回了 ${items.paths.length}/${total} 条路径（被截断）—— 没看到全部链，无法判定`,
+            evidence,
+            hint: "缩小 debug_items 的 region 到目标线附近再试",
+        };
+    }
+
+    const a = intent.anchor;
+    const allEnts = intent.entities || [];
+    const belts = allEnts.filter(e => e.kind === "belt");
+    if (!belts.length) {
+        return {
+            ok: false,
+            reason: "蓝图里没有带子 —— 没有可推导的链（真空绿）",
+            evidence,
+            hint: "纯机器直连的产线这道闸不适用，应显式跳过而不是报绿",
+        };
+    }
+    const byCell = new Map();
+    for (const e of belts) {
+        /* ★ 缺 in/out 不许 fail-open ★
+           没有方向就推不出链，跳过等于"图对不上我也看不出来"。 */
+        if (!e.inDir || !e.outDir) {
+            return {
+                ok: false,
+                reason: `带子 ${e.nodeId} 缺 inDir/outDir —— 无法推导链（不许 fail-open）`,
+                evidence: { ...evidence, nodeId: e.nodeId },
+            };
+        }
+        byCell.set(cellKey([a[0] + e.dx, a[1] + e.dy]), e);
+    }
+    evidence.expected_cells = byCell.size;
+
+    /* 1) 从蓝图推链：链头 = 链内没有 pred 的格 */
+    const hasPred = new Set();
+    for (const [key, e] of byCell) {
+        const pred = stepCell(key.split(",").map(Number), e.inDir);
+        if (pred && byCell.has(cellKey(pred))) hasPred.add(key);
+    }
+    const expectedChains = [];
+    for (const [key, e] of byCell) {
+        if (hasPred.has(key)) continue;
+        const chain = [];
+        let cur = key, guard = 0;
+        while (cur !== null && guard++ <= byCell.size + 2) {
+            chain.push(cur.split(",").map(Number));
+            const ce = byCell.get(cur);
+            const nxt = stepCell(chain[chain.length - 1], ce.outDir);
+            cur = nxt && byCell.has(cellKey(nxt)) ? cellKey(nxt) : null;
+        }
+        if (guard > byCell.size + 2) {
+            /* succ 成环 ⇒ 没有链头能走到头。蓝图里出现环是错的，
+               继续走会把同一格比两次、掩盖问题。 */
+            return {
+                ok: false,
+                reason: `蓝图推出的带子链有环（从 ${key} 出发超过 ${byCell.size} 步）—— 蓝图自身不成立`,
+                evidence: { ...evidence, cycle_start: key },
+            };
+        }
+        const tail = chain[chain.length - 1];
+        const te = byCell.get(cellKey(tail));
+        const exitCell = stepCell(tail, te.outDir);
+        const exitEnt = allEnts.find(x => x.kind !== "belt"
+            && a[0] + x.dx === exitCell[0] && a[1] + x.dy === exitCell[1]);
+        expectedChains.push({ cells: chain, exitCell, exitNode: exitEnt ? exitEnt.nodeId : null, broken: false });
+    }
+
+    /* ★ 声明邻接必须互反 ★
+       某格声明 outDir 指向另一格带子，那另一格必须声明 inDir 指回本格 —— 否则
+       "蓝图说的货流"本身是断的（形态 C：两侧各说各的）。这类格子上面推不出链，
+       以前会被静默漏掉；现在显式列成一条「断链」，照样参与逐格比对。 */
+    const brokenCells = [];
+    for (const [key, e] of byCell) {
+        const succ = stepCell(key.split(",").map(Number), e.outDir);
+        const se = succ && byCell.get(cellKey(succ));
+        if (se && se.inDir !== OPP[e.outDir]) {
+            brokenCells.push({ cell: key, nodeId: e.nodeId, outDir: e.outDir, succCell: succ, succIn: se.inDir, succNode: se.nodeId });
+        }
+        const pred = stepCell(key.split(",").map(Number), e.inDir);
+        const pe = pred && byCell.get(cellKey(pred));
+        if (pe && pe.outDir !== OPP[e.inDir]) {
+            brokenCells.push({ cell: key, nodeId: e.nodeId, inDir: e.inDir, predCell: pred, predOut: pe.outDir, predNode: pe.nodeId });
+        }
+    }
+    if (brokenCells.length) {
+        evidence.broken_adjacency = brokenCells.slice(0, 5);
+        return {
+            ok: false,
+            reason: `蓝图内部有 ${brokenCells.length} 处带子邻接不互反（首处 ${JSON.stringify(brokenCells[0])}）`
+                + ` —— 这一格声明的方向与邻格声明的不对接，货流在蓝图里就是断的`,
+            evidence,
+            hint: "形态 C：in/out 文本与几何可以各自自洽，但相邻两格对不上",
+        };
+    }
+
+    /* 每一格带子都必须恰好落在一条推出来的链里（上面已保证邻接互反，
+       这里兜"链推导漏格"这类实现级错误）。 */
+    const seen = new Set(expectedChains.flatMap(ch => ch.cells.map(cellKey)));
+    if (seen.size !== byCell.size) {
+        const missing = [...byCell.keys()].filter(k => !seen.has(k));
+        return {
+            ok: false,
+            reason: `蓝图推出的链只覆盖 ${seen.size}/${byCell.size} 格带子（首处漏 ${missing[0]}）—— 链推导不完整`,
+            evidence: { ...evidence, missing: missing.slice(0, 5) },
+        };
+    }
+    evidence.expected_chains = expectedChains.length;
+
+    /* 2) 实际链：所有与本蓝图带子格有交集的 path，按 cells 原序 */
+    const actual = [];
+    for (const p of items.paths) {
+        if ((p.cells || []).some(c => byCell.has(cellKey(c)))) actual.push(p);
+    }
+    evidence.actual_chains = actual.length;
+
+    const norm = cells => cells.map(cellKey).join(">");
+    const expectMap = new Map(expectedChains.map(ch => [norm(ch.cells), ch]));
+    const actualMap = new Map(actual.map(p => [norm(p.cells), p]));
+    const missing = [], extra = [];
+    for (const [sig, ch] of expectMap) if (!actualMap.has(sig)) missing.push({ sig, cells: ch.cells, exitNode: ch.exitNode, exitCell: ch.exitCell });
+    for (const [sig, p] of actualMap) if (!expectMap.has(sig)) extra.push({ sig, cells: p.cells, acceptor: p.boundAcceptor });
+
+    Object.assign(evidence, {
+        missing_chains: missing.length,
+        extra_chains: extra.length,
+        missing: missing.slice(0, 3).map(m => ({ len: m.cells.length, exitNode: m.exitNode, exitCell: m.exitCell, head: m.cells[0] })),
+        extra: extra.slice(0, 3).map(m => ({ len: m.cells.length, head: m.cells[0], tail: m.cells[m.cells.length - 1], acceptor: m.acceptor })),
+    });
+
+    if (missing.length || extra.length) {
+        let reason = `${missing.length} 条蓝图链在游戏里不存在、${extra.length} 条游戏链不在蓝图里`;
+        const m = missing[0];
+        if (m) {
+            const mSet = new Set(m.cells.map(cellKey));
+            const cand = actual.find(p => (p.cells || []).some(c => mSet.has(cellKey(c))));
+            if (cand) {
+                const tail = cand.cells[cand.cells.length - 1];
+                reason += `；期望链尾 ${m.exitNode || "?"}@${JSON.stringify(m.exitCell)}，`
+                    + `游戏却把这条货流接到了 ${JSON.stringify(tail)}`
+                    + (Array.isArray(cand.boundAcceptor) ? `（boundAcceptor=${JSON.stringify(cand.boundAcceptor)}）` : "（无接收者）")
+                    + `，链长 ${m.cells.length} → ${cand.cells.length}`;
+            } else {
+                reason += `；首条缺失链的链头 ${JSON.stringify(m.cells[0])} 不出现在任何游戏 path 上`;
+            }
+        }
+        return {
+            ok: false,
+            reason,
+            evidence,
+            hint: "L4 事故的形态：拐角被游戏重算成直带后，货顺着既有绕行接到了别处",
+        };
+    }
+    return { ok: true, reason: null, evidence };
+}
+
 /* ══════════════════════════ 回滚 ══════════════════════════ */
 
 /**
@@ -872,7 +1391,7 @@ function upgradesMul(level) {
  * @param {{miner?:number, processors?:number, painting?:number}} upgrades
  * @returns {number} 保守的成品交付速率上限（0 表示算不出）
  */
-function expectedRateOf(intent, upgrades = {}) {
+export function expectedRateOf(intent, upgrades = {}) {
     const counts = {};
     for (const e of intent.entities || []) counts[e.kind] = (counts[e.kind] || 0) + 1;
 
@@ -897,12 +1416,34 @@ function expectedRateOf(intent, upgrades = {}) {
     return +bound.toFixed(4);
 }
 
+/**
+ * `debug_items` 要查的区域必须**覆盖 intent 的 bbox**，不能写死。
+ * 写死 [-80,80]² 时，贴到范围外的蓝图会得到空覆盖 → G6b 假红。
+ * 用 origin 而不是 footprint：多格机器的 origin 就够把 bbox 撑到位，
+ * 而 footprint 需要 kind（G7/G8 只关心带子）。
+ */
+export function itemsRegionFor(intent, pad = 12) {
+    const ax = intent.anchor[0], ay = intent.anchor[1];
+    const xs = (intent.entities || []).map(e => ax + e.dx);
+    const ys = (intent.entities || []).map(e => ay + e.dy);
+    return [
+        Math.min(ax, ...xs) - pad, Math.min(ay, ...ys) - pad,
+        Math.max(ax, ...xs) + pad, Math.max(ay, ...ys) + pad,
+    ].map(Math.round);
+}
+
 export async function runGates(intent, opts = {}) {
     const results = [];
     const record = (id, r) => {
         results.push({ id, ok: r.ok, reason: r.reason, evidence: r.evidence, hint: r.hint });
         return r.ok;
     };
+
+    /* ── G2' 同源自洽（纯离线、零写入、最先跑）──
+       放在时钟闸之前：它不需要任何采样，坏蓝图应该在碰游戏之前就被拒掉。
+       这道闸红了就不能贴 —— paste 的载荷与 G4 的期望不同源，后面全部无意义。 */
+    const g2 = gateIntentMatchesBlueprint(intent);
+    if (!record("G2'-source", g2)) return { ok: false, results, fatal: true };
 
     // ── G-1 时钟 ──
     const clock = await gateClock(opts.probeTicks || 600);
@@ -985,6 +1526,25 @@ export async function runGates(intent, opts = {}) {
         return { ok: false, results };
     }
 
+    /* ── G7/G8：贴后立刻（t+0）各判一次 ──
+       必须在任何 step 之前采：t+0 与 t+60s 两次都判是刻意的 ——
+       游戏对拐角的重算（`_updateSurroundingBelt`）发生在**粘贴之后**的任意一次邻格变动，
+       所以 t+0 可能还是对的，t+60s 才被翻。两次都判 = 两次之间的差异本身就是翻转检测。 */
+    const region = itemsRegionFor(intent);
+
+    let items0 = null, g7a = null, g8a = null;
+    try {
+        items0 = await rpc("debug_items", { region });
+        g7a = gateG7flow(intent, items0);
+        g8a = gateG8chains(intent, items0);
+    } catch (e) {
+        const r = { ok: false, reason: `t+0 的 debug_items 失败：${e.message}` };
+        record("G7-flow@t0", r);
+        record("G8-chains@t0", r);
+    }
+    if (g7a) record("G7-flow@t0", g7a);
+    if (g8a) record("G8-chains@t0", g8a);
+
     // ── G6b 连通（先等货流起来）──
     const settle = opts.settleTicks || 7200;   // 60 游戏秒
     try {
@@ -1000,19 +1560,26 @@ export async function runGates(intent, opts = {}) {
         return { ok: false, results };
     }
 
-    /* debug_items 的区域要**覆盖 intent 的 bbox**，不能写死。
-       写死 [-80,80]² 时，贴到范围外的蓝图会得到空覆盖 → G6b 假红。 */
-    const ax = intent.anchor[0], ay = intent.anchor[1];
-    const pad = 12;
-    const xs = (intent.entities || []).map(e => ax + e.dx);
-    const ys = (intent.entities || []).map(e => ay + e.dy);
-    const region = [
-        Math.min(ax, ...xs) - pad, Math.min(ay, ...ys) - pad,
-        Math.max(ax, ...xs) + pad, Math.max(ay, ...ys) + pad,
-    ].map(Math.round);
     const items = await rpc("debug_items", { region });
     const g6b = gateG6b(intent, items);
     record("G6b-connectivity", g6b);
+
+    /* ── G7/G8：t+60s 再判一次，并记录两次的 pathCount 差异 ──
+       差异本身就是翻转检测：粘贴后游戏把拐角重算成直带会把两条 path 合成一条
+       （或拆成两条），而 pathCount 是最早能看见这件事的廉价信号。 */
+    try {
+        const g7b = gateG7flow(intent, items);
+        const g8b = gateG8chains(intent, items);
+        if (items0 && typeof items0.pathCount === "number" && typeof items.pathCount === "number") {
+            g7b.evidence = { ...g7b.evidence, path_count_t0: items0.pathCount, path_count_t60: items.pathCount };
+        }
+        record("G7-flow@t60", g7b);
+        record("G8-chains@t60", g8b);
+    } catch (e) {
+        const r = { ok: false, reason: `t+60s 的流向判定抛错：${e.message}` };
+        record("G7-flow@t60", r);
+        record("G8-chains@t60", r);
+    }
 
     /* G6 行为：用游戏自己的时间片算速率。
        时间片每 10 游戏秒一片，所以要推进够久才有 >= 2 片可算。
