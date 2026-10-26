@@ -69,6 +69,34 @@ async function main() {
         if (a.marginalGain !== null && a.marginalGain !== undefined) console.log(`        每加一台矿机省 ${a.marginalGain}s`);
     }
 
+    /* 结构审计（研究 01 §8 的 R1~R8）。
+       为什么放在最后而不是开头：`assess` 回答"下一步做什么"，
+       这里回答"现在这座工厂结构上有没有病"。一个能跑的工厂也可能结构全错
+       （实测：铜线 4 台矿机里 2 台永久卡死，而总产量看起来正常）。 */
+    try {
+        const { checkR1, checkR2, checkR3, checkR4 } = await import("./audit.mjs");
+        const auditObs = {
+            upgrades: obs.upgrades || {},
+            entities: obs.entities || [],
+            oreCells: obs.oreCells || [],
+            goal: { level: obs.level, shape: obs.goal.shape },
+        };
+        const before = await rpc("debug_items", { region: [-60, -60, 60, 60] }, 120000);
+        await rpc("act", { op: "step", ticks: 2400 });
+        const after = await rpc("debug_items", { region: [-60, -60, 60, 60] }, 120000);
+
+        const results = [checkR1(auditObs), checkR2(auditObs), checkR3(after, before), checkR4(auditObs)];
+        const problems = results.flatMap(x => x.problems);
+        console.log("\n═══ 结构审计 ═══");
+        if (!problems.length) {
+            console.log("  ✓ R1~R4 全部通过");
+        } else {
+            for (const p of problems) console.log(`  [${p.rule}] ${p.detail}`);
+        }
+    } catch (e) {
+        console.log(`\n═══ 结构审计 ═══\n  （跳过：${e.message}）`);
+    }
+
     return r;
 }
 
