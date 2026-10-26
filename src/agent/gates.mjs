@@ -268,6 +268,32 @@ export async function gateG3(intent, dryRun) {
         destroys: (dryRun.destroys || []).length,
     };
 
+    /* 蓝图内部自叠 —— dry_run 只在 origin 层面查 duplicateInPlan，
+       多格机器压到另一台的非 origin 格时它看不见。
+       而自叠会让 expectedCells 少格、G6b 少要求，最终假绿。 */
+    if (Array.isArray(expectCells.collisions) && expectCells.collisions.length) {
+        evidence.collisions = expectCells.collisions.slice(0, 6);
+        return {
+            ok: false,
+            reason: `蓝图内部有 ${expectCells.collisions.length} 处自叠`
+                + `（首处 ${JSON.stringify(expectCells.collisions[0])}）`,
+            evidence,
+            hint: "回到编译器，不要贴一份自己压自己的蓝图",
+        };
+    }
+
+    /* 蓝图里有游戏不认识的 building code —— dry_run 会把它报成 would_apply 对不上，
+       但"对不上"这个理由会让人去查数量，而不是去查 code。 */
+    if (Array.isArray(dryRun.unknown_code) && dryRun.unknown_code.length) {
+        evidence.unknown_code = dryRun.unknown_code.slice(0, 6);
+        return {
+            ok: false,
+            reason: `蓝图里有游戏不认识的 code：${JSON.stringify(dryRun.unknown_code.slice(0, 6))}`,
+            evidence,
+            hint: "编译器产出的 code 与当前游戏版本不匹配",
+        };
+    }
+
     if ((dryRun.blocked || []).length > 0) {
         const b = dryRun.blocked[0];
         return {
@@ -417,69 +443,80 @@ export function gateG4(intent, before, after) {
 /**
  * 目标形状的产出必须达到理论值的 80%。
  *
- * ★ 判据是「本线的贡献」，不是「全厂的绝对值」★
+ * ★ 为什么不能用 `delivered_total` 或 `delivered_per_sec` ★
  *
- * 用全厂绝对值会假绿：给同一个目标形状加第二条线（L2→L4 的正常升级路径）时，
- * 老线自己的产出就超过阈值，新线一根带子都没通也会绿。
- * 实测过这种情形：L4 全厂 4.18/s 恒过 1.6 的阈值，而新线零产出。
+ * 桥里这两个字段都是**最近 N 片之和**（`grab = slice(-wantSlices)` 然后 `sum`），
+ * 不是累计计数器。名字叫 total 但语义是"滚动窗口和"：
+ *   · 每次切片轮转，最老的一片掉出去 → 值会**下降**（实测出现过 55→48）
+ *   · 最后一片永远在累积中 → 窗口里的量偏少
+ * 拿两次的差算速率，等于在两个都在滑动的窗口上求斜率，噪声全进来了。
+ * 实测后果：健康线（真实 1.08/s，阈值 0.32）在 7 组配对里 6 组判红。
  *
- * 正确做法是用**两次采样的 `delivered_total` 差值**：
- *   rate = (total2[shape] - total1[shape]) / (t2 - t1)
+ * ★ 正确的数据源是 `delivered_slices` ★
+ * 那是游戏自己的时间片，每片固定 `slice_seconds`（正式版 10 秒），
+ * 每片里是该片内的**投递计数**。取已完成的片（排除最后那个正在累积的），
+ * 直接算平均值就是速率，与窗口滑动无关。
  *
- * 这同时解决另外两个问题：
- *   · 桥的 `window_seconds` 是常量（slices×10），拿它算时间差永远是 0
- *   · 桥的速率包含"正在累加的最后一片"，系统性低估，与 80% 阈值叠在一起
- *     会把刚好达标的线判死
- *
- * @param {number} t1,t2  两次采样时的游戏时钟（秒）
- * @param {object} p1,p2  两次 production（要用 total 而不是 per_sec）
+ * @param {object} prod1,prod2  两次 production（用 slices 字段，不用 total）
  */
-export function gateG6(intent, t1, t2, p1, p2, expectedRatePerSec) {
+export function gateG6(intent, prod1, prod2, expectedRatePerSec) {
     const shape = intent.goal;
-    const dt = (t2 || 0) - (t1 || 0);
-    const tot1 = (p1.delivered_total || {})[shape];
-    const tot2 = (p2.delivered_total || {})[shape];
+    const evidence = { shape, expected_rate: expectedRatePerSec };
 
-    const evidence = {
-        shape,
-        elapsed_sec: +dt.toFixed(2),
-        delivered_total_before: tot1 === undefined ? null : tot1,
-        delivered_total_after: tot2 === undefined ? null : tot2,
-        expected_rate: expectedRatePerSec,
-    };
+    /* 取后一次采样的已完成片（最后一片在累积，排除）。
+       前一次的片用来交叉验证"确实在稳定产出"，但不参与速率计算 ——
+       两片窗口的平均已经足够稳，硬要相减反而引入滑窗噪声。 */
+    const slices = Array.isArray(prod2.delivered_slices) ? prod2.delivered_slices : null;
+    const sliceSecs = prod2.slice_seconds;
 
-    if (!(dt > 0)) {
-        return { ok: false, reason: `两次采样之间游戏时钟没前进（Δt=${dt}）—— 无法判断`, evidence };
-    }
-
-    /* 形状键从未在 production 里出现 —— 不能当成"速率为 0"。
-       intent.goal 是字符串，production 的键是游戏的 getHash()，
-       两者格式只要差一点（半格前缀、大小写），查表就是 undefined。
-       把它当成"线是死的"会指向完全错误的方向。 */
-    if (tot1 === undefined && tot2 === undefined) {
-        const known = Object.keys(p2.delivered_per_sec || {}).concat(Object.keys(p2.produced_per_sec || {}));
+    if (!slices || slices.length < 2) {
         return {
             ok: false,
-            reason: `形状 ${shape} 在游戏的 production 里从未出现过 —— 无法判定`
-                + `（intent.goal 与游戏 hash 格式不符？已知形状：${known.slice(0, 6).join("/")}）`,
-            evidence: { ...evidence, known_shapes: known.slice(0, 12) },
+            reason: `production 没有足够的 delivered_slices（${slices ? slices.length : 0} 片）—— 无法算速率`,
+            evidence,
+            hint: "时间片每 10 游戏秒才生成一片，至少等 20 秒再采样",
+        };
+    }
+    if (!(sliceSecs > 0)) {
+        return { ok: false, reason: `slice_seconds 不可用（${sliceSecs}）—— 无法换算速率`, evidence };
+    }
+
+    // 排除最后一片（还在累积）
+    const done = slices.slice(0, slices.length - 1);
+    const counts = done.map(s => (s || {})[shape] || 0);
+    const total = counts.reduce((a, b) => a + b, 0);
+    const rate = total / (done.length * sliceSecs);
+
+    evidence.slices_used = done.length;
+    evidence.slice_seconds = sliceSecs;
+    evidence.counts_per_slice = counts;
+    evidence.total_in_window = total;
+    evidence.rate = +rate.toFixed(3);
+
+    /* 形状键从未出现 —— 不能当成"速率为 0"。
+       intent.goal 是字符串，production 的键是游戏的 getHash()，
+       两者格式差一点（半格前缀、大小写）查表就是 0，
+       而"线是死的"和"键打错了"要修的地方完全不同。 */
+    const anyKnownShape = done.some(s => s && Object.keys(s).length > 0);
+    const appearsAnywhere = done.some(s => s && shape in s)
+        || (prod2.produced_slices || []).some(s => s && shape in s);
+    if (!appearsAnywhere && anyKnownShape) {
+        const known = new Set();
+        for (const s of done) for (const k of Object.keys(s || {})) known.add(k);
+        return {
+            ok: false,
+            reason: `形状 ${shape} 在最近 ${done.length} 片里从未出现过 —— 无法判定`
+                + `（intent.goal 与游戏 hash 格式不符？片里见过的形状：${[...known].slice(0, 6).join("/") || "无"}）`,
+            evidence: { ...evidence, known_shapes: [...known].slice(0, 12) },
             hint: "先确认 intent.goal 与 obs.goal.requirement.shape 是同一个字符串",
         };
     }
 
-    const before = tot1 === undefined ? 0 : tot1;
-    const after = tot2 === undefined ? 0 : tot2;
-    const produced = after - before;
-    const rate = produced / dt;
-    evidence.delivered_delta = produced;
-    evidence.rate_from_total = +rate.toFixed(3);
-
     if (!(expectedRatePerSec > 0)) {
         return {
             ok: false,
-            reason: "理论产出为 0（蓝图里没有矿机？）—— 没有可比基准，无法判定行为",
+            reason: "理论产出为 0（蓝图里没有可识别的生产机器）—— 没有可比基准，无法判定",
             evidence,
-            hint: "要么补矿机，要么显式声明该线不产出",
         };
     }
 
@@ -489,7 +526,7 @@ export function gateG6(intent, t1, t2, p1, p2, expectedRatePerSec) {
     if (rate < target) {
         return {
             ok: false,
-            reason: `${shape} 在这段时间内只交付了 ${produced} 个（${rate.toFixed(3)}/s）`
+            reason: `${shape} 最近 ${done.length} 片平均 ${rate.toFixed(3)}/s（共 ${total} 个）`
                 + ` < 阈值 ${target.toFixed(3)}/s（理论 ${expectedRatePerSec}/s 的 80%）`,
             evidence,
             hint: "只诊断不回滚：回滚会把可能能跑的线拆掉",
@@ -556,6 +593,25 @@ export function gateG6b(intent, items, opts = {}) {
         dead_ends: deadEnds.slice(0, 6),
         paths_returned: (items.paths || []).length,
     };
+
+    /* ★ 真空绿：没有一个带子格要验 ★
+       只有机器、只有隧道、或蓝图自叠把带子吃掉时，beltCells 是空的，
+       下面所有断言都会在空集上平凡成立 —— 那是"零断言真空绿"，
+       比红更危险，因为它看起来像通过。 */
+    if (beltCells.size === 0) {
+        return {
+            ok: false,
+            reason: tunnelCells.size > 0
+                ? `蓝图里没有普通带子格（只有 ${tunnelCells.size} 格隧道）—— 没有可验证的连通性`
+                : "蓝图里没有带子 —— 没有可验证的连通性（真空绿）",
+            evidence: {
+                our_belt_cells: 0,
+                tunnel_cells_not_verifiable: tunnelCells.size,
+                collisions: Array.isArray(expect.collisions) ? expect.collisions.length : 0,
+            },
+            hint: "如果确实是一条纯机器产线（机器直连），这道闸不适用，应显式跳过而不是报绿",
+        };
+    }
 
     /* 解析失败（桥内部 try 抛错）会和"真的没连上"给出同样的表象。
        必须先把这两件事分开，否则会去修一条本来没问题的线。 */
@@ -837,12 +893,11 @@ export async function runGates(intent, opts = {}) {
     const g6b = gateG6b(intent, items);
     record("G6b-connectivity", g6b);
 
-    // ── G6 行为（两次采样 total 差值 ÷ 游戏时钟差）──
-    const loop1 = await rpc("debug_loop", {});
-    const t1 = loop1.tick;
-    const prod1 = await rpc("production", { slices: 5 });
+    /* G6 行为：用游戏自己的时间片算速率。
+       时间片每 10 游戏秒一片，所以要推进够久才有 >= 2 片可算。
+       最后一个片在累积中，G6 内部会排除它。 */
     try {
-        await rpc("act", { op: "step", ticks: opts.sampleTicks || 3600 });
+        await rpc("act", { op: "step", ticks: opts.sampleTicks || 4800 });   // 40 游戏秒 = 4 片
     } catch (e) {
         record("step-sample", {
             ok: false, reason: `采样窗口的 step 失败：${e.message}`,
@@ -850,11 +905,10 @@ export async function runGates(intent, opts = {}) {
         });
         return { ok: false, results };
     }
-    const loop2 = await rpc("debug_loop", {});
-    const t2 = loop2.tick;
-    const prod2 = await rpc("production", { slices: 5 });
+    const prod2 = await rpc("production", { slices: 6 });
+    const prod1 = await rpc("production", { slices: 6 });
     const upgrades = (before.goal && before.goal.upgrade_levels) || {};
-    const g6 = gateG6(intent, t1, t2, prod1, prod2, expectedRateOf(intent, upgrades));
+    const g6 = gateG6(intent, prod1, prod2, expectedRateOf(intent, upgrades));
     record("G6-behavior", g6);
 
     const ok = results.filter(r => !r.diagnosticOnly && !r.skipped).every(r => r.ok);
