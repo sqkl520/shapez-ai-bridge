@@ -1969,9 +1969,27 @@ class Mod extends shapez.Mod {
         }
         const t0 = performance.now();
         const tick0 = root.time.now();
+        /* ★ 必须同时推进 productionAnalytics ★
+           游戏主循环里（core.js:286-296）每帧做两件事：
+             root.time.performTicks(deltaMs, boundInternalTick)
+             root.productionAnalytics.update()
+           而 productionAnalytics.update() 是唯一会让**时间片轮转**的地方
+           （production_analytics.js:128-133，超过 analyticsSliceDurationSeconds 就 startNewSlice）。
+
+           这里原来只调 performTicks —— 于是整个 step 期间时间片**根本不轮转**，
+           40~60 秒的产量全部压进当前最后一片。
+           后果：production 的 delivered_per_sec 按 `总量 / (片数×10秒)` 折算，
+           而那个片实际代表了几十秒 → 速率被放大数倍。
+           实测：真实 0.5/s 的线在 step 7200+4800 后报 1.34/s（放大 2.68×），
+           一条只有理论值 42% 的产线会被判成达标。
+
+           这不是档位问题，是"step 语义与真实时间不一致"。必须补上。 */
         try {
             for (let i = 0; i < ticks; ++i) {
                 root.time.performTicks(deltaMs, core.boundInternalTick);
+                if (root.productionAnalytics && typeof root.productionAnalytics.update === "function") {
+                    root.productionAnalytics.update();
+                }
             }
         } finally {
             if (wasPaused) root.time.setSpeed(prevSpeed);
@@ -2303,15 +2321,20 @@ class Mod extends shapez.Mod {
                            游戏的 getTileSpaceBounds（static_map_entity.js:127-141）里
                            origin 是锚点：rot=0 向右下长，rot=180 向左上长。
                            这里原来无条件 `wx + cx` —— 于是 rot=180/270 的机器
-                           右半/下半格完全不参与占用检查，dry_run 会给假绿。
+                           左半/上半格完全不参与占用检查，dry_run 给假绿。
                            实测：rot=180 的 cutter 左半格压着既有带子时，
                            dry_run 报 would_delete=0 / destroys=0，真贴后旧 uid 消失。
-                           （gates.mjs 的 entityCells 从一开始就是负方向，两处模型不一致。） */
+
+                           ⚠️ 跳过 origin 的判据必须在**平移之后**算：
+                           第一版写成 `if (cx===0 && cy===0) continue`（平移前），
+                           而 ox=-1 时该跳的是 (cx=1,cy=0)，不是 (cx=0,cy=0) ——
+                           结果只查了 origin，左半格仍然漏检。现在直接算世界坐标再比。 */
                         const ox = (r === 180 || r === 270) ? -(w - 1) : 0;
                         const oy = (r === 180 || r === 270) ? -(h - 1) : 0;
                         for (let cx = 0; cx < w; cx++) for (let cy = 0; cy < h; cy++) {
-                            if (cx === 0 && cy === 0) continue;
-                            cells.push([wx + ox + cx, wy + oy + cy]);
+                            const px = wx + ox + cx, py = wy + oy + cy;
+                            if (px === wx && py === wy) continue;   // origin 已在 cells 里
+                            cells.push([px, py]);
                         }
                     } catch (e) { /* 尺寸拿不到则只查 origin */ }
                 }
