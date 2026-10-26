@@ -423,6 +423,9 @@ class Mod extends shapez.Mod {
                 case "production":
                     result = this.observeProduction(params || {});
                     break;
+                case "world_info":
+                    result = this.worldInfo();
+                    break;
                 default:
                     this.sendError(id, -32601, "method_not_found", "Unknown method: " + method);
                     return;
@@ -523,6 +526,43 @@ class Mod extends shapez.Mod {
             produced_slices: produced,
             delivered_slices: delivered,
         };
+    }
+
+    /**
+     * 读出这张地图的**身份**：种子、尺寸、hub 精确格位。
+     *
+     * 为什么需要它：离线编译器（`src/ai/compiler/`）复现矿图靠的是
+     * `world.mjs` 里按 seed 重算 chunk。默认 seed 是 43391（level-11 存档的值），
+     * 一旦在别的存档上用，矿机就落在一块空地上了 —— 而且编译照样 `ok:true`。
+     * 实测过：当前 level-4 存档的 22 格钌矿里，seed 43391 只认 8 格。
+     *
+     * 所以"编译器能看懂当前局面"的第一步，是把真实的 seed 交出去。
+     */
+    worldInfo() {
+        const root = this.requireRoot();
+        let seed = null;
+        try { seed = root.map && root.map.seed; } catch (e) { seed = null; }
+        if (typeof seed !== "number") seed = null;
+        const out = { seed, game_version: null, hub: null };
+        try {
+            out.game_version = (root.app && root.app.version && root.app.version.current) || null;
+        } catch (e) { /* 忽略 */ }
+        // hub 的 origin 就在 (0,0)（core.js 里 hub 固定建在原点），但不去猜 —— 扫一遍实体
+        try {
+            const table = this.ensureBuildingTables();
+            const entities = (root.entityMgr && root.entityMgr.entities) || [];
+            for (const ent of entities) {
+                const obs = this.entityToObs(ent, table);
+                if (obs && obs.type === "hub") {
+                    // 实体的 x/y 是**左上角**（origin），hub 是 4×4，所以右下角是 +3
+                    out.hub = { x: obs.x, y: obs.y, w: 4, h: 4, rotation: obs.r, uid: obs.uid };
+                    break;
+                }
+            }
+        } catch (e) {
+            out.hub_error = String(e && e.message ? e.message : e);
+        }
+        return out;
     }
 
     /**
@@ -2792,6 +2832,22 @@ class Mod extends shapez.Mod {
             }
         }
         this.app.stateMgr.moveToState("InGameState", { savegame: sg });
+        // `moveToState` 在游戏的状态机里可能被**静默忽略**（fade 保护 / 同名状态重入）。
+        // 之前这里无条件回 ok:true，于是「加载失败」在外面看起来和「加载成功」一模一样 ——
+        // 实测过一次：连续三次 load_save 全回 ok，而游戏一直停在 MainMenuState。
+        // 所以必须等到真的进了游戏再回 ok，否则如实报错。
+        const entered = await this.waitFor(
+            () => {
+                const st = this.app.stateMgr.currentState;
+                return !!st && st.getKey && st.getKey() === "InGameState";
+            },
+            15000
+        );
+        if (!entered) {
+            throw this.rpcError(2003, "mod_error",
+                "load_save: game refused to enter InGameState (stayed in main menu)",
+                "The state machine may be mid-transition. Retry, or restart the game if it persists.");
+        }
         return { ok: true, op: "load_save", internal_id: id, loading: true };
     }
 
@@ -2824,6 +2880,19 @@ class Mod extends shapez.Mod {
             throw this.rpcError(2002, "game_rejected", "could not create savegame (slot limit?): " + e);
         }
         this.app.stateMgr.moveToState("InGameState", { savegame: sg, gameModeId: mode });
+        // 同 loadSave：`moveToState` 可能被状态机静默忽略，必须等到真进去了再回 ok。
+        const entered = await this.waitFor(
+            () => {
+                const st = this.app.stateMgr.currentState;
+                return !!st && st.getKey && st.getKey() === "InGameState";
+            },
+            15000
+        );
+        if (!entered) {
+            throw this.rpcError(2003, "mod_error",
+                "new_game: game refused to enter InGameState (stayed in main menu)",
+                "The state machine may be mid-transition. Retry, or restart the game if it persists.");
+        }
         return { ok: true, op: "new_game", game_mode: mode, internal_id: sg && sg.internalId ? sg.internalId : null };
     }
 
