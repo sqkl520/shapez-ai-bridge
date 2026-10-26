@@ -242,6 +242,17 @@ console.log("\n── ⑤ gateG6b：死路判据不能看 itemsOnPath ──");
     ok(!g6b4.ok, '未截断时 → 红（没覆盖）', g6b4.reason);
     ok(/没出现在任何路径/.test(g6b4.reason), '未截断的 reason 是「没覆盖」', g6b4.reason);
 
+    /* ★ 回归锁：被截断时即使"看到的部分全覆盖"也必须判无法判定 ★
+       截断意味着没看到全部路径，排在 40 条之外的那段可能属于目标线、且可能是死路。
+       "恰好看到的部分没问题" ≠ "整条线没问题"。 */
+    const truncatedButCovered = {
+        paths: [{ cells: [[10, 11], [11, 11]], itemsOnPath: 0, boundAcceptor: [10, 13] }],
+        pathCount: 50,                        // 50 条只返回 1 条，但这一条全覆盖
+    };
+    const g6b5 = gateG6b(intent, truncatedButCovered);
+    ok(!g6b5.ok, '被截断（但看到的部分全覆盖）→ 红，不能绿（回归锁）', g6b5.reason);
+    eq(g6b5.undecidable, true, "被截断标 undecidable");
+
     /* ★ 回归锁：隧道格不参与"被覆盖"的判定 ★
        游戏的地下带没有 Belt 组件，beltPaths 只由 Belt 组件构成，
        所以隧道格永远不出现在任何 path 的 cells 里。

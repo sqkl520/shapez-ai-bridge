@@ -704,11 +704,19 @@ export function gateG6b(intent, items, opts = {}) {
     evidence.total_path_count = totalPaths;
     evidence.truncated = truncated;
 
-    if (truncated && uncovered.length > 0) {
+    /* ★ 截断本身就该让结论降级 ★
+       原实现只在 `truncated && uncovered.length > 0` 时判"无法判定"。
+       但当目标线恰好被覆盖时它会绿 —— 而截断意味着我们**没看到全部路径**，
+       可能有属于目标线、但排在 40 条之外的那段（它的 boundAcceptor 也许是 null）。
+       "恰好看到的部分没问题"不等于"整条线没问题"。
+       所以只要 truncated，这次结论就只能是"无法判定"，不管覆没覆盖。 */
+    if (truncated) {
         return {
             ok: false,
-            reason: `debug_items 只返回了 ${evidence.paths_returned}/${totalPaths} 条路径（被截断），`
-                + `目标线有 ${uncovered.length} 格没出现在其中 —— 无法判定`,
+            undecidable: true,
+            reason: `debug_items 只返回了 ${evidence.paths_returned}/${totalPaths} 条路径（被截断）`
+                + (uncovered.length ? `，且目标线有 ${uncovered.length} 格没出现在其中` : "")
+                + ` —— 没看到全部路径，无法判定连通性`,
             evidence: { ...evidence, sample: uncovered.slice(0, 5) },
             hint: "缩小 debug_items 的 region 到目标线附近再试",
         };
