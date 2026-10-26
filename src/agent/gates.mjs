@@ -100,29 +100,69 @@ const FOOTPRINT = {
  * 但切割机是 2×1、hub 是 4×4。只比原点格会漏掉右半/外圈 ——
  * 那正是"净空假绿"和"回滚漏格"的来源。
  */
+/**
+ * 一台建筑在世界上占的全部格。
+ *
+ * 对齐游戏的 `StaticMapEntity.getTileSpaceBounds()`：
+ * rot=0 时向 +x/+y 长；rot=180 时向 **-x/-y** 长（origin 是锚点）。
+ * rot=90/270 时宽高互换，且 origin 位移方向也随旋转走。
+ *
+ * 只有 rot=0/90 是"向正向长"；180/270 必须向负方向 —— 这一点实测核对过：
+ *   cutter rot=0   → (0,0)(1,0)
+ *   cutter rot=90  → (0,0)(0,1)
+ *   cutter rot=180 → (-1,0)(0,0)
+ *   cutter rot=270 → (0,-1)(0,0)
+ */
 export function entityCells(kind, x, y, rot = 0) {
-    const key = FOOTPRINT[kind] ? kind : (kind === "cutter" ? "cutter" : "belt");
+    const key = FOOTPRINT[kind] ? kind : "belt";
     let [w, h] = FOOTPRINT[key] || [1, 1];
-    // 旋转 90/270 时宽高互换
-    if (rot === 90 || rot === 270) [w, h] = [h, w];
+    const r = ((Number(rot) || 0) % 360 + 360) % 360;
+    if (r === 90 || r === 270) [w, h] = [h, w];
     const out = [];
-    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) out.push([x + dx, y + dy]);
+    // 180/270 时向负方向长
+    const dx0 = (r === 180 || r === 270) ? -(w - 1) : 0;
+    const dy0 = (r === 180 || r === 270) ? -(h - 1) : 0;
+    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) out.push([x + dx0 + dx, y + dy0 + dy]);
     return out;
 }
 
 /**
  * intent 里的全部实体，展开成世界坐标下逐一占用的格。
  * 世界坐标 = anchor + [dx, dy]。
+ *
+ * 同格被两个实体占用时**不静默覆盖** —— 那是蓝图自叠，必须能被发现。
+ * 实测过后果：belt 和 cutter 同在 (0,0) 时，cutter 覆盖 belt，
+ * belt 从集合里消失 → G6b 少要求一格 → 可以假绿。
+ *
+ * @returns {Map} key "x,y" → { kind, code, rot, nodeId, origin, collisions? }
  */
 export function expectedCells(intent) {
     const a = intent.anchor;
     if (!Array.isArray(a) || a.length !== 2) throw new Error("intent.anchor 必须是 [x,y]");
-    const cells = new Map();     // "x,y" → { kind, code, rot, nodeId }
+    if (!Number.isInteger(a[0]) || !Number.isInteger(a[1])) {
+        throw new Error(`intent.anchor 必须是整数坐标，实得 ${JSON.stringify(a)}`);
+    }
+    const cells = new Map();
+    const collisions = [];
     for (const e of intent.entities || []) {
+        if (!Number.isInteger(e.dx) || !Number.isInteger(e.dy)) {
+            throw new Error(`实体 ${e.nodeId} 的 dx/dy 必须是整数，实得 ${e.dx},${e.dy}`);
+        }
         const wx = a[0] + e.dx, wy = a[1] + e.dy;
         for (const [x, y] of entityCells(e.kind, wx, wy, e.rot | 0)) {
-            cells.set(`${x},${y}`, { kind: e.kind, code: e.code, rot: e.rot | 0, nodeId: e.nodeId, origin: [wx, wy] });
+            const k = `${x},${y}`;
+            if (cells.has(k)) {
+                const prev = cells.get(k);
+                if (prev.nodeId !== e.nodeId) {
+                    collisions.push({ cell: [x, y], a: prev.nodeId, b: e.nodeId });
+                }
+                continue;      // 不覆盖：先写的留着，冲突单独报
+            }
+            cells.set(k, { kind: e.kind, code: e.code, rot: e.rot | 0, nodeId: e.nodeId, origin: [wx, wy] });
         }
+    }
+    if (collisions.length) {
+        cells.collisions = collisions;
     }
     return cells;
 }
@@ -272,6 +312,30 @@ export async function gateG3(intent, dryRun) {
 export function gateG4(intent, before, after) {
     const evidence = {};
 
+    /* ★ after 被截断时不能判红 ★
+       obs 有 max_entities 上限。贴完实体变多之后，after 里可能只剩前 N 条：
+         · 新贴的实体"没出现在预期位置" → 假红"没贴全"
+         · 排在后面的既有 uid 在 after 里"消失" → 假红"被销毁了，必须回滚"
+       两种都是错误诊断，而且会误导去回滚一个其实没问题的工厂。
+       这种情况必须是"无法判定"，不是红也不是绿。 */
+    if (after.truncated) {
+        return {
+            ok: false,
+            undecidable: true,
+            reason: `贴后的 obs 被截断（实体数超过上限），无法判定落地是否完整`,
+            evidence: { before_count: before.byUid.size, after_count: after.byUid.size },
+            hint: "调大 mod 设置里的 max_entities，或先清掉远处的旧实体",
+        };
+    }
+    if (before.truncated) {
+        return {
+            ok: false,
+            undecidable: true,
+            reason: `贴前的 obs 被截断，无法建立完整的 uid 基线`,
+            evidence: { before_count: before.byUid.size },
+        };
+    }
+
     // 1) 有没有 uid 消失 —— A3 静默销毁的兜底
     const gone = [];
     for (const uid of before.byUid.keys()) {
@@ -299,7 +363,7 @@ export function gateG4(intent, before, after) {
     evidence.expected_entities = (intent.entities || []).length;
 
     const addedByCell = new Map(added.map(e => [`${e.x},${e.y}`, e]));
-    const missing = [], wrongCode = [];
+    const missing = [], wrongCode = [], wrongRot = [];
     for (const ent of intent.entities || []) {
         const wx = a[0] + ent.dx, wy = a[1] + ent.dy;
         const got = addedByCell.get(`${wx},${wy}`);
@@ -307,9 +371,19 @@ export function gateG4(intent, before, after) {
         if (got.code !== ent.code) {
             wrongCode.push({ cell: [wx, wy], nodeId: ent.nodeId, want: ent.code, got: got.code });
         }
+        /* ★ 朝向也必须比 ★
+           code 相同不代表落对了：cutter 2×1 在 rot=0 占 {(x,y),(x+1,y)}，
+           在 rot=90 占 {(x,y),(x,y+1)} —— origin 和 code 都一样，物理格完全不同。
+           这正是 A2（方向反了）的形态，光靠 code 抓不到。 */
+        const wantR = (ent.rot | 0) % 360;
+        const gotR = typeof got.r === "number" ? got.r : (got.rotation | 0);
+        if (gotR !== wantR) {
+            wrongRot.push({ cell: [wx, wy], nodeId: ent.nodeId, kind: ent.kind, want: wantR, got: gotR });
+        }
     }
     evidence.missing_entities = missing.length;
     evidence.wrong_code = wrongCode.length;
+    evidence.wrong_rot = wrongRot.length;
 
     if (missing.length) {
         return {
@@ -326,49 +400,81 @@ export function gateG4(intent, before, after) {
             evidence: { ...evidence, sample: wrongCode.slice(0, 5) },
         };
     }
+    if (wrongRot.length) {
+        return {
+            ok: false,
+            reason: `${wrongRot.length} 台的朝向与蓝图不符（首处 ${JSON.stringify(wrongRot[0])}）`
+                + ` —— 朝向错会让机器的物理占地和进出料口全变`,
+            evidence: { ...evidence, sample: wrongRot.slice(0, 5) },
+            hint: "这是 A2 的形态：origin 和 code 都对，但方向反了，产线实际不通",
+        };
+    }
     return { ok: true, reason: null, evidence };
 }
 
 /* ══════════════════════════ G6 行为 ══════════════════════════ */
 
 /**
- * 目标形状的产出速率必须达到理论值的 80%。
+ * 目标形状的产出必须达到理论值的 80%。
  *
- * ★ 两个实现陷阱，都是实测踩出来的 ★
+ * ★ 判据是「本线的贡献」，不是「全厂的绝对值」★
  *
- * 1. **不能拿 `window_seconds` 算时间差**
- *    桥的 `observeProduction` 里是 `windowSecs = wantSlices * sliceSecs` —— 常量。
- *    两次采样拿到的 window_seconds 永远相同，`dt` 恒为 0。
- *    用它会得到"窗口没前进 → 时钟可能停了"，而那是一条**假红**，
- *    理由还是错的（G-1 刚刚证明时钟在走）。
- *    时间差必须用**游戏时钟**：两次 `debug_loop.tick` 之差（单位是游戏秒）。
+ * 用全厂绝对值会假绿：给同一个目标形状加第二条线（L2→L4 的正常升级路径）时，
+ * 老线自己的产出就超过阈值，新线一根带子都没通也会绿。
+ * 实测过这种情形：L4 全厂 4.18/s 恒过 1.6 的阈值，而新线零产出。
  *
- * 2. **不能拿"速率之差"比"速率阈值"**
- *    `delivered_per_sec` 已经是速率（每条时间片的稳态值）。
- *    两条稳态线（1.0 → 1.0）的"差"是 0，会被判死 —— 而它完全正常。
- *    正确判据是**第二次采样的速率**必须达到阈值，不是它的增量。
+ * 正确做法是用**两次采样的 `delivered_total` 差值**：
+ *   rate = (total2[shape] - total1[shape]) / (t2 - t1)
+ *
+ * 这同时解决另外两个问题：
+ *   · 桥的 `window_seconds` 是常量（slices×10），拿它算时间差永远是 0
+ *   · 桥的速率包含"正在累加的最后一片"，系统性低估，与 80% 阈值叠在一起
+ *     会把刚好达标的线判死
  *
  * @param {number} t1,t2  两次采样时的游戏时钟（秒）
- * @param {object} p2     后一次 production（速率已经收敛）
+ * @param {object} p1,p2  两次 production（要用 total 而不是 per_sec）
  */
-export function gateG6(intent, t1, t2, p2, expectedRatePerSec) {
+export function gateG6(intent, t1, t2, p1, p2, expectedRatePerSec) {
     const shape = intent.goal;
     const dt = (t2 || 0) - (t1 || 0);
-    const rate = (p2.delivered_per_sec || {})[shape] || 0;
+    const tot1 = (p1.delivered_total || {})[shape];
+    const tot2 = (p2.delivered_total || {})[shape];
 
     const evidence = {
         shape,
         elapsed_sec: +dt.toFixed(2),
-        delivered_rate: rate,
+        delivered_total_before: tot1 === undefined ? null : tot1,
+        delivered_total_after: tot2 === undefined ? null : tot2,
         expected_rate: expectedRatePerSec,
     };
 
     if (!(dt > 0)) {
         return { ok: false, reason: `两次采样之间游戏时钟没前进（Δt=${dt}）—— 无法判断`, evidence };
     }
+
+    /* 形状键从未在 production 里出现 —— 不能当成"速率为 0"。
+       intent.goal 是字符串，production 的键是游戏的 getHash()，
+       两者格式只要差一点（半格前缀、大小写），查表就是 undefined。
+       把它当成"线是死的"会指向完全错误的方向。 */
+    if (tot1 === undefined && tot2 === undefined) {
+        const known = Object.keys(p2.delivered_per_sec || {}).concat(Object.keys(p2.produced_per_sec || {}));
+        return {
+            ok: false,
+            reason: `形状 ${shape} 在游戏的 production 里从未出现过 —— 无法判定`
+                + `（intent.goal 与游戏 hash 格式不符？已知形状：${known.slice(0, 6).join("/")}）`,
+            evidence: { ...evidence, known_shapes: known.slice(0, 12) },
+            hint: "先确认 intent.goal 与 obs.goal.requirement.shape 是同一个字符串",
+        };
+    }
+
+    const before = tot1 === undefined ? 0 : tot1;
+    const after = tot2 === undefined ? 0 : tot2;
+    const produced = after - before;
+    const rate = produced / dt;
+    evidence.delivered_delta = produced;
+    evidence.rate_from_total = +rate.toFixed(3);
+
     if (!(expectedRatePerSec > 0)) {
-        /* 理论值为 0 时不能判绿也不能判红 —— 那是"没有可比基准"，
-           静默 fail-open 会让一道闸变成摆设（0 台矿机的蓝图会永远绿）。 */
         return {
             ok: false,
             reason: "理论产出为 0（蓝图里没有矿机？）—— 没有可比基准，无法判定行为",
@@ -383,8 +489,8 @@ export function gateG6(intent, t1, t2, p2, expectedRatePerSec) {
     if (rate < target) {
         return {
             ok: false,
-            reason: `${shape} 的交付速率 ${rate.toFixed(3)}/s < 阈值 ${target.toFixed(3)}/s`
-                + `（理论 ${expectedRatePerSec}/s 的 80%）`,
+            reason: `${shape} 在这段时间内只交付了 ${produced} 个（${rate.toFixed(3)}/s）`
+                + ` < 阈值 ${target.toFixed(3)}/s（理论 ${expectedRatePerSec}/s 的 80%）`,
             evidence,
             hint: "只诊断不回滚：回滚会把可能能跑的线拆掉",
         };
@@ -406,8 +512,22 @@ export function gateG6(intent, t1, t2, p2, expectedRatePerSec) {
  */
 export function gateG6b(intent, items, opts = {}) {
     const expect = expectedCells(intent);
-    const beltCells = new Set();
-    for (const [k, v] of expect) if (v.kind === "belt" || v.kind === "underground_belt") beltCells.add(k);
+    const beltCells = new Set();       // 只放普通带子
+    const tunnelCells = new Set();     // 隧道单独处理
+    for (const [k, v] of expect) {
+        if (v.kind === "belt") beltCells.add(k);
+        else if (v.kind === "underground_belt") tunnelCells.add(k);
+    }
+
+    /* ★ 隧道格不会出现在 belt_paths 里 ★
+       游戏的地下带没有 Belt 组件，而 beltPaths 只由 Belt 组件构成
+       （systems/belt.js 第一行就 `if (!entity.components.Belt) return;`）。
+       实测确认：隧道在 (-7,-12)/(-7,-14)，经过它的路径 cells 是
+       [-8,-13],[-7,-13],[-6,-13] —— 直接跨过去了，两个隧道格都不在。
+
+       所以拿隧道格去比对"有没有被 path 覆盖"必然全部落空，
+       任何含隧道的蓝图都会被判成"没连上"。这里只验普通带子，
+       隧道在 evidence 里如实记数，不参与判定。 */
 
     const toKey = c => `${c[0]},${c[1]}`;
     const covered = new Set();
@@ -416,7 +536,9 @@ export function gateG6b(intent, items, opts = {}) {
         const onOurLine = (p.cells || []).filter(c => beltCells.has(toKey(c)));
         if (!onOurLine.length) continue;
         for (const c of onOurLine) covered.add(toKey(c));
-        if (p.boundAcceptor === null) {
+        /* 用真值判断而不是 `=== null`：
+           桥在异常分支里可能根本不带这个 key，`undefined !== null` 会 fail-open。 */
+        if (!p.boundAcceptor) {
             deadEnds.push({
                 head: p.cells[0], tail: p.cells[p.cells.length - 1],
                 len: p.cells.length, items: p.itemsOnPath,
@@ -427,12 +549,30 @@ export function gateG6b(intent, items, opts = {}) {
     const uncovered = [...beltCells].filter(k => !covered.has(k));
     const evidence = {
         our_belt_cells: beltCells.size,
+        tunnel_cells_not_verifiable: tunnelCells.size,
         covered_cells: covered.size,
         uncovered_cells: uncovered.length,
         dead_end_paths: deadEnds.length,
         dead_ends: deadEnds.slice(0, 6),
         paths_returned: (items.paths || []).length,
     };
+
+    /* 解析失败（桥内部 try 抛错）会和"真的没连上"给出同样的表象。
+       必须先把这两件事分开，否则会去修一条本来没问题的线。 */
+    if (items.beltError) {
+        return {
+            ok: false,
+            reason: `debug_items 自己报错（${items.beltError}）—— 无法判定连通性`,
+            evidence: { ...evidence, beltError: items.beltError },
+        };
+    }
+    if (!Array.isArray(items.paths)) {
+        return {
+            ok: false,
+            reason: "debug_items 没有返回 paths 数组 —— 无法判定连通性",
+            evidence,
+        };
+    }
 
     /* 桥对 paths 做了 `slice(0, 40)`，但同时给了 `pathCount`（未截断的总数）。
        两者不等 ⇒ 我们看到的只是前 40 条 ⇒ "没覆盖"不代表"没连上"，
@@ -519,7 +659,27 @@ export async function rollback(before, after, opts = {}) {
     }
     if (opts.dryRun) return { ok: true, dryRun: true, would_delete: dry.would_delete, region };
 
+    /* 真删前后各取一次时钟：世界是活的，dry_run 和真删之间可能已经变了。
+       变了就说明回滚结果不可信 —— 必须说出来，不能假装成功。 */
+    const t0 = (await rpc("debug_loop", {})).tick;
     const r = await rpc("act", { op: "bulk_delete", region });
+    const t1 = (await rpc("debug_loop", {})).tick;
+
+    const failed = (r.failed || []).length;
+    if (r.applied !== added.length || failed > 0) {
+        return {
+            ok: false,
+            reason: `回滚只删了 ${r.applied}/${added.length} 个（失败 ${failed} 个）—— 回滚不完整`,
+            applied: r.applied, expected: added.length, failed: r.failed, region,
+        };
+    }
+    if (t1 !== t0) {
+        return {
+            ok: false,
+            reason: `世界在回滚期间推进了（tick ${t0} → ${t1}）—— 结果不可信`,
+            applied: r.applied, region,
+        };
+    }
     return { ok: true, deleted: r.applied, region };
 }
 
@@ -534,12 +694,68 @@ function loadIntent(file) {
     return j;
 }
 
-/** 该线理论上每秒能产出多少（只用矿机算，它是最慢的一环） */
+/**
+ * 该线理论上每秒能交付几个成品。
+ *
+ * ★ 不能只用「矿机数 × 单台速率」★
+ * 每件成品需要的矿石不是 1 份：
+ *   · stacker 吃 2 份输入产 1 份 → 输出 ≤ 输入/2
+ *   · 双输入 painter/mixer 同理
+ * 2 台矿机的 CpCpCpCp 线按"矿机数×速率"算是 0.8/s，而它物理上只能交付 0.4/s ——
+ * 阈值 0.64 永远达不到，任何带 stacker/双输入上色的线都会被判死。
+ *
+ * 这里按实体种类给保守折算：把每种机器的**速率上限**取出来，
+ * 遇到"消耗多份输入"的种类再除以它的输入份数。
+ *
+ * 数值来自 op-templates 的 ratePerSec（已与源码核对）：
+ *   miner 0.4 / cutter 0.5 / rotater 2.0 / painter 1/3 / mixer 0.4 / stacker 0.25
+ * stacker 与 mixer 是二进一，所以各自产出上限还要除以 2 的实际输入需求。
+ */
+const BASE_RATE = {
+    miner: 0.4, cutter: 0.5, rotater: 2.0,
+    painter: 1 / 3, mixer: 0.4, stacker: 0.25,
+    balancer: null, trash: null, belt: null, underground_belt: null, hub: null,
+};
+/** 这些机器吃 2 份输入才产 1 份 —— 产出速率要按输入份数折算 */
+const INPUT_FACTOR = { stacker: 2, mixer: 2 };
+
+const MUL = [1, 1.5, 2, 3, 4, 6, 7, 8];
+
+function upgradesMul(level) {
+    const l = Math.max(0, level | 0);
+    // 前 8 档查表；超出时按"每档 +0.5"保守外推（游戏 fixedImprovements 之后还有 1000 档）
+    if (l < MUL.length) return MUL[l];
+    return MUL[MUL.length - 1] + (l - (MUL.length - 1)) * 0.5;
+}
+
+/**
+ * @param {object} intent
+ * @param {{miner?:number, processors?:number, painting?:number}} upgrades
+ * @returns {number} 保守的成品交付速率上限（0 表示算不出）
+ */
 function expectedRateOf(intent, upgrades = {}) {
-    const MUL = [1, 1.5, 2, 3, 4, 6, 7, 8];
-    const minerMul = MUL[Math.min(upgrades.miner | 0, 7)];
-    const miners = (intent.entities || []).filter(e => e.kind === "miner").length;
-    return miners * 0.4 * minerMul;
+    const counts = {};
+    for (const e of intent.entities || []) counts[e.kind] = (counts[e.kind] || 0) + 1;
+
+    let bound = Infinity;
+    let anyKnown = false;
+    for (const [kind, n] of Object.entries(counts)) {
+        const base = BASE_RATE[kind];
+        if (base === undefined || base === null) continue;
+        // 档位：矿机看 miner，其它加工看 processors，上色看 painting
+        const lvl = kind === "miner" ? upgrades.miner
+            : (kind === "painter" || kind === "mixer") ? upgrades.painting
+            : upgrades.processors;
+        const speed = base * upgradesMul(lvl || 0);
+        const factor = INPUT_FACTOR[kind] || 1;
+        // 这一类的合计产出上限
+        const cap = (n * speed) / factor;
+        bound = Math.min(bound, cap);
+        anyKnown = true;
+    }
+
+    if (!anyKnown) return 0;
+    return +bound.toFixed(4);
 }
 
 export async function runGates(intent, opts = {}) {
@@ -605,20 +821,40 @@ export async function runGates(intent, opts = {}) {
 
     // ── G6b 连通（先等货流起来）──
     const settle = opts.settleTicks || 7200;   // 60 游戏秒
-    await rpc("act", { op: "step", ticks: settle }).catch(() => null);
+    try {
+        await rpc("act", { op: "step", ticks: settle });
+    } catch (e) {
+        /* step 失败**不能吞**。吞掉之后 G6b 会读到刚贴完的瞬时状态（path 可能还没建），
+           报成"线没连上"；G6 会拿到混着贴前产量的窗口。
+           两种都是把基础设施故障伪装成内容结论。 */
+        record("step-settle", {
+            ok: false, reason: `等待货流的 step 失败：${e.message}`,
+            hint: "游戏可能停在对话框（2002）、或桥设了 allow_step=false（1004）、或超时",
+        });
+        return { ok: false, results };
+    }
     const items = await rpc("debug_items", { region: [-80, -80, 80, 80] });
     const g6b = gateG6b(intent, items);
     record("G6b-connectivity", g6b);
 
-    // ── G6 行为（用**游戏时钟**算时间差，不用 window_seconds）──
+    // ── G6 行为（两次采样 total 差值 ÷ 游戏时钟差）──
     const loop1 = await rpc("debug_loop", {});
     const t1 = loop1.tick;
-    await rpc("act", { op: "step", ticks: opts.sampleTicks || 3600 }).catch(() => null);
+    const prod1 = await rpc("production", { slices: 5 });
+    try {
+        await rpc("act", { op: "step", ticks: opts.sampleTicks || 3600 });
+    } catch (e) {
+        record("step-sample", {
+            ok: false, reason: `采样窗口的 step 失败：${e.message}`,
+            hint: "同 step-settle：请看是不是对话框/权限/超时",
+        });
+        return { ok: false, results };
+    }
     const loop2 = await rpc("debug_loop", {});
     const t2 = loop2.tick;
     const prod2 = await rpc("production", { slices: 5 });
     const upgrades = (before.goal && before.goal.upgrade_levels) || {};
-    const g6 = gateG6(intent, t1, t2, prod2, expectedRateOf(intent, upgrades));
+    const g6 = gateG6(intent, t1, t2, prod1, prod2, expectedRateOf(intent, upgrades));
     record("G6-behavior", g6);
 
     const ok = results.filter(r => !r.diagnosticOnly && !r.skipped).every(r => r.ok);
