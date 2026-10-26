@@ -43,6 +43,8 @@ console.log("── ① entityCells：footprint 必须展开 ──");
 eq(entityCells("belt", 5, 5).length, 1, "belt 占 1 格");
 eq(entityCells("cutter", 5, 5).length, 2, "cutter 2×1 占 2 格");
 eq(entityCells("hub", 5, 5).length, 16, "hub 4×4 占 16 格");
+eq(entityCells("miner", 5, 5).length, 1, "miner 占 1 格（实测：四台在 (2..5,-8) 相邻共存）");
+eq(entityCells("rotater", 5, 5).length, 1, "rotater 占 1 格（继承默认 Vector(1,1)）");
 eq(entityCells("cutter", 5, 5, 90).length, 2, "cutter 转 90° 仍占 2 格（宽高互换）");
 {
     const cells = entityCells("cutter", 5, 5);
@@ -52,10 +54,9 @@ eq(entityCells("cutter", 5, 5, 90).length, 2, "cutter 转 90° 仍占 2 格（�
 console.log("\n── ② expectedCells：世界坐标 = anchor + [dx,dy] ──");
 {
     const cells = expectedCells(intent);
-    // miner 2×1 = 2 格 + cutter 2×1 = 2 格 + belt ×2 = 2 格 → 6 格
-    eq(cells.size, 6, "展开后共 6 格（miner 2 + cutter 2 + belt 2）");
-    ok(cells.has("10,10"), "miner 左半在 anchor 上");
-    ok(cells.has("11,10"), "miner 右半被展开");
+    // miner 1×1 = 1 格 + cutter 2×1 = 2 格 + belt ×2 = 2 格 → 5 格
+    eq(cells.size, 5, "展开后共 5 格（miner 1 + cutter 2 + belt 2）");
+    ok(cells.has("10,10"), "miner 在 anchor 上");
     ok(cells.has("10,12"), "cutter 原点在 anchor+[0,2]");
     ok(cells.has("11,12"), "cutter 右半被展开");
 }
@@ -90,26 +91,25 @@ console.log("\n── ④ gateG4：uid 消失与 code 不符都必须红 ──"
     const before = mkSnap([
         { uid: 1, x: 100, y: 100, code: 1, type: "belt" },   // 既有实体
     ]);
-    // 正例：既有保留 + 新增齐全（6 格：miner 2 + cutter 2 + belt 2）
+    /* 正例：既有保留 + 新增与蓝图一致。
+       ★ 关键：按**实体**比对，不是按格 ★
+       obs 对每台建筑只报一条（origin），cutter 2×1 也不会给出右半那条。
+       所以这里每条:  miner(1) + cutter(1) + belt(2) = 4 条，不是 5 格。 */
     const goodAfter = mkSnap([
         { uid: 1, x: 100, y: 100, code: 1, type: "belt" },
         { uid: 11, x: 10, y: 10, code: 7, type: "miner" },
-        { uid: 12, x: 11, y: 10, code: 7, type: "miner" },    // miner 右半
-        { uid: 13, x: 10, y: 12, code: 9, type: "cutter" },
-        { uid: 14, x: 11, y: 12, code: 9, type: "cutter" },   // cutter 右半
-        { uid: 15, x: 10, y: 11, code: 1, type: "belt" },
-        { uid: 16, x: 11, y: 11, code: 1, type: "belt" },
+        { uid: 12, x: 10, y: 12, code: 9, type: "cutter" },
+        { uid: 13, x: 10, y: 11, code: 1, type: "belt" },
+        { uid: 14, x: 11, y: 11, code: 1, type: "belt" },
     ]);
-    ok(gateG4(intent, before, goodAfter).ok, "全部到位 → 绿");
+    ok(gateG4(intent, before, goodAfter).ok, "全部到位 → 绿（按实体口径，cutter 只报 origin）");
 
     // 反例 1：既有 uid 消失（A3 静默销毁）
     const vanished = mkSnap([
         { uid: 11, x: 10, y: 10, code: 7, type: "miner" },
-        { uid: 12, x: 11, y: 10, code: 7, type: "miner" },
-        { uid: 13, x: 10, y: 12, code: 9, type: "cutter" },
-        { uid: 14, x: 11, y: 12, code: 9, type: "cutter" },
-        { uid: 15, x: 10, y: 11, code: 1, type: "belt" },
-        { uid: 16, x: 11, y: 11, code: 1, type: "belt" },
+        { uid: 12, x: 10, y: 12, code: 9, type: "cutter" },
+        { uid: 13, x: 10, y: 11, code: 1, type: "belt" },
+        { uid: 14, x: 11, y: 11, code: 1, type: "belt" },
     ]);
     const g4a = gateG4(intent, before, vanished);
     ok(!g4a.ok, "既有 uid 消失 → 红（A3 的兜底，arm E）", g4a.reason);
@@ -118,22 +118,33 @@ console.log("\n── ④ gateG4：uid 消失与 code 不符都必须红 ──"
     const wrongCode = mkSnap([
         { uid: 1, x: 100, y: 100, code: 1, type: "belt" },
         { uid: 11, x: 10, y: 10, code: 7, type: "miner" },
-        { uid: 12, x: 11, y: 10, code: 7, type: "miner" },
-        { uid: 13, x: 10, y: 12, code: 9, type: "cutter" },
-        { uid: 14, x: 11, y: 12, code: 9, type: "cutter" },
-        { uid: 15, x: 10, y: 11, code: 1, type: "belt" },
-        { uid: 16, x: 11, y: 11, code: 99, type: "belt" },   // 错
+        { uid: 12, x: 10, y: 12, code: 9, type: "cutter" },
+        { uid: 13, x: 10, y: 11, code: 1, type: "belt" },
+        { uid: 14, x: 11, y: 11, code: 99, type: "belt" },   // 错
     ]);
     const g4b = gateG4(intent, before, wrongCode);
     ok(!g4b.ok, "code 不符 → 红（arm E）", g4b.reason);
 
-    // 反例 3：缺格
+    // 反例 3：缺实体
     const missing = mkSnap([
         { uid: 1, x: 100, y: 100, code: 1, type: "belt" },
         { uid: 11, x: 10, y: 10, code: 7, type: "miner" },
     ]);
     const g4c = gateG4(intent, before, missing);
-    ok(!g4c.ok, "预期格缺失 → 红（arm E）", g4c.reason);
+    ok(!g4c.ok, "缺实体 → 红（arm E）", g4c.reason);
+
+    /* ★ 回归锁：cutter 在 obs 里只报 origin 一条 ★
+       曾经按格比对，要求 (11,12) 也有实体 —— 而游戏永远不给，
+       任何含 cutter 的蓝图都会被判死。这条锁住"不这么要求"。 */
+    const cutterOriginOnly = mkSnap([
+        { uid: 1, x: 100, y: 100, code: 1, type: "belt" },
+        { uid: 11, x: 10, y: 10, code: 7, type: "miner" },
+        { uid: 12, x: 10, y: 12, code: 9, type: "cutter" },   // 只有 origin，没有右半
+        { uid: 13, x: 10, y: 11, code: 1, type: "belt" },
+        { uid: 14, x: 11, y: 11, code: 1, type: "belt" },
+    ]);
+    ok(gateG4(intent, before, cutterOriginOnly).ok,
+        "cutter 只有 origin 一条 obs 时也要绿（回归锁：不按格要求）");
 }
 
 console.log("\n── ⑤ gateG6b：死路判据不能看 itemsOnPath ──");
@@ -165,27 +176,35 @@ console.log("\n── ⑤ gateG6b：死路判据不能看 itemsOnPath ──");
     ok(!g6b2.ok, "有带子格没被覆盖 → 红（arm E）", g6b2.reason);
 }
 
-console.log("\n── ⑥ gateG6：按形状算增量，不用全厂 ──");
+console.log("\n── ⑥ gateG6：用游戏时钟算时长，比的是速率不是增量 ──");
 {
-    const p1 = { window_seconds: 10, delivered_per_sec: { "RuRu----": 0.5, CuCuCuCu: 10 } };
-    const p2 = { window_seconds: 20, delivered_per_sec: { "RuRu----": 1.0, CuCuCuCu: 10 } };
+    /* 签名：(intent, t1, t2, production, expectedRate)
+       t 是两个时间点的**游戏时钟**（秒），不是 window_seconds ——
+       桥的 window_seconds 是 `slices*10` 常量，拿它算 dt 永远是 0。
+       比的是"后一次采样的速率"而不是"速率之差" ——
+       稳态线（1.0→1.0）的差是 0，拿差值比阈值会把正常线判死。 */
+    const p = (r) => ({ delivered_per_sec: { "RuRu----": r, CuCuCuCu: 999 } });
 
-    // 目标 0.4/s 的理论值，80% = 0.32；实际 1.0 远超
-    ok(gateG6(intent, p1, p2, 0.4).ok, "达标 → 绿");
+    // 达标：稳态 1.0/s，理论 0.4/s 的 80% = 0.32
+    ok(gateG6(intent, 100, 160, p(1.0), 0.4).ok, "稳态 1.0/s ≥ 0.32 → 绿");
 
-    // 反例：目标形状产量没涨，但其他形状涨了（全厂口径会误判绿）
-    const p3 = { window_seconds: 20, delivered_per_sec: { "RuRu----": 0.5, CuCuCuCu: 999 } };
-    const g6a = gateG6(intent, p1, p3, 0.4);
-    ok(!g6a.ok, "只有别的形状涨、目标没涨 → 红（证明用按形状口径，arm E）", g6a.reason);
+    // ★ 回归锁：稳态线（两次相同）必须绿 ★
+    //   旧实现比"速率之差的绝对值"，1.0→1.0 的差是 0 → 被判死。
+    ok(gateG6(intent, 100, 160, p(1.0), 0.4).ok, "两次速率相同（稳态）→ 绿（回归锁：不比增量）");
 
-    // 反例：窗口没前进（时钟停了）
-    const g6b = gateG6(intent, p1, { ...p1, window_seconds: 10 }, 0.4);
-    ok(!g6b.ok, "窗口没前进 → 红（时钟停的兜底）", g6b.reason);
+    // ★ 回归锁：全厂别的形状再高也不能救目标形状 ★
+    const allHigh = { delivered_per_sec: { "RuRu----": 0.1, CuCuCuCu: 999 } };
+    ok(!gateG6(intent, 100, 160, allHigh, 0.4).ok, "目标形状只有 0.1/s 而别的形状 999 → 红（按形状口径）");
 
-    // 反例：产量不足 80%
-    const p4 = { window_seconds: 20, delivered_per_sec: { "RuRu----": 0.6 } };
-    const g6c = gateG6(intent, p1, p4, 0.4);
-    ok(!g6c.ok, "0.1/s < 0.32/s 阈值 → 红（arm E）", g6c.reason);
+    // 时钟没前进
+    ok(!gateG6(intent, 100, 100, p(1.0), 0.4).ok, "t1===t2（时钟没走）→ 红");
+
+    // 产量不足
+    ok(!gateG6(intent, 100, 160, p(0.2), 0.4).ok, "0.2/s < 0.32/s 阈值 → 红（arm E）");
+
+    // ★ 理论值为 0 时不能 fail-open ★
+    //   旧实现在 0 台矿机时阈值 = 0，任何速率都 ≥ 0 → 永远绿。
+    ok(!gateG6(intent, 100, 160, p(0), 0).ok, "理论值 0（没矿机）→ 红，不许 fail-open（回归锁）");
 }
 
 console.log("\n" + "═".repeat(60));
