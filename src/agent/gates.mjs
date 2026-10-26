@@ -443,6 +443,20 @@ export function gateG4(intent, before, after) {
     evidence.added_entities = added.length;
     evidence.expected_entities = (intent.entities || []).length;
 
+    /* ★ 数量也要比 ★
+       上面那个循环只回答"蓝图里的每格在 after 里有没有"，答不了"after 里多出来的东西
+       是谁"。paste 静默多贴（蓝图被改、或游戏自己补了实体）会从这里漏过去。
+       多贴和少贴一样是事故：少贴是线不通，多贴是凭空多出占位、堵后面的通道。 */
+    if (added.length !== (intent.entities || []).length) {
+        return {
+            ok: false,
+            reason: `贴后新增 ${added.length} 个实体，蓝图只有 ${(intent.entities || []).length} 个 —— `
+                + `paste 多贴或少贴了 ${Math.abs(added.length - (intent.entities || []).length)} 个`,
+            evidence,
+            hint: "多贴通常是蓝图被改过或游戏自己补了实体；两种都不该被当成「贴成功」",
+        };
+    }
+
     const addedByCell = new Map(added.map(e => [`${e.x},${e.y}`, e]));
     const missing = [], wrongCode = [], wrongRot = [];
     for (const ent of intent.entities || []) {
@@ -1544,6 +1558,31 @@ export async function runGates(intent, opts = {}) {
     }
     if (g7a) record("G7-flow@t0", g7a);
     if (g8a) record("G8-chains@t0", g8a);
+
+    /* ★ t+0 就红 ⇒ 立刻回滚，别等 t+60s ★
+       之前只有 G4 失败才回滚，而 G7/G8 红了只"记一笔"继续往下走：于是事故里
+       108 个实体照样留在存档里，粗料照样灌进 hub，`ok:false` 是最后才交出去的。
+       那正是 L4 当时的真实损失形态 —— 不是没发现，是发现了以后线还在那儿。
+
+       t+0 这个时点回滚最干净：粘贴刚发生、`added` 集合与 before/after 都还准确，
+       不需要等货流跑起来，也不会把 100 游戏秒的脏产出留在世界里的新线上。
+       注意 undecidable（数据不全）仍然不回滚 —— 那是 G4 同一条纪律。 */
+    const t0Bad = [g7a, g8a].find(r => r && r.ok === false && !r.undecidable);
+    if (t0Bad) {
+        const plan = await rollback(before, after, { dryRun: true });
+        results.push({ id: "rollback-plan", ok: plan.ok, reason: plan.reason, evidence: plan });
+        if (opts.noRollback) {
+            results.push({ id: "rollback", ok: false, skipped: true, reason: "调用方给了 --no-rollback，不执行" });
+            return { ok: false, results };
+        }
+        if (!plan.ok) {
+            results.push({ id: "rollback", ok: false, reason: "回滚计划不可行，未执行（见 rollback-plan）" });
+            return { ok: false, results };
+        }
+        const rb = await rollback(before, after);
+        results.push({ id: "rollback", ok: rb.ok, reason: rb.reason, evidence: rb });
+        return { ok: false, results, rolledBackEarly: "G7/G8@t0" };
+    }
 
     // ── G6b 连通（先等货流起来）──
     const settle = opts.settleTicks || 7200;   // 60 游戏秒
