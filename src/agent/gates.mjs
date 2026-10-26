@@ -37,7 +37,8 @@
  * ## 用法
  *
  *   node src/agent/gates.mjs --plan <intent.json>           # 只跑到 G3（零写入）
- *   node src/agent/gates.mjs --plan <intent.json> --apply   # 完整五闸
+ *   node src/agent/gates.mjs --plan <intent.json> --apply   # 完整五闸（G4 失败会自动回滚）
+ *   node src/agent/gates.mjs --plan <intent.json> --apply --no-rollback  # 失败时保留现状
  *   node src/agent/gates.mjs --plan <intent.json> --json
  *
  * 退出码：0 全绿 / 2 有闸红 / 1 致命（无法继续）
@@ -729,11 +730,15 @@ export async function rollback(before, after, opts = {}) {
     }
     if (opts.dryRun) return { ok: true, dryRun: true, would_delete: dry.would_delete, region };
 
-    /* 真删前后各取一次时钟：世界是活的，dry_run 和真删之间可能已经变了。
-       变了就说明回滚结果不可信 —— 必须说出来，不能假装成功。 */
+    /* 真删前后各取一次时钟。
+       ⚠️ 不能要求 tick **完全不变** —— 游戏主循环在两次 RPC 之间
+       自己会走 0.025~0.067 游戏秒，所以"完全不变"几乎恒假。
+       实测：10 次真回滚里 8 次被判"世界推进了，结果不可信"，而 applied 已经是 3/3。
+       合理的判据是"推进量小到不足以发生大规模变化"（比如 < 1 游戏秒）。 */
     const t0 = (await rpc("debug_loop", {})).tick;
     const r = await rpc("act", { op: "bulk_delete", region });
     const t1 = (await rpc("debug_loop", {})).tick;
+    const drift = t1 - t0;
 
     const failed = (r.failed || []).length;
     if (r.applied !== added.length || failed > 0) {
@@ -743,14 +748,14 @@ export async function rollback(before, after, opts = {}) {
             applied: r.applied, expected: added.length, failed: r.failed, region,
         };
     }
-    if (t1 !== t0) {
+    if (drift >= 1) {
         return {
             ok: false,
-            reason: `世界在回滚期间推进了（tick ${t0} → ${t1}）—— 结果不可信`,
-            applied: r.applied, region,
+            reason: `世界在回滚期间推进了 ${drift.toFixed(2)} 游戏秒 —— 结果可能不完整`,
+            applied: r.applied, region, tick_drift: +drift.toFixed(3),
         };
     }
-    return { ok: true, deleted: r.applied, region };
+    return { ok: true, deleted: r.applied, region, tick_drift: +drift.toFixed(3) };
 }
 
 /* ══════════════════════════ 主流程 ══════════════════════════ */
@@ -884,8 +889,30 @@ export async function runGates(intent, opts = {}) {
     // ── G4 落地 ──
     const g4 = gateG4(intent, before, after);
     if (!record("G4-landing", g4)) {
-        const rb = await rollback(before, after, { dryRun: true });
-        results.push({ id: "rollback-plan", ok: rb.ok, reason: rb.reason, evidence: rb });
+        /* ★ 只有"确定是我们贴坏的"才真回滚 ★
+           · undecidable（obs 被截断）：不碰世界 —— 数据不全时回滚可能删错东西
+           · 有既有 uid 消失（A3 静默销毁）或落地不一致：真回滚
+           先跑一次 dry_run 拿回滚计划，再把计划如实报出来，
+           然后真删（除非调用方显式 --no-rollback）。 */
+        if (g4.undecidable) {
+            results.push({
+                id: "rollback", ok: false, skipped: true,
+                reason: "落地无法判定（obs 被截断），不做回滚 —— 数据不全时回滚可能误删",
+            });
+            return { ok: false, results };
+        }
+        const plan = await rollback(before, after, { dryRun: true });
+        results.push({ id: "rollback-plan", ok: plan.ok, reason: plan.reason, evidence: plan });
+        if (opts.noRollback) {
+            results.push({ id: "rollback", ok: false, skipped: true, reason: "调用方给了 --no-rollback，不执行" });
+            return { ok: false, results };
+        }
+        if (!plan.ok) {
+            results.push({ id: "rollback", ok: false, reason: "回滚计划不可行，未执行（见 rollback-plan）" });
+            return { ok: false, results };
+        }
+        const rb = await rollback(before, after);
+        results.push({ id: "rollback", ok: rb.ok, reason: rb.reason, evidence: rb });
         return { ok: false, results };
     }
 
@@ -971,6 +998,9 @@ if (isMain) {
     const opts = {
         apply: argv.includes("--apply"),
         charge: argv.includes("--charge") ? true : false,
+        /* 默认 G4 失败时真回滚（把这次贴的删掉）。
+           想保留现状做人工检查时给 --no-rollback。 */
+        noRollback: argv.includes("--no-rollback"),
     };
     runGates(intent, opts).then(res => {
         if (argv.includes("--json")) console.log(JSON.stringify(res, null, 2));
