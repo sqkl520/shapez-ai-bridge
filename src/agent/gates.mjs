@@ -441,6 +441,11 @@ export function gateG4(intent, before, after) {
     const added = [];
     for (const [uid, e] of after.byUid) if (!before.byUid.has(uid)) added.push(e);
     evidence.added_entities = added.length;
+    /* 这一闸只看**粘贴刚结束的那个瞬间**。游戏对拐角的 `_updateSurroundingBelt`
+       重算发生在之后任意一次邻格变动，所以"贴后被翻"不在 G4 的视野里 ——
+       那由 G7/G8 的 t+0 与 t+60 两次采样兜。不标清楚的话，读到
+       `wrong_rot: []` 的人会以为"朝向已被持续验证"，实际只是一帧快照。 */
+    evidence.snapshot_stage = "post-paste-t0";
     evidence.expected_entities = (intent.entities || []).length;
 
     /* ★ 数量也要比 ★
