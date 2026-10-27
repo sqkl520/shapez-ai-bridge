@@ -129,10 +129,31 @@ export function buildWorld(entities, spec = loadSpec()) {
         };
         byUid.set(rec.uid, rec);
         byOrigin.set(key(rec.x, rec.y), rec);
+        /* ★ 展开时必须考虑旋转 ★
+           2×1 的机器在 r=90/270 时，第二格在 (x, y+1)，不是 (x+1, y)。
+           游戏自己的 `getTileSpaceBounds()` 就是按 rotation 算的；
+           朴素地用 `x+dx, y+dy` 只对 r=0 成立。
+           当前存档里 8 台多格机器恰好都是 r=0（实测重叠数 0），
+           所以这个 bug 一直没暴露 —— 但只要出现一台 r≠0 的 balancer 就会占错格，
+           让 connect 以为某格空着、实际有机器。
+
+           旋转规则（与游戏 Vector.rotateFastMultipleOf90 一致，y 向下）：
+             r=0   : (dx, dy) → ( dx,  dy)
+             r=90  : (dx, dy) → (-dy,  dx)
+             r=180 : (dx, dy) → (-dx, -dy)
+             r=270 : (dx, dy) → ( dy, -dx)
+           原点（dx=dy=0）恒映射到自身，所以 origin 不变。 */
+        const rot = ((rec.r % 360) + 360) % 360;
         for (let dx = 0; dx < w; dx++) {
             for (let dy = 0; dy < h; dy++) {
-                const k = key(rec.x + dx, rec.y + dy);
-                if (!cells.has(k)) cells.set(k, { uid: rec.uid, type: rec.type, isAnchor: dx === 0 && dy === 0 });
+                let ox = dx, oy = dy;
+                if (rot === 90) { ox = -dy; oy = dx; }
+                else if (rot === 180) { ox = -dx; oy = -dy; }
+                else if (rot === 270) { ox = dy; oy = -dx; }
+                const k = key(rec.x + ox, rec.y + oy);
+                if (!cells.has(k)) {
+                    cells.set(k, { uid: rec.uid, type: rec.type, isAnchor: dx === 0 && dy === 0 });
+                }
             }
         }
     }
