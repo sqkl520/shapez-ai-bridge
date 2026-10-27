@@ -75,6 +75,10 @@ const stubShapez = {
     },
     gBuildingVariants: {
         1: { metaInstance: { getId: () => "belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => true }, variant: "default", rotationVariant: 0 },
+        // 带子的另外两个 rv 档位（belt.js:25-43：internalId 1/2/3 ↔ rv 0/1/2）。
+        // 注册表里的存在性 = rv 合法性，测试必须镜像真机，否则 rv=1/2 会被误判非法。
+        2: { metaInstance: { getId: () => "belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => true }, variant: "default", rotationVariant: 1 },
+        3: { metaInstance: { getId: () => "belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => true }, variant: "default", rotationVariant: 2 },
         7: { metaInstance: { getId: () => "miner", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 0 },
         9: { metaInstance: { getId: () => "cutter", getDimensions: () => ({ x: 2, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 0 },
         // 隧道：22=sender(rv0) / 23=receiver(rv1)，1×1、不可替换（buildings/underground_belt.js:45-48）
@@ -398,6 +402,164 @@ check("paste_blueprint passes code's rotationVariant through to placeOne", () =>
     assert(res.applied === 2, "both pasted; got " + res.applied);
     assert(rvs.length === 2, "two placements");
     assert(rvs[0] === 0 && rvs[1] === 0, "stub code 1 carries rv 0; got " + JSON.stringify(rvs));
+});
+
+// ── place 的 rotationVariant / originalRotation 显式指定（逐格微调用）──
+// 背景：place 过去只给 rotation，带子的弯道变体（直/左弯/右弯）由游戏按当时邻居自动算，
+// 于是 place 放不出可靠的转角（实测 r=0 与 r=90 都落成 code=1）。placeOne 早有 override 能力，
+// 这里把它暴露给 place，并要求**读回实际 code 自证**——不能 applied=1 就当成功。
+
+/** 造一个能跑 opPlace 的 root；makeResult 决定"游戏"最终返回的实体长什么样。 */
+function placeStubRoot(makeResult) {
+    const calls = [];
+    const root = {
+        time: { now: () => 99 },
+        map: { getLayerContentXY: () => null },
+        signals: { entityManuallyPlaced: { dispatch() {} } },
+        logic: {
+            tryPlaceBuilding: p => {
+                calls.push(p);
+                const r = makeResult ? makeResult(p) : { rotation: p.rotation, rotationVariant: p.rotationVariant, code: 1 };
+                return {
+                    uid: 900 + calls.length,
+                    components: { StaticMapEntity: { rotation: r.rotation, code: r.code } },
+                };
+            },
+        },
+    };
+    return { root, calls };
+}
+
+check("opPlace: 给 rv 时把它传进 placeOne（不被游戏自动定向覆盖）", () => {
+    const m = newMod();
+    // 自动定向若被调用会返回 rv=0；显式 rv=2 必须赢
+    const meta = {
+        getId: () => "belt",
+        getLayer: () => "regular",
+        computeOptimalDirectionAndRotationVariantAtTile: () => ({ rotation: 0, rotationVariant: 0 }),
+    };
+    m.resolveBuilding = () => meta;
+    const { root, calls } = placeStubRoot(p => ({ rotation: p.rotation, rotationVariant: p.rotationVariant, code: 1 + p.rotationVariant }));
+    const res = m.opPlace(root, { building: "belt", x: 10, y: -11, r: 0, rv: 2 });
+    assert(calls.length === 1, "one placement");
+    assert(calls[0].rotationVariant === 2, "override must reach tryPlaceBuilding, got " + calls[0].rotationVariant);
+    assert(res.requested.rotationVariant === 2, "requested echoes rv");
+    assert(res.actual.code === 3 && res.actual.rotationVariant === 2, "actual decoded from code 3, got " + JSON.stringify(res.actual));
+    assert(res.mismatch === false, "matching rv -> no mismatch");
+});
+
+check("opPlace: 不给 rv 时行为不变（仍走游戏自动定向）—— 回归锁", () => {
+    const m = newMod();
+    let autoCalled = 0;
+    const meta = {
+        getId: () => "belt",
+        getLayer: () => "regular",
+        computeOptimalDirectionAndRotationVariantAtTile: () => {
+            autoCalled++;
+            return { rotation: 90, rotationVariant: 1 };
+        },
+    };
+    m.resolveBuilding = () => meta;
+    const { root, calls } = placeStubRoot(p => ({ rotation: p.rotation, rotationVariant: p.rotationVariant, code: 1 + p.rotationVariant }));
+    const res = m.opPlace(root, { building: "belt", x: 0, y: 0 });
+    assert(autoCalled === 1, "auto-orientation must still run when rv is absent, calls=" + autoCalled);
+    assert(calls[0].rotation === 90 && calls[0].rotationVariant === 1, "auto result used, got " + JSON.stringify(calls[0]));
+    assert(res.requested.rotationVariant === null, "no rv requested -> requested.rotationVariant null");
+    assert(res.mismatch === false, "no rv requested -> rv is not comparable, mismatch must be false");
+});
+
+check("opPlace: rv 非法值报 2001（belt 越界 / 非整数 / 机器 rv≠0）", () => {
+    const m = newMod();
+    const bad = [
+        { building: "belt", x: 0, y: 0, rv: 3 },          // belt 只有 0/1/2
+        { building: "belt", x: 0, y: 0, rv: -1 },
+        { building: "belt", x: 0, y: 0, rv: 1.5 },        // 非整数
+        { building: "belt", x: 0, y: 0, rv: "1" },        // 字符串
+        { building: "miner", x: 0, y: 0, rv: 1 },         // 注册表里 miner 只有 rv=0
+    ];
+    for (const a of bad) {
+        const { root } = placeStubRoot();
+        let threw = null;
+        try {
+            m.opPlace(root, a);
+        } catch (e) {
+            threw = e;
+        }
+        assert(threw && threw.__rpcError && threw.__rpcError.code === 2001,
+            "must be 2001 for " + JSON.stringify(a) + ", got " + (threw && threw.__rpcError && threw.__rpcError.code));
+    }
+    // 合法值不抛
+    const { root: okRoot } = placeStubRoot();
+    m.opPlace(okRoot, { building: "belt", x: 0, y: 0, rv: 1 });
+});
+
+check("opPlace: rv 合法档位按建筑类型区分（belt 2 档 / 机器仅 0）", () => {
+    const m = newMod();
+    const beltMeta = { getId: () => "belt" };
+    const minerMeta = { getId: () => "miner" };
+    const beltInfo = m.allowedRotationVariants({}, beltMeta, "default");
+    const minerInfo = m.allowedRotationVariants({}, minerMeta, "default");
+    assert(beltInfo.allowed.join(",") === "0,1,2", "belt rv set, got " + beltInfo.allowed.join(","));
+    assert(beltInfo.source === "registry", "belt rv set comes from the live registry, got " + beltInfo.source);
+    assert(minerInfo.allowed.join(",") === "0", "miner only rv=0, got " + minerInfo.allowed.join(","));
+    // 注册表里完全没有该建筑时兜底到文档表，而不是放行
+    const tbl = m.ensureBuildingTables();
+    const saved = tbl.rvByKey["belt/default"];
+    delete tbl.rvByKey["belt/default"];
+    try {
+        const doc = m.allowedRotationVariants({}, beltMeta, "default");
+        assert(doc.source === "documented" && doc.allowed.join(",") === "0,1,2", "fallback uses documented belt set, got " + JSON.stringify(doc));
+        const cutterMeta = { getId: () => "cutter" };
+        assert(m.allowedRotationVariants({}, cutterMeta, "default").allowed.join(",") === "0", "unknown machine falls back to [0]");
+    } finally {
+        tbl.rvByKey["belt/default"] = saved;
+    }
+});
+
+check("opPlace: 实际 code 与期望 rv 不符 -> mismatch:true 且 actual 如实上报", () => {
+    const m = newMod();
+    m.resolveBuilding = () => ({ getId: () => "belt", getLayer: () => "regular" });
+    // 游戏"拒绝"了 rv=2，仍旧落成直带（code=1）
+    const { root } = placeStubRoot(() => ({ rotation: 0, rotationVariant: 0, code: 1 }));
+    const res = m.opPlace(root, { building: "belt", x: 10, y: -11, rv: 2 });
+    assert(res.ok === true && res.applied === 1, "placement itself succeeded");
+    assert(res.requested.rotationVariant === 2, "requested rv=2");
+    assert(res.actual.code === 1 && res.actual.rotationVariant === 0, "actual reports what landed, got " + JSON.stringify(res.actual));
+    assert(res.mismatch === true, "mismatch must be true when the game substitutes its own rv");
+});
+
+check("opPlace: rotation 被拒绝也报 mismatch", () => {
+    const m = newMod();
+    m.resolveBuilding = () => ({ getId: () => "belt", getLayer: () => "regular" });
+    const { root } = placeStubRoot(() => ({ rotation: 0, rotationVariant: 0, code: 1 }));
+    const res = m.opPlace(root, { building: "belt", x: 0, y: 0, r: 90, rv: 0 });
+    assert(res.requested.rotation === 90, "requested rotation 90");
+    assert(res.actual.rotation === 0, "actual rotation 0");
+    assert(res.mismatch === true, "rotation mismatch must be reported");
+});
+
+check("opPlace: originalRotation/orig 透传到 placeOne", () => {
+    const m = newMod();
+    m.resolveBuilding = () => ({ getId: () => "belt", getLayer: () => "regular" });
+    const { root, calls } = placeStubRoot();
+    m.opPlace(root, { building: "belt", x: 0, y: 0, r: 180, orig: 270 });
+    assert(calls[0].originalRotation === 270, "originalRotation passed, got " + calls[0].originalRotation);
+    assert(calls[0].rotation === 180, "rotation passed, got " + calls[0].rotation);
+    // 别名冲突 -> 2001
+    let threw = null;
+    try {
+        m.opPlace(placeStubRoot().root, { building: "belt", x: 0, y: 0, rotationVariant: 1, rv: 2 });
+    } catch (e) {
+        threw = e;
+    }
+    assert(threw && threw.__rpcError.code === 2001, "conflicting aliases must be 2001");
+});
+
+check("place accepts rotationVariant/rv/originalRotation/orig as known fields", () => {
+    const m = newMod();
+    m.validateAction({ op: "place", building: "belt", x: 0, y: 0, rotationVariant: 2 });
+    m.validateAction({ op: "place", building: "belt", x: 0, y: 0, rv: 1, orig: 90 });
+    m.validateAction({ op: "place", building: "belt", x: 0, y: 0, originalRotation: 0 });
 });
 
 // ── bulk_delete 的 dry_run（防误删真实工厂）──

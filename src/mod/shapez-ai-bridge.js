@@ -78,6 +78,21 @@ const RECONNECT_MAX_MS = 30000;
 const MAX_STEP_TICKS = 20000;
 
 /**
+ * 各建筑的 rotationVariant 合法档位 —— **仅在运行期注册表（gBuildingVariants）不可用时兜底**。
+ * 与 src/ai/op-templates.mjs 的 RV_ALLOWED 同源（那里有源码+实机凭据）：
+ *   · belt：rv 0/1/2 = 直/左弯/右弯（belt.js:25-43 的 internalId 1/2/3）；
+ *   · underground_belt：rv 0/1 = sender/receiver（underground_belt.js:45-48）；
+ *   · 其它机器（miner/cutter/rotater/stacker/mixer/painter/trash/hub）：注册表里只有 rv=0 的 code。
+ * ⚠️ 这张表只回答"该建筑有哪些 rv 档位"，**不回答档位对应哪个 code** ——
+ *    code 一律从运行中的注册表反查（见 ensureBuildingTables 的 rvByKey）。
+ */
+const RV_DOCUMENTED = Object.freeze({
+    belt: [0, 1, 2],
+    underground_belt: [0, 1],
+});
+const RV_DEFAULT_ALLOWED = Object.freeze([0]);
+
+/**
  * 继承官方 Mod 基类（mod_examples 的官方模式：class Mod extends shapez.Mod）。
  * window.shapez 由 modloader 在本文件 eval 之前 exposeExports() 建立，故此处可直接引用。
  * 基类构造为 Mod({app, modLoader, meta, settings, saveSettings})。
@@ -1103,7 +1118,7 @@ class Mod extends shapez.Mod {
     ensureBuildingTables() {
         if (this._buildingTable) return this._buildingTable;
         const shapez = /** @type {any} */ (window).shapez;
-        const table = { byId: {}, byCode: {}, variantsByCode: {} };
+        const table = { byId: {}, byCode: {}, variantsByCode: {}, rvByKey: {} };
         try {
             const registry = shapez.gMetaBuildingRegistry;
             for (const meta of registry.getEntries()) {
@@ -1120,6 +1135,14 @@ class Mod extends shapez.Mod {
                     variant: v.variant,
                     rotationVariant: v.rotationVariant,
                 };
+                // rv 合法档位的**运行期权威**：注册表按 `id/variant/rv` 注册（building_codes.js:41-56），
+                // 所以"这个 (building, variant, rv) 有没有 code"就是"rv 合不合法"。
+                // 这比写死的表更可靠：非 belt 机器在注册表里根本没有 rv≠0 的条目（H2 的源码依据）。
+                if (id) {
+                    const key = id + "/" + v.variant;
+                    if (!table.rvByKey[key]) table.rvByKey[key] = [];
+                    table.rvByKey[key].push({ rv: v.rotationVariant || 0, code: isNaN(+code) ? code : +code });
+                }
             }
         } catch (e) {
             this.error("failed to build building tables:", e);
@@ -1464,7 +1487,74 @@ class Mod extends shapez.Mod {
     }
 
     /**
+     * 该 (building, variant) 允许的 rotationVariant 档位。
+     * 顺序：运行期注册表（权威，gBuildingVariants 登记了哪些 rv 就有哪些）→ 文档表兜底。
+     * 返回 { allowed: number[], source: "registry"|"documented", codeByRv: Map<rv,code>|null }
+     */
+    allowedRotationVariants(root, meta, variant) {
+        const table = this.ensureBuildingTables();
+        const id = meta.getId();
+        const entry = table.rvByKey && table.rvByKey[id + "/" + variant];
+        if (Array.isArray(entry) && entry.length > 0) {
+            const codeByRv = new Map();
+            entry.forEach(e => codeByRv.set(e.rv, e.code));
+            return { allowed: [...codeByRv.keys()].sort((x, y) => x - y), source: "registry", codeByRv };
+        }
+        // 注册表不可用（未进世界 / stub 环境 / 该变体未注册）→ 退回文档表。
+        // 注意：这只决定"档位合不合法"，实际 code 仍以放置后读回的实体为准（见 opPlace 自证）。
+        const documented = RV_DOCUMENTED[id] || RV_DEFAULT_ALLOWED;
+        return { allowed: documented.slice(), source: "documented", codeByRv: null };
+    }
+
+    /**
+     * 解析并校验 place 的 rotationVariant / rv 字段。
+     * 语义：不给（undefined/null）→ 返回 null，走"游戏自动定向"（既有行为，零改动）。
+     *       给了 → 必须是整数，且落在该 (building, variant) 的合法档位内，否则 2001。
+     * ⚠️ 不做"非 belt 一律拒绝"的一刀切：合法性以该建筑的注册档位为准
+     *    （belt 是 0/1/2，隧道 0/1，机器只有 0），见 allowedRotationVariants。
+     */
+    resolveRotationVariant(root, meta, variant, raw) {
+        if (raw === undefined || raw === null) return null;
+        if (typeof raw !== "number" || !Number.isInteger(raw)) {
+            throw this.rpcError(
+                2001,
+                "invalid_action",
+                "rotationVariant must be an integer, got " + JSON.stringify(raw),
+                "Use 0/1/2 for belts (0=straight, 1=left, 2=right). Omit the field to let the game auto-orient."
+            );
+        }
+        const info = this.allowedRotationVariants(root, meta, variant);
+        if (!info.allowed.includes(raw)) {
+            const id = meta.getId();
+            const isBeltFamily = id === "belt";
+            throw this.rpcError(
+                2001,
+                "invalid_action",
+                `rotationVariant ${raw} is not valid for ${id}|${variant} (allowed: ${info.allowed.join("/")})`,
+                isBeltFamily
+                    ? "Belts accept rv 0 (straight), 1 (left curve), 2 (right curve)."
+                    : `${id} has no rv≠0 building code registered — its curved/alternate forms are derived by the game, not selectable. Omit rotationVariant.`
+            );
+        }
+        return raw;
+    }
+
+    /**
      * 放一个建筑。返回放置后的 entity 或 null。
+     *
+     * place 的可选字段（逐格精确指定拓扑用）：
+     *   rotationVariant / rv —— 显式指定弯道变体。省略 = 游戏按邻居自动定向（既有语义，一字不改）。
+     *   originalRotation / orig —— 透传给 placeOne 的 originalRotation。
+     *
+     * ⚠️ rv 与 r 是**一对**：给了 rv 时 placeOne 不再调用 computeOptimalDirectionAndRotationVariantAtTile，
+     *    也就不会为了弯道而改 rotation（自动路径在 belt.js:207/226 会把 rotation ±90）。
+     *    所以复刻蓝图里的转角必须同时给 (r, rv)，只给 rv 会得到"朝向 r 的弯带"。
+     * ⚠️ 邻居重算（本文件外，游戏侧）：BeltSystem.updateSurroundingBeltPlacement 挂在 entityAdded 上，
+     *    每放一格都会把**周围一圈**的带子按邻居重算 rv 并覆写 code（systems/belt.js:120-210），
+     *    唯一豁免是 immutableOperationRunning（belt.js:169）。也就是说：先 place 出转角、再 place 它的邻居，
+     *    前一格的 rv 会被游戏改掉。本 op 的 mismatch 只比对**放置那一刻**的读回值；
+     *    需要整块拓扑稳定时仍应走 paste_blueprint（它包了 performImmutableOperation）。
+     *
      * 参照游戏自身 HUDBuildingPlacerLogic.tryPlaceCurrentBuildingAt 的调用形态：
      *   computeOptimalDirectionAndRotationVariantAtTile({root, tile, rotation, variant, layer})
      *   logic.tryPlaceBuilding({origin, rotation, rotationVariant, originalRotation, building, variant})
@@ -1564,7 +1654,7 @@ class Mod extends shapez.Mod {
         // 每个 op 的允许字段集合（协议 §5）
         return {
             noop: { fields: new Set([]) },
-            place: { fields: new Set(["building", "x", "y", "r", "variant"]) },
+            place: { fields: new Set(["building", "x", "y", "r", "variant", "rotationVariant", "rv", "originalRotation", "orig"]) },
             place_path: { fields: new Set(["building", "from", "to", "r", "variant"]) },
             delete: { fields: new Set(["x", "y", "layer"]) },
             bulk_delete: { fields: new Set(["region", "layer", "dry_run"]) },
@@ -1710,11 +1800,49 @@ class Mod extends shapez.Mod {
         const meta = this.resolveBuilding(root, a.building);
         const variant = this.resolveVariant(root, meta, a.variant);
         const rot = this.normalizeRotation(a.r === undefined ? 0 : a.r);
-        const entity = this.placeOne(root, meta, a.x, a.y, rot, variant);
+
+        // 别名合并：rotationVariant/rv 与 originalRotation/orig 各自允许两种写法，
+        // 同时给且不一致 → 2001（不猜调用方想要哪个）。
+        const rvRaw = this.pickAlias(a, "rotationVariant", "rv");
+        const origRaw = this.pickAlias(a, "originalRotation", "orig");
+        const rv = this.resolveRotationVariant(root, meta, variant, rvRaw);
+        let orig = null;
+        if (origRaw !== undefined && origRaw !== null) {
+            if (typeof origRaw !== "number" || !Number.isFinite(origRaw)) {
+                throw this.rpcError(2001, "invalid_action", "originalRotation must be a number (degrees), got " + JSON.stringify(origRaw));
+            }
+            orig = this.normalizeRotation(origRaw);
+        }
+
+        const entity = this.placeOne(root, meta, a.x, a.y, rot, variant, rv, orig);
         if (!entity) {
             const hint = this.describeTileOccupant(root, a.x, a.y);
             throw this.rpcError(2002, "game_rejected", "cannot place " + a.building + " at (" + a.x + "," + a.y + ")", hint);
         }
+
+        /* ★ 自证：读回真正落地的 code / rotation / rv ★
+           游戏可能拒绝我们给的 rv（或 belt 系统在 entityAdded 里重算邻居），
+           此时 applied=1 只说明"放下去了"，不说明"放对了"。调用方必须能自己判断。 */
+        const sme = entity.components && entity.components.StaticMapEntity;
+        const actualCode = sme ? sme.code : null;
+        const table = this.ensureBuildingTables();
+        const codeInfo = actualCode !== null ? table.byCode[actualCode] : null;
+        let actualRv = codeInfo && typeof codeInfo.rotationVariant === "number" ? codeInfo.rotationVariant : null;
+        if (actualRv === null && sme && typeof sme.getRotationVariant === "function") {
+            try {
+                actualRv = sme.getRotationVariant();
+            } catch (e) {
+                actualRv = null;
+            }
+        }
+        const actualRotation = sme && typeof sme.rotation === "number" ? sme.rotation : null;
+
+        // 未请求 rv 时 rotationVariant 不可比（游戏自动定向是既有语义，不算 mismatch）；
+        // 未请求 r 时 rotation 同理 —— 老调用方只给 building+x+y，不能因为游戏自动转了方向就报 mismatch。
+        const rvRequested = rv !== null;
+        const rotRequested = a.r !== undefined && a.r !== null;
+        const mismatch = (rvRequested && actualRv !== rv) || (rotRequested && actualRotation !== null && actualRotation !== rot);
+
         return {
             ok: true,
             op: "place",
@@ -1723,7 +1851,25 @@ class Mod extends shapez.Mod {
             applied: 1,
             failed: [],
             tick: root.time.now(),
+            requested: { rotation: rotRequested ? rot : null, rotationVariant: rv },
+            actual: { rotation: actualRotation, rotationVariant: actualRv, code: actualCode },
+            mismatch,
         };
+    }
+
+    /** 取别名对（primary 优先），两者都给且值不同 → 2001。都缺 → undefined。 */
+    pickAlias(a, primary, alias) {
+        const hasP = a[primary] !== undefined && a[primary] !== null;
+        const hasA = a[alias] !== undefined && a[alias] !== null;
+        if (hasP && hasA && a[primary] !== a[alias]) {
+            throw this.rpcError(
+                2001,
+                "invalid_action",
+                `${primary} and ${alias} disagree (${JSON.stringify(a[primary])} vs ${JSON.stringify(a[alias])})`,
+                "They are aliases — pass only one of them."
+            );
+        }
+        return hasP ? a[primary] : hasA ? a[alias] : undefined;
     }
 
     opPlacePath(root, a) {
