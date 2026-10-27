@@ -78,6 +78,35 @@ const RECONNECT_MAX_MS = 30000;
 const MAX_STEP_TICKS = 20000;
 
 /**
+ * 会改世界的 op / method —— 它们必须在同一条串行链上（见 rpcTouchesWorld）。
+ *
+ * 这份清单是"谁需要排队"的**唯一**来源，新增写 op 时必须同步加进来；
+ * test/mod_selftest.mjs 有一条测试把 actionSpecs() 与它对照，漏加会红。
+ */
+const RPC_WRITE_OPS = new Set([
+    "place",
+    "place_path",
+    "delete",
+    "bulk_delete",
+    "paste_blueprint",
+    "step",
+    "await",
+    "set_speed",
+    "save",
+    "load",
+    "new_game",
+]);
+const RPC_WRITE_METHODS = new Set([
+    "save_now",
+    "load_save",
+    "new_game",
+    "delete_save",
+    "repair_save",
+    "upgrade",
+    "game_setting",
+]);
+
+/**
  * 各建筑的 rotationVariant 合法档位 —— **仅在运行期注册表（gBuildingVariants）不可用时兜底**。
  * 与 src/ai/op-templates.mjs 的 RV_ALLOWED 同源（那里有源码+实机凭据）：
  *   · belt：rv 0/1/2 = 直/左弯/右弯（belt.js:25-43 的 internalId 1/2/3）；
@@ -355,17 +384,68 @@ class Mod extends shapez.Mod {
         });
     }
 
+    /**
+     * 一条 RPC 是否**会改世界**（因而必须与其它写操作、与状态切换互斥）。
+     *
+     * 为什么不能只按 method 名判断：`place` 走的是 method="act"，同一个 method
+     * 里既有 `noop`/`camera`（几乎瞬时，挡它没意义）也有 `place`（改世界）。
+     * 必须下钻到 op 级别。
+     *
+     * 分类依据是"这个调用一旦 await 让出，另一个调用插进来会不会读到不一致的世界"：
+     *   · place / place_path / delete / bulk_delete / paste_blueprint —— 直接改地图
+     *   · step / await —— 推进逻辑时钟，地图会被系统改写（带子重算、机器产量）
+     *   · save —— 在 await 点会把**当时**的世界序列化（game doSave 内 updateData）
+     *   · upgrade —— 扣库存、改写 hubGoals
+     *   · set_speed —— 改时间倍率，影响别人的 step 语义
+     *   · game_setting —— 改 app 级设置（隧道磁贴开关会改变粘贴/删除的语义）
+     *   · load_save / new_game / delete_save / repair_save —— 换世界或动存档文件
+     *   · batch —— 逐条看里面的 action
+     * 其余（status/obs/screenshot/list_saves/...）是纯读，不排队。
+     */
+    rpcTouchesWorld(method, params) {
+        if (method === "act") {
+            const op = params && params.op;
+            return RPC_WRITE_OPS.has(op);
+        }
+        if (method === "batch") {
+            const actions = (params && params.actions) || [];
+            return actions.some(a => a && RPC_WRITE_OPS.has(a.op));
+        }
+        return RPC_WRITE_METHODS.has(method);
+    }
+
+    /**
+     * 把一次 RPC 排进串行链；链上任何一环抛错都不影响下一环。
+     * 返回的 Promise 永远 resolve（错误由 handleRpc 内部转成 JSON-RPC error 回出去）。
+     */
+    enqueueOnChain(chainName, msg) {
+        const prev = this[chainName] || Promise.resolve();
+        const next = prev.then(
+            () => this.handleRpc(msg),
+            () => this.handleRpc(msg)
+        );
+        this[chainName] = next;
+        return next;
+    }
+
     handleBridgeMessage(msg) {
         // 桥接只发请求（带 id）或通知（无 id）。本 Mod 对未知 method 回 -32601。
         if (msg && msg.id !== undefined && msg.method !== undefined) {
-            // 状态切换类 RPC 必须串行（红队发现：并发 load_save/new_game 时第二次
-            // moveToState 会撞上游戏的状态机 fade 保护而被静默忽略，但 mod 仍回 ok）。
-            // 用一条 Promise 链保证顺序执行；其余 RPC 走原路径不被拖慢。
-            if (msg.method === "load_save" || msg.method === "new_game") {
-                this.stateChain = (this.stateChain || Promise.resolve()).then(
-                    () => this.handleRpc(msg),
-                    () => this.handleRpc(msg)
-                );
+            /* 所有**会改世界**的 RPC 走同一条链（worldChain），状态切换类也在这条链上。
+               为什么状态切换也要进来：载荷顺序是 load_save 先到、place 后到。
+               load_save 一进 handleRpc 就会 await（readAsync / waitFor），此时排在
+               后面的 place 若走"立即执行"的路径，就会落到**旧世界**上 —— 而 load_save
+               随后把那个世界换掉，place 已经回了 ok:true、实体却随着旧 root 一起消失。
+               这正是"返回 ok 但实体没建出来"的形态。
+               纯读 RPC 不进链：obs/status/screenshot 动辄几十毫秒，把读也堵在写后面
+               会让 AI 的观测被无关的粘贴拖住（而且读本身不会破坏顺序）。
+               链本身不排队"执行"，只排队"开始"：一个 place 是同步完成的（见
+               opPlace → placeOne → logic.tryPlaceBuilding，全同步），它进链后立刻跑完，
+               不会给后面的 RPC 增加延迟；只有真的需要 await 的写操作才占住链。*/
+            if (this.rpcTouchesWorld(msg.method, msg.params)) {
+                this.enqueueOnChain("worldChain", msg).catch(err => {
+                    this.sendError(msg.id, 2003, "mod_error", String(err && err.stack ? err.stack : err));
+                });
                 return;
             }
             this.handleRpc(msg).catch(err => {

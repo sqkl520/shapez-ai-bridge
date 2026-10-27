@@ -759,5 +759,197 @@ check("paste dry_run 是已知字段；真粘贴路径不受影响", () => {
     assert(real.dry_run === undefined, "真粘贴不带 dry_run 标志");
 });
 
+// ─────────────── RPC 写操作串行化 ───────────────
+/*
+ * 背景（实测现象）：连续快速发多个 place，部分请求回 ok:true 但实体没建出来。
+ *
+ * 源码判据：
+ *   · 单个 place 是**同步**完成的（opPlace → placeOne → logic.tryPlaceBuilding），
+ *     所以 place-vs-place 在 JS 单线程里不会交错，这不是根因。
+ *   · 但 load_save / new_game 是 async（await readAsync / waitFor），
+ *     它们一进 handleRpc 就 await 让出；此时后到的 place 若"立即执行"，
+ *     就会落在**旧 root** 上。load_save 随后把世界换掉 → place 已回 ok，
+ *     实体却随旧 root 一起消失。这才是"ok 但没建出来"的真实形态。
+ *   · 修法：所有会改世界的 RPC 走同一条 Promise 链（worldChain），纯读不排队。
+ *
+ * 下面三条测试分别锁：① 分类表不漏写 op ② 写操作真的按到达顺序执行
+ * ③ 状态切换占住链时，写操作不许插进去（并内嵌变异检查：去掉串行化必须变红）。
+ */
+
+check("rpcTouchesWorld：所有写 op / method 都被判定为改世界，纯读不被拖进链", () => {
+    const m = newMod();
+    // 1) actionSpecs 里除了这几个纯只读 op，其余都必须被判为"改世界"
+    const READ_ONLY_OPS = new Set(["noop", "camera", "export_blueprint"]);
+    const specs = m.actionSpecs();
+    for (const op of Object.keys(specs)) {
+        const want = !READ_ONLY_OPS.has(op);
+        const got = m.rpcTouchesWorld("act", { op });
+        assert(got === want, `op '${op}' 应 ${want ? "进链" : "不进链"}，实得 ${got}`);
+    }
+    // 2) 写 method 逐个检查
+    for (const method of ["save_now", "load_save", "new_game", "delete_save", "repair_save", "upgrade", "game_setting"]) {
+        assert(m.rpcTouchesWorld(method, {}) === true, method + " 必须进链");
+    }
+    // 3) 纯读 method 一个都不许进链（进链会让观测被无关的粘贴拖住）
+    for (const method of ["status", "obs", "screenshot", "list_saves", "debug_items", "debug_loop",
+                          "debug_log", "debug_app_state", "resources", "production", "world_info",
+                          "debug_canvas_api", "debug_speed_registry"]) {
+        assert(m.rpcTouchesWorld(method, {}) === false, method + " 不该进链");
+    }
+    // 4) batch：只要含一个写 op 就要进链；全读不进链
+    assert(m.rpcTouchesWorld("batch", { actions: [{ op: "noop" }, { op: "place", building: "belt", x: 0, y: 0 }] }) === true,
+        "含 place 的 batch 必须进链");
+    assert(m.rpcTouchesWorld("batch", { actions: [{ op: "noop" }, { op: "export_blueprint" }] }) === false,
+        "全只读 batch 不进链");
+});
+
+/** 造一个能记录 tryPlaceBuilding 调用顺序的假 root；bulk 操作直接同步执行。 */
+function serialRoot(tag, log, opts = {}) {
+    return {
+        tag,
+        time: { now: () => 1, getIsPaused: () => false, getSpeed: () => ({ getId: () => "regular" }), setSpeed() {} },
+        hubGoals: {
+            level: 5, storedShapes: {}, upgradeLevels: {},
+            currentGoal: { definition: { getHash: () => "Cu" }, required: 10 },
+            getCurrentGoalDelivered: () => 0,
+        },
+        entityMgr: { entities: [] },
+        map: { getLayerContentXY: () => null },
+        logic: {
+            performBulkOperation: fn => fn(),
+            tryPlaceBuilding: p => { log.push(tag + ":" + p.origin.x + "," + p.origin.y); return { uid: log.length }; },
+            tryDeleteBuilding: () => true,
+        },
+        signals: { entityManuallyPlaced: { dispatch() {} }, prePlacementCheck: { dispatch: () => {} } },
+        camera: { center: { x: 0, y: 0 }, zoomLevel: 1 },
+        gameMode: { getHasFreeCopyPaste: () => true, getBlueprintShapeKey: () => "Cu", getIsEditor: () => false, getUpgrades: () => ({}) },
+        canvas: {},
+        gameState: opts.gameState || {},
+    };
+}
+
+/** 把 mod 接到假 ws 上，返回 { m, ws }；ws.responses 收所有回包。 */
+function wiredMod() {
+    const m = newMod();
+    const responses = [];
+    m.ws = { readyState: 1, send: raw => responses.push(JSON.parse(raw)) };
+    return { m, responses };
+}
+
+const tickAsync = (ms = 0) => new Promise(r => setTimeout(r, ms));
+
+/** 异步版 check：错误也要计入 pass/fail，而不是把整个进程抛崩（那样后面的用例就不跑了）。 */
+async function checkAsync(name, fn) {
+    try {
+        await fn();
+        pass++;
+        console.log("PASS", name);
+    } catch (e) {
+        fail++;
+        console.log("FAIL", name, "->", (e && e.message) || e);
+    }
+}
+
+/**
+ * 复刻「修复前」的入口分发：写操作不排队，handleRpc 被直接调用。
+ * 用它跑同一组断言，就能证明这条测试是**因为串行化**才绿的。
+ */
+function useUnserializedDispatch(m) {
+    m.handleBridgeMessage = function (msg) {
+        if (msg && msg.id !== undefined && msg.method !== undefined) {
+            this.handleRpc(msg).catch(() => {});
+        }
+    };
+}
+
+/** 搭一台「load_save 卡在 readAsync 里」的假游戏，返回控制句柄。 */
+function stalledLoadMod(tag) {
+    const { m, responses } = wiredMod();
+    const log = [];
+    const mainMenu = { getKey: () => "MainMenuState" };
+    const newRoot = serialRoot("B", log);
+    let resolveRead = null;
+    const stateMgr = {
+        currentState: { getKey: () => "InGameState" },
+        moveToState(key) {
+            log.push("moveToState:" + key);
+            if (key === "InGameState") m.root = newRoot;
+            // 模拟状态机的异步 fade：稍后才真正切过去
+            if (key === "MainMenuState") setTimeout(() => { stateMgr.currentState = mainMenu; }, 5);
+        },
+    };
+    m.app.stateMgr = stateMgr;
+    m.app.savegameMgr = {
+        getSavegameById: id => ({ internalId: id, readAsync: () => new Promise(r => { resolveRead = r; }) }),
+    };
+    m.root = serialRoot("A", log);
+    return {
+        m, responses, log,
+        startLoad: () => m.handleBridgeMessage({ jsonrpc: "2.0", id: 10, method: "load_save", params: { internal_id: "save-1" } }),
+        startPlace: () => m.handleBridgeMessage({ jsonrpc: "2.0", id: 11, method: "act", params: { op: "place", building: "belt", x: 7, y: 7 } }),
+        releaseRead: () => resolveRead && resolveRead(),
+    };
+}
+
+// ② 两个写操作同时进来：必须按到达顺序执行
+await checkAsync("写操作串行：两个 place 同时到达 → 按到达顺序执行", async () => {
+    const { m, responses } = wiredMod();
+    const log = [];
+    m.root = serialRoot("A", log);
+    m.handleBridgeMessage({ jsonrpc: "2.0", id: 1, method: "act", params: { op: "place", building: "belt", x: 1, y: 1 } });
+    m.handleBridgeMessage({ jsonrpc: "2.0", id: 2, method: "act", params: { op: "place", building: "belt", x: 2, y: 2 } });
+    await tickAsync();
+    assert(JSON.stringify(log) === JSON.stringify(["A:1,1", "A:2,2"]),
+        "两个 place 必须按到达顺序执行, got " + JSON.stringify(log));
+    const ids = responses.map(r => r.id).sort((a, b) => a - b);
+    assert(JSON.stringify(ids) === "[1,2]", "两个请求都要回包, got " + JSON.stringify(ids));
+});
+
+// ③ 状态切换在飞时，写操作必须等它落地（这是 ok:true 却丢实体的根因）
+async function assertNoCutIn(h, expectSerialized) {
+    h.startLoad();
+    // 后到的 place：此时 load_save 卡在 readAsync 里
+    h.startPlace();
+    await tickAsync(0);
+    if (expectSerialized) {
+        assert(!h.log.includes("A:7,7"),
+            "load_save 未落地时 place 不许插队到旧 root 上, got " + JSON.stringify(h.log));
+    }
+    h.releaseRead();
+    // loadSave 内部用 waitFor(100ms 轮询) 等主菜单 → 再 moveToState；给足时间
+    await tickAsync(600);
+    assert(h.log.indexOf("A:7,7") === -1, "旧 root 上不该有任何 place, got " + JSON.stringify(h.log));
+    assert(h.log.indexOf("B:7,7") > h.log.indexOf("moveToState:InGameState"),
+        "place 必须落在 load_save 之后的新 root 上, got " + JSON.stringify(h.log));
+    const r11 = h.responses.find(r => r.id === 11);
+    assert(r11 && r11.result && r11.result.ok === true, "place 回 ok");
+    const r10 = h.responses.find(r => r.id === 10);
+    assert(r10 && r10.result && r10.result.ok === true, "load_save 回 ok");
+}
+
+await checkAsync("写操作串行：load_save 在飞时 place 不插队，落在新 root 上", async () => {
+    await assertNoCutIn(stalledLoadMod(), true);
+});
+
+/*
+ * 变异自检：同一条断言在「不排队」的分发下必须失败。
+ * 这条用程序证明「去掉串行化 → 测试变红」，而不是靠人相信。
+ * 若哪天有人把 worldChain 删掉，上面的用例会红；若有人把这条变异用例改成永远通过，
+ * 它自己会红（因为它要求变异体确实出现 A:7,7 这个插队痕迹）。
+ */
+await checkAsync("变异自检：不排队时分发器会把 place 插到旧 root 上（断言确实有判别力）", async () => {
+    const h = stalledLoadMod();
+    useUnserializedDispatch(h.m);
+    let threw = null;
+    try {
+        await assertNoCutIn(h, false);
+    } catch (e) {
+        threw = e;
+    }
+    assert(threw, "变异体必须让断言失败，但它通过了 —— 这条测试没有判别力");
+    assert(/旧 root 上不该有任何 place|不许插队/.test(String(threw.message)),
+        "变异体的失败原因应是 place 插队, got: " + threw.message);
+});
+
 console.log("\n" + (fail === 0 ? "ALL " + pass + " CHECKS PASSED" : pass + " passed, " + fail + " FAILED"));
 process.exit(fail === 0 ? 0 : 1);
