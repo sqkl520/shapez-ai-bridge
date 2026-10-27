@@ -2090,7 +2090,7 @@ await checkAsync("tx: 会产出「放得下但删不掉」的建筑 → 执行�
     assert(root.map.getLayerContentXY(60, -46, "regular") === null, "tile must be empty");
 });
 
-check("tx: place_path 也走同一条可逆性预检", async () => {
+checkAsync("tx: place_path 也走同一条可逆性预检", async () => {
     const m = newMod();
     const { root } = txWorld();
     m.root = root;
@@ -2105,7 +2105,7 @@ check("tx: place_path 也走同一条可逆性预检", async () => {
     assert(root.entityMgr.entities.length === 0, "nothing placed");
 });
 
-check("tx: 可删的建筑不受预检影响（belt 正常通过）", async () => {
+checkAsync("tx: 可删的建筑不受预检影响（belt 正常通过）", async () => {
     const m = newMod();
     const { root } = txWorld();
     m.root = root;
@@ -2113,7 +2113,7 @@ check("tx: 可删的建筑不受预检影响（belt 正常通过）", async () =
     assert(res.ok === true, "belt is removable ⇒ tx must pass; failures=" + JSON.stringify(res.failures));
 });
 
-check("delete{uid}: 不可删建筑 → 2002 且 detail 说清是哪类", async () => {
+checkAsync("delete{uid}: 不可删建筑 → 2002 且 detail 说清是哪类", async () => {
     const m = newMod();
     const { root, spawn } = txWorld();
     m.root = root;
