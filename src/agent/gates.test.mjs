@@ -28,6 +28,7 @@ import {
     entityCells, expectedCells, gateG3, gateG4, gateG6, gateG6b,
     gateG7flow, gateG8chains, gateIntentMatchesBlueprint, itemsRegionFor,
     gateG9WorldReady, gateG10RvSelfcheck, gateG11NoConcurrentLoss, gateG12ScreenshotRegion,
+    gateGDeleteReplay, gateGRollbackRestore, normalizeIntent, declaredRemovals,
     expectedRateOf, runGates,
 } from "./gates.mjs";
 import { encodeBlueprint, decodeBlueprint } from "../shared/blueprint.mjs";
@@ -199,7 +200,7 @@ console.log("\n── ② expectedCells：世界坐标 = anchor + [dx,dy] ──
 }
 
 /* ═════════ ③ gateG3：三个条件都必须有灵敏度 ═════════ */
-console.log("\n── ③ gateG3：三个条件都必须有灵敏度 ──");
+console.log("\n── ③ gateG3：三个条件都必须有灵敏度 + removes 语义 ──");
 {
     const good = await gateG3(intent, { blocked: [], destroys: [], would_apply: 4, would_delete: 0 });
     ok(good.ok, "干净落点 → 绿");
@@ -207,8 +208,34 @@ console.log("\n── ③ gateG3：三个条件都必须有灵敏度 ──");
     const blocked = await gateG3(intent, { blocked: [{ cell: [10, 10], reason: "solid collision" }], destroys: [], would_apply: 3, would_delete: 0 });
     ok(!blocked.ok, "有 blocked → 红（arm E）", blocked.reason);
 
+    /* ★ 语义已改（终裁 §1.3）：destroy ≠ 恒红，只有**未声明**的 destroy 才红 ★
+       destroys 落在 intent.removes 里 ⇒ 绿（这是 L4 五 op 解的表达方式） */
     const destroys = await gateG3(intent, { blocked: [], destroys: [{ uid: 1, cell: [5, 5], type: "belt" }], would_apply: 4, would_delete: 1 });
-    ok(!destroys.ok, "有 destroys → 红（arm E）", destroys.reason);
+    ok(!destroys.ok, "有未声明的 destroys → 红（真事故）", destroys.reason);
+    ok(/没在 intent.removes 里声明/.test(destroys.reason),
+        "未声明销毁的 reason 明确点名 intent.removes", destroys.reason);
+
+    const destDeclared = await gateG3({ ...intent, removes: [{ uid: 1 }] },
+        { blocked: [], destroys: [{ uid: 1, cell: [5, 5], type: "belt" }], would_apply: 4, would_delete: 1 });
+    ok(destDeclared.ok, "destroys 已在 removes 里声明 → 绿（L4「删 3 带」可被表达）", destDeclared.reason);
+    eq(destDeclared.evidence.declared_destroys.length, 1, "声明的销毁逐条进 evidence.declared_destroys");
+    eq(destDeclared.evidence.declared_destroys[0].uid, 1, "evidence 里带 uid");
+    eq(destDeclared.evidence.undeclared_destroys, 0, "evidence 里 undeclared_destroys=0");
+
+    /* 声明了 A 却撞了 B ⇒ 仍红。这是最容易被"批量声明"糊弄过去的形态 */
+    const destWrong = await gateG3({ ...intent, removes: [{ uid: 1 }, { uid: 2 }] },
+        { blocked: [], destroys: [{ uid: 99, cell: [5, 5], type: "belt" }], would_apply: 4, would_delete: 1 });
+    ok(!destWrong.ok, "声明删 1/2、实际撞上 99 → 红（声明不是免死金牌）", destWrong.reason);
+    eq(destWrong.evidence.undeclared_destroys, 1, "evidence 数出 1 个未声明销毁");
+
+    /* 同一 uid 被多处 cells 报两次时不能重复计数（cutter 2×1 压两格） */
+    const destDup = await gateG3({ ...intent, removes: [{ uid: 7 }] },
+        {
+            blocked: [], would_apply: 4, would_delete: 1,
+            destroys: [{ uid: 7, cell: [5, 5], type: "cutter" }, { uid: 7, cell: [6, 5], type: "cutter" }],
+        });
+    ok(destDup.ok, "同一 uid 在两个格上被报销毁 → 去重后仍绿", destDup.reason);
+    eq(destDup.evidence.destroys, 1, "destroys 按 uid 去重（cutter 占两格不算两个实体）");
 
     const miscount = await gateG3(intent, { blocked: [], destroys: [], would_apply: 3, would_delete: 0 });
     ok(!miscount.ok, "would_apply 与实体数不符 → 红（arm E）", miscount.reason);
@@ -314,6 +341,20 @@ console.log("\n── ④ gateG4：uid 消失与 code 不符都必须红 ──"
     }));
     const g4a = gateG4(rich, before, mkSnap(vanishedList));
     ok(!g4a.ok, "既有 uid 消失 → 红（A3 的兜底，arm E）", g4a.reason);
+    ok(/未在 intent.removes 里声明/.test(g4a.reason), "G4 的 reason 说清楚是「未声明」才红", g4a.reason);
+
+    /* ★ 语义已改：声明过的消失 → 绿（L4 的「删 3 带」就靠这条） ★
+       与上一条是同一份快照，唯一差别是 intent.removes 里多了 uid 1。 */
+    const g4Decl = gateG4({ ...rich, removes: [{ uid: 1 }] }, before, mkSnap(vanishedList));
+    ok(g4Decl.ok, "既有 uid 1 消失但已在 removes 里声明 → G4 绿", g4Decl.reason);
+    eq(g4Decl.evidence.deleted_declared, 1, "G4 evidence 记 deleted_declared=1");
+    ok(jEq(g4Decl.evidence.deleted_declared_uids, [1]), "G4 evidence 列出被声明删除的 uid", g4Decl.evidence.deleted_declared_uids);
+
+    /* 声明了 1、实际消失的却是别人（before 里有 1/2，只声明 1，但 2 也没了）*/
+    const before12 = mkSnap([oldEnt, { uid: 2, x: 101, y: 100, code: 1, type: "belt", r: 0 }]);
+    const g4Partly = gateG4({ ...rich, removes: [{ uid: 1 }] }, before12, mkSnap(vanishedList));
+    ok(!g4Partly.ok, "声明删 1、实际连 uid 2 也消失了 → 红（只有声明的那一个才豁免）", g4Partly.reason);
+    ok(/uid 2|1 个既有实体消失/.test(g4Partly.reason), "reason 点名未声明的那个 uid", g4Partly.reason);
 
     // 反例：code 不符
     const wrongCode = mkSnap([
@@ -994,6 +1035,164 @@ console.log("\n── ⑮ gateG12：world_rect 覆盖 bbox / drew 非空 / skipp
         "未请求 region 时不比对 world_rect → 只判 drew（绿）");
 }
 
+/* ═════════ 十七 removes[]：形状校验（loadIntent 的语义，不写临时文件） ═════════ */
+console.log("\n── ⑰ removes[]：可选的、一旦出现必须逐项有 uid 或 cell ──");
+{
+    const base = { goal: "RuRu----", anchor: [0, 0], entities: [] };
+    ok(normalizeIntent({ ...base }).removes === undefined, "老 intent（没有 removes）照常通过，且不被凭空加上字段");
+    eq(normalizeIntent({ ...base, removes: [{ uid: 10042 }] }).removes.length, 1, "只给 uid 合法");
+    eq(normalizeIntent({ ...base, removes: [{ cell: [3, 4] }] }).removes.length, 1, "只给 cell 合法");
+    eq(normalizeIntent({ ...base, removes: [{ uid: 10042, cell: [3, 4], why: "L4 旧拐角" }] }).removes.length, 1,
+        "uid + cell + 注释字段合法");
+
+    /* ★ 关键负例：空对象声明 —— 看起来声明了删除，其实什么都没说 ★
+       放行它等于给 G3 一个"已声明"的免死金牌。 */
+    const throwOf = fn => { try { fn(); return null; } catch (e) { return e.message; } };
+    const m1 = throwOf(() => normalizeIntent({ ...base, removes: [{}] }));
+    ok(!!m1, "removes:[{}] → 抛错（不能拿空声明换免死金牌）", m1);
+    ok(/uid 或 cell/.test(m1 || ""), "错误信息点名「uid 或 cell」", m1);
+
+    ok(!!throwOf(() => normalizeIntent({ ...base, removes: "10042" })), "removes 不是数组 → 抛错");
+    ok(!!throwOf(() => normalizeIntent({ ...base, removes: [null] })), "removes 里有 null → 抛错");
+    ok(!!throwOf(() => normalizeIntent({ ...base, removes: [{ uid: "10042" }] })), "uid 是字符串 → 抛错（uid 必须整数）");
+    ok(!!throwOf(() => normalizeIntent({ ...base, removes: [{ uid: -1 }] })), "uid 为负 → 抛错");
+    ok(!!throwOf(() => normalizeIntent({ ...base, removes: [{ cell: [1] }] })), "cell 只有 1 个元素 → 抛错");
+    ok(!!throwOf(() => normalizeIntent({ ...base, removes: [{ cell: [1.5, 2] }] })), "cell 非整数 → 抛错");
+    ok(!!throwOf(() => normalizeIntent({ ...base, removes: [{ uid: 5 }, { uid: 5 }] })), "uid 重复声明 → 抛错");
+    ok(!!throwOf(() => normalizeIntent({ ...base, removes: [{ cell: [1, 1] }, { cell: [1, 1] }] })), "cell 重复声明 → 抛错");
+    ok(!!throwOf(() => normalizeIntent({ anchor: [0, 0], entities: [] })), "缺 goal 仍然抛错（老必填项没被改坏）");
+
+    /* declaredRemovals：uid 与 cell 两套索引都要建，重复的 uid 只算一次 */
+    const d = declaredRemovals({ removes: [{ uid: 7 }, { uid: 7 }, { cell: [2, 3] }] });
+    eq(d.uids.size, 1, "declaredRemovals 的 uid 集合去重");
+    eq(d.cells.size, 1, "declaredRemovals 的 cell 集合");
+    eq(d.items.length, 3, "declaredRemovals 保留原始条目数（逐条回放要用）");
+    eq(declaredRemovals({}).items.length, 0, "没有 removes 时返回空集合，不抛错");
+}
+
+/* ═════════ 十八 G-dr：声明的删除必须逐 uid 真的发生 ═════════ */
+console.log("\n── ⑱ gateGDeleteReplay：声明的删除逐 uid 回放 / 不许漏删不许多删 ──");
+{
+    const snapOf = list => ({
+        byUid: new Map(list.map(e => [e.uid, e])),
+        byCell: new Map(list.map(e => [`${e.x},${e.y}`, e])),
+    });
+    /* 贴前世界：3 条旧带（10042/10043/10044）+ 2 台不动的机器 */
+    const oldBelts = [
+        { uid: 10042, x: 10, y: 10, code: 1, type: "belt", r: 0 },
+        { uid: 10043, x: 11, y: 10, code: 1, type: "belt", r: 0 },
+        { uid: 10044, x: 12, y: 10, code: 1, type: "belt", r: 0 },
+    ];
+    const keep = [
+        { uid: 20001, x: 0, y: 0, code: 9, type: "cutter", r: 0 },
+        { uid: 20002, x: 30, y: 30, code: 7, type: "miner", r: 0 },
+    ];
+    const before = snapOf([...oldBelts, ...keep]);
+    const newStuff = [
+        { uid: 30001, x: 10, y: 11, code: 9, type: "cutter", r: 0 },
+        { uid: 30002, x: 11, y: 11, code: 40, type: "trash", r: 0 },
+    ];
+    const rs = [{ uid: 10042 }, { uid: 10043 }, { cell: [12, 10] }];
+
+    // 必绿：三条都真的删了，其余不动
+    const good = snapOf([...keep, ...newStuff]);
+    const gGood = gateGDeleteReplay({ removes: rs }, before, good);
+    ok(gGood.ok, "声明删 3 条、实际正是那 3 条 → 绿", gGood.reason);
+    eq(gGood.evidence.deleted, 3, "evidence.deleted=3");
+    eq(gGood.evidence.extra_deleted, 0, "evidence.extra_deleted=0");
+
+    // 必红 1：声明删 10042，实际 10042 还在
+    const notDeleted = snapOf([...oldBelts, ...keep, ...newStuff]);
+    const gAlive = gateGDeleteReplay({ removes: [{ uid: 10042 }] }, before, notDeleted);
+    ok(!gAlive.ok, "声明要删的 uid 贴后仍然存在 → 红（删除没发生）", gAlive.reason);
+    ok(/仍然存在/.test(gAlive.reason), "reason 说「仍然存在」而不是泛泛的 ok:false", gAlive.reason);
+
+    // 必红 2：★ 声明删 10043，实际删的是 10042（题目点名的形态）★
+    //   10043 还在 → 正向红（没删成），10042 没了但没声明 → 反向也能抓到
+    const wrongOne = snapOf([oldBelts[1], oldBelts[2], ...keep, ...newStuff]);
+    const gWrong = gateGDeleteReplay({ removes: [{ uid: 10043 }] }, before, wrongOne);
+    ok(!gWrong.ok, "声明删 10043 而实际删了 10042 → 红（uid 逐一比对）", gWrong.reason);
+    eq(gWrong.evidence.still_alive, 1, "evidence 指出声明的那 1 个仍然活着");
+    eq(gWrong.evidence.extra_deleted, 1, "evidence 抓出 1 个「消失了但没声明」的 uid");
+
+    // 必红 3：多删 —— 实际删 3 条、只声明 2 条
+    const extraDeleted = snapOf([...keep, ...newStuff]);
+    const gExtra = gateGDeleteReplay({ removes: [{ uid: 10042 }, { uid: 10043 }] }, before, extraDeleted);
+    ok(!gExtra.ok, "实际删了 3 条、只声明 2 条 → 红（多删）", gExtra.reason);
+    ok(/多删了/.test(gExtra.reason), '多删的 reason 明确说「多删了」', gExtra.reason);
+
+    // 必红 4：cell 声明指向空格（计划过期）
+    const gCellEmpty = gateGDeleteReplay({ removes: [{ cell: [99, 99] }] }, before, good);
+    ok(!gCellEmpty.ok, "cell 声明的格上贴前没有实体 → 红（计划过期）", gCellEmpty.reason);
+
+    // 必红 5：uid 与 cell 互相矛盾（uid 在 A 格，cell 写 B 格）
+    const gMismatch = gateGDeleteReplay({ removes: [{ uid: 10042, cell: [11, 10] }] }, before, good);
+    ok(!gMismatch.ok, "uid 与 cell 指向不同实体 → 红（计划写完后世界变过）", gMismatch.reason);
+
+    // 必绿 2：removes 为空时对"什么都没删"的世界恒绿（老 intent 不受影响）
+    ok(gateGDeleteReplay({}, before, before).ok, "没有 removes 的 intent → 绿（老 intent 不被这道闸判死）");
+
+    // 必红 6：截断 → undecidable，不是绿也不是普通红
+    const gTrunc = gateGDeleteReplay({ removes: rs }, before, { ...good, truncated: true });
+    eq(gTrunc.undecidable, true, "after 截断 → undecidable");
+    ok(!gTrunc.ok, "undecidable 时 ok=false（fail-closed）");
+}
+
+/* ═════════ 十九 G-rb：回滚后 uid 集合逐字节相等 ═════════ */
+console.log("\n── ⑲ gateGRollbackRestore：回滚后 uid 集合必须与贴前逐字节相等 ──");
+{
+    const snapOf = list => ({
+        byUid: new Map(list.map(e => [e.uid, e])),
+        byCell: new Map(list.map(e => [`${e.x},${e.y}`, e])),
+    });
+    const base = [
+        { uid: 10042, x: 10, y: 10, code: 1, type: "belt", r: 0 },
+        { uid: 10043, x: 11, y: 10, code: 1, type: "belt", r: 0 },
+        { uid: 10044, x: 12, y: 10, code: 1, type: "belt", r: 0 },
+    ];
+    const before = snapOf(base);
+    const after = snapOf(base.concat([
+        { uid: 30001, x: 10, y: 11, code: 9, type: "cutter", r: 0 },
+    ]));
+
+    // 必绿：回滚后集合逐字节相同
+    ok(gateGRollbackRestore(before, after, snapOf(base)).ok, "回滚后 uid 集合 == 贴前 → 绿");
+
+    // 必红 1：★ 数量相同但 uid 变了（假还原 —— 题目点名的形态）★
+    const renumbered = base.map(e => ({ ...e, uid: e.uid + 50000 }));
+    const gRenum = gateGRollbackRestore(before, after, snapOf(renumbered));
+    ok(!gRenum.ok, "回滚后数量相同但 uid 全变了 → 红", gRenum.reason);
+    ok(/假还原/.test(gRenum.reason), 'reason 明说「假还原」（恢复时分配了新 uid）', gRenum.reason);
+    eq(gRenum.evidence.same_count_assumed_identity, true, "evidence 标出「数量相同 ≠ 身份相同」");
+
+    // 必红 2：少了一条（被删的旧带没恢复）
+    const gMiss = gateGRollbackRestore(before, after, snapOf(base.slice(1)));
+    ok(!gMiss.ok, "回滚后有 1 条旧带没恢复 → 红", gMiss.reason);
+    eq(gMiss.evidence.missing_uids, 1, "evidence.missing_uids=1");
+
+    // 必红 3：新贴的没删干净
+    const gNot = gateGRollbackRestore(before, after, snapOf(base.concat([
+        { uid: 30001, x: 10, y: 11, code: 9, type: "cutter", r: 0 },
+    ])));
+    ok(!gNot.ok, "回滚后新贴的实体还在 → 红", gNot.reason);
+    eq(gNot.evidence.extra_uids, 1, "evidence.extra_uids=1");
+
+    // 必红 4：uid 全对，但位置变了 —— 集合相等还不够
+    const moved = base.map(e => e.uid === 10043 ? { ...e, x: 50 } : e);
+    const gMoved = gateGRollbackRestore(before, after, snapOf(moved));
+    ok(!gMoved.ok, "uid 集合相等但 1 台位置变了 → 红（内容没还原）", gMoved.reason);
+    eq(gMoved.evidence.content_changed, 1, "evidence.content_changed=1");
+
+    // 必红 5：uid 全对，但 code 变了
+    const recoded = base.map(e => e.uid === 10044 ? { ...e, code: 3 } : e);
+    ok(!gateGRollbackRestore(before, after, snapOf(recoded)).ok, "uid 集合相等但 1 台 code 变了 → 红");
+
+    // 截断 → undecidable
+    const gTrunc = gateGRollbackRestore(before, after, { ...snapOf(base), truncated: true });
+    eq(gTrunc.undecidable, true, "回滚后截断 → undecidable");
+    ok(!gTrunc.ok, "undecidable 时 ok=false（fail-closed）");
+}
+
 /* ═════════ 十六 runGates 主流程（§5.3(5) 以前零覆盖） ═════════ */
 console.log("\n── ⑯ runGates：主流程的参数顺序 / 基线顺序 / region 来源 / G9 位置 ──");
 
@@ -1071,10 +1270,20 @@ async function withMockBridge(fn) {
                 return handler.applyResult;
             }
             if (params.op === "bulk_delete") {
+                /* 真删（非 dry_run）之后世界变了 —— 让 obs 返回回滚后的快照，
+                   这是 G-rb 需要的第三个时点（before / after / afterRollback）。 */
+                if (!params.dry_run) phase = "rollback";
                 return params.dry_run ? handler.bulkDry : handler.bulk;
             }
+            if (params.op === "place") {
+                return handler.placeResult || { ok: true, applied: 1 };
+            }
         }
-        if (method === "obs") return phase === "before" ? handler.obsBefore : handler.obsAfter;
+        if (method === "obs") {
+            if (phase === "before") return handler.obsBefore;
+            if (phase === "rollback") return handler.obsRollback || handler.obsAfter;
+            return handler.obsAfter;
+        }
         if (method === "production") return phase === "before" ? handler.prodBefore : handler.prodAfter;
         if (method === "debug_items") {
             itemsCalls++;
@@ -1221,7 +1430,10 @@ const loadFlow = () => import(new URL(`./gates.mjs?flow=${++flowSeq}`, import.me
 }
 
 {
-    /* 流程 4：--plan（不 apply）→ 只跑到 G3，零写入 */
+    /* 流程 4：--plan（不 apply）→ 只跑到 G3。★ 不是零写入 ★
+       终裁 §1.3 点名了这个谎言：G-1 时钟闸会先发 `act step 600`。
+       这条锁住的正是"如实报告"：没贴东西（wroteToWorld=false），
+       但游戏确实被推进了（tickAdvanced > 0）。 */
     const { out, calls } = await withMockBridge(async (h, state, snap) => {
         h.obsBefore = snap(rich, [{ kind: "belt", dx: 60, dy: 60, code: 1, rot: 0 }]);
         h.dry = { would_apply: rich.entities.length, blocked: [], destroys: [], would_delete: 0, unknown_code: [] };
@@ -1231,7 +1443,15 @@ const loadFlow = () => import(new URL(`./gates.mjs?flow=${++flowSeq}`, import.me
     ok(out.ok === true, "流程：--plan 全绿");
     eq(out.planOnly, true, "planOnly=true");
     const writes = calls.filter(c => c.method === "act" && c.params.op === "paste_blueprint" && !c.params.dry_run);
-    eq(writes.length, 0, "--plan 时没有任何真 paste（零写入）");
+    eq(writes.length, 0, "--plan 时没有任何真 paste（不写地图）");
+    eq(out.wroteToWorld, false, "--plan 如实报告 wroteToWorld=false");
+    /* ★ 关键：时钟闸那一次 step 是真的发生了，返回值必须承认它 ★ */
+    const steps = calls.filter(c => c.method === "act" && c.params.op === "step");
+    eq(steps.length, 1, "--plan 期间时钟闸推进过一次（不是零写入的硬证据）");
+    eq(steps[0].params.ticks, 600, "那次 step 是 600 tick");
+    ok(typeof out.tickAdvanced === "number" && out.tickAdvanced > 0,
+        "--plan 返回值里 tickAdvanced>0 —— 不再声称零写入", out.tickAdvanced);
+    ok(/不是「零写入」/.test(out.note || ""), "返回值里的 note 明说 planOnly ≠ 零写入", out.note);
     eq(calls.filter(c => c.method === "debug_items").length, 0, "--plan 时不采 debug_items");
     ok(out.results.some(r => r.id === "G2'-source" && r.ok), "--plan 也会跑 G2'");
     ok(out.results.some(r => r.id === "G3-clearance" && r.ok), "--plan 跑到 G3");
@@ -1485,8 +1705,228 @@ const loadFlow = () => import(new URL(`./gates.mjs?flow=${++flowSeq}`, import.me
     eq(del.filter(d => !d.params.dry_run).length, 1, "真删只发生一次");
 }
 
+/* ═════════ 流程 6：L4 五 op 解 —— 「删 3 带 + 放切割机」现在可以被表达 ═════════ */
+console.log("\n── ⑳ 流程：L4 五 op（声明删 3 条旧带）在 runGates 里走通 / 漏删必红 ──");
+{
+    /* L4 的真解：就地改旧线 —— 删掉 3 条旧带，放 1 台切割机 + 1 个垃圾桶。
+       旧闸在 G3 就把它判死（"会销毁 3 个既有实体"），G4 再判死一次（"3 个消失了"）。
+       这条测的是：同样的世界、同样的蓝图，只是 intent 里多了 removes[]，现在能绿。 */
+    const plan = mkL4([0, 0]);
+    const oldBelts = [
+        { kind: "belt", dx: 60, dy: 60, code: 1, rot: 0 },
+        { kind: "belt", dx: 61, dy: 60, code: 1, rot: 0 },
+        { kind: "belt", dx: 62, dy: 60, code: 1, rot: 0 },
+    ];
+    const intentWithRemoves = {
+        ...plan,
+        removes: [{ uid: 10042 }, { uid: 10043 }, { uid: 10044 }],
+    };
+
+    /* 这里不能用 withMockBridge 的 snap()：它按**列表下标**发 uid（1000+i），
+       于是"旧带"和"新贴实体"会拿到互相重叠的 uid，测不出声明与事实的差。
+       本段自带一份按显式 uid 造快照的工具。 */
+    const obsOf = (ents, uidOf) => ({
+        entities: ents.map((e, i) => ({
+            uid: uidOf(e, i),
+            x: plan.anchor[0] + e.dx, y: plan.anchor[1] + e.dy,
+            code: e.code, type: e.kind, r: e.rot,
+        })),
+        goal: { requirement: { shape: plan.goal }, upgrade_levels: {} },
+        hub: { stored: {} },
+        tick: 100,
+        truncated: false,
+    });
+    const oldUid = e => 10042 + e.dx - 60;          // 旧带 uid 10042/10043/10044
+    const newUid = (e, i) => 30000 + i;             // 新贴实体 uid 30000+
+
+    const build = (removesDeclared) => withMockBridge(async (h) => {
+        h.obsBefore = obsOf(oldBelts, oldUid);
+        /* 贴后：3 条旧带被销毁（uid 10042/10043/10044 消失），新蓝图落地。
+           ★ 世界的行为由 handler 决定，不由 removes 决定 ——
+             测试要证明的是"闸能不能看出声明与事实的差"。 */
+        h.obsAfter = obsOf(plan.entities, newUid);
+        h.prodBefore = { slice_seconds: 10, delivered_slices: Array.from({ length: 6 }, () => ({})), produced_slices: [] };
+        h.prodAfter = {
+            slice_seconds: 10,
+            delivered_slices: Array.from({ length: 6 }, () => ({ "RuRu----": 10 })),
+            produced_slices: Array.from({ length: 6 }, () => ({ "RuRu----": 10 })),
+        };
+        h.items0 = l4HealthyItems(plan);
+        h.items1 = l4HealthyItems(plan);
+        h.dry = {
+            would_apply: plan.entities.length,
+            blocked: [],
+            destroys: [
+                { uid: 10042, cell: [60, 60], type: "belt" },
+                { uid: 10043, cell: [61, 60], type: "belt" },
+                { uid: 10044, cell: [62, 60], type: "belt" },
+            ],
+            would_delete: 3,
+            unknown_code: [],
+        };
+        const mod = await loadFlow();
+        return mod.runGates(removesDeclared ? intentWithRemoves : plan, { apply: true });
+    });
+
+    // ① 不声明 removes → G3 就红（老语义，真事故：拆了别人正在跑的线）
+    const r1 = await build(false);
+    ok(r1.out.ok === false, "流程：intent 没有 removes 就销毁 3 条旧带 → runGates 红");
+    ok(r1.out.results.some(r => r.id === "G3-clearance" && !r.ok), "G3 报红（未声明的销毁）");
+
+    // ② 声明了 removes → 全绿（L4 五 op 解终于可被表达）
+    const r2 = await build(true);
+    ok(r2.out.ok === true, "流程：intent 声明 removes 后，同一份世界全绿（L4 五 op 可被表达）",
+        r2.out.results.filter(r => !r.ok).map(r => r.id + ": " + r.reason));
+    ok(r2.out.results.some(r => r.id === "G3-clearance" && r.ok), "G3 绿");
+    ok(r2.out.results.some(r => r.id === "G-dr-delete-replay" && r.ok), "G-dr 绿（声明删的 3 个都真删了）");
+    ok(r2.out.results.some(r => r.id === "G4-landing" && r.ok), "G4 绿（声明过的消失不再判「销毁」）");
+
+    /* ★ 必红（题目点名）：把切割机朝向改反 → G4 或 G8 必须报错，否则闸是空的 ★
+       与 ② 同一份世界、同一份 removes，**唯一差别**是 obs 里 cutter 的 r 被翻成 90。
+       期望：G4 直接报「朝向不符」（kind=rot）；若 G4 漏了，G8 也得在 t+0 或 t+60 报红。 */
+    const r2b = await withMockBridge(async (h) => {
+        h.obsBefore = obsOf(oldBelts, oldUid);
+        h.obsAfter = obsOf(plan.entities.map(e => e.kind === "cutter" ? { ...e, rot: 90 } : e), newUid);
+        h.prodBefore = { slice_seconds: 10, delivered_slices: Array.from({ length: 6 }, () => ({})), produced_slices: [] };
+        h.prodAfter = {
+            slice_seconds: 10,
+            delivered_slices: Array.from({ length: 6 }, () => ({ "RuRu----": 10 })),
+            produced_slices: Array.from({ length: 6 }, () => ({ "RuRu----": 10 })),
+        };
+        h.items0 = l4HealthyItems(plan);
+        h.items1 = l4HealthyItems(plan);
+        h.dry = {
+            would_apply: plan.entities.length, blocked: [],
+            destroys: [{ uid: 10042, cell: [60, 60], type: "belt" }], would_delete: 1, unknown_code: [],
+        };
+        h.bulkDry = { would_delete: plan.entities.length };
+        h.bulk = { applied: plan.entities.length, failed: [] };
+        const mod = await loadFlow();
+        return mod.runGates({ ...plan, removes: [{ uid: 10042 }, { uid: 10043 }, { uid: 10044 }] }, { apply: true });
+    });
+    ok(r2b.out.ok === false, "流程：切割机朝向改反 → runGates 红");
+    ok(r2b.out.results.some(r => r.id === "G3-clearance" && r.ok), "对照：朝向反了 G3 仍然绿 —— 净空闸看不见朝向");
+    ok(r2b.out.results.some(r => (r.id === "G4-landing" || r.id === "G8-chains@t0" || r.id === "G8-chains@t60") && !r.ok),
+        "G4 或 G8 报了红（负例不是空的）",
+        r2b.out.results.map(r => r.id + (r.ok ? "✓" : "✗")));
+
+    // ③ ★ 声明删的是 2000/2001/2002，实际世界删的是 10042/10043/10044 → G-dr 必红 ★
+    const r3 = await withMockBridge(async (h) => {
+        h.obsBefore = obsOf(oldBelts, oldUid);
+        h.obsAfter = obsOf(plan.entities, newUid);
+        h.prodBefore = { slice_seconds: 10, delivered_slices: Array.from({ length: 6 }, () => ({})), produced_slices: [] };
+        h.prodAfter = h.prodBefore;
+        h.items0 = l4HealthyItems(plan);
+        h.items1 = l4HealthyItems(plan);
+        // dry_run 配合撒谎：谎称只会销毁 2000（计划里声明的那一个）
+        h.dry = {
+            would_apply: plan.entities.length, blocked: [],
+            destroys: [{ uid: 2000, cell: [60, 60], type: "belt" }],
+            would_delete: 1, unknown_code: [],
+        };
+        const mod = await loadFlow();
+        return mod.runGates({ ...plan, removes: [{ uid: 2000 }, { uid: 2001 }, { uid: 2002 }] }, { apply: true });
+    });
+    ok(r3.out.ok === false, "流程：声明删 2000-2002 但世界删的是 10042-10044 → runGates 红");
+    const gdr3 = r3.out.results.find(r => r.id === "G-dr-delete-replay");
+    ok(!!gdr3 && !gdr3.ok, "G-dr 报红（G3 被 dry_run 的谎话骗过，只有运行时回放能看见）");
+    ok(/仍然存在|多删/.test((gdr3 && gdr3.reason) || ""), "G-dr 的 reason 指名是「没删成」或「多删了」", gdr3 && gdr3.reason);
+    ok(r3.out.results.some(r => r.id === "G3-clearance" && r.ok),
+        "对照：G3 在这份夹具里是绿的 —— 证明 G-dr 不是 G3 的重复");
+}
+
+/* ═════════ 流程 7：回滚必须「删新增 + 恢复被删」，且逐字节验 ═════════ */
+console.log("\n── ㉑ 流程：回滚恢复被删实体 / 恢复后 uid 变了必须红 ──");
+{
+    /* 场景：L4 就地改造 —— 贴了切割机，同时吞掉旧带 10042。
+       随后 G4 因为朝向不符而失败 → 回滚必须 ①删掉新贴的 ②把 10042 放回去。
+       旧版 rollback() 只做 ①，于是"回滚成功"之后世界比贴前少一条带子。 */
+    const plan = mkL4([0, 0]);
+    const oldBelts = [
+        { kind: "belt", dx: 60, dy: 60, code: 1, rot: 0 },
+        { kind: "belt", dx: 61, dy: 60, code: 1, rot: 0 },
+    ];
+    const obsOf = (ents, uidOf) => ({
+        entities: ents.map((e, i) => ({
+            uid: uidOf(e, i),
+            x: plan.anchor[0] + e.dx, y: plan.anchor[1] + e.dy,
+            code: e.code, type: e.kind, r: e.rot,
+        })),
+        goal: { requirement: { shape: plan.goal }, upgrade_levels: {} },
+        hub: { stored: {} }, tick: 100, truncated: false,
+    });
+    const oldUid = e => 10042 + e.dx - 60;      // 10042, 10043
+    const newUid = (e, i) => 30000 + i;
+
+    const mkDry = () => ({
+        would_apply: plan.entities.length, blocked: [],
+        destroys: [{ uid: 10042, cell: [60, 60], type: "belt" }], would_delete: 1, unknown_code: [],
+    });
+
+    // ① 恢复成功且 uid 保住 → G-rb 绿，整体 ok:false（因为 G4 本来就红了）但回滚链完整
+    const r1 = await withMockBridge(async (h) => {
+        h.obsBefore = obsOf(oldBelts, oldUid);
+        // 贴后：旧带 10042 被吞，新实体落地时 cutter 朝向被游戏翻成 90 → G4 必红
+        h.obsAfter = obsOf(plan.entities.map(e => e.kind === "cutter" ? { ...e, rot: 90 } : e), newUid);
+        // 回滚后：新实体删干净、10042 被恢复、10043 一直在
+        h.obsRollback = obsOf(oldBelts, oldUid);
+        h.dry = mkDry();
+        h.bulkDry = { would_delete: plan.entities.length };
+        h.bulk = { applied: plan.entities.length, failed: [] };
+        const mod = await loadFlow();
+        return mod.runGates({ ...plan, removes: [{ uid: 10042 }] }, { apply: true });
+    });
+    ok(r1.out.ok === false, "流程：cutter 朝向反 → 整体红（G4 负责）");
+    ok(r1.out.results.some(r => r.id === "rollback" && r.ok), "回滚执行成功（删掉新贴的）");
+    const rs1 = r1.out.results.find(r => r.id === "rollback-restore");
+    ok(!!rs1 && rs1.ok, "被删的旧带走了恢复分支（不再是「只删新增」）", rs1 && rs1.reason);
+    eq(rs1 && rs1.evidence && rs1.evidence.restored, 1, "恢复了 1 台（uid 10042）");
+    const grb1 = r1.out.results.find(r => r.id === "G-rb-rollback-restore");
+    ok(!!grb1 && grb1.ok, "G-rb 绿（回滚后 uid 集合与贴前逐字节相等）", grb1 && grb1.reason);
+    ok(r1.calls.some(c => c.method === "act" && c.params.op === "place" && c.params.x === 60 && c.params.y === 60),
+        "恢复用的是 place 回到被删的那一格 (60,60)");
+
+    // ② ★ 恢复后 uid 变了（place 分新 uid）→ G-rb 必须红 ★
+    const r2 = await withMockBridge(async (h) => {
+        h.obsBefore = obsOf(oldBelts, oldUid);
+        h.obsAfter = obsOf(plan.entities.map(e => e.kind === "cutter" ? { ...e, rot: 90 } : e), newUid);
+        // 回滚后：旧的 10042 没回来，换成 40001（模拟 restoreEntity/place 分配新 uid）
+        h.obsRollback = obsOf([
+            { kind: "belt", dx: 60, dy: 60, code: 1, rot: 0 },
+            oldBelts[1],
+        ], (e, i) => i === 0 ? 40001 : 10043);
+        h.dry = mkDry();
+        h.bulkDry = { would_delete: plan.entities.length };
+        h.bulk = { applied: plan.entities.length, failed: [] };
+        const mod = await loadFlow();
+        return mod.runGates({ ...plan, removes: [{ uid: 10042 }] }, { apply: true });
+    });
+    const grb2 = r2.out.results.find(r => r.id === "G-rb-rollback-restore");
+    ok(!!grb2 && !grb2.ok, "回滚后 uid 变了 → G-rb 报红（假还原）", grb2 && grb2.reason);
+    ok(/假还原/.test(grb2.reason || ""), "G-rb 的 reason 明说「假还原」", grb2 && grb2.reason);
+
+    // ③ 没有声明删除时不做多余的 obs，但仍留一条 G-rb（trivially 绿）
+    const r3 = await withMockBridge(async (h) => {
+        const far = mkL4([0, 0]);
+        h.obsBefore = { entities: [{ uid: 1, x: 60, y: 60, code: 1, type: "belt", r: 0 }], goal: { requirement: { shape: far.goal }, upgrade_levels: {} }, hub: {}, tick: 100, truncated: false };
+        h.obsAfter = {
+            entities: [{ uid: 1, x: 60, y: 60, code: 1, type: "belt", r: 0 },
+                ...far.entities.map((e, i) => ({ uid: 30000 + i, x: e.dx, y: e.dy, code: e.code, type: e.kind, r: e.kind === "cutter" ? 90 : e.rot }))],
+            goal: { requirement: { shape: far.goal }, upgrade_levels: {} }, hub: {}, tick: 100, truncated: false,
+        };
+        h.dry = { would_apply: far.entities.length, blocked: [], destroys: [], would_delete: 0, unknown_code: [] };
+        h.bulkDry = { would_delete: far.entities.length };
+        h.bulk = { applied: far.entities.length, failed: [] };
+        const mod = await loadFlow();
+        return mod.runGates(far, { apply: true });
+    });
+    const grb3 = r3.out.results.find(r => r.id === "G-rb-rollback-restore");
+    ok(!!grb3 && grb3.ok, "没声明删除时不做多余的 obs，G-rb 平凡绿");
+    eq(r3.calls.filter(c => c.method === "obs").length, 2, "没有声明删除 → 只采 before/after 两次 obs（不多采回滚后那次）");
+    ok(!r3.out.results.some(r => r.id === "rollback-restore"), "没有声明删除 → 不出现 rollback-restore 这条");
+}
+
 /* ═════════ 汇总 ═════════ */
-console.log("\n" + "═".repeat(60));
 console.log(`gates 自测：${pass} 通过 / ${fail} 失败`);
 if (fail) {
     console.log("失败项：");

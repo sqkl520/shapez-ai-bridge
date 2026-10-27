@@ -23,12 +23,14 @@
  *   · 游戏自己的产量统计（G6）
  *   · 游戏运行时的实际连接关系（G6b / G7 / G8）
  *
- * ## 十二道闸
+ * ## 十四道闸
  *
  *   G-1 时钟    —— 任何采样之前，先确认时钟在走
  *   G2' 同源    —— paste 的载荷（blueprint）与 G4 的期望（entities）是同一张图（零写入）
- *   G3  净空    —— 落点不压既有实体、不销毁任何东西
- *   G4  落地    —— 贴进去的东西与蓝图逐格一致，且没有 uid 消失
+ *   G3  净空    —— 落点不压既有实体；**销毁必须在 intent.removes 里声明**
+ *   G4  落地    —— 贴进去的东西与蓝图逐格一致，且没有**未声明**的 uid 消失
+ *   G-dr 删除回放 —— 声明要删的 uid 必须真的删掉，且不能多删（运行时）
+ *   G-rb 回滚还原 —— 回滚后的 uid 集合与贴前逐字节相等（运行时）
  *   G6  行为    —— 目标形状的交付速率达到理论值的 80%
  *   G6b 连通    —— 目标线上每一段都有去处
  *   G7  流向    —— 游戏 path 的逐格邻接方向 == 声明的 inDir/outDir（贴后 t+0 与 t+60s）
@@ -55,10 +57,17 @@
  *
  * ## 用法
  *
- *   node src/agent/gates.mjs --plan <intent.json>           # 只跑到 G3（零写入）
- *   node src/agent/gates.mjs --plan <intent.json> --apply   # 完整五闸（G4 失败会自动回滚）
+ *   node src/agent/gates.mjs --plan <intent.json>           # 只跑到 G3（不真贴，但**不是零写入**）
+ *   node src/agent/gates.mjs --plan <intent.json> --apply   # 完整流程（G4 失败会自动回滚）
  *   node src/agent/gates.mjs --plan <intent.json> --apply --no-rollback  # 失败时保留现状
  *   node src/agent/gates.mjs --plan <intent.json> --json
+ *
+ * ★ `--plan` 不是零写入 ★
+ *   G-1 时钟闸会先发一次 `act {op:"step", ticks:600}`（= 120Hz 下 5 游戏秒）。
+ *   那是**刻意的**：不看时钟在走，后面所有速率断言的基线都是假的。
+ *   所以 `--plan` 的准确定义是「不改地图、不推进到足以发生生产的时间尺度」，
+ *   不是「不碰游戏」。返回值里用 `wroteToWorld` / `tickAdvanced` 如实报告，
+ *   `planOnly:true` 只表示"没贴东西"。
  *
  * 退出码：0 全绿 / 2 有闸红 / 1 致命（无法继续）
  */
@@ -189,6 +198,119 @@ export function expectedCells(intent) {
     return cells;
 }
 
+/* ══════════════════════════ removes 声明（纯函数，可单测） ══════════════════════════ */
+
+/**
+ * `intent.removes[]` —— 计划里**故意要删掉**的既有实体。
+ *
+ * ## 形状
+ *
+ *   { "uid": 10042, "cell": [10, 12], "kind": "belt", "why": "L4 旧线拐角" }
+ *   { "uid": 10047 }              // 只知道 uid
+ *   { "cell": [10, 13] }          // 只知道格（plan 阶段的常见形态）
+ *
+ * 字段：`uid` 与 `cell` **至少有一个**；其余字段（kind/why/note…）自由，只作注释。
+ *
+ * ## 为什么是 uid 为主、cell 为辅，而不是只留一个
+ *
+ *   · **uid 是唯一能逐字节验证的身份**。坐标会被"同一格换了一台机器"骗过去：
+ *     贴前 (10,12) 是 belt#10042，回滚后 (10,12) 是 belt#10099 —— 按格看一模一样，
+ *     按 uid 看是"假还原"。G-dr / G-rb 的判据必须落在 uid 上。
+ *   · **但写 plan 的时候可能还没有 uid**：intent 是离线产物，编译器/LLM 手上只有
+ *     几何与观测。强制要求 uid 会逼调用方先在游戏里查一遍，把"离线可写的计划"
+ *     变成"必须贴着游戏写的脚本"。
+ *   · 所以：uid 权威、cell 可用来在**贴前快照**里解析出 uid（G-dr 负责解析）。
+ *     两者都给时 cell 还兼作交叉校验 —— 若该格上的实体 uid 与声明不符，
+ *     说明计划已经过期（世界变了），必须红。
+ *
+ * ## 为什么是"声明"而不是"指令"
+ *
+ *   removes 是给闸看的**预期**，不是删除命令。真正删东西的是 paste（覆盖旧带）
+ *   或 delete op。G-dr 验的是"实际删掉的 == 声明要删的"，不是"按这份清单去删"。
+ *   这么分工的理由：删一半失败时，指令模型会以为删成了，而预期模型能看见差异。
+ *
+ *   ⚠️ 当前 `runGates` 只执行 `paste_blueprint`，**不执行 `delete` op**。
+ *   所以能通过 G-dr 的 removes 只有一种：那些格被 paste 覆盖掉（旧带被替换）。
+ *   如果计划想删的是"蓝图不覆盖的格"，本闸会判"仍然存在" —— 这是对的：
+ *   那一步根本没执行过，声称删了就是假的。要支持它得让 runGates 会执行 delete 序列，
+ *   那是下一步（`removes` 的形状已经够用，缺的是执行器）。
+ */
+export function declaredRemovals(intent) {
+    const items = Array.isArray(intent && intent.removes) ? intent.removes : [];
+    const uids = new Set();
+    const cells = new Set();
+    const byUid = new Map();
+    const byCell = new Map();
+    for (const it of items) {
+        if (!it || typeof it !== "object") continue;
+        if (Number.isInteger(it.uid)) { uids.add(it.uid); byUid.set(it.uid, it); }
+        if (Array.isArray(it.cell) && it.cell.length === 2) {
+            const k = cellKey(it.cell);
+            cells.add(k); byCell.set(k, it);
+        }
+    }
+    return { items, uids, cells, byUid, byCell };
+}
+
+/**
+ * 校验并归一化一份 intent。`loadIntent` 用它，单测也直接用它（不必写临时文件）。
+ *
+ * `removes` **可选**（老 intent 全部没有这个字段，必须继续能读）；一旦出现就必须合法：
+ *   1. 是数组
+ *   2. 每项是非 null 对象
+ *   3. 每项至少有 `uid`（非负整数）或 `cell`（两个整数）
+ *   4. uid 不重复、cell 不重复
+ *
+ * 第 3 条是这一节的**全部意义**：一份 `removes:[{}]` 的 intent 看起来声明了删除，
+ * 实际上什么都没说 —— G3 会把它当成"已声明"而放行任意销毁。宁可在这里拒绝。
+ */
+export function normalizeIntent(j) {
+    if (!j || typeof j !== "object" || Array.isArray(j)) throw new Error("intent 必须是 JSON 对象");
+    for (const k of ["goal", "anchor", "entities"]) {
+        if (!(k in j)) throw new Error(`intent 缺字段 ${k}`);
+    }
+    if (!("removes" in j)) return j;
+    if (!Array.isArray(j.removes)) throw new Error("intent.removes 必须是数组");
+    const seenUid = new Set(), seenCell = new Set();
+    j.removes.forEach((r, i) => {
+        if (!r || typeof r !== "object" || Array.isArray(r)) {
+            throw new Error(`intent.removes[${i}] 必须是对象，实得 ${JSON.stringify(r)}`);
+        }
+        const hasUid = Number.isInteger(r.uid);
+        const hasCell = Array.isArray(r.cell) && r.cell.length === 2 && r.cell.every(Number.isInteger);
+        if (!hasUid && !hasCell) {
+            throw new Error(`intent.removes[${i}] 必须有 uid 或 cell（uid 为整数；cell 为 [整数,整数]），实得 ${JSON.stringify(r)}`);
+        }
+        if (hasUid) {
+            if (r.uid < 0) throw new Error(`intent.removes[${i}].uid 必须是非负整数，实得 ${r.uid}`);
+            if (seenUid.has(r.uid)) throw new Error(`intent.removes 里 uid ${r.uid} 重复声明`);
+            seenUid.add(r.uid);
+        }
+        if (Array.isArray(r.cell) && !hasCell) {
+            throw new Error(`intent.removes[${i}].cell 必须是 [整数,整数]，实得 ${JSON.stringify(r.cell)}`);
+        }
+        if (hasCell) {
+            const k = cellKey(r.cell);
+            if (seenCell.has(k)) throw new Error(`intent.removes 里 cell ${k} 重复声明`);
+            seenCell.add(k);
+        }
+    });
+    return j;
+}
+
+/** 一个已声明项在世界里的身份：uid 已知用 uid，否则按贴前快照的格反查。 */
+function resolveRemovalTarget(item, before) {
+    if (Number.isInteger(item.uid)) {
+        const e = before.byUid.get(item.uid);
+        return { uid: item.uid, beforeEntity: e || null, by: "uid" };
+    }
+    const k = cellKey(item.cell);
+    const e = before.byCell ? before.byCell.get(k) : null;
+    /* byCell 只按 origin 建索引。声明的是多格机器的非 origin 格时查不到 ——
+       退化成"按 uid 未知"处理，由调用方报 undecidable，而不是假装删成功了。 */
+    return { uid: e ? e.uid : null, beforeEntity: e || null, by: "cell" };
+}
+
 /* ══════════════════════════ 方向工具（纯函数，可单测） ══════════════════════════ */
 
 /** 从 from 格指向 to 格的方位面；非正交邻接返回 null。 */
@@ -307,7 +429,21 @@ export async function gateClock(probeTicks = 600) {
 /* ══════════════════════════ G3 净空 ══════════════════════════ */
 
 /**
- * 落点必须干净：不压既有实体、不销毁任何东西、实体数与预期一致。
+ * 落点必须干净：不压既有实体、不销毁**未声明**的东西、实体数与预期一致。
+ *
+ * ★ 2026-10 语义修订：从「不许销毁」改成「销毁必须声明且可恢复」★
+ *
+ * 旧判据是 `destroys.length > 0 ⇒ 红`，理由是"旧产线是升级供应链的一部分"。
+ * 那条判据把**唯一已知的 L4 正确解**判死了：L4 = 删 3 条旧带 + 放 1 台切割机
+ * + 1 个垃圾桶，一共 5 个 op。旧带的销毁不是事故，是解的组成部分。
+ *
+ * 新判据：
+ *   · `destroys` 里每个 uid **必须**出现在 `intent.removes` 里 —— 这才叫"计划过的"
+ *   · 未出现在 removes 里的销毁 ⇒ 仍然红（真事故：paste 静默吞掉了别人的带子）
+ *   · 声明过的销毁 ⇒ 绿，但必须在 evidence.declared_destroys 里逐条列出
+ *     （uid / 格 / 类型），让回滚能按这份清单恢复
+ *   · `destroys` 里没声明但 `removes` 里声明的（声明了却没撞上）不在这里判红 ——
+ *     那由 G-dr（删除回放）在真贴之后判，因为"计划要删"和"实际撞到"是两个时点
  *
  * ⚠️ 单位（实测确认，不是推测）：
  *   `dry_run.would_apply` 是**实体数**，不是格数。
@@ -322,13 +458,19 @@ export async function gateClock(probeTicks = 600) {
 export async function gateG3(intent, dryRun) {
     const expectCells = expectedCells(intent);
     const expectEntities = (intent.entities || []).length;
+    const declared = new Set(declaredRemovals(intent).uids);   // Set<uid>（只认 uid 形态，理由见 G4）
+    const destroys = Array.isArray(dryRun.destroys) ? dryRun.destroys : [];
+    const uniqDestroys = [...new Map(destroys.map(d => [d.uid, d])).values()];
+    const undeclared = uniqDestroys.filter(d => !declared.has(d.uid));
     const evidence = {
         expected_entities: expectEntities,
         expected_cells: expectCells.size,
         would_apply: dryRun.would_apply,
         would_delete: dryRun.would_delete,
         blocked: (dryRun.blocked || []).length,
-        destroys: (dryRun.destroys || []).length,
+        destroys: uniqDestroys.length,
+        declared_removes: declared.size,
+        undeclared_destroys: undeclared.length,
     };
 
     /* 蓝图内部自叠 —— dry_run 只在 origin 层面查 duplicateInPlan，
@@ -364,11 +506,22 @@ export async function gateG3(intent, dryRun) {
             evidence, hint: "若 occupant 是既有实体 → 换锚点重编译；若是 plan 内自叠 → 回蓝图",
         };
     }
-    if ((dryRun.destroys || []).length > 0) {
+    /* ★ 未声明销毁 = 真事故 ★
+       paste 落在别人活着的带子上会**静默替换**（旧 uid 消失、failed:[]、零报告）。
+       这类销毁如果不在计划里，就是拆了别人一条正在跑的线。 */
+    if (undeclared.length > 0) {
+        const sample = undeclared.slice(0, 5).map(d => `${d.uid}@(${d.cell})${d.type}`);
         return {
-            ok: false, reason: `会销毁 ${evidence.destroys} 个既有实体`,
-            evidence, hint: "旧产线是升级供应链的一部分，不能拆",
+            ok: false,
+            reason: `${undeclared.length} 个既有实体会被销毁，但没在 intent.removes 里声明（${sample.join(" ")}）`,
+            evidence: { ...evidence, sample },
+            hint: "要么换锚点避开它们；要么在 intent.removes 里逐 uid 声明 —— 声明后由 G-dr 验证真的删掉、G-rb 验证能还原",
         };
+    }
+    if (uniqDestroys.length > 0) {
+        /* 声明过的销毁：绿，但逐条写进 evidence。
+           回滚需要这份清单才知道要恢复什么（uid + 格 + 类型）。 */
+        evidence.declared_destroys = uniqDestroys.map(d => ({ uid: d.uid, cell: d.cell, type: d.type }));
     }
     if (dryRun.would_apply !== expectEntities) {
         return {
@@ -384,7 +537,13 @@ export async function gateG3(intent, dryRun) {
 /* ══════════════════════════ G4 落地 ══════════════════════════ */
 
 /**
- * 贴进去的东西必须与蓝图一致，而且**不能有既有的 uid 消失**。
+ * 贴进去的东西必须与蓝图一致，而且**不能有未声明的既有 uid 消失**。
+ *
+ * ★ 2026-10 语义修订 ★
+ * 旧判据：任何既有 uid 在 after 里消失 ⇒ 红「paste 销毁了它们」。
+ * 那个判据挡住了 L4 的正确解 —— 正确解本来就是"删 3 条旧带 + 放切割机"。
+ * 新判据：消失的 uid 去掉 `intent.removes` 声明的部分，剩下的才是事故。
+ * 「声明了要删，但游戏没删」由 G-dr 判，不在这一闸。
  *
  * ★ 这里必须按**实体**比对，不能按格 ★
  *
@@ -426,11 +585,19 @@ export function gateG4(intent, before, after) {
     }
 
     // 1) 有没有 uid 消失 —— A3 静默销毁的兜底
+    /* 声明过的删除不算消失。这里**只按 uid** 认账：cell 形态的声明由 G-dr 在
+       贴前快照里解析成 uid 后再统一核（G4 拿不到 removes 的解析结果，
+       而重复解析两份会引入两份不一致的真相）。 */
+    const declaredUids = declaredRemovals(intent).uids;
     const gone = [];
+    const goneDeclared = [];
     for (const uid of before.byUid.keys()) {
-        if (!after.byUid.has(uid)) gone.push(uid);
+        if (after.byUid.has(uid)) continue;
+        (declaredUids.has(uid) ? goneDeclared : gone).push(uid);
     }
     evidence.vanished_uids = gone.length;
+    evidence.deleted_declared = goneDeclared.length;
+    if (goneDeclared.length) evidence.deleted_declared_uids = goneDeclared.slice(0, 20);
     if (gone.length > 0) {
         const sample = gone.slice(0, 5).map(uid => {
             const e = before.byUid.get(uid);
@@ -438,9 +605,10 @@ export function gateG4(intent, before, after) {
         });
         return {
             ok: false,
-            reason: `${gone.length} 个既有实体消失了（${sample.join(" ")}）—— paste 销毁了它们`,
+            reason: `${gone.length} 个既有实体消失了（${sample.join(" ")}）且未在 intent.removes 里声明`
+                + ` —— paste 静默销毁了它们`,
             evidence: { ...evidence, sample },
-            hint: "这是 C1 静默销毁，必须回滚",
+            hint: "这是 C1 静默销毁，必须回滚；若确实要删，请在 intent.removes 里逐 uid 声明",
         };
     }
 
@@ -515,6 +683,214 @@ export function gateG4(intent, before, after) {
                 + ` —— 朝向错会让机器的物理占地和进出料口全变`,
             evidence: { ...evidence, sample: wrongRot.slice(0, 5) },
             hint: "这是 A2 的形态：origin 和 code 都对，但方向反了，产线实际不通",
+        };
+    }
+    return { ok: true, reason: null, evidence };
+}
+
+/* ══════════════════════════ G-dr 删除回放 ══════════════════════════ */
+
+/**
+ * 声明的删除必须在游戏里**逐 uid** 真的发生，而且不能多删。
+ *
+ * 判据（两条方向都要，缺一条就有一半的病看不见）：
+ *   正向 —— `intent.removes` 里每一条，在 before 里存在、在 after 里不存在。
+ *            不满足 ⇒ 计划说要删的东西还在（计划没落地 / cell 解析到了错的实体）
+ *   反向 —— after 里消失的每个 uid，都必须在 removes 里。
+ *            不满足 ⇒ 多删了（这是 G4 已经判过一次的事故形态，这里再判一次，
+ *            因为 G4 只看 uid 形态的声明，cell 形态的声明在 G4 眼里是"未声明"，
+ *            而在这里两种声明都已解析成 uid）
+ *
+ * ★ 为什么必须在**运行时**判，而不是信任 G3 的 dry_run ★
+ *   G3 问的是 dry_run 会销毁什么；dry_run 是 mod 自己算的预演，和真贴共用
+ *   footprint 推断的那段代码。`3306ade` 之前那段代码在 rot=180/270 上算错，
+ *   dry_run 报 destroys=0 而真贴静默吞掉旧带（mod 注释里记着实测）。
+ *   所以"计划要删的"和"实际删掉的"必须分别来自两个时点的 obs，不能同源。
+ *
+ * @param {object} intent
+ * @param {object} before 贴前快照 {byUid, byCell}
+ * @param {object} after  贴后快照 {byUid}
+ */
+export function gateGDeleteReplay(intent, before, after) {
+    const declared = declaredRemovals(intent);
+    const evidence = {
+        declared: declared.items.length,
+        declared_uids: declared.uids.size,
+        declared_cells: declared.cells.size,
+    };
+    /* 快照被截断时 uid 集合本身不完整 —— 判红是假红，判绿是假绿。 */
+    if (after && after.truncated) {
+        return { ok: false, undecidable: true, reason: "贴后 obs 被截断，无法判定删除是否发生", evidence };
+    }
+    if (before && before.truncated) {
+        return { ok: false, undecidable: true, reason: "贴前 obs 被截断，无法建立 uid 基线", evidence };
+    }
+
+    // 正向：声明要删的必须真的没了
+    const stillAlive = [], unresolved = [], cellMismatch = [];
+    for (const item of declared.items) {
+        if (!item || typeof item !== "object") continue;
+        const t = resolveRemovalTarget(item, before);
+        if (t.uid === null) {
+            /* cell 形态但贴前那格上没有实体 —— 计划过期，或者该格是多格机器的非 origin 格。
+               两种都必须红：静默跳过等于让一条声明凭空消失。 */
+            unresolved.push({ cell: item.cell });
+            continue;
+        }
+        if (t.beforeEntity && Array.isArray(item.cell)
+            && (t.beforeEntity.x !== item.cell[0] || t.beforeEntity.y !== item.cell[1])) {
+            cellMismatch.push({ uid: t.uid, declared_cell: item.cell, actual_cell: [t.beforeEntity.x, t.beforeEntity.y] });
+            continue;
+        }
+        if (after.byUid.has(t.uid)) stillAlive.push({ uid: t.uid, cell: item.cell || null, by: t.by });
+    }
+    evidence.still_alive = stillAlive.length;
+    evidence.unresolved = unresolved.length;
+    evidence.cell_mismatch = cellMismatch.length;
+
+    // 反向：实际消失的必须都是声明过的
+    const declaredUids = new Set();
+    for (const item of declared.items) {
+        const t = resolveRemovalTarget(item, before);
+        if (t.uid !== null) declaredUids.add(t.uid);
+    }
+    const vanished = [];
+    for (const uid of before.byUid.keys()) if (!after.byUid.has(uid)) vanished.push(uid);
+    const extraGone = vanished.filter(uid => !declaredUids.has(uid));
+    evidence.vanished = vanished.length;
+    evidence.extra_deleted = extraGone.length;
+
+    if (unresolved.length) {
+        return {
+            ok: false,
+            reason: `intent.removes 里 ${unresolved.length} 条按 cell 声明，但贴前那格上没有实体`
+                + `（首条 ${JSON.stringify(unresolved[0].cell)}）—— 计划过期或声明了非 origin 格`,
+            evidence: { ...evidence, sample: unresolved.slice(0, 5) },
+            hint: "用 obs 复查那几格现在的 uid 再改 intent；若删的是多格机器的右半格，请改声明它的 origin",
+        };
+    }
+    if (cellMismatch.length) {
+        return {
+            ok: false,
+            reason: `${cellMismatch.length} 条声明里 uid 与 cell 对不上（首条 ${JSON.stringify(cellMismatch[0])}）`
+                + ` —— 计划写完之后世界变过`,
+            evidence: { ...evidence, sample: cellMismatch.slice(0, 5) },
+            hint: "uid 权威、cell 交叉校验；两者矛盾时不要猜，先去 obs 重新核对",
+        };
+    }
+    if (stillAlive.length) {
+        return {
+            ok: false,
+            reason: `intent.removes 声明要删的 ${stillAlive.length} 个实体贴后仍然存在`
+                + `（首个 uid ${stillAlive[0].uid}${stillAlive[0].cell ? "@(" + stillAlive[0].cell + ")" : ""}）`
+                + ` —— 删除没有真的发生`,
+            evidence: { ...evidence, sample: stillAlive.slice(0, 5) },
+            hint: "paste 没有覆盖到那几格（或 delete op 没执行）—— 回放计划的删除，别把「计划写了」当成「已经删了」",
+        };
+    }
+    if (extraGone.length) {
+        return {
+            ok: false,
+            reason: `${extraGone.length} 个 uid 消失了但没在 intent.removes 里声明（${extraGone.slice(0, 5).join(" ")}）`
+                + ` —— 多删了`,
+            evidence: { ...evidence, sample: extraGone.slice(0, 5) },
+            hint: "未声明的删除仍然是事故，与 G4 同一条纪律",
+        };
+    }
+    if (declared.items.length) {
+        evidence.deleted = declared.items.length;
+    }
+    return { ok: true, reason: null, evidence };
+}
+
+/* ══════════════════════════ G-rb 回滚还原 ══════════════════════════ */
+
+/**
+ * 回滚后的 uid 集合必须与**贴前逐字节相等**。
+ *
+ * 判据：`set(afterRollback.byUid.keys()) === set(before.byUid.keys())`
+ * —— 既不多、也不少，且**uid 本身**必须相同（不是"数量相同"）。
+ *
+ * ★ 为什么"数量相同"不够 ★
+ *   回滚 = 删新增 + 恢复被删。`restoreEntity` 会重新 `createEntity()`，
+ *   游戏分配的是一个**新 uid**（primitives 里那段 `delete+restore` 的实测记录
+ *   明确写着"运行期状态不在 schema 里"）。所以"删了 3 个、恢复了 3 个、总数对"
+ *   完全可以对应"3 个 uid 变了"的假还原 —— 而下游所有按 uid 记的引用
+ *   （连接关系、产线记账、别的 plan 里的 removes 声明）全部指向死 uid。
+ *   只有逐 uid 比对能看见这件事。
+ *
+ * ★ 一处刻意的宽严 ★
+ *   `restoreEntity` 能不能保住原 uid 取决于 mod 实现（它接受 payload.uid 并在
+ *   冲突时拒绝）。如果恢复后 uid 变了，这道闸**应该**红 —— 它就是为此存在的。
+ *   把它判绿等于承认"假还原可以接受"。
+ *
+ * @param {object} before        贴前快照
+ * @param {object} after         贴后（回滚前）快照 —— 只为报告差异，不参与判定
+ * @param {object} afterRollback 回滚后快照
+ */
+export function gateGRollbackRestore(before, after, afterRollback) {
+    const evidence = {
+        before_count: before.byUid.size,
+        after_count: after ? after.byUid.size : null,
+        after_rollback_count: afterRollback.byUid.size,
+    };
+    if (afterRollback.truncated) {
+        return { ok: false, undecidable: true, reason: "回滚后的 obs 被截断，无法判定集合是否相等", evidence };
+    }
+    if (before.truncated) {
+        return { ok: false, undecidable: true, reason: "贴前 obs 被截断，没有可比对的基线", evidence };
+    }
+
+    const missing = [];       // 贴前有、回滚后没有 —— 没恢复回来
+    for (const uid of before.byUid.keys()) if (!afterRollback.byUid.has(uid)) missing.push(uid);
+    const extra = [];         // 回滚后有、贴前没有 —— 没删干净
+    for (const uid of afterRollback.byUid.keys()) if (!before.byUid.has(uid)) extra.push(uid);
+
+    evidence.missing_uids = missing.length;
+    evidence.extra_uids = extra.length;
+
+    if (missing.length || extra.length) {
+        /* 区分"数量对但身份错"这种最隐蔽的形态，单独给一句 reason。 */
+        const sameCount = missing.length === extra.length && before.byUid.size === afterRollback.byUid.size;
+        const sampleOut = missing.slice(0, 5).map(uid => {
+            const e = before.byUid.get(uid);
+            return `${uid}@(${e.x},${e.y})${e.type}`;
+        });
+        return {
+            ok: false,
+            reason: sameCount
+                ? `回滚后的 uid 集合与贴前数量相同（${before.byUid.size}）但身份不同：`
+                    + `少了 ${missing.length} 个、多了 ${extra.length} 个 —— 这是假还原（恢复时分配了新 uid）`
+                : `回滚后的 uid 集合与贴前不等：少 ${missing.length} 个、多 ${extra.length} 个`
+                    + (sampleOut.length ? `（缺失样本 ${sampleOut.join(" ")}）` : ""),
+            evidence: {
+                ...evidence,
+                same_count_assumed_identity: sameCount,
+                sample_missing: missing.slice(0, 5),
+                sample_extra: extra.slice(0, 5),
+            },
+            hint: "逐字节还原失败。若 restoreEntity 分配了新 uid，说明它没有沿用 payload.uid —— 修 mod，不要放宽这道闸",
+        };
+    }
+
+    /* 集合相等还不够：格/类型也要对得上，否则"还原"成了一个 uid 相同但内容不同的世界。
+       这是廉价的一步（同一份快照里已有），不加白不加。 */
+    const changed = [];
+    for (const [uid, b] of before.byUid) {
+        const r = afterRollback.byUid.get(uid);
+        if (!r) continue;
+        if (b.x !== r.x || b.y !== r.y || b.code !== r.code) {
+            changed.push({ uid, before: [b.x, b.y, b.code], after: [r.x, r.y, r.code] });
+        }
+    }
+    evidence.content_changed = changed.length;
+    if (changed.length) {
+        return {
+            ok: false,
+            reason: `${changed.length} 个 uid 回滚后位置或 code 与贴前不同（首个 ${JSON.stringify(changed[0])}）`
+                + ` —— uid 保住了但内容没还原`,
+            evidence: { ...evidence, sample: changed.slice(0, 5) },
+            hint: "restoreEntity 的载荷没有忠实还原；检查 components.StaticMapEntity 的 origin/code",
         };
     }
     return { ok: true, reason: null, evidence };
@@ -1718,15 +2094,152 @@ export async function rollback(before, after, opts = {}) {
     return { ok: true, deleted: r.applied, region, tick_drift: +drift.toFixed(3) };
 }
 
+/**
+ * 回滚 = 删新增 + **恢复被删**，然后逐字节验一遍。
+ *
+ * ★ 为什么不能只调 rollback() 就完事 ★
+ *   `rollback()` 只处理"贴进去的"（after 有、before 没有）。而 L4 这类就地改造
+ *   的正确解**会先销毁旧带**：那些 uid 在 before 有、after 没有，`rollback()` 看不见，
+ *   于是"回滚成功"之后世界比贴前少了 3 条带子 —— 比不回滚更糟，而且它报 ok。
+ *
+ *   本函数补上另一半：对每个"before 有、after 没有"且**在 intent.removes 里声明过**
+ *   的 uid，先用 `obs` 拿不到它的载荷了（已经删了）——
+ *   所以载荷必须来自**贴前**。
+ *
+ * ★ 恢复载荷的来源（诚实记录）★★
+ *   当前快照（`snapshot()`）只给 `{uid,x,y,code,type,r}`，**没有组件序列化载荷**，
+ *   而 `restoreEntity` 需要 `components.StaticMapEntity.code/origin/rotation`。
+ *   本文件按可用的最小集拼出 StaticMapEntity 那一段，并把它标成
+ *   `partial: true` —— 能恢复"哪台机器在哪、朝哪"，恢复不了 belt 上的在途货、
+ *   processor 的槽位（mod 的 serializeEntity 注释里逐条列了这批字段）。
+ *
+ *   真正的修法是给 `obs` 加 `include_payload` 或加一个 `serialize_region` RPC
+ *   （属于 mod 侧，本轮禁改）。在那之前：
+ *     · 能恢复的：几何 / code / 朝向 —— G-rb 的 uid 集合判据就是验这一层
+ *     · 恢复不了的一律在返回值 `restored_partial` 里点名，不假装完整
+ *
+ * ★ 恢复后必须验 ★
+ *   调 `gateGRollbackRestore` 逐 uid 比对集合。**回滚报 ok 而 uid 集合不等 ⇒ 整次
+ *   回滚算失败**：调用方拿到的 `ok:false` 才是真话。
+ */
+async function rollbackWithRestore(intent, before, after, opts, results) {
+    const plan = await rollback(before, after, { dryRun: true });
+    results.push({ id: "rollback-plan", ok: plan.ok, reason: plan.reason, evidence: plan });
+    if (opts.noRollback) {
+        results.push({ id: "rollback", ok: false, skipped: true, reason: "调用方给了 --no-rollback，不执行" });
+        return null;
+    }
+    if (!plan.ok) {
+        results.push({ id: "rollback", ok: false, reason: "回滚计划不可行，未执行（见 rollback-plan）" });
+        return null;
+    }
+
+    const rb = await rollback(before, after);
+    results.push({ id: "rollback", ok: rb.ok, reason: rb.reason, evidence: rb });
+    if (!rb.ok) return rb;
+
+    /* 被删的既有实体：before 有、after 没有。只恢复**声明过**的 —— 未声明的销毁
+       本身就是事故，把它也恢复掉会让 G-rb 变绿，从而掩盖"paste 静默吞了别人的带子"。 */
+    const declaredUids = new Set();
+    for (const item of declaredRemovals(intent).items) {
+        const t = resolveRemovalTarget(item, before);
+        if (t.uid !== null) declaredUids.add(t.uid);
+    }
+    const destroyedDeclared = [];
+    for (const [uid, e] of before.byUid) {
+        if (after.byUid.has(uid)) continue;
+        if (declaredUids.has(uid)) destroyedDeclared.push(e);
+    }
+
+    let restore = { ok: true, restored: 0, restored_partial: 0, failed: [] };
+    if (destroyedDeclared.length) {
+        restore = await restoreEntities(destroyedDeclared);
+        results.push({
+            id: "rollback-restore", ok: restore.ok,
+            reason: restore.ok
+                ? null
+                : `有 ${restore.failed.length} 个被删实体恢复失败（首个 uid ${restore.failed[0] && restore.failed[0].uid}）`,
+            evidence: { restored: restore.restored, partial: restore.restored_partial, failed: restore.failed.slice(0, 5) },
+        });
+        if (!restore.ok) return { ...rb, ok: false, restore };
+    } else if (declaredRemovals(intent).items.length) {
+        results.push({ id: "rollback-restore", ok: true, skipped: true, reason: "声明要删的实体贴后仍在，无需恢复" });
+    }
+
+    // ── 逐字节验 ──
+    /* ★ 没声明任何删除时，快照就没有变化，不必再采一次 obs ★
+       这条早退是省钱也是省事故：多一次 obs 就多一次"贴后世界又动了"的机会，
+       而 G-rb 的判据只在"这次操作**可能**改变了既有 uid 集合"时才有意义。
+       什么都没删 ⇒ 集合必然相等，判它只会引入噪声。 */
+    const declaredUidCount = declaredRemovals(intent).items.length;
+    let rbAfter = null;
+    if (!declaredUidCount && !destroyedDeclared.length) {
+        const trivially = {
+            ok: true, reason: null,
+            evidence: { before_count: before.byUid.size, after_count: after.byUid.size, note: "本次没有声明删除，uid 集合不可能变" },
+        };
+        results.push({ id: "G-rb-rollback-restore", ok: true, reason: null, evidence: trivially.evidence });
+        return { ...rb, ok: rb.ok, verified: true, evidence: trivially.evidence };
+    }
+    try { rbAfter = await snapshot(); } catch (e) {
+        results.push({ id: "G-rb-rollback-restore", ok: false, reason: `回滚后取 obs 失败：${e.message}` });
+        return { ...rb, ok: false, restore };
+    }
+    const grb = gateGRollbackRestore(before, after, rbAfter);
+    results.push({ id: "G-rb-rollback-restore", ok: grb.ok, reason: grb.reason, evidence: grb.evidence, hint: grb.hint });
+    return { ...rb, ok: rb.ok && restore.ok && grb.ok, restore, verified: grb.ok, evidence: grb.evidence };
+}
+
+/**
+ * 把若干"已经被删掉"的实体放回去。
+ *
+ * 载荷只有几何（见 rollbackWithRestore 的诚实记录），所以走 `delete`-free 的路径：
+ * 每台按 `kind → building` 用 `act {op:"place", building, x, y, r}` 重放。
+ *
+ * ★ 为什么不用 `restoreEntity` ★
+ *   `restoreEntity` 是 mod 内部方法，**没有暴露成 RPC**（`handleRpc` 的 switch 里
+ *   没有它；`debug_entity_roundtrip` 才有，而那个会自己删一个再放回来，语义不对）。
+ *   在 mod 侧加 RPC 属于禁区。所以这里用 `place` 重放，并**接受一个已知差异**：
+ *   `place` 会让游戏分配**新 uid** —— 正因如此 G-rb 会红。这不是本层的 bug，
+ *   是"没有 uid-preserving 的 RPC"这件事的如实后果。
+ *
+ *   `place` 的 building 名取自 obs 的 `type` 字段（mod 的 buildingId），
+ *   rotationVariant 从 code 反推不了时只传 r —— 传错的 variant 会让 G2'/G7 类
+ *   判据（离线）报错，但这层只求 uid 集合能对齐。
+ */
+async function restoreEntities(entities) {
+    const out = { ok: true, restored: 0, restored_partial: 0, failed: [], placed: [] };
+    for (const e of entities) {
+        try {
+            const r = await rpc("act", { op: "place", building: e.type, x: e.x, y: e.y, r: e.r | 0 });
+            if (r && (r.ok || r.applied)) { out.restored++; out.restored_partial++; out.placed.push({ uid: e.uid, x: e.x, y: e.y }); }
+            else out.failed.push({ uid: e.uid, reason: r && r.reason ? r.reason : "place 未成功" });
+        } catch (err) {
+            out.failed.push({ uid: e.uid, reason: err.message });
+        }
+    }
+    out.ok = out.failed.length === 0;
+    out.note = out.restored_partial
+        ? "按几何重放（place），游戏会分配新 uid —— G-rb 会因此判红，这是缺 uid-preserving RPC 的如实后果"
+        : null;
+    return out;
+}
+
 /* ══════════════════════════ 主流程 ══════════════════════════ */
 
+/**
+ * 读一份 intent JSON 并做结构校验。
+ *
+ * 必填：`goal` / `anchor` / `entities`。
+ * 可选：`blueprint`（G2' 用）、`removes[]`（G3/G4/G-dr 用，形状见 declaredRemovals 的注释）。
+ *
+ * `removes` 一旦出现就必须逐项合法 —— 见 normalizeIntent 的第 3 条理由：
+ * 一份 `removes:[{}]` 的 intent 会让 G3 以为"删除已声明"而放行任意销毁。
+ */
 function loadIntent(file) {
     const raw = fs.readFileSync(file, "utf8");
     const j = JSON.parse(raw);
-    for (const k of ["goal", "anchor", "entities"]) {
-        if (!(k in j)) throw new Error(`intent 缺字段 ${k}`);
-    }
-    return j;
+    return normalizeIntent(j);
 }
 
 /**
@@ -1889,8 +2402,22 @@ export async function runGates(intent, opts = {}) {
     }
 
     if (!opts.apply) {
-        results.push({ id: "apply", ok: true, reason: null, skipped: true, note: "未给 --apply，停在这里（零写入）" });
-        return { ok: true, results, planOnly: true };
+        /* ★ 如实报告"不是零写入" ★
+           到这里已经发生过一次 `act {op:"step", ticks:600}`（G-1 时钟闸）。
+           `planOnly:true` 只表示**没往地图里写东西**，不表示没碰游戏。
+           以前这里写的是"零写入"，而 G-1 的 step 会让世界推进约 5 游戏秒 ——
+           对"只想知道能不能贴"的调用方，这个差别在 `--apply` 之后会用产量曲线打脸
+           （基线里混进了 plan 阶段推进的那几秒）。 */
+        results.push({
+            id: "apply", ok: true, reason: null, skipped: true,
+            note: "未给 --apply：没有 paste、没有地图写入；但 G-1 时钟闸推进了游戏（见 tickAdvanced）",
+        });
+        return {
+            ok: true, results, planOnly: true,
+            wroteToWorld: false,
+            tickAdvanced: clock.evidence ? clock.evidence.tick_delta : null,
+            note: "planOnly 只表示「没贴东西」，不是「零写入」：G-1 时钟闸会 step 600 tick",
+        };
     }
 
     // ── 真粘贴 ──
@@ -1907,6 +2434,27 @@ export async function runGates(intent, opts = {}) {
 
     const after = await snapshot();
 
+    /* ── G-dr 删除回放 ──
+       位置必须在 G4 之前：G4 只认 uid 形态的声明，cell 形态的声明在它眼里是"未声明销毁"；
+       G-dr 把两种形态都解析成 uid 后再判，所以它才是"声明与事实"的权威比对。
+       但反过来 G-dr 也不能替代 G4：G4 判的是"贴进去的蓝图是否逐格落地"，
+       G-dr 完全不看这块。两道闸的判据不重叠。
+
+       没有声明删除的 intent（绝大多数老 intent）不会因为这道闸变严：
+       removes 为空时正向/反向两个循环都是空集，判定恒绿。 */
+    const gdr = gateGDeleteReplay(intent, before, after);
+    if (!record("G-dr-delete-replay", gdr)) {
+        if (gdr.undecidable) {
+            results.push({
+                id: "rollback", ok: false, skipped: true,
+                reason: "删除回放无法判定（obs 被截断），不做回滚",
+            });
+            return { ok: false, results };
+        }
+        const rb = await rollbackWithRestore(intent, before, after, opts, results);
+        return { ok: false, results, rollback: rb };
+    }
+
     // ── G4 落地 ──
     const g4 = gateG4(intent, before, after);
     if (!record("G4-landing", g4)) {
@@ -1922,19 +2470,8 @@ export async function runGates(intent, opts = {}) {
             });
             return { ok: false, results };
         }
-        const plan = await rollback(before, after, { dryRun: true });
-        results.push({ id: "rollback-plan", ok: plan.ok, reason: plan.reason, evidence: plan });
-        if (opts.noRollback) {
-            results.push({ id: "rollback", ok: false, skipped: true, reason: "调用方给了 --no-rollback，不执行" });
-            return { ok: false, results };
-        }
-        if (!plan.ok) {
-            results.push({ id: "rollback", ok: false, reason: "回滚计划不可行，未执行（见 rollback-plan）" });
-            return { ok: false, results };
-        }
-        const rb = await rollback(before, after);
-        results.push({ id: "rollback", ok: rb.ok, reason: rb.reason, evidence: rb });
-        return { ok: false, results };
+        const rb = await rollbackWithRestore(intent, before, after, opts, results);
+        return { ok: false, results, rollback: rb };
     }
 
     /* ── G7/G8：贴后立刻（t+0）各判一次 ──
@@ -1966,19 +2503,8 @@ export async function runGates(intent, opts = {}) {
        注意 undecidable（数据不全）仍然不回滚 —— 那是 G4 同一条纪律。 */
     const t0Bad = [g7a, g8a].find(r => r && r.ok === false && !r.undecidable);
     if (t0Bad) {
-        const plan = await rollback(before, after, { dryRun: true });
-        results.push({ id: "rollback-plan", ok: plan.ok, reason: plan.reason, evidence: plan });
-        if (opts.noRollback) {
-            results.push({ id: "rollback", ok: false, skipped: true, reason: "调用方给了 --no-rollback，不执行" });
-            return { ok: false, results };
-        }
-        if (!plan.ok) {
-            results.push({ id: "rollback", ok: false, reason: "回滚计划不可行，未执行（见 rollback-plan）" });
-            return { ok: false, results };
-        }
-        const rb = await rollback(before, after);
-        results.push({ id: "rollback", ok: rb.ok, reason: rb.reason, evidence: rb });
-        return { ok: false, results, rolledBackEarly: "G7/G8@t0" };
+        const rb = await rollbackWithRestore(intent, before, after, opts, results);
+        return { ok: false, results, rollback: rb, rolledBackEarly: "G7/G8@t0" };
     }
 
     // ── G6b 连通（先等货流起来）──
