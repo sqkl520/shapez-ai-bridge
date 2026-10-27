@@ -104,7 +104,19 @@ const RPC_WRITE_METHODS = new Set([
     "repair_save",
     "upgrade",
     "game_setting",
+    // debug_entity_roundtrip 会真的删一次再放回来 —— 它是写操作，必须与其它写操作串行，
+    // 否则和 place/paste 交错时会拿到"删了一半"的世界。
+    "debug_entity_roundtrip",
 ]);
+
+/**
+ * 还原报告挂在实体上的键（不可枚举 ⇒ 不进 JSON、不进 Object.keys，不污染存档/观测）。
+ * 事务层用来知道"这个实体有哪些组件没被还原（payload 里有、实体上已不存在）"。
+ *
+ * ⚠️ 为什么不用 Symbol：Symbol 键在测试与外部诊断里拿不到，而这份报告正是
+ * "哪些状态还原不了"的机器证据，必须可读。
+ */
+const RESTORE_REPORT_KEY = "__bridgeRestoreReport";
 
 /**
  * 各建筑的 rotationVariant 合法档位 —— **仅在运行期注册表（gBuildingVariants）不可用时兜底**。
@@ -379,6 +391,10 @@ class Mod extends shapez.Mod {
                     "screenshot",
                     "save",
                     "new_game",
+                    // 实体序列化还原原语（事务层前置）：serializeEntity / restoreEntity /
+                    // deleteEntityByUid + debug_entity_roundtrip。声明出来，桥接侧才能
+                    // 在功能不可用时 fail fast 而不是 2003。
+                    "entity_snapshot",
                 ],
             },
         });
@@ -526,6 +542,10 @@ class Mod extends shapez.Mod {
                     break;
                 case "debug_app_state":
                     result = this.debugAppState();
+                    break;
+                case "debug_entity_roundtrip":
+                    this.assertWritable("debug_entity_roundtrip");
+                    result = this.debugEntityRoundtrip(params || {});
                     break;
                 default:
                     this.sendError(id, -32601, "method_not_found", "Unknown method: " + method);
@@ -1173,7 +1193,7 @@ class Mod extends shapez.Mod {
             mod_version: BRIDGE_MOD_VERSION,
             game_version: this.gameVersion(),
             in_game: !!root,
-            features: ["observe", "act", "batch", "step", "await", "blueprint", "screenshot", "save", "new_game"],
+            features: ["observe", "act", "batch", "step", "await", "blueprint", "screenshot", "save", "new_game", "entity_snapshot"],
             allow_write: !!this.settings.allow_write,
             allow_step: !!this.settings.allow_step,
         };
@@ -1526,6 +1546,668 @@ class Mod extends shapez.Mod {
             /* ignore */
         }
         return String(item);
+    }
+
+    // ─────────────── 实体序列化还原原语（事务层用） ───────────────
+    /*
+     * 为什么不能用 `entity.clone()`
+     * ------------------------------------------------------------------
+     * recon/upstream-full/src/js/game/entity.js:88-106 的 clone() 只调每个组件的
+     * `copyAdditionalStateTo()`，而全仓只有 4 个组件实现它：
+     *   constant_signal.js:21 / goal_acceptor.js:64 / lever.js:19 / static_map_entity.js:86
+     * Belt / Storage / Filter / UndergroundBelt / ItemEjector / ItemProcessor / Wire 全是
+     * Component 基类的空实现（component.js:29-32）⇒ clone 出来的 storage 是空的、
+     * filter 队列是空的、隧道在途货丢了。**clone 不是还原原语。**
+     *
+     * 正确的原语是存档反序列化路径本身
+     * ------------------------------------------------------------------
+     * serializer_internal.js:44-68 deserializeEntity + :80-100 deserializeComponents
+     * 都是实例方法（`new SerializerInternal()` 无参），不需要 import 任何东西；
+     * 但为了不依赖 window.shapez 上是否恰好暴露了 SerializerInternal，
+     * 这里按其**逐行等价**的方式重写一遍（同样的调用顺序、同样的 uid/register/place 顺序）。
+     * 之所以顺序重要：registerEntity 会 dispatch entityAdded，belt/wire/miner 系统都在这个
+     * 信号上重算缓存，先 placeStaticEntity 再 register 会导致 findFollowUpEntity 看不到自己。
+     *
+     * ⚠️ 还原的**边界**（重要，事务层必须知道）
+     * ------------------------------------------------------------------
+     * `entity.serialize()` 只覆盖各组件 `getSchema()` 里声明的字段（entity.js:71-78）。
+     * 下面这些**运行期状态不在 schema 里**，delete+restore 之后一定丢：
+     *
+     *   Belt.assignedPath                       components/belt.js:54-58 注释 "not serialized"
+     *   BeltPath.items / spacingToFirstItem     不在 entity 的 payload 里（存档单独存 beltPaths）
+     *   Wire.linkedNetwork                       components/wire.js:33-38 无 getSchema
+     *   WiredPins.slots[].linkedNetwork          components/wired_pins.js:32-40 只存 value
+     *   WireTunnel.linkedNetworks               components/wire_tunnel.js 无 getSchema
+     *   ItemEjector.slots[].cachedTargetEntity  components/item_ejector.js:28 注释明写不序列化
+     *                 .cachedDestSlot / .cachedBeltPath
+     *   ItemProcessor.inputSlots/inputCount/ongoingCharges/queuedEjects/bonusTime
+     *                                           components/item_processor.js:46-50 只存 nextOutputSlot
+     *   Miner.cachedMinedItem / cachedChainedMiner
+     *                                           components/miner.js:14-15 注释 "not serialized"
+     *   UndergroundBelt.cachedLinkedEntity / consumptionAnimations
+     *                                           components/underground_belt.js:26-30 只存 pendingItems
+     *   Storage.maximumStorage                  构造参数，由建筑 setupEntityComponents 给定（5000）
+     *   GoalAcceptor.currentDeliveredItems / lastDelivery
+     *   BeltReader.lastItemTimes / lastThroughput / lastThroughputComputation
+     *   BeltUnderlays.underlays[].cachedType
+     *
+     * 其中**可以靠重算补回**的：
+     *   Belt.assignedPath   → 注册时 BeltSystem.onEntityAdded(systems/belt.js:312-325) 会重建/并入 path；
+     *                         但**原有 path 上的 items 位置会被 deleteEntityFromPath 改写/丢失**
+     *                         （belt_path.js:633-793 会丢掉落点格上的货、并重算其它货的间距），
+     *                         所以精确还原需要连 beltPaths 一起快照（存档的 beltPaths 字段即为此）。
+     *   Wire.linkedNetwork / WiredPins.slots[].linkedNetwork
+     *                       → WireSystem 在 entityAdded 上置 needsRecompute（systems/wire.js:115-120），
+     *                         下一 tick 的 update() → recomputeWiresNetwork()（:517-522）整体重建。
+     *   UndergroundBelt.cachedLinkedEntity → StaleAreaDetector（:43-46）在下一 tick 重算。
+     *   ItemEjector 的 cached*              → postLoadHook 才会全量重算（systems/item_ejector.js:32）；
+     *                         单独加一个实体只会走 staleAreaDetector 的 1 格外扩（:33-36），
+     *                         因此**远处**的下游 ejector 缓存不会自动刷新 —— 需要显式 invalidate。
+     *   Miner.cachedMinedItem               → systems/miner.js:49-56 在 update 里自愈。
+     *
+     * 完全**补不回来**（delete 即丢）：
+     *   ItemProcessor 的 inputSlots/inputCount/ongoingCharges/queuedEjects、GoalAcceptor 计数器、
+     *   BeltReader 的吞吐历史 —— 它们不在 schema、也没有任何重算路径，只能由调用方自行快照。
+     */
+
+    /**
+     * code → 建筑数据（{metaInstance, variant, rotationVariant}）。
+     *
+     * 优先用游戏自己的 `getBuildingDataFromCode`（building_codes.js:66-69，存档反序列化走的就是它），
+     * 拿不到时退回 ensureBuildingTables() 的 byCode 表（同一份 gBuildingVariants 的投影）。
+     */
+    buildingDataFromCode(code) {
+        const shapez = /** @type {any} */ (window).shapez;
+        if (shapez && typeof shapez.getBuildingDataFromCode === "function") {
+            return shapez.getBuildingDataFromCode(code);
+        }
+        const table = this.ensureBuildingTables();
+        const info = table.byCode[code];
+        if (!info) {
+            throw this.rpcError(2001, "invalid_action", "unknown building code: " + code,
+                "代码表来自运行中的 gBuildingVariants；该 code 在当前版本不存在");
+        }
+        return info;
+    }
+
+    /** 向量构造：优先游戏自己的 Vector.fromSerializedObject（vector.js:664-668）。 */
+    vectorFrom(obj) {
+        const shapez = /** @type {any} */ (window).shapez;
+        const V = this.VectorCtor();
+        if (V && typeof V.fromSerializedObject === "function") return V.fromSerializedObject(obj);
+        return new V((obj && obj.x) || 0, (obj && obj.y) || 0);
+    }
+
+    /**
+     * 把实体序列化成可 JSON 化的载荷。
+     *
+     * 返回 { uid, code, layer, rotation, rotationVariant, buildingId, variant,
+     *        components, component_keys, non_serialized }
+     *
+     * components 直接来自 entity.serialize()（entity.js:71-78），与存档里的 entities[i] 同形，
+     * 所以这个载荷可以原样喂给 restoreEntity，也可以写进存档做离线比对。
+     *
+     * ⚠️ Entity 的 schema 里**没有 layer**（entity.js:73-77 只有 uid + components），
+     * 而 layer 决定 placeStaticEntity 写哪张图（map.js:234-245）。所以这里显式带出 layer，
+     * restoreEntity 会拿它做交叉校验。
+     */
+    serializeEntity(entity) {
+        if (!entity || !entity.components || !entity.components.StaticMapEntity) {
+            throw this.rpcError(2001, "invalid_action", "serializeEntity: entity has no StaticMapEntity");
+        }
+        const sme = entity.components.StaticMapEntity;
+        const table = this.ensureBuildingTables();
+        const info = table.byCode[sme.code];
+        const serialized = entity.serialize();
+        return {
+            uid: serialized.uid,
+            code: sme.code,
+            layer: entity.layer || "regular",
+            rotation: sme.rotation,
+            rotationVariant: info ? info.rotationVariant : null,
+            buildingId: info ? info.buildingId : null,
+            variant: info ? info.variant : null,
+            components: serialized.components,
+            // 诊断用：payload 里实际出现了哪些组件。空 schema 的组件会被
+            // types.keyValueMap(..., includeEmptyValues=false) 丢掉（serialization_data_types.js:1030-1049），
+            // 这不影响还原（组件由建筑自己建出来），但对比时要知道"缺"不是丢。
+            component_keys: Object.keys(serialized.components || {}),
+            // 实体上实际有的组件（含空 schema 的）
+            live_component_keys: Object.keys(entity.components).filter(k => entity.components[k]),
+        };
+    }
+
+    /**
+     * 还原一个实体：与 serializer_internal.js:44-68 的 deserializeEntity 逐行等价。
+     *
+     * 顺序（不可换）：
+     *   1. metaInstance.createEntity(...)   —— 由 code 反查出 meta/variant/rotationVariant，
+     *      组件由建筑自己的 setupEntityComponents 建好（ItemEjector/ItemAcceptor/... 的槽位几何都在这里）
+     *   2. entity.uid = payload.uid          —— 必须在 registerEntity 之前；
+     *      registerEntity 里的 `entity.uid = uid ? uid : generateUid()` 遇到 0 会自己生成
+     *   3. deserializeComponents(...)        —— 逐组件 deserialize(schema)，item 单例靠 root 解析
+     *   4. entityMgr.registerEntity(entity, uid)  —— dispatch entityAdded（belt/wire/miner 系统在此重算）
+     *   5. map.placeStaticEntity(entity)     —— 写 chunk 格子
+     *      ⚠️ 注意 4/5 与 serializer_internal 一致（register 在 place 之前）。
+     */
+    restoreEntity(payload, opts) {
+        const root = this.requireRoot();
+        const o = opts || {};
+        if (!payload || typeof payload !== "object") {
+            throw this.rpcError(2001, "invalid_action", "restoreEntity: payload must be an object");
+        }
+        const staticData = payload.components && payload.components.StaticMapEntity;
+        // 缺 StaticMapEntity ⇒ 没有 code/origin，无从建实体。**必须报错，不能静默返回 null**：
+        // 静默会让事务层以为"还原成功但实体是空的"，等到下游发现时已经丢了写入。
+        if (!staticData) {
+            throw this.rpcError(2001, "invalid_action",
+                "restoreEntity: payload.components.StaticMapEntity is missing",
+                "载荷必须来自 serializeEntity()（含 components.StaticMapEntity.code/origin/rotation）");
+        }
+        if (staticData.code === undefined || staticData.code === null) {
+            throw this.rpcError(2001, "invalid_action", "restoreEntity: StaticMapEntity.code is missing");
+        }
+        if (!staticData.origin || !Number.isFinite(staticData.origin.x) || !Number.isFinite(staticData.origin.y)) {
+            throw this.rpcError(2001, "invalid_action", "restoreEntity: StaticMapEntity.origin must be {x,y}");
+        }
+        if (typeof payload.uid !== "number" || !Number.isInteger(payload.uid) || payload.uid < 0) {
+            throw this.rpcError(2001, "invalid_action", "restoreEntity: payload.uid must be a non-negative integer");
+        }
+
+        const data = this.buildingDataFromCode(staticData.code);
+        const metaBuilding = data.metaInstance;
+        if (!metaBuilding || typeof metaBuilding.createEntity !== "function") {
+            throw this.rpcError(2003, "mod_error",
+                "restoreEntity: building code " + staticData.code + " has no metaInstance.createEntity()");
+        }
+
+        /*
+         * uid 冲突预检。
+         *
+         * 上游 registerEntity 只在 **dev** 构建里 assert uid 不重复（entity_manager.js:96-99
+         * 被 G_IS_DEV && !disableSlowAsserts 包着）；正式版会直接 push 两个同 uid 的实体，
+         * 于是 map 上一格新、一格里还是旧实体，findByUid 永远返回先找到的那个 ——
+         * 这种损坏不会立刻报错，只会在很久以后表现为"删不掉 / 指向错的东西"。
+         * 事务层回滚时若忘了先删就还原，正好会踩这个，所以在这里硬拒。
+         */
+        const occupant = (() => {
+            try { return root.entityMgr.findByUid(payload.uid, false); } catch (e) { return null; }
+        })();
+        if (occupant && occupant !== null && !occupant.destroyed && !occupant.queuedForDestroy) {
+            const occStatic = occupant.components && occupant.components.StaticMapEntity;
+            throw this.rpcError(2002, "game_rejected",
+                "restoreEntity: uid " + payload.uid + " is already taken by a live entity"
+                    + (occStatic ? " at (" + occStatic.origin.x + "," + occStatic.origin.y + ")" : ""),
+                "回滚顺序必须是：先 deleteEntityByUid(uid)，再 restoreEntity(payload)；否则会出现两个同 uid 实体");
+        }
+
+        // 目标格占用预检：placeStaticEntity 内部 assert 会抛（map_chunk.js:465
+        // "Tile already used"），但那个 assert 在正式版里也可能被裁掉，
+        // 而"覆盖了别的建筑"是不可逆的。这里先明确拒绝。
+        // ⚠️ 必须查**整个 footprint**，不是 origin 一格：仓库是 2×2、hub 是 4×4，
+        // 只查 origin 会让"右下角压着别人的机器"漏过去。
+        const layerForCheck = payload.layer || "regular";
+        const footprint = this.entityTileBounds(metaBuilding, data, staticData);
+        for (let dx = 0; dx < footprint.w; ++dx) {
+            for (let dy = 0; dy < footprint.h; ++dy) {
+                const gx = footprint.x + dx;
+                const gy = footprint.y + dy;
+                let occ = null;
+                try { occ = root.map.getLayerContentXY(gx, gy, layerForCheck); } catch (e) { occ = null; }
+                if (occ && occ.uid !== payload.uid) {
+                    throw this.rpcError(2002, "game_rejected",
+                        "restoreEntity: tile (" + gx + "," + gy + ") on layer " + layerForCheck
+                            + " is occupied by uid " + occ.uid,
+                        "先清空该格再还原；静默覆盖会丢掉别人的建筑");
+                }
+            }
+        }
+
+        const Vector = this.VectorCtor();
+        const entity = metaBuilding.createEntity({
+            root,
+            origin: this.vectorFrom(staticData.origin),
+            rotation: staticData.rotation,
+            originalRotation: staticData.originalRotation === undefined ? staticData.rotation : staticData.originalRotation,
+            rotationVariant: data.rotationVariant,
+            variant: data.variant,
+        });
+
+        // ⚠️ 这一行是"uid 保真"的唯一来源。删掉它，registerEntity 会给实体发一个**新** uid
+        // （generateUid() 从 10000 起）—— 于是所有引用旧 uid 的东西（事务日志、蓝图、
+        // 上层 AI 的心智模型）全部指错。test/mod_selftest.mjs 有一条变异用例专锁这一行。
+        entity.uid = payload.uid;
+
+        // layer 交叉校验：createEntity 用 meta.getLayer() 定 layer，与 payload 不一致说明
+        // code 表与存档不同源（例如 mod 版本差异）—— 还原出来的东西会落在错误的图层上。
+        const wantLayer = payload.layer || null;
+        if (wantLayer && entity.layer !== wantLayer) {
+            throw this.rpcError(2003, "mod_error",
+                "restoreEntity: layer mismatch — payload says " + wantLayer + ", building code "
+                + staticData.code + " is on " + entity.layer,
+                "同一 code 在不同游戏版本可能改变图层；拒绝静默还原到错误图层");
+        }
+
+        const restoreReport = this.deserializeComponentsInto(root, entity, payload.components);
+
+        const register = () => {
+            root.entityMgr.registerEntity(entity, payload.uid);
+            root.map.placeStaticEntity(entity);
+        };
+        // 与 paste_blueprint 同样的理由：registerEntity 会 dispatch entityAdded，
+        // BeltSystem.updateSurroundingBeltPlacement 会把**周围一圈**带子的 rv 按邻居重算并覆写 code
+        // （systems/belt.js:120-210，唯一豁免是 immutableOperationRunning，:169）。
+        // 还原一个带子不该悄悄改掉它邻居的拓扑。
+        this.runGuarded(root, register);
+
+        // 供事务层读取：payload 里有、但实体上已不存在（被重算/丢弃）的组件。
+        // 定义成不可枚举属性 —— 不会被 entity.serialize()/JSON.stringify 带出去。
+        try {
+            Object.defineProperty(entity, RESTORE_REPORT_KEY, {
+                value: restoreReport, enumerable: false, writable: true, configurable: true,
+            });
+        } catch (e) {
+            entity[RESTORE_REPORT_KEY] = restoreReport;
+        }
+        return entity;
+    }
+
+    /**
+     * 等价于 serializer_internal.js:80-100 deserializeComponents：
+     * 逐组件调用 `component.deserialize(data, root)`，返回错误码即失败。
+     * 与上游的唯一差别：上游对"实体没有该组件"只 warn 并 continue（:86-95），
+     * 这里把它记进报告（missing），因为对事务层来说"载荷里有、实体上没了"是**信息丢失**，
+     * 必须可观测，而不是静默吞掉。
+     */
+    deserializeComponentsInto(root, entity, components) {
+        const report = { missing: [], failed: [], restored: [] };
+        for (const componentId in components) {
+            const comp = entity.components[componentId];
+            if (!comp) {
+                report.missing.push(componentId);
+                continue;
+            }
+            if (typeof comp.deserialize !== "function") {
+                report.failed.push({ component: componentId, error: "component has no deserialize()" });
+                continue;
+            }
+            const errorStatus = comp.deserialize(components[componentId], root);
+            if (errorStatus) {
+                // 与上游一致：组件反序列化失败必须中断，不能带着半截状态继续（存档加载同理）。
+                throw this.rpcError(2003, "mod_error",
+                    "restoreEntity: component " + componentId + " failed to deserialize: " + errorStatus);
+            }
+            report.restored.push(componentId);
+        }
+        return report;
+    }
+
+    /**
+     * 在 bulk + immutable 语义下执行 fn，但**不嵌套**：如果调用方已经包了这两层
+     * （例如事务层自己做 performBulkOperation），就直接执行 —— 上游 logic.js:170-203
+     * 对重入是 assert 失败，不是无害的。
+     */
+    runGuarded(root, fn) {
+        const logic = root.logic;
+        if (!logic) return fn();
+        const needBulk = !root.bulkOperationRunning && typeof logic.performBulkOperation === "function";
+        const needImmutable = !root.immutableOperationRunning && typeof logic.performImmutableOperation === "function";
+        if (!needBulk && !needImmutable) return fn();
+        const wrapped = () => (needImmutable ? logic.performImmutableOperation(fn) : fn());
+        return needBulk ? logic.performBulkOperation(wrapped) : wrapped();
+    }
+
+    /**
+     * 算出该建筑会占哪几格（世界格坐标 + 尺寸）。两种来源，按可靠性排序：
+     *   ① 让建筑自己 createEntity 一次，读 StaticMapEntity.getTileSpaceBounds() —— 权威
+     *      （static_map_entity.js:129-146 已处理 90/180/270 的 origin 语义），
+     *      但会多造一个一次性实体；
+     *   ② 用 code 表里的 tileSize + 自己的旋转公式 —— 便宜，但 code 表若缺 tileSize
+     *      会退化成 1×1，把 2×2/4×4 的覆盖检查做漏。
+     * 这里优先 ①，失败再退 ②。**绝不静默用 1×1**（那等于没检查）。
+     */
+    entityTileBounds(metaBuilding, data, staticData) {
+        const rot = ((Number(staticData.rotation) % 360) + 360) % 360;
+        const ox = staticData.origin.x, oy = staticData.origin.y;
+        const wrap = (w, h) => {
+            switch (rot) {
+                case 0: return { x: ox, y: oy, w, h };
+                case 90: return { x: ox - h + 1, y: oy, w: h, h: w };
+                case 180: return { x: ox - w + 1, y: oy - h + 1, w, h };
+                case 270: return { x: ox, y: oy - w + 1, w: h, h: w };
+                default: return { x: ox, y: oy, w, h };
+            }
+        };
+        try {
+            const probe = metaBuilding.createEntity({
+                root: this.root,
+                origin: this.vectorFrom(staticData.origin),
+                rotation: staticData.rotation,
+                originalRotation: staticData.rotation,
+                rotationVariant: data.rotationVariant,
+                variant: data.variant,
+            });
+            const sme = probe && probe.components && probe.components.StaticMapEntity;
+            if (sme && typeof sme.getTileSpaceBounds === "function") {
+                const r = sme.getTileSpaceBounds();
+                if (r && Number.isFinite(r.w) && Number.isFinite(r.h)) {
+                    return { x: r.x, y: r.y, w: r.w, h: r.h };
+                }
+            }
+            if (sme && sme.getTileSize) {
+                const s = sme.getTileSize();
+                if (s && Number.isFinite(s.x) && Number.isFinite(s.y)) return wrap(s.x, s.y);
+            }
+        } catch (e) {
+            /* 退到 ② */
+        }
+        const ts = data && data.tileSize;
+        if (ts && Number.isFinite(ts.x) && Number.isFinite(ts.y)) return wrap(ts.x, ts.y);
+        throw this.rpcError(2003, "mod_error",
+            "restoreEntity: cannot determine tile footprint for code " + staticData.code,
+            "既拿不到 getTileSpaceBounds()，也拿不到 tileSize —— 无法安全地做覆盖检查，拒绝还原");
+    }
+
+    /**
+     * 按 uid 删除实体，走游戏自己的删除路径（logic.js:218-226 tryDeleteBuilding）：
+     *   map.removeStaticEntity → entityMgr.destroyEntity → processDestroyList
+     * 这条路径会 dispatch entityDestroyed，belt 系统据此把该格从 path 里摘掉
+     * （systems/belt.js:223-241 / belt_path.js:633-793），wire/miner 各自标脏。
+     *
+     * 返回 { ok, cell, uid, reason? }。**不可删的建筑（hub、非编辑器里的 goal acceptor）
+     * 返回 ok:false + reason:"not_removable"**，而不是抛错 —— 事务层需要区分
+     * "删不掉"（回滚时是真实失败）与"根本没找到"（可能已经被别人删了）。
+     */
+    deleteEntityByUid(uid) {
+        const root = this.requireRoot();
+        if (typeof uid !== "number" || !Number.isInteger(uid)) {
+            throw this.rpcError(2001, "invalid_action", "deleteEntityByUid: uid must be an integer");
+        }
+        let entity = null;
+        try {
+            entity = root.entityMgr.findByUid(uid, false);
+        } catch (e) {
+            entity = null;
+        }
+        if (!entity) {
+            // 兜底：findByUid 会跳过 queuedForDestroy/destroyed（entity_manager.js:151-158），
+            // 但我们不认为"排队中"算找到 —— 那就是即将消失的东西。
+            const list = (root.entityMgr && root.entityMgr.entities) || [];
+            for (let i = 0; i < list.length; ++i) {
+                const e = list[i];
+                if (e && e.uid === uid && !e.queuedForDestroy && !e.destroyed) { entity = e; break; }
+            }
+        }
+        if (!entity) {
+            return { ok: false, uid, cell: null, reason: "not_found" };
+        }
+        const sme = entity.components.StaticMapEntity;
+        const cell = sme ? [sme.origin.x, sme.origin.y] : null;
+        const layer = entity.layer || "regular";
+        let deleted = false;
+        if (root.logic && typeof root.logic.tryDeleteBuilding === "function") {
+            deleted = !!root.logic.tryDeleteBuilding(entity);
+        } else {
+            // 兜底：没有 logic（测试桩 / 极端情况）时按 tryDeleteBuilding 的三步手工走
+            if (root.map && root.map.removeStaticEntity) root.map.removeStaticEntity(entity);
+            root.entityMgr.destroyEntity(entity);
+            root.entityMgr.processDestroyList();
+            deleted = true;
+        }
+        if (!deleted) {
+            return { ok: false, uid, cell, layer, reason: "not_removable" };
+        }
+        return { ok: true, uid, cell, layer };
+    }
+
+    /**
+     * 读取实体的**非序列化**运行期状态（诊断用）。
+     *
+     * 这是"哪些状态还原不了"的实测出口：它把不参与 schema、delete+restore 后会变/会丢的字段
+     * 全部摊平成 JSON，供 debug_entity_roundtrip 做前后比对。
+     */
+    volatileSnapshot(entity) {
+        const c = entity.components || {};
+        const out = {};
+        const pathSummary = path => {
+            if (!path) return null;
+            try {
+                return {
+                    entities: (path.entityPath || []).map(e => e.uid),
+                    items: (path.items || []).map(([d, item]) => [d, this.itemToShortKey(item)]),
+                    spacingToFirstItem: path.spacingToFirstItem,
+                    totalLength: path.totalLength,
+                };
+            } catch (e) {
+                return { error: String(e && e.message ? e.message : e) };
+            }
+        };
+        if (c.Belt) {
+            out.Belt = {
+                direction: c.Belt.direction,
+                assignedPath: pathSummary(c.Belt.assignedPath),
+            };
+        }
+        if (c.Storage) {
+            out.Storage = {
+                storedCount: c.Storage.storedCount,
+                storedItem: c.Storage.storedItem ? this.itemToShortKey(c.Storage.storedItem) : null,
+                maximumStorage: c.Storage.maximumStorage,
+            };
+        }
+        if (c.Filter) {
+            out.Filter = {
+                leaveThrough: (c.Filter.pendingItemsToLeaveThrough || []).map(i => [this.itemToShortKey(i.item), i.progress]),
+                reject: (c.Filter.pendingItemsToReject || []).map(i => [this.itemToShortKey(i.item), i.progress]),
+            };
+        }
+        if (c.UndergroundBelt) {
+            out.UndergroundBelt = {
+                mode: c.UndergroundBelt.mode,
+                tier: c.UndergroundBelt.tier,
+                pendingItems: (c.UndergroundBelt.pendingItems || []).map(([item, t]) => [this.itemToShortKey(item), t]),
+                cachedLinkedEntity: c.UndergroundBelt.cachedLinkedEntity
+                    ? (c.UndergroundBelt.cachedLinkedEntity.entity ? c.UndergroundBelt.cachedLinkedEntity.entity.uid : null)
+                    : null,
+                consumptionAnimations: (c.UndergroundBelt.consumptionAnimations || []).length,
+            };
+        }
+        if (c.ItemEjector) {
+            out.ItemEjector = {
+                slots: (c.ItemEjector.slots || []).map(s => ({
+                    item: s.item ? this.itemToShortKey(s.item) : null,
+                    progress: s.progress,
+                    cachedTargetEntity: s.cachedTargetEntity ? s.cachedTargetEntity.uid : null,
+                    cachedDestSlot: s.cachedDestSlot ? s.cachedDestSlot.index : null,
+                    cachedBeltPath: !!s.cachedBeltPath,
+                })),
+            };
+        }
+        if (c.ItemProcessor) {
+            const p = c.ItemProcessor;
+            out.ItemProcessor = {
+                type: p.type,
+                nextOutputSlot: p.nextOutputSlot,
+                inputCount: p.inputCount,
+                inputSlots: p.inputSlots ? Array.from(p.inputSlots.keys()).sort((a, b) => a - b) : null,
+                ongoingCharges: (p.ongoingCharges || []).length,
+                queuedEjects: (p.queuedEjects || []).length,
+                bonusTime: p.bonusTime,
+            };
+        }
+        if (c.Miner) {
+            out.Miner = {
+                lastMiningTime: c.Miner.lastMiningTime,
+                cachedMinedItem: c.Miner.cachedMinedItem ? this.itemToShortKey(c.Miner.cachedMinedItem) : null,
+                cachedChainedMiner: c.Miner.cachedChainedMiner && c.Miner.cachedChainedMiner !== false
+                    ? c.Miner.cachedChainedMiner.uid : c.Miner.cachedChainedMiner,
+                itemChainBuffer: (c.Miner.itemChainBuffer || []).map(i => this.itemToShortKey(i)),
+            };
+        }
+        if (c.Wire) {
+            out.Wire = {
+                type: c.Wire.type,
+                variant: c.Wire.variant,
+                linkedNetwork: c.Wire.linkedNetwork ? (c.Wire.linkedNetwork.id === undefined ? true : c.Wire.linkedNetwork.id) : null,
+            };
+        }
+        if (c.WireTunnel) {
+            out.WireTunnel = { linkedNetworks: (c.WireTunnel.linkedNetworks || []).length };
+        }
+        if (c.WiredPins) {
+            out.WiredPins = {
+                slots: (c.WiredPins.slots || []).map(s => ({
+                    value: s.value ? this.itemToShortKey(s.value) : null,
+                    linkedNetwork: s.linkedNetwork ? true : null,
+                })),
+            };
+        }
+        if (c.GoalAcceptor) {
+            out.GoalAcceptor = {
+                currentDeliveredItems: c.GoalAcceptor.currentDeliveredItems,
+                lastDelivery: c.GoalAcceptor.lastDelivery ? true : null,
+            };
+        }
+        if (c.BeltReader) {
+            out.BeltReader = {
+                lastItem: c.BeltReader.lastItem ? this.itemToShortKey(c.BeltReader.lastItem) : null,
+                lastItemTimes: (c.BeltReader.lastItemTimes || []).length,
+                lastThroughput: c.BeltReader.lastThroughput,
+            };
+        }
+        if (c.BeltUnderlays) {
+            out.BeltUnderlays = {
+                cachedTypes: (c.BeltUnderlays.underlays || []).map(u => u.cachedType === undefined ? null : u.cachedType),
+            };
+        }
+        return out;
+    }
+
+    /** 深比较两棵 JSON 树，把差异摊平到 out（path 形如 components.Belt.direction）。 */
+    diffJson(a, b, prefix, out) {
+        const isObj = v => v !== null && typeof v === "object";
+        if (isObj(a) && isObj(b)) {
+            const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+            for (const k of keys) {
+                this.diffJson(a[k], b[k], prefix ? prefix + "." + k : k, out);
+            }
+            return out;
+        }
+        if (JSON.stringify(a) !== JSON.stringify(b)) {
+            out.push({ field: prefix, before: a === undefined ? null : a, after: b === undefined ? null : b });
+        }
+        return out;
+    }
+
+    /**
+     * 诊断 RPC：把一个实体 serialize → delete → restore → 读回，逐字段比对。
+     *
+     * params: { x, y, layer? }
+     * 返回：{ ok, uid, original: {...}, restored: {...}, diffs: [...], component_keys: [...],
+     *         lost_state: {...}, volatile_diffs: [...] }
+     *
+     * ⚠️ 这是**写操作**（会真的删一次再放回来），已登记进 RPC_WRITE_METHODS 走同一条串行链。
+     * 调用方必须自己保证那格是它自己的测试区（hub/玩家产线不可用这个做实验）。
+     */
+    debugEntityRoundtrip(params) {
+        const root = this.requireRoot();
+        const p = params || {};
+        if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+            throw this.rpcError(2001, "invalid_action", "debug_entity_roundtrip requires numeric x, y");
+        }
+        const layer = p.layer || "regular";
+        const entity = root.map.getLayerContentXY(p.x, p.y, layer);
+        if (!entity) {
+            throw this.rpcError(2002, "game_rejected",
+                "no entity at (" + p.x + "," + p.y + ") on layer " + layer,
+                "先用 obs region 确认目标格里有东西");
+        }
+        const uid = entity.uid;
+        const smeBefore = entity.components.StaticMapEntity;
+
+        const beforeSerialized = this.serializeEntity(entity);
+        const beforeVolatile = this.volatileSnapshot(entity);
+        const beforeComponentKeys = Object.keys(entity.components).filter(k => entity.components[k]).sort();
+
+        // ── delete ──
+        const del = this.deleteEntityByUid(uid);
+        if (!del.ok) {
+            throw this.rpcError(2002, "game_rejected",
+                "could not delete uid " + uid + " for roundtrip: " + del.reason,
+                "该建筑不可删（hub / 非编辑器里的 goal acceptor），换个目标");
+        }
+        const stillThere = root.map.getLayerContentXY(p.x, p.y, layer);
+        if (stillThere) {
+            throw this.rpcError(2003, "mod_error",
+                "delete reported ok but the tile is still occupied (uid " + stillThere.uid + ")");
+        }
+
+        // ── restore ──
+        /*
+         * 失败语义：delete 已经发生，如果 restore 抛错，这格就**空了** —— 不能把异常
+         * 直接抛给调用方然后让他以为"什么都没发生"。这里把原始载荷一并带出去，
+         * 并明确告知 rollback 需要什么。
+         */
+        let restoredEntity;
+        try {
+            restoredEntity = this.restoreEntity(beforeSerialized, { roundtrip: true });
+        } catch (e) {
+            const detail = e && e.__rpcError ? e.__rpcError.detail : String(e && e.message ? e.message : e);
+            throw this.rpcError(2003, "mod_error",
+                "roundtrip: delete succeeded but restore FAILED — tile (" + p.x + "," + p.y + ") is now empty. "
+                    + detail,
+                "原载荷: " + JSON.stringify(beforeSerialized));
+        }
+        const back = root.map.getLayerContentXY(p.x, p.y, layer);
+        const landed = back && back.uid === restoredEntity.uid;
+
+        const afterSerialized = this.serializeEntity(restoredEntity);
+        const afterVolatile = this.volatileSnapshot(restoredEntity);
+        const afterComponentKeys = Object.keys(restoredEntity.components).filter(k => restoredEntity.components[k]).sort();
+
+        // ── diff ──
+        const diffs = [];
+        this.diffJson(
+            { uid: beforeSerialized.uid, code: beforeSerialized.code, layer: beforeSerialized.layer,
+              components: beforeSerialized.components },
+            { uid: afterSerialized.uid, code: afterSerialized.code, layer: afterSerialized.layer,
+              components: afterSerialized.components },
+            "", diffs
+        );
+        const volatileDiffs = [];
+        this.diffJson(beforeVolatile, afterVolatile, "", volatileDiffs);
+
+        const report = restoredEntity[RESTORE_REPORT_KEY] || null;
+
+        return {
+            ok: del.ok && !!landed && diffs.length === 0,
+            x: p.x,
+            y: p.y,
+            layer,
+            uid,
+            restored_uid: restoredEntity.uid,
+            uid_preserved: restoredEntity.uid === uid,
+            tile_landed: !!landed,
+            original: {
+                uid, code: smeBefore.code, rotation: smeBefore.rotation,
+                rotationVariant: beforeSerialized.rotationVariant,
+                layer: beforeSerialized.layer,
+            },
+            restored: {
+                uid: restoredEntity.uid,
+                code: restoredEntity.components.StaticMapEntity.code,
+                rotation: restoredEntity.components.StaticMapEntity.rotation,
+                rotationVariant: afterSerialized.rotationVariant,
+                layer: restoredEntity.layer,
+            },
+            diffs,                              // schema 内的差异（应为空）
+            volatile_diffs: volatileDiffs,      // 非 schema 状态差异（**正常情况不空**，见 lost_state）
+            component_keys: beforeSerialized.component_keys,
+            live_component_keys_before: beforeComponentKeys,
+            live_component_keys_after: afterComponentKeys,
+            restore_report: report,             // { restored[], missing[], failed[] }
+            lost_state: afterVolatile,          // 还原后这些运行期字段是什么（供事务层决定快照要含什么）
+        };
     }
 
     // ─────────────── 动作实现 ───────────────
