@@ -340,6 +340,18 @@ function needsLongTimeout(method, params) {
     if (method === "batch" && params && Array.isArray(params.actions)) {
         return params.actions.some(a => a && (a.op === "step" || a.op === "await"));
     }
+    /* 会等游戏**加载世界**的方法也必须走长超时。
+       实测：游戏重启后第一次 load_save 要 40~60 秒才把 world 建起来，
+       而 30 秒的默认超时会在世界刚好建好之前把它判成失败 ——
+       调用方看到 timeout，以为失败了，实际再等几秒就成功了。
+       这类误判比等久一点危险得多：它会诱导调用方去重启游戏，
+       而重启本身又要 50 秒。 */
+    if (method === "load_save" || method === "new_game") return true;
+    // 大蓝图粘贴（含 immutable 操作 + 逐格 entityManuallyPlaced）也可能超过 30 秒
+    if (method === "act" && params && params.op === "paste_blueprint") return true;
+    if (method === "batch" && params && Array.isArray(params.actions)) {
+        return params.actions.some(a => a && a.op === "paste_blueprint");
+    }
     return false;
 }
 
