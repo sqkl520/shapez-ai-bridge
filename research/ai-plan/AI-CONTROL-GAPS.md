@@ -164,3 +164,37 @@ AI 做"放一个 → 看效果 → 再放"的循环时，每步都要全量拉�
 4. **加载可靠性**（短板 1，已修）—— 决定 AI 能不能反复切换存档
 5. **事件驱动观测**（短板 5）—— 效率优化，不是能力边界
 6. **结构化错误**（短板 6）—— 体验优化
+
+---
+
+## 附：一个被纠正的概念错误（来自独立审查）
+
+我一直以为「切割机切一刀，两个输出槽各出一半」。**这是错的。**
+
+`systems/item_processor.js:367-389`：
+
+```js
+process_CUTTER(payload) {
+    const inputItem = payload.items.get(0);
+    const cutDefinitions = this.root.shapeDefinitionMgr.shapeActionCutHalf(inputDefinition);
+    const ejectorComp = payload.entity.components.ItemEjector;
+    for (let i = 0; i < cutDefinitions.length; ++i) {
+        ...
+        payload.outItems.push({ item: ..., requiredSlot: i });   // ← 两半都 push
+    }
+}
+```
+
+**每个输出槽的产出速率 = 输入速率**，不是一半。
+
+实机印证（当前存档）：
+```
+RuRu---- 0.367/s
+----RuRu 0.367/s     ← 两个槽速率相同
+```
+
+所以产能估算要改：一台 0.4/s 矿机喂切割机，两个槽各出 0.4/s，
+70 个目标约 **175 秒**，不是我之前算的 350 秒。
+
+**这类错误的共同点是**：我用"直觉上的守恒"代替了读源码。
+切一刀得到两半，直觉会说"各一半"；但游戏实现是"输入一件，输出两件"。
