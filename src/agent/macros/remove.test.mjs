@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { OPP, DIRV, beltEntry, beltExit } from "../../ai/belt-rules.mjs";
 import { validateMacroResult, lintNoBareCoords } from "./contract.mjs";
@@ -104,26 +104,56 @@ if (process.argv.includes("--mutate")) {
         }
         const mutantPath = path.join(tmpDir, "remove.mutant.mjs");
         const testPath = path.join(tmpDir, "remove.test.mutant.mjs");
-        fs.writeFileSync(mutantPath, srcText.replace(m.from, m.to));
-        /* 测试副本：只把 relatives 换成指向真目录的绝对路径，其余逐字照抄 ——
-           保证跑的是**同一份测试**，不是另写的一套。 */
+        /* 用 pathToFileURL 而不是手拼 "file://" —— Windows 下反斜杠转义在多层引号里
+           极易被吃掉（实测被吃成 /\/g 造成 SyntaxError），而它顺便处理盘符与 %20 空格。 */
+        const uri = f => pathToFileURL(path.resolve(HERE, f)).href;
+        /* 变异体**自己**的 import 也要换成绝对 URL：临时目录里的相对路径会指到别处
+           （实测变成 <Temp>\ai\belt-rules.mjs，于是子进程以「模块找不到」退出）。 */
+        const mutantText = srcText
+            .replace(m.from, m.to)
+            .replaceAll('"../../ai/belt-rules.mjs"', JSON.stringify(uri("../../ai/belt-rules.mjs")))
+            .replaceAll('"../../ai/op-templates.mjs"', JSON.stringify(uri("../../ai/op-templates.mjs")))
+            .replaceAll('"./contract.mjs"', JSON.stringify(uri("contract.mjs")))
+            .replaceAll('"./connect.mjs"', JSON.stringify(uri("connect.mjs")))
+            .replace(
+                'const SPEC_PATH = path.resolve(HERE, "../../ai/machine-spec.json");',
+                `const SPEC_PATH = ${JSON.stringify(path.resolve(HERE, "../../ai/machine-spec.json"))};`);
+        fs.writeFileSync(mutantPath, mutantText);
+        /* 测试副本：只把 import 说明符换成绝对 URL，其余逐字照抄 ——
+           保证跑的是**同一份测试**，不是另写的一套。
+           ⚠️ 必须按**说明符**（引号内的部分）替换，不能按 `from "x"` 整行替换 ——
+           带花括号的多行 import 那行里没有 `from`。 */
         const rewritten = selfText
-            .replace('from "./remove.mjs"', `from ${JSON.stringify("file://" + mutantPath.replace(/\\/g, "/"))}`)
-            .replace('from "./contract.mjs"', `from ${JSON.stringify("file://" + path.resolve(HERE, "contract.mjs").replace(/\\/g, "/"))}`)
-            .replace('from "./connect.mjs"', `from ${JSON.stringify("file://" + path.resolve(HERE, "connect.mjs").replace(/\\/g, "/"))}`)
-            .replace('from "../../ai/belt-rules.mjs"', `from ${JSON.stringify("file://" + path.resolve(HERE, "../../ai/belt-rules.mjs").replace(/\\/g, "/"))}`)
+            .replaceAll('"./remove.mjs"', JSON.stringify(pathToFileURL(mutantPath).href))
+            .replaceAll('"./contract.mjs"', JSON.stringify(uri("contract.mjs")))
+            .replaceAll('"./connect.mjs"', JSON.stringify(uri("connect.mjs")))
+            .replaceAll('"../../ai/belt-rules.mjs"', JSON.stringify(uri("../../ai/belt-rules.mjs")))
             .replace(
                 'const SAVE = path.resolve(HERE, "../../../research/ai-plan/live-L4-entities.json");',
                 `const SAVE = ${JSON.stringify(SAVE)};`)
             .replace(
                 'const SRC = path.resolve(HERE, "remove.mjs");',
                 `const SRC = ${JSON.stringify(SRC)};`);
+        /* 自检：路径重写必须真的发生了。否则子进程会以「模块找不到」退出，
+           那个退出码 1 会被误当成「变异被抓」—— 变异测试最常见的假绿来源。
+           判据两条：测试副本里不许再有相对说明符；变异体里也不许有。 */
+        if (/from "(\.\/|\.\.\/)/.test(rewritten) || !rewritten.includes("file://")) {
+            throw new Error("变异测试副本的 import 重写失败（会退化成假绿）");
+        }
+        if (/from "(\.\/|\.\.\/)/.test(mutantText)) {
+            throw new Error("变异体的 import 重写失败（子进程会以模块找不到退出）");
+        }
         fs.writeFileSync(testPath, rewritten);
         const r = spawnSync(process.execPath, [testPath], { encoding: "utf8" });
         const out = (r.stdout || "") + (r.stderr || "");
-        const red = (out.match(/^✗/gm) || []).length;
+        /* 行首有 ANSI 颜色码（\x1b[31m✗\x1b[0m），所以要先剥色再按行首数 ✗。
+           直接 /^✗/gm 会数到 0 条 —— 那会让「变异被抓」永远判成逃逸（假红）。 */
+        const plain = out.replace(/\x1b\[[0-9;]*m/g, "");
+        const red = (plain.match(/^✗/gm) || []).length;
+        const passed = (plain.match(/^✓/gm) || []).length;
         const crashed = /SyntaxError|ReferenceError|TypeError/.test(out) && red === 0;
-        const caught = r.status !== 0 && red === m.expectRed;
+        const caught = r.status !== 0 && red === m.expectRed && passed > 0;
+        if (process.env.MUT_DEBUG) console.log("--- " + m.id + " status=" + r.status + " red=" + red + " pass=" + passed + "\n" + plain.slice(0, 1200));
         if (caught) {
             console.log(`\x1b[32m✓ ${m.id}\x1b[0m  红 ${red}/${m.expectRed} 条 —— ${m.why}`);
         } else {
