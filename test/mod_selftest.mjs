@@ -107,12 +107,16 @@ function makeStubEntity({ root, origin, rotation, originalRotation, rotationVari
 }
 
 const STUB_BUILDING_META = {};
-function stubMeta(id, w, h, code, layer, replaceable) {
+function stubMeta(id, w, h, code, layer, replaceable, removable) {
     const meta = {
         getId: () => id,
         getLayer: () => layer,
         getDimensions: () => ({ x: w, y: h }),
         getIsReplaceable: () => !!replaceable,
+        // 与 buildings/*.js 同形：delete 走 tryDeleteBuilding → canDeleteBuilding
+        // → staticComp.getMetaBuilding().getIsRemovable(root)。tx 的可逆性预检问的是同一把尺子，
+        // 所以桩必须提供它 —— 否则预检会以为"无法判断"而放行（会把真缺陷放过去）。
+        getIsRemovable: () => removable === undefined ? true : !!removable,
         createEntity(params) {
             return makeStubEntity(Object.assign({ buildingId: id, code, layer, tileSize: { x: w, y: h } }, params));
         },
@@ -160,26 +164,31 @@ const stubShapez = {
     compressX64: s => "COMPRESSED:" + s,
     decompressX64: s => s.replace(/^COMPRESSED:/, ""),
     gMetaBuildingRegistry: {
-        getEntries: () => [
-            { getId: () => "belt" },
-            { getId: () => "miner" },
-        ],
+        // 必须返回**真的** meta（含 createEntity / getDimensions），否则 place 走不通：
+        // resolveBuilding 用这张表拿 meta，而 placeOne → logic.tryPlaceBuilding → meta.createEntity。
+        // 之前这里给的是裸 { getId } 桩，于是 tx 里的 place 全部 2003 —— 而那个失败又被
+        // "async 回调传给同步 check" 吞掉了（见本文件末尾的 checkAsync 用法）。
+        // 懒取 STUB_BUILDING_META：函数调用发生在 gBuildingVariants 填充之后。
+        getEntries: () => Object.values(STUB_BUILDING_META),
     },
     gBuildingVariants: {
         1: { metaInstance: stubMeta("belt", 1, 1, 1, "regular", true), variant: "default", rotationVariant: 0 },
         // 带子的另外两个 rv 档位（belt.js:25-43：internalId 1/2/3 ↔ rv 0/1/2）。
         // 注册表里的存在性 = rv 合法性，测试必须镜像真机，否则 rv=1/2 会被误判非法。
-        2: { metaInstance: { getId: () => "belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => true }, variant: "default", rotationVariant: 1 },
-        3: { metaInstance: { getId: () => "belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => true }, variant: "default", rotationVariant: 2 },
-        7: { metaInstance: { getId: () => "miner", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 0 },
-        9: { metaInstance: { getId: () => "cutter", getDimensions: () => ({ x: 2, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 0 },
+        2: { metaInstance: stubMeta("belt", 1, 1, 2, "regular", true), variant: "default", rotationVariant: 1 },
+        3: { metaInstance: stubMeta("belt", 1, 1, 3, "regular", true), variant: "default", rotationVariant: 2 },
+        7: { metaInstance: stubMeta("miner", 1, 1, 7, "regular", false), variant: "default", rotationVariant: 0 },
+        9: { metaInstance: stubMeta("cutter", 2, 1, 9, "regular", false), variant: "default", rotationVariant: 0 },
         // 隧道：22=sender(rv0) / 23=receiver(rv1)，1×1、不可替换（buildings/underground_belt.js:45-48）
-        22: { metaInstance: { getId: () => "underground_belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 0 },
-        23: { metaInstance: { getId: () => "underground_belt", getDimensions: () => ({ x: 1, y: 1 }), getIsReplaceable: () => false }, variant: "default", rotationVariant: 1 },
+        22: { metaInstance: stubMeta("underground_belt", 1, 1, 22, "regular", false), variant: "default", rotationVariant: 0 },
+        23: { metaInstance: stubMeta("underground_belt", 1, 1, 23, "regular", false), variant: "default", rotationVariant: 1 },
         // 仓库 21（buildings/storage.js:22-30，2×2）：序列化还原的实机自证目标 ——
         // storedCount/storedItem 是判断"还原的是实体还是空壳"的关键字段。
         21: { metaInstance: stubMeta("storage", 2, 2, 21, "regular", false), variant: "default", rotationVariant: 0 },
         26: { metaInstance: stubMeta("hub", 4, 4, 26, "regular", false), variant: "default", rotationVariant: 0 },
+        // 62 = constant_producer（buildings/constant_producer.js:34）：**放得下、删不掉**。
+        // 实机实测：place 成功、delete 返回 2002 not_removable。tx 的可逆性预检必须拦住它。
+        62: { metaInstance: stubMeta("constant_producer", 1, 1, 62, "regular", false, false), variant: "default", rotationVariant: 0 },
     },
 };
 
@@ -1101,6 +1110,8 @@ function roundtripRoot() {
         immutableOperationRunning: false,
         entityMgr: {
             entities,
+            get nextUid() { return nextUid; },
+            set nextUid(v) { nextUid = v; },
             findByUid(uid, err = true) {
                 for (const e of entities) if (e.uid === uid) return e;
                 return null;
@@ -1112,6 +1123,17 @@ function roundtripRoot() {
                 entity.uid = uid ? uid : nextUid++;
                 entity.registered = true;
                 entities.push(entity);
+                // 真机里 registerEntity 会 dispatch entityAdded，BeltSystem 在这个信号上把带子
+                // 挂进路网（systems/belt.js:312-325）。测试桩必须同样做，否则
+                // "restore 之后带子有没有回到路网"这一类断言就没有判别力。
+                root.systemMgr.systems.belt.onBeltAdded(entity);
+                // 另一个挂在 entityAdded 上的监听：updateSurroundingBeltPlacement 会把**周围一圈**
+                // 带子的 rv 按邻居重算并覆写 code（systems/belt.js:120-210）。这里用最小的
+                // 等价物把那条"回滚本身会改世界"的边界变成可测的：
+                // 只在 opt-in（root.simulateNeighborRecompute）时开启，避免影响其它 60 条。
+                if (root.simulateNeighborRecompute && entity.components.StaticMapEntity) {
+                    root.systemMgr.systems.belt.simulateNeighborRecompute(entity);
+                }
             },
             destroyEntity(entity) { entity.queuedForDestroy = true; destroyed.push(entity.uid); },
             processDestroyList() {
@@ -1149,10 +1171,105 @@ function roundtripRoot() {
             tryDeleteBuilding(entity) {
                 const meta = { getIsRemovable: () => entity.uid !== 99 };
                 if (entity.uid === 99) return false;   // 模拟 hub：不可删
+                root.systemMgr.systems.belt.onBeltRemoved(entity);
                 root.map.removeStaticEntity(entity);
                 root.entityMgr.destroyEntity(entity);
                 root.entityMgr.processDestroyList();
                 return true;
+            },
+            // 事务层测试需要能"放置"：与 logic.js:117-133 同形
+            // （createEntity → checkCanPlaceEntity → placeStaticEntity → registerEntity）。
+            tryPlaceBuilding({ origin, rotation, rotationVariant, originalRotation, building, variant }) {
+                const entity = building.createEntity({
+                    root, origin, rotation, originalRotation, rotationVariant, variant,
+                });
+                const sme = entity.components.StaticMapEntity;
+                const size = building.getDimensions ? building.getDimensions() : { x: 1, y: 1 };
+                for (let dx = 0; dx < size.x; ++dx) {
+                    for (let dy = 0; dy < size.y; ++dy) {
+                        if (root.map.getLayerContentXY(origin.x + dx, origin.y + dy, entity.layer)) return null;
+                    }
+                }
+                void sme;
+                root.map.placeStaticEntity(entity);
+                root.entityMgr.registerEntity(entity);
+                root.systemMgr.systems.belt.onBeltAdded(entity);
+                return entity;
+            },
+        },
+        signals: {
+            entityManuallyPlaced: { dispatch() {} },
+            entityAdded: { dispatch() {} },
+            entityDestroyed: { dispatch() {} },
+        },
+        // 最小带子路网：每条带子一条 path（真实系统会把相邻带子并成一条 —— 这里刻意简化，
+        // 因为事务层只关心"路网是否自洽 / 重算会不会丢货"，不关心合并算法）。
+        systemMgr: {
+            systems: {
+                belt: {
+                    beltPaths: [],
+                    _nextPath: 1,
+                    onBeltAdded(entity) {
+                        if (!entity.components.Belt) return;
+                        const path = {
+                            __id: this._nextPath++,
+                            entityPath: [entity],
+                            items: [],
+                            totalLength: 1,
+                            spacingToFirstItem: 1,
+                        };
+                        entity.components.Belt.assignedPath = path;
+                        this.beltPaths.push(path);
+                    },
+                    onBeltRemoved(entity) {
+                        const bc = entity.components.Belt;
+                        if (!bc) return;
+                        const p = bc.assignedPath;
+                        if (!p) return;
+                        const i = this.beltPaths.indexOf(p);
+                        if (i >= 0) this.beltPaths.splice(i, 1);
+                        bc.assignedPath = null;
+                    },
+                    recomputeAllBeltPaths() {
+                        this.recomputeCalls = (this.recomputeCalls || 0) + 1;
+                        this.beltPaths = [];
+                        const list = root.entityMgr.entities.filter(e => e && e.components && e.components.Belt);
+                        for (const e of list) {
+                            // 与上游一致：new BeltPath(...) 的 items 为空 ⇒ 全世界的在途货被清空
+                            const path = { __id: this._nextPath++, entityPath: [e], items: [], totalLength: 1, spacingToFirstItem: 1 };
+                            e.components.Belt.assignedPath = path;
+                            this.beltPaths.push(path);
+                        }
+                    },
+                    /**
+                     * 复刻 systems/belt.js:120-210 `updateSurroundingBeltPlacement` 的**净效果**：
+                     * 新实体进出世界时，它周围一圈的带子会被按邻居重算，rv/code 被覆写。
+                     * 桩里的规则刻意做"最小但可判别的"：带子的 code = 1 + (南侧是带子 ? 1 : 0)。
+                     * 于是删/放一格会让**邻居**的 code 变化 —— 这正是"回滚本身在改世界"那条边界。
+                     */
+                    simulateNeighborRecompute(center) {
+                        const sme = center.components.StaticMapEntity;
+                        const around = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+                        for (const [dx, dy] of around) {
+                            const nb = root.map.getLayerContentXY(sme.origin.x + dx, sme.origin.y + dy, "regular");
+                            if (!nb || !nb.components.Belt) continue;
+                            if (nb.uid === center.uid) continue;
+                            this.recomputeOne(nb);
+                        }
+                    },
+                    recomputeOne(belt) {
+                        if (root.pathologicalRecompute) {
+                            // 病态规则：每次重算都把 code 翻面 —— 永不收敛。
+                            // 用来验证"回滚不收敛时必须如实报 false"，而不是假装成功。
+                            const sme = belt.components.StaticMapEntity;
+                            sme.code = 1 + ((sme.code + 1) % 3);
+                            return;
+                        }
+                        const sme = belt.components.StaticMapEntity;
+                        const south = root.map.getLayerContentXY(sme.origin.x, sme.origin.y + 1, "regular");
+                        sme.code = (south && south.components.Belt) ? 2 : 1;
+                    },
+                },
             },
         },
         time: { now: () => 0 },
@@ -1498,6 +1615,519 @@ await checkAsync("变异自检：footprint 退化成只查 origin → 右下角�
     let threw = null;
     try { m.restoreEntity(payloadA); } catch (e) { threw = e; }
     assert(!threw, "变异体本应放行（只查 origin 看不到右下角），却抛了: " + (threw && threw.message));
+});
+
+// ─────────────── delete{uid} 与 tx（事务层） ───────────────
+/*
+ * 为什么这组测试存在（终裁 §3 阶段 0）：
+ *   在 tx 之前，系统**物理上无法表达**唯一已知的正确解 ——
+ *   L4 = 删 3 条带 + 放 1 切割机 + 1 垃圾桶（5 个 op），
+ *   而 delete 只认坐标、batch 逐条落地不可撤销、rollback 只能删新增。
+ *
+ * 这里锁死四条不可退让的性质：
+ *   ① delete 能按 uid 寻址，且 uid/坐标不一致时**不猜**（2001）。
+ *   ② tx 的失败必须**整体回滚**（不是"前 6 条留下了"）。
+ *   ③ 回滚后的 uid 集合与贴前**逐字节相等**（不只是"看起来一样"）。
+ *   ④ 变异验证：把回滚里的 restoreEntity 换成 noop，测试必须变红。
+ */
+
+/** 装一个 tx 用的世界：干净 root + 常用 spawn 快捷方式。 */
+function txWorld() {
+    const w = roundtripRoot();
+    return w;
+}
+
+check("delete{uid}: 按 uid 删除，返回实际删掉的东西", () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    const e = spawn(21, 60, -50);
+    const res = m.opDelete(root, { uid: e.uid });
+    assert(res.ok === true, "ok");
+    assert(res.uid === e.uid, "uid reported; got " + res.uid);
+    assert(res.freed_uid === e.uid, "freed_uid preserved for old callers");
+    assert(res.type === "storage", "type reported; got " + res.type);
+    assert(JSON.stringify(res.cell) === "[60,-50]", "cell reported; got " + JSON.stringify(res.cell));
+    assert(res.addressed_by === "uid", "addressed_by=uid; got " + res.addressed_by);
+    assert(root.map.getLayerContentXY(60, -50, "regular") === null, "tile cleared");
+});
+
+check("delete{uid}: 坐标与 uid 不一致 → 2001（不猜调用方想要哪个）", () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    const e = spawn(21, 60, -50);
+    let threw = null;
+    try { m.opDelete(root, { uid: e.uid, x: 61, y: -49 }); } catch (err) { threw = err; }
+    assert(threw && threw.__rpcError && threw.__rpcError.code === 2001,
+        "2001 expected; got " + (threw && threw.__rpcError && threw.__rpcError.code));
+    assert(/disagree/.test(String(threw.__rpcError.detail)), "detail names the disagreement");
+    // 关键：**什么都没删**（拒绝必须发生在任何写操作之前）
+    assert(root.map.getLayerContentXY(60, -50, "regular") === e, "entity must still be there");
+});
+
+check("delete{uid}: 坐标与 uid 一致 → 正常删除", () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    const e = spawn(21, 60, -50);
+    const res = m.opDelete(root, { uid: e.uid, x: 60, y: -50 });
+    assert(res.ok === true && res.addressed_by === "uid+xy", "got " + JSON.stringify(res.addressed_by));
+});
+
+check("delete{x,y}: 旧形态仍然可用（兼容）", () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    const e = spawn(21, 60, -50);
+    const res = m.opDelete(root, { x: 60, y: -50 });
+    assert(res.ok === true && res.freed_uid === e.uid && res.addressed_by === "xy",
+        "got " + JSON.stringify(res));
+});
+
+check("delete: 两种寻址都不给 → 2001", () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    let threw = null;
+    try { m.opDelete(root, {}); } catch (e) { threw = e; }
+    assert(threw && threw.__rpcError.code === 2001, "2001 expected");
+});
+
+check("delete{uid}: uid 不存在 → 2002（不是静默成功）", () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    let threw = null;
+    try { m.opDelete(root, { uid: 424242 }); } catch (e) { threw = e; }
+    assert(threw && threw.__rpcError.code === 2002, "2002 expected");
+});
+
+await checkAsync("tx: 成功路径 —— 删除 + 放置都落地，diff 是净变更", async () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    const a = spawn(1, 60, -50);
+    const b = spawn(1, 61, -50);
+    const beforeUids = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+    const res = await m.opTx(root, { ops: [{ op: "delete", uid: a.uid }, { op: "place", building: "belt", x: 60, y: -48 }] });
+    assert(res.ok === true, "ok; failures=" + JSON.stringify(res.failures));
+    assert(res.applied === 2, "applied 2; got " + res.applied);
+    assert(res.rolled_back === false, "no rollback on success");
+    assert(res.diff.removed.length === 1 && res.diff.removed[0] === a.uid, "diff.removed = [" + a.uid + "]");
+    assert(res.diff.added.length === 1, "diff.added has the new belt");
+    assert(res.diff.modified.length === 0, "diff.modified empty; got " + JSON.stringify(res.diff.modified));
+    void b; void beforeUids;
+});
+
+/*
+ * ★ T2 的核心断言：第 7 条非法 → 整体无副作用。
+ * 这里用"第 3 条删一个不存在的 uid"作为硬失败，因为它走的是 op 的执行期
+ * （形状校验通过、运行期 2002），正是事务必须覆盖的那条路径。
+ */
+await checkAsync("tx: 硬失败 → 整体回滚，实体总数与前 N 格全空", async () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+
+    // 12 格带子（测试区 x=60..70, y=-40）
+    const belts = [];
+    for (let i = 0; i < 12; ++i) belts.push(spawn(1, 60 + i, -40));
+    const totalBefore = root.entityMgr.entities.length;
+    const uidSetBefore = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+
+    const ops = [
+        { op: "delete", uid: belts[0].uid },
+        { op: "delete", uid: belts[1].uid },
+        { op: "place", building: "belt", x: 60, y: -41 },
+        { op: "place", building: "belt", x: 61, y: -41 },
+        { op: "place", building: "belt", x: 62, y: -41 },
+        { op: "place", building: "belt", x: 63, y: -41 },
+        { op: "delete", uid: 999999 },            // ← 第 7 条：不存在
+        { op: "place", building: "belt", x: 64, y: -41 },
+    ];
+    const res = await m.opTx(root, { ops });
+
+    assert(res.ok === false, "ok must be false");
+    assert(res.rolled_back === true, "rolled_back must be true");
+    assert(res.applied === 6, "applied 6 before the bad one; got " + res.applied);
+    assert(res.failures.length === 1 && res.failures[0].index === 6,
+        "failure at index 6; got " + JSON.stringify(res.failures.map(f => f.index)));
+    assert(res.failures[0].error.code === 2002, "failure code 2002; got " + res.failures[0].error.code);
+
+    // 实体总数与 uid 集合必须逐字节还原
+    const totalAfter = root.entityMgr.entities.length;
+    const uidSetAfter = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+    assert(totalAfter === totalBefore, "entity count " + totalAfter + " != " + totalBefore);
+    assert(JSON.stringify(uidSetAfter) === JSON.stringify(uidSetBefore),
+        "uid set changed: " + JSON.stringify(uidSetAfter) + " vs " + JSON.stringify(uidSetBefore));
+
+    // 前 6 条明明成功过的 4 个 place 必须全空
+    for (let i = 0; i < 4; ++i) {
+        assert(root.map.getLayerContentXY(60 + i, -41, "regular") === null,
+            "tile (" + (60 + i) + ",-41) must be empty after rollback");
+    }
+    // 前 2 条删掉的带子必须回来（**同一个 uid** —— 回滚走 delete+restore，实体是新对象，
+    // 所以不变量是 uid 与载荷，不是对象同一性）
+    const back0 = root.map.getLayerContentXY(60, -40, "regular");
+    const back1 = root.map.getLayerContentXY(61, -40, "regular");
+    assert(back0 && back0.uid === belts[0].uid, "belts[0] restored with the same uid; got " + (back0 && back0.uid));
+    assert(back1 && back1.uid === belts[1].uid, "belts[1] restored with the same uid; got " + (back1 && back1.uid));
+
+    assert(res.verify && res.verify.uid_set_equal === true, "verify.uid_set_equal must be true");
+    assert(res.diff.added.length === 0 && res.diff.removed.length === 0,
+        "final diff must be empty; got " + JSON.stringify(res.diff));
+});
+
+await checkAsync("tx: 回滚后 nextUid 也退化（uid 空间不前进）", async () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    const nextBefore = root.entityMgr.nextUid;
+    const res = await m.opTx(root, { ops: [
+        { op: "place", building: "belt", x: 60, y: -42 },
+        { op: "delete", uid: 888888 },   // 硬失败
+    ] });
+    assert(res.ok === false && res.rolled_back === true, "rolled back");
+    assert(root.entityMgr.nextUid === nextBefore,
+        "nextUid advanced anyway: " + root.entityMgr.nextUid + " vs " + nextBefore);
+    const step = res.rollback.steps.find(s => s.step === "nextUid");
+    assert(step && step.ok === true, "nextUid step must be ok; got " + JSON.stringify(step));
+});
+
+await checkAsync("tx: dry_run 无论成败都不留痕迹", async () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    const a = spawn(1, 60, -43);
+    const uidSetBefore = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+    const res = await m.opTx(root, { dry_run: true, ops: [
+        { op: "delete", uid: a.uid },
+        { op: "place", building: "belt", x: 65, y: -43 },
+    ] });
+    assert(res.ok === false && res.dry_run === true, "dry_run never reports ok");
+    assert(res.rolled_back === true, "dry_run rolls back");
+    // net 告诉调用方"本来会发生什么"
+    assert(res.net && res.net.removed.length === 1 && res.net.added.length === 1,
+        "net must describe what would have happened; got " + JSON.stringify(res.net));
+    const uidSetAfter = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+    assert(JSON.stringify(uidSetAfter) === JSON.stringify(uidSetBefore), "world unchanged");
+    const backA = root.map.getLayerContentXY(60, -43, "regular");
+    assert(backA && backA.uid === a.uid, "the deleted belt is back with its uid; got " + (backA && backA.uid));
+});
+
+await checkAsync("tx: 形状非法的 op 在执行前就拒绝（零副作用）", async () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    spawn(1, 60, -44);
+    const uidSetBefore = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+    let threw = null;
+    try {
+        await m.opTx(root, { ops: [
+            { op: "place", building: "belt", x: 62, y: -44 },
+            { op: "explode" },
+        ] });
+    } catch (e) { threw = e; }
+    assert(threw && threw.__rpcError && threw.__rpcError.code === 2001, "2001 expected");
+    assert(/op\[1\]/.test(String(threw.__rpcError.detail)), "detail names the index; got " + threw.__rpcError.detail);
+    const uidSetAfter = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+    assert(JSON.stringify(uidSetAfter) === JSON.stringify(uidSetBefore), "nothing may have been placed");
+    assert(root.map.getLayerContentXY(62, -44, "regular") === null, "tile must be empty");
+});
+
+await checkAsync("tx: 拒绝会动时间/换世界的 op（1003/1004 之外的白名单纪律）", async () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    for (const op of [{ op: "step", ticks: 10 }, { op: "save" }, { op: "load", internal_id: "x" },
+                      { op: "set_speed", speed: "regular" }, { op: "paste_blueprint", text: "SZBP1.x", x: 0, y: 0 }]) {
+        let threw = null;
+        try { await m.opTx(root, { ops: [op] }); } catch (e) { threw = e; }
+        assert(threw && threw.__rpcError && threw.__rpcError.code === 2001,
+            "op " + op.op + " must be rejected with 2001");
+        assert(String(threw.__rpcError.detail).includes(op.op), "detail names " + op.op);
+    }
+});
+
+await checkAsync("tx: 嵌套 tx → 2001（外层的快照会被内层打乱）", async () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    m._txDepth = 1;
+    let threw = null;
+    try { await m.opTx(root, { ops: [{ op: "noop" }] }); } catch (e) { threw = e; }
+    m._txDepth = 0;
+    assert(threw && threw.__rpcError.code === 2001, "2001 expected");
+});
+
+await checkAsync("tx: 空 ops / 非数组 → 2001", async () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    for (const bad of [{}, { ops: [] }, { ops: "nope" }, { ops: new Array(2001).fill({ op: "noop" }) }]) {
+        let threw = null;
+        try { await m.opTx(root, bad); } catch (e) { threw = e; }
+        assert(threw && threw.__rpcError.code === 2001, "2001 expected for " + JSON.stringify(bad).slice(0, 40));
+    }
+});
+
+await checkAsync("tx: 边界如实声明（时间 / 第三方系统 / 不可删 / 非序列化状态）", async () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    const res = await m.opTx(root, { ops: [{ op: "place", building: "belt", x: 60, y: -45 }] });
+    assert(res.ok === true, "ok");
+    assert(res.boundaries.time.reversible === false, "time is not reversible");
+    assert(typeof res.boundaries.time.tick_advance === "number", "tick_advance reported");
+    assert(res.boundaries.non_removable.covered === false, "non_removable.covered must be false");
+    assert(res.boundaries.non_removable.types.includes("hub"), "hub listed");
+    assert(res.boundaries.third_party_systems.note.includes("BeltSystem"), "belt system noted");
+    assert(res.boundaries.non_serialized_state.note.includes("assignedPath"), "assignedPath noted");
+});
+
+await checkAsync("tx: 带子路网 —— 成功事务后每条带子都在某条 path 里", async () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    const res = await m.opTx(root, { ops: [
+        { op: "place", building: "belt", x: 60, y: -46 },
+        { op: "place", building: "belt", x: 61, y: -46 },
+    ] });
+    assert(res.ok === true, "ok");
+    const health = m.beltNetworkHealth(root);
+    assert(health.available === true, "belt system reachable");
+    assert(health.belts === 2, "2 belts on paths; got " + health.belts);
+    assert(health.problems.length === 0, "no path problems; got " + JSON.stringify(health.problems));
+});
+
+await checkAsync("tx: 回滚后带子路网自洽（不会留下悬空 assignedPath）", async () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    for (let i = 0; i < 6; ++i) spawn(1, 60 + i, -47);
+    const res = await m.opTx(root, { ops: [
+        { op: "delete", uid: root.entityMgr.entities[0].uid },
+        { op: "delete", uid: root.entityMgr.entities[1].uid },
+        { op: "delete", uid: 777777 },   // 硬失败
+    ] });
+    assert(res.ok === false && res.rolled_back === true, "rolled back");
+    const health = m.beltNetworkHealth(root);
+    assert(health.problems.length === 0, "no path problems; got " + JSON.stringify(health.problems));
+    assert(health.belts === 6, "all 6 belts are in paths; got " + health.belts);
+});
+
+await checkAsync("tx: 回滚不改动事务区域外的实体（uid + components 快照对比）", async () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    const outside = spawn(21, 70, -49);          // 区域外，且**不可删**的 uid 不会影响
+    outside.components.Storage.storedCount = 42;
+    const before = m.serializeEntity(outside);
+    const res = await m.opTx(root, { ops: [
+        { op: "place", building: "belt", x: 60, y: -49 },
+        { op: "delete", uid: 555555 },           // 硬失败
+    ] });
+    assert(res.rolled_back === true, "rolled back");
+    const after = m.serializeEntity(root.map.getLayerContentXY(70, -49, "regular"));
+    assert(JSON.stringify(after.components) === JSON.stringify(before.components),
+        "outside entity must be byte-identical; before=" + JSON.stringify(before.components) +
+        " after=" + JSON.stringify(after.components));
+});
+
+/*
+ * ★ 变异验证（完成判据里的硬要求）
+ * 把回滚里的 `this.restoreEntity(payload, ...)` 换成 noop，T1/T2 的核心断言必须变红。
+ * 这条测试自己在源码里找靶子行；靶子行不在了它会红（防止源码重构后此用例悄悄失效）。
+ */
+await checkAsync("变异自检：回滚里的 restoreEntity 改成 noop → uid 集合还原断言必须变红", async () => {
+    const target = "                this.restoreEntity(payload, { txRollback: true });";
+    assert(src.includes(target), "变异的靶子行不存在了 —— 源码结构变了，请复核这条测试");
+    const mutantSrc = src.replace(target, "                void payload; // MUTANT: restoreEntity removed");
+    const MutantMod = loadModClass(mutantSrc);
+    const mm = new MutantMod({
+        app: { stateMgr: { currentState: null }, savegameMgr: {} },
+        modLoader: fakeLoader,
+        meta: sandbox.__METADATA,
+        settings: { ws_url: "ws://127.0.0.1:7777/mod", allow_step: true, allow_write: true, max_entities: 20000 },
+        saveSettings: () => {},
+    });
+    const { root, spawn } = txWorld();
+    mm.root = root;
+    const belts = [];
+    for (let i = 0; i < 4; ++i) belts.push(spawn(1, 60 + i, -40));
+    const uidSetBefore = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+
+    const res = await mm.opTx(root, { ops: [
+        { op: "delete", uid: belts[0].uid },
+        { op: "delete", uid: belts[1].uid },
+        { op: "delete", uid: 123123 },     // 硬失败
+    ] });
+    // 变异体：删掉的带子不会被还原 ⇒ uid 集合少了 2 个
+    const uidSetAfter = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+    assert(res.rolled_back === true, "变异体仍会声称回滚过（证明 rolled_back 只是声称）");
+    assert(JSON.stringify(uidSetAfter) !== JSON.stringify(uidSetBefore),
+        "变异体本应丢实体，uid 集合却相等 —— 这条测试没有判别力");
+    assert(res.verify && res.verify.uid_set_equal === false,
+        "变异体的 verify.uid_set_equal 必须为 false（verify 才是证据）");
+});
+
+await checkAsync("对照：未变异源码下同一条断言为真（真阳性对照）", async () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    const belts = [];
+    for (let i = 0; i < 4; ++i) belts.push(spawn(1, 60 + i, -41));
+    const uidSetBefore = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+    const res = await m.opTx(root, { ops: [
+        { op: "delete", uid: belts[0].uid },
+        { op: "delete", uid: belts[1].uid },
+        { op: "delete", uid: 123123 },
+    ] });
+    const uidSetAfter = root.entityMgr.entities.map(e => e.uid).sort((x, y) => x - y);
+    assert(res.rolled_back === true && res.verify.uid_set_equal === true, "clean rollback");
+    assert(JSON.stringify(uidSetAfter) === JSON.stringify(uidSetBefore), "uid sets equal");
+});
+
+/*
+ * ★ 回滚必须**迭代**才能收敛（这是"回滚本身会改世界"那条边界的直接后果）
+ *
+ * 场景：一条竖带 (60,-40)..(60,-43) + 一条横带 (61,-41)。
+ * 删除 (60,-41) 会让**邻居** (60,-40) 和 (60,-42) 的 code 被重算改写（BeltSystem 的行为）。
+ * 回滚第 1 轮还原 (60,-41) 之后，那两格邻居又被重算一次 —— 但重算结果是确定的，
+ * 所以第 2 轮能把残余差异清掉。若只跑 1 轮，uid 集合虽然相等，**载荷**却不相等。
+ * 因此断言必须落在"逐字节相等"，不能只数实体个数 —— 这正是 T1 要求"逐字节"的原因。
+ */
+await checkAsync("tx: 回滚迭代 —— 邻居被重算改写后，回滚仍能把载荷还原到逐字节相等", async () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    root.simulateNeighborRecompute = true;
+
+    // 竖带 4 格 + 横带 1 格（横带让 (60,-41) 的南侧/东侧都有邻居）
+    const v = [];
+    for (let i = 0; i < 4; ++i) v.push(spawn(1, 60, -40 - i));
+    spawn(1, 61, -41);
+    // 让初态就处于"已收敛"的形态（否则快照本身就带着未重算的 code）
+    for (const b of v) root.systemMgr.systems.belt.recomputeOne(b);
+    root.systemMgr.systems.belt.recomputeOne(root.map.getLayerContentXY(61, -41, "regular"));
+
+    const before = m.snapshotWorld(root);
+    const canonicalBefore = new Map();
+    for (const [uid, p] of before.entities) canonicalBefore.set(uid, m.canonicalEntityPayload(p));
+
+    // 删中间那格 → 邻居被重算 → 再删一个不存在的 uid 触发硬失败 → 回滚
+    const res = await m.opTx(root, { ops: [
+        { op: "delete", uid: v[1].uid },
+        { op: "delete", uid: 999001 },
+    ] });
+    assert(res.ok === false && res.rolled_back === true, "rolled back");
+    assert(res.verify && res.verify.entities_equal === true,
+        "entities must be byte-equal after rollback; modified=" + JSON.stringify(res.verify && res.verify.modified));
+    assert(res.verify.diffs.length === 0, "no field diffs; got " + JSON.stringify(res.verify.diffs));
+
+    const after = m.snapshotWorld(root);
+    for (const [uid, p] of after.entities) {
+        assert(canonicalBefore.get(uid) === m.canonicalEntityPayload(p),
+            "uid " + uid + " payload changed after rollback");
+    }
+    assert(res.rollback.rounds >= 1, "rounds reported; got " + res.rollback.rounds);
+});
+
+/*
+ * ★ 回滚不收敛时必须**如实报 false**，而不是假装成功。
+ * 病态规则：每次重算都把 code 翻面（永远无法回到快照值）。
+ * 这条测的不是"回滚有多强"，而是"verify 会不会撒谎" —— 终裁 §5 反复强调的那件事。
+ */
+await checkAsync("tx: 回滚不收敛 → verify 必须报 false（不许假装成功）", async () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    root.simulateNeighborRecompute = true;
+    root.pathologicalRecompute = true;
+
+    const a = spawn(1, 60, -40);
+    const b = spawn(1, 60, -41);
+    void b;
+    const res = await m.opTx(root, { ops: [
+        { op: "delete", uid: a.uid },
+        { op: "delete", uid: 999002 },
+    ] });
+    assert(res.rolled_back === true, "it still claims to have rolled back");
+    assert(res.verify, "verify must run");
+    assert(res.verify.uid_set_equal === true, "uid set can still converge (only payloads churn)");
+    assert(res.verify.entities_equal === false,
+        "payloads churned forever ⇒ entities_equal must be false, got " + res.verify.entities_equal);
+    assert(res.rollback.rounds > 1, "must have tried more than one round; got " + res.rollback.rounds);
+});
+
+/*
+ * ★ 可逆性预检（实机抓到的真缺陷）
+ *
+ * constant_producer 在正常模式**放得下去、删不掉**（buildings/constant_producer.js:34
+ * getIsRemovable → getIsEditor()）。若 tx 允许放它，一条 place 成功 + 后一条失败 ⇒
+ * 回滚时 deleteEntityByUid 返回 not_removable，原子性当场破产，世界留下一个
+ * 调用方没批准、也删不掉的实体。实测过这条路径（实机 uid 10938 至今卡在测试区）。
+ * 所以必须在**执行之前**拒绝，而不是让它在回滚里失败。
+ */
+await checkAsync("tx: 会产出「放得下但删不掉」的建筑 → 执行前 2001 拒绝（零副作用）", async () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    let threw = null;
+    try {
+        await m.opTx(root, { ops: [
+            { op: "place", building: "constant_producer", x: 60, y: -46 },
+            { op: "delete", uid: 1 },   // 后面本来就会失败
+        ] });
+    } catch (e) { threw = e; }
+    assert(threw && threw.__rpcError && threw.__rpcError.code === 2001,
+        "2001 expected; got " + (threw && threw.__rpcError && threw.__rpcError.code));
+    assert(/not reversible/.test(String(threw.__rpcError.detail)), "detail says why");
+    assert(/constant_producer/.test(String(threw.__rpcError.detail)), "detail names the building");
+    // 关键：**一个实体都没落地**（拒绝发生在执行之前）
+    assert(root.entityMgr.entities.length === 0, "nothing may have been placed; got " + root.entityMgr.entities.length);
+    assert(root.map.getLayerContentXY(60, -46, "regular") === null, "tile must be empty");
+});
+
+check("tx: place_path 也走同一条可逆性预检", async () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    let threw = null;
+    try {
+        await m.opTx(root, { ops: [
+            { op: "place_path", building: "constant_producer", from: [60, -46], to: [63, -46] },
+        ] });
+    } catch (e) { threw = e; }
+    assert(threw && threw.__rpcError.code === 2001 && /not reversible/.test(threw.__rpcError.detail),
+        "place_path must be prechecked too");
+    assert(root.entityMgr.entities.length === 0, "nothing placed");
+});
+
+check("tx: 可删的建筑不受预检影响（belt 正常通过）", async () => {
+    const m = newMod();
+    const { root } = txWorld();
+    m.root = root;
+    const res = await m.opTx(root, { ops: [{ op: "place", building: "belt", x: 60, y: -46 }] });
+    assert(res.ok === true, "belt is removable ⇒ tx must pass; failures=" + JSON.stringify(res.failures));
+});
+
+check("delete{uid}: 不可删建筑 → 2002 且 detail 说清是哪类", async () => {
+    const m = newMod();
+    const { root, spawn } = txWorld();
+    m.root = root;
+    const cp = spawn(62, 60, -46);
+    let threw = null;
+    try { m.opDelete(root, { uid: cp.uid }); } catch (e) { threw = e; }
+    assert(threw && threw.__rpcError.code === 2002, "2002 expected");
+    assert(/constant_producer/.test(String(threw.__rpcError.detail)), "detail names the type");
+    assert(/non-removable/.test(String(threw.__rpcError.hint)), "hint explains non-removability");
+});
+
+check("tx 是写操作（进串行链）", () => {
+    const m = newMod();
+    assert(m.rpcTouchesWorld("act", { op: "tx" }) === true, "tx must be serialized on worldChain");
 });
 
 console.log("\n" + (fail === 0 ? "ALL " + pass + " CHECKS PASSED" : pass + " passed, " + fail + " FAILED"));

@@ -87,6 +87,7 @@ const RPC_WRITE_OPS = new Set([
     "place",
     "place_path",
     "delete",
+    "tx",
     "bulk_delete",
     "paste_blueprint",
     "step",
@@ -395,6 +396,10 @@ class Mod extends shapez.Mod {
                     // deleteEntityByUid + debug_entity_roundtrip。声明出来，桥接侧才能
                     // 在功能不可用时 fail fast 而不是 2003。
                     "entity_snapshot",
+                    // 事务层：act{op:"tx"} + delete{uid}。有它才能在**一次调用内**
+                    // "试一次改动，失败就当没发生"（阶段 0 的解锁项）。
+                    "tx",
+                    "delete_by_uid",
                 ],
             },
         });
@@ -1193,7 +1198,7 @@ class Mod extends shapez.Mod {
             mod_version: BRIDGE_MOD_VERSION,
             game_version: this.gameVersion(),
             in_game: !!root,
-            features: ["observe", "act", "batch", "step", "await", "blueprint", "screenshot", "save", "new_game", "entity_snapshot"],
+            features: ["observe", "act", "batch", "step", "await", "blueprint", "screenshot", "save", "new_game", "entity_snapshot", "tx", "delete_by_uid"],
             allow_write: !!this.settings.allow_write,
             allow_step: !!this.settings.allow_step,
         };
@@ -2418,7 +2423,8 @@ class Mod extends shapez.Mod {
             noop: { fields: new Set([]) },
             place: { fields: new Set(["building", "x", "y", "r", "variant", "rotationVariant", "rv", "originalRotation", "orig"]) },
             place_path: { fields: new Set(["building", "from", "to", "r", "variant"]) },
-            delete: { fields: new Set(["x", "y", "layer"]) },
+            delete: { fields: new Set(["x", "y", "layer", "uid"]) },
+            tx: { fields: new Set(["ops", "verify", "dry_run"]) },
             bulk_delete: { fields: new Set(["region", "layer", "dry_run"]) },
             paste_blueprint: { fields: new Set(["text", "x", "y", "charge", "dry_run"]) },
             export_blueprint: { fields: new Set(["region"]) },
@@ -2481,6 +2487,10 @@ class Mod extends shapez.Mod {
                 this.requireRoot();
                 this.assertWritable("delete");
                 return this.opDelete(root, a);
+            case "tx":
+                this.requireRoot();
+                this.assertWritable("tx");
+                return this.opTx(root, a);
             case "bulk_delete":
                 this.requireRoot();
                 this.assertWritable("bulk_delete");
@@ -2726,22 +2736,718 @@ class Mod extends shapez.Mod {
         }
     }
 
+    /**
+     * 删除一个实体。两种寻址方式，**uid 优先**：
+     *   delete { uid }         —— 按 uid（精确：不受"格子被别人抢了"影响，事务层唯一可用形态）
+     *   delete { x, y, layer } —— 按坐标（兼容旧调用方）
+     * 两个都给且指向不同实体 → 2001（不猜调用方想要哪个，与 pickAlias 同一条纪律）。
+     *
+     * 返回值必须说清**实际删掉了什么**（uid / type / cell / layer），因为：
+     *   · 按坐标删时，格子里的东西可能已经不是调用方以为的那个（AI 的心智模型会过期）；
+     *   · 事务层要把这个 uid 记进账本，"说过要删"和"真删了什么"必须是同一件事。
+     * `applied` 保留 1/0 语义（旧调用方按它计数）。
+     */
     opDelete(root, a) {
-        this.requireInt(a.x, "x");
-        this.requireInt(a.y, "y");
+        const hasUid = a.uid !== undefined && a.uid !== null;
+        const hasXY = a.x !== undefined || a.y !== undefined;
+
+        if (!hasUid && !hasXY) {
+            throw this.rpcError(2001, "invalid_action",
+                "delete requires either uid or x,y",
+                "Prefer {uid}: coordinates can point at a different entity than the one you observed");
+        }
+
         const layer = a.layer || "regular";
         if (layer !== "regular" && layer !== "wires") {
             throw this.rpcError(2001, "invalid_action", "layer must be regular|wires");
         }
-        const ent = root.map.getLayerContentXY(a.x, a.y, layer);
-        if (!ent) {
-            throw this.rpcError(2002, "game_rejected", "nothing to delete at (" + a.x + "," + a.y + ")", "Tile is empty on layer " + layer);
+
+        let ent = null;
+
+        if (hasUid) {
+            this.requireInt(a.uid, "uid");
+            ent = this.findLiveEntityByUid(root, a.uid);
+            if (!ent) {
+                throw this.rpcError(2002, "game_rejected",
+                    "no entity with uid " + a.uid,
+                    "It may already be gone (deleted by someone else). Call obs again to refresh your model.");
+            }
+            // 双寻址交叉校验：坐标与 uid 不一致 ⇒ 调用方的心智模型已经过期。
+            // 这时**不能猜**：猜坐标会删错东西，猜 uid 会让调用方以为坐标也对。
+            if (hasXY) {
+                this.requireInt(a.x, "x");
+                this.requireInt(a.y, "y");
+                const sme = ent.components.StaticMapEntity;
+                const actualCell = sme ? [sme.origin.x, sme.origin.y] : null;
+                if (!actualCell || actualCell[0] !== a.x || actualCell[1] !== a.y) {
+                    throw this.rpcError(2001, "invalid_action",
+                        "uid and x,y disagree: uid " + a.uid + " is at ("
+                            + (actualCell ? actualCell[0] + "," + actualCell[1] : "?") + "), not (" + a.x + "," + a.y + ")",
+                        "Pass only one of them — they are two ways to address the same entity");
+                }
+                if ((ent.layer || "regular") !== layer) {
+                    throw this.rpcError(2001, "invalid_action",
+                        "uid and layer disagree: uid " + a.uid + " is on layer " + (ent.layer || "regular")
+                            + ", not " + layer);
+                }
+            }
+        } else {
+            this.requireInt(a.x, "x");
+            this.requireInt(a.y, "y");
+            ent = root.map.getLayerContentXY(a.x, a.y, layer);
+            if (!ent) {
+                throw this.rpcError(2002, "game_rejected", "nothing to delete at (" + a.x + "," + a.y + ")", "Tile is empty on layer " + layer);
+            }
         }
+
+        // 不可删的建筑（hub / 非编辑器里的 block·constant_producer·goal_acceptor）：
+        // 走同一条 tryDeleteBuilding，但要把"为什么不可删"说透 —— 否则调用方只会看到
+        // "delete rejected"，然后反复重试或改用更粗暴的 bulk 路径。
+        const desc = this.describeEntity(ent);
         const ok = root.logic.tryDeleteBuilding(ent);
         if (!ok) {
-            throw this.rpcError(2002, "game_rejected", "delete rejected at (" + a.x + "," + a.y + ")", "Building may be non-removable (e.g. hub)");
+            throw this.rpcError(2002, "game_rejected",
+                "delete rejected for " + desc.type + " uid " + ent.uid + " at (" + desc.x + "," + desc.y + ")",
+                "Building is non-removable here (hub, or block/constant_producer/goal_acceptor outside the editor)");
         }
-        return { ok: true, op: "delete", applied: 1, freed_uid: ent.uid, tick: root.time.now() };
+        return {
+            ok: true,
+            op: "delete",
+            applied: 1,
+            addressed_by: hasUid ? (hasXY ? "uid+xy" : "uid") : "xy",
+            freed_uid: ent.uid,
+            uid: desc.uid,
+            type: desc.type,
+            cell: [desc.x, desc.y],
+            layer: desc.layer,
+            tick: root.time.now(),
+        };
+    }
+
+    /** 按 uid 找活实体（跳过 queuedForDestroy / destroyed）。找不到返回 null。 */
+    findLiveEntityByUid(root, uid) {
+        let ent = null;
+        try { ent = root.entityMgr.findByUid(uid, false); } catch (e) { ent = null; }
+        if (ent && !ent.destroyed && !ent.queuedForDestroy) return ent;
+        // findByUid 在部分实现里会返回 null 而不抛；再走一遍实体表兜底（与 deleteEntityByUid 同口径）
+        const list = (root.entityMgr && root.entityMgr.entities) || [];
+        for (let i = 0; i < list.length; ++i) {
+            const e = list[i];
+            if (e && e.uid === uid && !e.destroyed && !e.queuedForDestroy) return e;
+        }
+        return null;
+    }
+
+    /** 实体的可读描述：{uid, type, x, y, layer, code, rotation}。找不到 StaticMapEntity 时字段为 null。 */
+    describeEntity(entity) {
+        const sme = entity && entity.components && entity.components.StaticMapEntity;
+        const table = this.ensureBuildingTables();
+        const info = sme ? table.byCode[sme.code] : null;
+        return {
+            uid: entity ? entity.uid : null,
+            type: info ? info.buildingId : (sme ? "code_" + sme.code : "unknown"),
+            code: sme ? sme.code : null,
+            x: sme ? sme.origin.x : null,
+            y: sme ? sme.origin.y : null,
+            rotation: sme ? sme.rotation : null,
+            layer: entity ? (entity.layer || "regular") : null,
+        };
+    }
+
+    // ─────────────── tx：单调用原子事务 ───────────────
+    /*
+     * 为什么需要 tx（终裁 §3 阶段 0）
+     * ------------------------------------------------------------------
+     * 今天系统在**物理上无法表达唯一已知的正确解**：
+     *   L4 = 删 3 条带 + 放 1 切割机 + 1 垃圾桶 = 5 个 op，失败就要重来。
+     * batch 是"逐条执行 + 逐条报错"，第 3 条失败时前 2 条已经落地 ——
+     * 于是"试错"这件事本身变成了对存档的破坏。tx 把"试"变成可逆的。
+     *
+     * 设计（快照 → 执行 → 失败则还原）
+     * ------------------------------------------------------------------
+     *   快照 = { entities: Map<uid, serializeEntity()>, nextUid }
+     *          180 实体约 60–90KB，一次 RPC 内无压力。
+     *   执行 = 逐条走**与单独 act 完全相同**的路径（performAction）。
+     *          刻意不包 performBulkOperation / performImmutableOperation：
+     *          包了会让"tx 里的 place"与"单独 place"行为不同（belt 自动定向靠
+     *          entityAdded 上的邻居重算，immutable 下会被跳过），
+     *          而事务层的第一要求是**可预测**，不是快。
+     *   回滚 = 用 uid 集合差集驱动，不碰 region 删除：
+     *          · 新增的 → deleteEntityByUid
+     *          · 消失的 → restoreEntity(快照载荷)
+     *          · 变了的（belts 被邻居重算改了 code/rotation/rv）→ 先删再按快照还原
+     *          ⚠️ **不用 region 删除**：gates.mjs:1300-1345 已证明在新旧实体混合区会误伤
+     *             （区域里既有该删的也有不该删的，而 region 删除分不出来）。
+     *   校验 = 回滚后再拍一次快照，与原始快照逐条比对，把结论写进返回。
+     *          `rolled_back: true` 只是**声称**，`verify.uid_set_equal` 才是证据。
+     *
+     * ★ 三条不可消除的边界（终裁 §1.5，写在这里是因为它们会咬人）★
+     * ------------------------------------------------------------------
+     * 1. **时间不可回滚。** tick 一定前进：tx 期间世界在跑，矿机可能多挖了一段时间、
+     *    带子上的货可能挪了位置、hub 可能多收了货。回滚只能把**实体**还原，
+     *    不能把时间倒回去。返回里的 `tick_advance` 就是这段不可逆的代价。
+     * 2. **回滚期间世界可能被第三方系统改。** BeltSystem 挂在 entityAdded / entityDestroyed
+     *    上重算**邻居**的 rotation 与 code（systems/belt.js:120-210），WireSystem 在
+     *    entityAdded 上置 needsRecompute、下一 tick 整体重建网络。也就是说：
+     *    回滚的每一步本身都在改别的实体。所以回滚不是"逆运算"，而是
+     *    "按快照重建 + 事后校验"，而校验结果必须如实返回，不能假定成功。
+     * 3. **`block` / `constant_producer` / `goal_acceptor` / hub 在正常模式不可删**
+     *    （getIsRemovable 只在编辑器里为真，buildings/{block,constant_producer,goal_acceptor}.js）。
+     *    这类实体不在 tx 的覆盖范围内：delete 它们会得到 2002，然后整体回滚。
+     *    tx **不**绕过游戏的可删性判断 —— 绕过等于伪造一个存档里不可能存在的状态。
+     *
+     * 另有一条实现层边界：`Belt.assignedPath` / `BeltPath.items` 都不在实体 schema 里
+     * （见本文件 serializeEntity 上方那段长注释）。回滚后带子上的在途货**会丢**，
+     * 路网结构要靠重算补回。返回里的 `belt.items_before/after` 如实报告差了多少。
+     */
+
+    /** tx 允许的 op：只接受"增删实体"这一类，其余一律 2001。 */
+    txAllowedOps() {
+        // 为什么只有这四个：
+        //   · step/await/set_speed/camera —— 动时间与视角，回滚不了，不该在事务里；
+        //   · save/load/new_game        —— 换世界，快照立刻失效；
+        //   · export_blueprint/noop     —— 只读，没有事务意义（用 batch 就行）；
+        //   · paste_blueprint           —— 会扣 hub 的货（takeShapeByKey），扣费不可逆，
+        //                                  所以不进事务；要贴蓝图请自己先备份。
+        return new Set(["place", "delete", "place_path", "bulk_delete"]);
+    }
+
+    /** 拍一份世界快照：{ entities: Map<uid,payload>, nextUid, ... }。 */
+    snapshotWorld(root) {
+        const entities = new Map();
+        const skipped = [];
+        const list = (root.entityMgr && root.entityMgr.entities) || [];
+        for (let i = 0; i < list.length; ++i) {
+            const e = list[i];
+            if (!e || e.destroyed || e.queuedForDestroy) continue;
+            if (!e.components || !e.components.StaticMapEntity) {
+                // 动态实体（没有 StaticMapEntity）不进快照。它们不由 place/delete 创建，
+                // 但**必须报出来**：快照没覆盖它们，意味着回滚不保证它们不变。
+                skipped.push(e.uid);
+                continue;
+            }
+            try {
+                entities.set(e.uid, this.serializeEntity(e));
+            } catch (err) {
+                skipped.push(e.uid);
+            }
+        }
+        let nextUid = null;
+        try {
+            nextUid = typeof root.entityMgr.nextUid === "number" ? root.entityMgr.nextUid : null;
+        } catch (e) {
+            nextUid = null;
+        }
+        return { entities, nextUid, skipped };
+    }
+
+    /**
+     * 预检：这条 op 一旦执行，回滚时能不能把它的效果撤掉？
+     *
+     * 为什么必须有这一步（**实机抓到的真缺陷**）：
+     * `constant_producer` 在正常模式**放得下去、删不掉**（buildings/constant_producer.js:34
+     * getIsRemovable → root.gameMode.getIsEditor()）。于是 tx 里一条 place 成功、
+     * 后面一条失败，回滚时 deleteEntityByUid 返回 not_removable —— 原子性当场破产：
+     * 世界留下了一个调用方没批准、也删不掉的实体。
+     *
+     * 这类 op **在快照拍摄之后、执行之前**就要拒绝（2001），而不是让它落地再回滚失败。
+     * 判据直接问游戏自己（getMetaBuilding().getIsRemovable(root)），不抄一张类型名单 ——
+     * 名单会与游戏版本脱节，而 getIsRemovable 就是 delete 实际用的那把尺子。
+     */
+    txPrecheckReversible(root, op) {
+        // 只有"增加实体"的 op 需要这个判据：删除的 op 可以用 restoreEntity 撤，
+        // 而 restoreEntity 不检查 getIsRemovable（它走 registerEntity，不是 tryDeleteBuilding）。
+        const producesNewEntities = op.op === "place" || op.op === "place_path";
+        if (!producesNewEntities) return null;
+        if (op.op === "place_path") {
+            // place_path 一次放一串，逐个预检成本高且收益低 —— 它的产物都是同一种建筑，
+            // 所以只查一次 meta 就够。
+            const meta = this.resolveBuilding(root, op.building);
+            return this.txReversibilityOfMeta(root, meta, op.building);
+        }
+        const meta = this.resolveBuilding(root, op.building);
+        return this.txReversibilityOfMeta(root, meta, op.building);
+    }
+
+    /** 若该建筑放进世界后删不掉，返回失败描述；可删（或无法判断）返回 null。 */
+    txReversibilityOfMeta(root, meta, buildingId) {
+        if (!meta || typeof meta.getIsRemovable !== "function") {
+            // 没有这把尺子就无法判断 —— 放行，而不是假装"不可删"。
+            // 回滚失败时 verify 会把真相报出来（这是"宁可晚报也不误拒"的选择）。
+            return null;
+        }
+        let removable = true;
+        try {
+            removable = !!meta.getIsRemovable(root);
+        } catch (e) {
+            return null;
+        }
+        if (removable) return null;
+        return {
+            code: 2001,
+            name: "invalid_action",
+            detail: "tx cannot place '" + buildingId + "': it is placeable but NOT removable "
+                + "(getIsRemovable() is false outside the editor), so a rollback could never undo it",
+            hint: "Such buildings (block / constant_producer / goal_acceptor / hub) are outside the transaction's coverage. "
+                + "Place them with a plain act, and make sure no later tx step can fail.",
+        };
+    }
+    canonicalEntityPayload(payload) {
+        if (!payload) return "";
+        const sortValue = v => {
+            if (Array.isArray(v)) return v.map(sortValue);
+            if (v !== null && typeof v === "object") {
+                const out = {};
+                for (const k of Object.keys(v).sort()) out[k] = sortValue(v[k]);
+                return out;
+            }
+            return v;
+        };
+        return JSON.stringify(sortValue({
+            uid: payload.uid,
+            code: payload.code === undefined ? null : payload.code,
+            layer: payload.layer === undefined ? null : payload.layer,
+            components: payload.components || {},
+        }));
+    }
+
+    /** 两个快照之间的差集：{added, removed, modified}（都是 uid 列表）。 */
+    diffSnapshots(before, after) {
+        const added = [];
+        const removed = [];
+        const modified = [];
+        for (const uid of after.entities.keys()) {
+            if (!before.entities.has(uid)) added.push(uid);
+        }
+        for (const uid of before.entities.keys()) {
+            if (!after.entities.has(uid)) removed.push(uid);
+        }
+        for (const [uid, b] of before.entities) {
+            const a = after.entities.get(uid);
+            if (!a) continue;
+            if (this.canonicalEntityPayload(a) !== this.canonicalEntityPayload(b)) modified.push(uid);
+        }
+        added.sort((x, y) => x - y);
+        removed.sort((x, y) => x - y);
+        modified.sort((x, y) => x - y);
+        return { added, removed, modified };
+    }
+
+    /**
+     * 世界的**非实体**健康度：带子路网与在途货。
+     *
+     * 为什么需要它：tx 的价值全在"回滚后世界与之前一样"。但带子的路径不在实体 schema 里，
+     * 所以"实体集合一致"**不等于**"带子网络一致"。这里给出三个可在返回里如实报告的指标：
+     *   paths     —— 路网条数（delete 拆分 / restore 合并会改它）
+     *   items     —— 全世界的在途货总数（delete + restore 一定会丢一部分，这是已知边界）
+     *   problems  —— 路网结构性问题（某条带没有 path / path 不在 beltPaths 里 / 格子在两条 path 里）
+     */
+    beltNetworkHealth(root) {
+        const out = { available: false, paths: null, items: null, belts: null, problems: [] };
+        let beltSystem = null;
+        try { beltSystem = root.systemMgr && root.systemMgr.systems && root.systemMgr.systems.belt; } catch (e) { beltSystem = null; }
+        if (!beltSystem) return out;
+        out.available = true;
+        let paths = [];
+        try { paths = beltSystem.beltPaths || []; } catch (e) { paths = []; }
+        let items = 0;
+        let belts = 0;
+        const seen = new Set();
+        for (let i = 0; i < paths.length; ++i) {
+            const p = paths[i];
+            if (!p) continue;
+            const ents = p.entityPath || [];
+            if (ents.length === 0) out.problems.push("path#" + i + " is empty");
+            items += (p.items || []).length;
+            for (let j = 0; j < ents.length; ++j) {
+                const e = ents[j];
+                if (!e) { out.problems.push("path#" + i + " has a hole at " + j); continue; }
+                belts++;
+                if (seen.has(e.uid)) out.problems.push("belt uid " + e.uid + " appears in more than one path");
+                seen.add(e.uid);
+                const bc = e.components && e.components.Belt;
+                if (!bc) continue;
+                if (!bc.assignedPath) out.problems.push("belt uid " + e.uid + " has no assignedPath");
+                else if (paths.indexOf(bc.assignedPath) < 0) out.problems.push("belt uid " + e.uid + " points at a path that is not in beltPaths");
+            }
+            const total = p.totalLength;
+            const spacing = p.spacingToFirstItem;
+            if (!Number.isFinite(total) || total <= 0) out.problems.push("path#" + i + " totalLength=" + String(total));
+            if (!Number.isFinite(spacing) || spacing < -1e-6 || (Number.isFinite(total) && spacing > total + 1e-6)) {
+                out.problems.push("path#" + i + " spacingToFirstItem=" + String(spacing) + " out of [0," + String(total) + "]");
+            }
+        }
+        // 每一条活带子都必须被某条 path 覆盖，且覆盖它的就是它自己声称的那条
+        const list = (root.entityMgr && root.entityMgr.entities) || [];
+        for (let i = 0; i < list.length; ++i) {
+            const e = list[i];
+            if (!e || e.destroyed || e.queuedForDestroy) continue;
+            if (!e.components || !e.components.Belt) continue;
+            if (!seen.has(e.uid)) out.problems.push("belt uid " + e.uid + " is not in any belt path");
+        }
+        out.paths = paths.length;
+        out.items = items;
+        out.belts = belts;
+        return out;
+    }
+
+    /**
+     * 回滚后修补带子路网。
+     *
+     * 只在**结构不健康**时才整网重算，因为 recomputeAllBeltPaths（systems/belt.js:423）
+     * 会用 `new BeltPath(...)` 重建每一条 path —— 而新 BeltPath 的 items 是空的
+     * （belt_path.js:64-87）。也就是说**整网重算会丢掉全世界带子上的在途货**，
+     * 不只是事务区域里的。把它无条件放在事务成功路径上，等于每次 tx 都清空玩家的产线货流。
+     * 所以：先体检，坏了才重算，并如实报告 items 损失。
+     */
+    repairBeltPaths(root) {
+        const health = this.beltNetworkHealth(root);
+        if (!health.available) return { recompute: "unavailable", health, items_lost: null };
+        if (health.problems.length === 0) return { recompute: "none", health, items_lost: 0 };
+        let attempted = false;
+        try {
+            const beltSystem = root.systemMgr.systems.belt;
+            if (typeof beltSystem.recomputeAllBeltPaths === "function") {
+                attempted = true;
+                beltSystem.recomputeAllBeltPaths();
+            }
+        } catch (e) {
+            return { recompute: "failed", health, items_lost: null, error: String(e && e.message ? e.message : e) };
+        }
+        if (!attempted) return { recompute: "unavailable", health, items_lost: null };
+        const after = this.beltNetworkHealth(root);
+        return {
+            recompute: "full",
+            health,
+            health_after: after,
+            // 重算把每条 path 的 items 清空了 ⇒ 全世界的在途货数量直接归零。
+            // 这里报告的是**重算那一刻实际丢了多少**，不是估计。
+            items_lost: health.items,
+            problems_after: after.problems,
+        };
+    }
+
+    /**
+     * 回滚：把世界按快照还原。**不抛错**（回滚本身失败时要把失败收集起来交给调用方，
+     * 因为此时抛错会掩盖原始失败原因）。返回 { steps:[...], errors:[...], rounds }。
+     *
+     * 为什么要**迭代**而不是一轮：
+     * 还原一个带子会触发 BeltSystem.updateSurroundingBeltPlacement（entityAdded 上的监听），
+     * 把**邻居**的 rotation/rv/code 重算并覆写（systems/belt.js:120-210）。也就是说
+     * 回滚的第 N 步会修改第 1..N-1 步刚修好的实体 —— 一轮还原**不可能**收敛。
+     * 终止条件：(diff 为空) 或 轮数用完；轮数用完时把残余差如实报出来（verify 会红）。
+     */
+    rollbackToSnapshot(root, snapshot) {
+        const steps = [];
+        const errors = [];
+        const MAX_ROUNDS = 4;
+        let rounds = 0;
+
+        const deleteUid = (uid, why) => {
+            try {
+                const res = this.deleteEntityByUid(uid);
+                steps.push({ step: "delete_" + why, uid, ok: !!res.ok, reason: res.reason || null });
+                if (!res.ok) errors.push({ step: "delete_" + why, uid, reason: res.reason || "unknown" });
+                return !!res.ok;
+            } catch (e) {
+                steps.push({ step: "delete_" + why, uid, ok: false });
+                errors.push({ step: "delete_" + why, uid, reason: String(e && e.message ? e.message : e) });
+                return false;
+            }
+        };
+        const restoreUid = uid => {
+            const payload = snapshot.entities.get(uid);
+            if (!payload) {
+                errors.push({ step: "restore", uid, reason: "payload missing from snapshot" });
+                return false;
+            }
+            try {
+                this.restoreEntity(payload, { txRollback: true });
+                steps.push({ step: "restore", uid, ok: true });
+                return true;
+            } catch (e) {
+                steps.push({ step: "restore", uid, ok: false });
+                errors.push({
+                    step: "restore", uid,
+                    reason: String(e && e.message ? e.message : e),
+                    code: e && e.__rpcError ? e.__rpcError.code : null,
+                });
+                return false;
+            }
+        };
+
+        for (let round = 1; round <= MAX_ROUNDS; ++round) {
+            rounds = round;
+            const diff = this.diffSnapshots(snapshot, this.snapshotWorld(root));
+            if (diff.added.length === 0 && diff.removed.length === 0 && diff.modified.length === 0) break;
+
+            // ① 先删新增 —— 它们占着快照里没有的格子，不先清掉，②③ 就会撞格（restoreEntity 2002）
+            for (const uid of diff.added) deleteUid(uid, "added");
+            // ② 变了的先删（下一步再按快照放回来）。它们"变"通常是邻居重算改了带子的
+            //    code/rotation/rv —— 只有删掉重建才能把 code 也改回快照的值。
+            for (const uid of diff.modified) deleteUid(uid, "modified");
+            // ③ 恢复消失的 + 被删掉待重建的
+            for (const uid of diff.removed) restoreUid(uid);
+            for (const uid of diff.modified) restoreUid(uid);
+        }
+
+        // ④ nextUid：把发号器退回去，否则"回滚成功"的世界里 uid 空间已经前进了。
+        //    只在**安全**的时候退：若已有活实体占用了 [snapshot.nextUid, current) 里的号，
+        //    退回去会让下一次 place 产生 uid 冲突（正式版不 assert 重复 uid，会静默损坏）。
+        const nextUidStep = this.restoreNextUid(root, snapshot);
+        if (nextUidStep) steps.push(nextUidStep);
+
+        return { steps, errors, rounds };
+    }
+
+    /**
+     * 把 entityMgr.nextUid 退回快照值，条件是 [snapshot.nextUid, current) 里没有活实体。
+     * 返回 { step, ok, from, to, reason? } 或 null（快照没有 nextUid 时）。
+     */
+    restoreNextUid(root, snapshot) {
+        if (snapshot.nextUid === null || snapshot.nextUid === undefined) return null;
+        try {
+            const current = root.entityMgr.nextUid;
+            if (typeof current !== "number" || current === snapshot.nextUid) {
+                return { step: "nextUid", ok: true, from: current, to: snapshot.nextUid, reason: "unchanged" };
+            }
+            if (current < snapshot.nextUid) {
+                return { step: "nextUid", ok: false, from: current, to: snapshot.nextUid, reason: "current already below snapshot (someone else created entities)" };
+            }
+            const live = (root.entityMgr.entities || []);
+            for (let i = 0; i < live.length; ++i) {
+                const e = live[i];
+                if (!e || e.destroyed || e.queuedForDestroy) continue;
+                if (e.uid >= snapshot.nextUid && e.uid < current) {
+                    return {
+                        step: "nextUid", ok: false, from: current, to: snapshot.nextUid,
+                        reason: "uid " + e.uid + " is still live in the recycled range; leaving nextUid at " + current,
+                    };
+                }
+            }
+            root.entityMgr.nextUid = snapshot.nextUid;
+            return { step: "nextUid", ok: true, from: current, to: snapshot.nextUid };
+        } catch (e) {
+            return { step: "nextUid", ok: false, reason: String(e && e.message ? e.message : e) };
+        }
+    }
+
+    /**
+     * 单调用原子事务。
+     *
+     * params: { ops: [Action...], dry_run?: bool, verify?: bool }
+     * 返回：{ ok, applied, rolled_back, failures[], diff{added,removed,modified}, verify, belt, boundaries, ... }
+     *
+     * 失败分级：
+     *   2001/2002/2003 → 硬失败：整体回滚（这是事务的语义）
+     *   1003/1004      → 立刻中止（世界不在 / 只读），同样回滚已落地的部分
+     */
+    async opTx(root, a) {
+        const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+        const tickStart = root.time.now();
+        if (this._txDepth) {
+            throw this.rpcError(2001, "invalid_action", "tx cannot be nested inside another tx");
+        }
+        const ops = a.ops;
+        if (!Array.isArray(ops)) {
+            throw this.rpcError(2001, "invalid_action", "tx requires {ops: [...]}", "ops must be an array of Action objects");
+        }
+        if (ops.length === 0) {
+            throw this.rpcError(2001, "invalid_action", "tx requires at least one op");
+        }
+        if (ops.length > 2000) {
+            throw this.rpcError(2001, "invalid_action", "tx too large (max 2000 ops)");
+        }
+        const allowed = this.txAllowedOps();
+        const dryRun = a.dry_run === true;
+        const doVerify = a.verify !== false;
+
+        // ① 先校验**形状**（op 名/字段）。形状错误在任何执行之前就拒绝 ——
+        //    这类错误没有"执行到一半"的问题，提前拒绝比"执行 6 条再回滚"便宜且更安全。
+        //    注意：形状合法但**运行期**会失败的 op（删不存在的 uid、往占用格放东西）
+        //    仍然会在执行中触发回滚，那条路径由下面的 catch 覆盖（T2 测的就是它）。
+        for (let i = 0; i < ops.length; ++i) {
+            try {
+                const spec = this.validateAction(ops[i]);
+                void spec;
+            } catch (e) {
+                if (e && e.__rpcError) {
+                    const err = this.rpcError(2001, "invalid_action",
+                        "tx op[" + i + "] is invalid: " + e.__rpcError.detail,
+                        e.__rpcError.hint);
+                    err.__txPreflight = true;
+                    throw err;
+                }
+                throw e;
+            }
+            if (!allowed.has(ops[i].op)) {
+                throw this.rpcError(2001, "invalid_action",
+                    "tx does not allow op '" + ops[i].op + "'",
+                    "Allowed in tx: " + [...allowed].join(", ") + ". "
+                        + "Time-traveling / world-swapping / billing ops cannot be rolled back.");
+            }
+            // 可逆性预检：会产出新实体的 op，其产物必须**删得掉**，否则回滚无从下手。
+            // 实机抓到的真案例：constant_producer 放得下、删不掉。
+            const irrev = this.txPrecheckReversible(root, ops[i]);
+            if (irrev) {
+                throw this.rpcError(irrev.code, irrev.name,
+                    "tx op[" + i + "] is not reversible: " + irrev.detail, irrev.hint);
+            }
+        }
+
+        // ② 快照
+        const snapshot = this.snapshotWorld(root);
+        const beltBefore = this.beltNetworkHealth(root);
+
+        const failures = [];
+        const appliedResults = [];
+        let applied = 0;
+        let aborted = false;
+        let hardFail = null;
+
+        this._txDepth = 1;
+        try {
+            for (let i = 0; i < ops.length; ++i) {
+                const op = ops[i];
+                try {
+                    const res = await this.performAction(op);
+                    applied++;
+                    appliedResults.push({ index: i, op: op.op, ok: true, result: res });
+                } catch (e) {
+                    const code = e && e.__rpcError ? e.__rpcError.code : 2003;
+                    failures.push({
+                        index: i,
+                        op: op.op,
+                        error: {
+                            code,
+                            code_name: e && e.__rpcError ? e.__rpcError.name : "mod_error",
+                            detail: e && e.__rpcError ? e.__rpcError.detail : String(e && e.message ? e.message : e),
+                            hint: e && e.__rpcError ? e.__rpcError.hint : undefined,
+                        },
+                    });
+                    if (code === 1003 || code === 1004) {
+                        aborted = true;
+                        hardFail = "world_or_write_gate";
+                    } else {
+                        hardFail = "op_failed";
+                    }
+                    break;
+                }
+            }
+        } finally {
+            this._txDepth = 0;
+        }
+
+        // ③ dry_run：无论成败都回滚（"试一下但别留下痕迹"）
+        const mustRollback = !!hardFail || dryRun;
+
+        // 事务执行期间的净效果（回滚前记录，用于报告"本来会发生什么"）
+        const afterRun = this.snapshotWorld(root);
+        const netDuringRun = this.diffSnapshots(snapshot, afterRun);
+
+        let rollbackReport = null;
+        if (mustRollback) {
+            rollbackReport = this.rollbackToSnapshot(root, snapshot);
+            // 回滚后再拍一次，`diff` 报的就是**最终**世界相对快照的差（成功回滚 ⇒ 全空）
+        }
+
+        const beltRepair = this.repairBeltPaths(root);
+        const beltAfter = this.beltNetworkHealth(root);
+
+        const finalSnapshot = this.snapshotWorld(root);
+        const finalDiff = this.diffSnapshots(snapshot, finalSnapshot);
+
+        // ④ 校验：声称「已还原」必须有证据
+        let verify = null;
+        if (doVerify && mustRollback) {
+            const uidEqual = finalDiff.added.length === 0 && finalDiff.removed.length === 0;
+            const entityDiff = [];
+            for (const uid of finalDiff.modified) {
+                const before = snapshot.entities.get(uid);
+                const after = finalSnapshot.entities.get(uid);
+                this.diffJson(
+                    { code: before.code, layer: before.layer, components: before.components },
+                    { code: after.code, layer: after.layer, components: after.components },
+                    "uid" + uid, entityDiff
+                );
+            }
+            verify = {
+                ran: true,
+                uid_set_equal: uidEqual,
+                // 注意：modified 非空不代表回滚失败 —— 它可能是合法重算（例如带子被邻居
+                // 重算成新朝向）。这里既报布尔也报逐字段差异，让调用方自己判断。
+                entities_equal: uidEqual && finalDiff.modified.length === 0,
+                modified: finalDiff.modified,
+                diffs: entityDiff.slice(0, 50),
+                diff_truncated: entityDiff.length > 50,
+            };
+        }
+
+        const ok = !hardFail && !dryRun;
+        return {
+            ok,
+            op: "tx",
+            applied,                                   // 实际成功执行的 op 数
+            requested: ops.length,
+            rolled_back: !!rollbackReport,
+            dry_run: dryRun,
+            aborted,
+            failures,
+            // diff = **最终**世界相对快照的差（成功的回滚 ⇒ 全空；成功的事务 ⇒ 净变更）
+            diff: finalDiff,
+            // net = 事务执行期间的世界净变更（仅回滚时给出，用来告诉调用方"本来会发生什么"）
+            net: mustRollback ? netDuringRun : null,
+            verify,
+            rollback: rollbackReport,
+            results: appliedResults.map(r => ({
+                index: r.index, op: r.op,
+                ok: r.result && r.result.ok,
+                uid: r.result ? (r.result.uid !== undefined ? r.result.uid : r.result.entity_uid) : undefined,
+                applied: r.result ? r.result.applied : undefined,
+            })),
+            belt: {
+                paths_before: beltBefore.paths,
+                paths_after: beltAfter.paths,
+                items_before: beltBefore.items,
+                items_after: beltAfter.items,
+                health_problems_before: beltBefore.problems.slice(0, 20),
+                health_problems_after: beltAfter.problems.slice(0, 20),
+                repair: beltRepair.recompute,
+                items_lost_to_repair: beltRepair.items_lost,
+            },
+            snapshot: {
+                entities: snapshot.entities.size,
+                next_uid: snapshot.nextUid,
+                // 没有 StaticMapEntity 的动态实体不在快照里 —— 回滚不保证它们不变
+                skipped_no_static_map: snapshot.skipped.length,
+                skipped_uids: snapshot.skipped.slice(0, 20),
+            },
+            /*
+             * 诚实边界（原样带回，别让调用方以为 tx 是万能的）
+             */
+            boundaries: {
+                time: {
+                    reversible: false,
+                    tick_start: tickStart,
+                    tick_end: root.time.now(),
+                    tick_advance: root.time.now() - tickStart,
+                },
+                third_party_systems: {
+                    note: "rollback itself mutates the world: BeltSystem recomputes neighbour rv on entityAdded/entityDestroyed",
+                    belt_paths_recomputed: beltRepair.recompute,
+                },
+                non_removable: {
+                    covered: false,
+                    types: ["hub", "block", "constant_producer", "goal_acceptor"],
+                    note: "getIsRemovable() is editor-only for these; delete returns 2002 and the tx rolls back",
+                },
+                non_serialized_state: {
+                    note: "Belt.assignedPath / BeltPath.items / Wire networks / ItemProcessor queues are not in the entity schema; items on belts may be lost",
+                },
+            },
+            tick: root.time.now(),
+            duration_ms: (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt,
+        };
     }
 
     opBulkDelete(root, a) {
