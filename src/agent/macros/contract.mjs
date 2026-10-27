@@ -837,21 +837,21 @@ export const MACRO_SPECS = Object.freeze({
 
     replace_run: {
         name: "replace_run",
-        summary: "把 region 内的带子原位换成另一种建筑，保持每格 entry/exit 拓扑。本版仅支持 building=\"belt\"。",
+        summary: "把 region 内的带子原位换成另一种建筑。building=\"belt\" 保持每格拓扑（修 rv）；building 为机器/机器数组时展开 footprint，删掉被覆盖的带、保留没被覆盖的。",
         params: [
             { name: "region", type: "BBox", required: true, coordClass: "endpoint", description: "闭区间包围盒 [x0,y0,x1,y1]。逐格校验：全部必须是带子。" },
-            { name: "building", type: "string|{kind,variant}", required: true, description: "目标建筑。本版只接受 \"belt\"。" },
+            { name: "building", type: "string|{kind,variant}|Array", required: true, description: "目标建筑。\"belt\" = 原位换带（修 rv）；机器名或 [{kind,variant,port?,confirm_waste?}] = 展开 footprint 换机器。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只报告不执行。" },
         ],
         preconditions: [
             "region 内**每一格**都是带子（belt / underground_belt）；含任何机器/hub/空格 → not_a_run 或 precondition_failed，列出前 5 个反例。",
             "region 的边界必须与实体格对齐：宏会核对 region 内带子数 === region 面积；不等说明框选偏了（这是最常见的误删来源，PROTOCOL §5 记录过一次误删 42 个实体）。",
-            "目标 building 在本版支持矩阵内（只有 belt）。",
+            "目标 building 必须在支持矩阵内：belt 走原位换带；机器须在 op-templates 里有 footprint 与槽位定义。",
             "替换会销毁旧 uid 并产生新 uid —— 必须有 tx 与快照，否则 tx_unavailable。",
         ],
         whenNotToUse: [
             "想删除带子时不要用：remove_run（replace 不减少实体数，用错会留下一条「换了个 uid 的同样的带子」）。",
-            "想把带子换成机器时不要用：insert_machine（replace_run 保持 1×1 拓扑，不展开 footprint）。",
+            "只想放一台机器、不需要处理它周边带子时，用 insert_machine 更直接（replace_run 会连带删除被 footprint 覆盖的带，并检查留下的带是否还连着）。",
             "想铺隧道时不要用：v1 明确不支持（sender/receiver 成对），会报 unsupported_building。",
             "region 框不准时不要用：先 bulk_delete dry_run 看 items，或用 remove_run(uids) 精确指名。",
         ],
