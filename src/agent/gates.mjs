@@ -23,7 +23,7 @@
  *   · 游戏自己的产量统计（G6）
  *   · 游戏运行时的实际连接关系（G6b / G7 / G8）
  *
- * ## 八道闸
+ * ## 十二道闸
  *
  *   G-1 时钟    —— 任何采样之前，先确认时钟在走
  *   G2' 同源    —— paste 的载荷（blueprint）与 G4 的期望（entities）是同一张图（零写入）
@@ -33,6 +33,14 @@
  *   G6b 连通    —— 目标线上每一段都有去处
  *   G7  流向    —— 游戏 path 的逐格邻接方向 == 声明的 inDir/outDir（贴后 t+0 与 t+60s）
  *   G8  链划分  —— 蓝图推出的带子链与游戏 path 逐格同序（贴后 t+0 与 t+60s）
+ *   G9  世界    —— status/debug_app_state 说世界真的可用（不是「状态切了但 world 没建」）
+ *   G10 rv 自证 —— place 的 requested/actual/mismatch 与 `code === 1+rv` 一致
+ *   G11 并发    —— 批量写之后实体计数增量 == 预期（纯计数，本文件不自己发请求）
+ *   G12 截图    —— region 取景覆盖请求的 bbox，且没有绘制步骤抛错
+ *
+ * G9/G12 接进 runGates（G9 紧跟时钟闸；G12 只在调用方显式要截图时跑）。
+ * G10/G11 是**调用方主动调用的工具闸** —— 主流程里没有 placeResult / 并发场景，
+ * 硬塞进去只会变成又一条恒绿的空断言。
  *
  * ★ 为什么必须有 G2' / G7 / G8 ★
  * 2026-10-26 的 L4 事故里，G-1/G3/G4/G6b 全绿（G6 要等 100 游戏秒才红）。
@@ -1281,6 +1289,356 @@ export function gateG8chains(intent, items) {
     return { ok: true, reason: null, evidence };
 }
 
+/* ══════════════════════════ G9 世界可用 ══════════════════════════ */
+
+/**
+ * `status` / `obs` 反映的世界必须**真的可用**，不只是"状态名对了"。
+ *
+ * ★ 这条闸的存在理由是一个具体的假成功 ★
+ * 旧实现判加载成功用 `currentState.getKey() === "InGameState"`。
+ * 但 `core/state_manager.js:58` 里，一旦 `window.APP_ERROR_OCCURED` 为真，
+ * `moveToState()` **直接 return** —— 状态名切过去了、world 没有任何一步被执行、
+ * RPC 还回 `ok:true`。之后 `states/ingame.js:431` 的 `onRender` 同样 return，
+ * world 永远建不起来，只能重启进程。
+ *
+ * 所以判据必须是 `root` 非空（它只由 `gameStarted` 信号注入），
+ * 而这个判据由 mod 的 `debug_app_state.root_present` / `status.in_game` 报出来。
+ *
+ * 判据：
+ *   · `root_present === false` 或 `in_game === false` → 红，说明「状态切了但 world 没建」
+ *   · 调用方给了 `appState` 且 `app_error_occurred === true` → 红，并提示**必须重启进程**
+ *   · 两个字段都缺失（老版 mod / 调用方传错对象）→ undecidable，不许 fail-open 报绿
+ *
+ * @param {object} snapshot  合并后的快照：{ in_game?, root_present?, app_error_occurred?, state_key?, ingame_stage? }
+ *                           也接受 { status, appState } 两个子对象的形式。
+ */
+export function gateG9WorldReady(snapshot) {
+    const s = snapshot && typeof snapshot === "object" ? snapshot : {};
+    /* 允许两种入参形状：平铺（{in_game, root_present}）或分包（{status:{...}, appState:{...}}）。
+       分包形式更贴近调用方手里真实的两份 RPC 返回，免得它自己手抖拼错字段名。 */
+    const st = (s.status && typeof s.status === "object") ? s.status : s;
+    const app = (s.appState && typeof s.appState === "object") ? s.appState
+        : (s.debug_app_state && typeof s.debug_app_state === "object") ? s.debug_app_state
+        : s;
+
+    const evidence = {
+        in_game: st.in_game === undefined ? null : st.in_game,
+        root_present: app.root_present === undefined ? null : app.root_present,
+        app_error_occurred: app.app_error_occurred === undefined ? null : app.app_error_occurred,
+        state_key: app.state_key === undefined ? null : app.state_key,
+    };
+    if (app.ingame_stage !== undefined) evidence.ingame_stage = app.ingame_stage;
+
+    /* ★ 字段缺失 ≠ 世界可用 ★
+       `undefined === false` 为假，所以不显式判缺失的话，一个拼错字段名的快照会静默变绿。 */
+    const hasInGame = typeof st.in_game === "boolean";
+    const hasRoot = typeof app.root_present === "boolean";
+    if (!hasInGame && !hasRoot) {
+        return {
+            ok: false,
+            undecidable: true,
+            reason: "快照里既没有 status.in_game 也没有 debug_app_state.root_present —— 无法判定世界是否可用",
+            evidence,
+            hint: "status 与 debug_app_state 至少要取到一个；两者都没有时不许当成通过",
+        };
+    }
+
+    /* 崩溃标志优先判：它解释了「为什么 root 不在」，而且决定了能不能重试。 */
+    if (app.app_error_occurred === true) {
+        return {
+            ok: false,
+            reason: "APP_ERROR_OCCURED=true —— 游戏已崩溃，state_manager.js:58 会让之后所有 moveToState 静默跳过"
+                + `（状态 ${evidence.state_key || "?"}，root_present=${evidence.root_present}）`
+                + "；这不是加载慢，是进程已经废了",
+            evidence,
+            hint: "必须重启游戏进程，重试无效",
+        };
+    }
+
+    if (hasRoot && app.root_present === false) {
+        return {
+            ok: false,
+            reason: `root_present=false —— 状态切到了 ${evidence.state_key || "?"}`
+                + (app.ingame_stage ? `（stage=${app.ingame_stage}）` : "")
+                + "，但 world 没有建起来；此时 RPC 可能仍然回 ok:true",
+            evidence,
+            hint: "root 只由 gameStarted 信号注入：root 为空 ⇒ 世界不存在，任何 obs/place 读数都不可信",
+        };
+    }
+    if (hasInGame && st.in_game === false) {
+        return {
+            ok: false,
+            reason: `in_game=false —— 世界没加载好（root_present=${evidence.root_present}），`
+                + `任何基于 obs 的判据都会是假数据`,
+            evidence,
+            hint: "先确认 status.in_game=true 再做任何测量",
+        };
+    }
+
+    return { ok: true, reason: null, evidence };
+}
+
+/* ══════════════════════════ G10 place 的 rv 自证 ══════════════════════════ */
+
+/**
+ * `place` 的自证字段必须与请求一致 —— 光有 `applied:1` 不等于"放对了"。
+ *
+ * ★ 修复前的真实形态 ★
+ * `place belt r=90` 只能得到 `code=1` 的直带：rv 由游戏按邻居自动算，
+ * 且只在放置那一刻算一次。于是"我要求的转角"和"世界里的转角"可以不同，
+ * 而返回依然是 `ok:true, applied:1`。
+ *
+ * 现在 mod 回三个字段：`requested.rotationVariant` / `actual.{rotationVariant,code}` / `mismatch`。
+ * 判据（全部来自游戏自己的读回值，不是我们的假设）：
+ *   · `actual.code` 必须 === `1 + requested.rotationVariant`（belt-rules 命题 A）
+ *   · `actual.rotationVariant` 必须 === `requested.rotationVariant`
+ *   · `mismatch === true` → 红
+ *
+ * ★ 没有 `requested` 字段 ⇒ undecidable ★
+ * 老版 mod 也回 `code`，但没有 `requested`，"放对了没有"根本无从判断。
+ * 这种情况报绿就是 fail-open：以后有人回退 mod 版本，这条闸会静默失效。
+ *
+ * @param {object} placeResult  place RPC 的返回
+ */
+export function gateG10RvSelfcheck(placeResult) {
+    const r = placeResult && typeof placeResult === "object" ? placeResult : {};
+    const evidence = {};
+    if (!r || typeof r !== "object" || !Object.keys(r).length) {
+        return { ok: false, reason: "place 没有返回任何东西 —— 无法自证", evidence };
+    }
+    if (r.ok === false) {
+        return { ok: false, reason: `place 自己回了 ok:false（${r.error || r.reason || "无原因"}）`, evidence };
+    }
+    if (r.applied !== 1) {
+        return {
+            ok: false,
+            reason: `place 的 applied=${r.applied} —— 没有放下东西，自证无意义`,
+            evidence: { applied: r.applied },
+        };
+    }
+
+    const req = r.requested;
+    if (!req || typeof req !== "object") {
+        return {
+            ok: false,
+            undecidable: true,
+            reason: "place 返回里没有 requested 字段（旧版 mod）—— 无从判断放的是不是我要的变体",
+            evidence: { has_actual: !!(r.actual && typeof r.actual === "object") },
+            hint: "这是 fail-open 的入口：缺 requested 时报绿等于这条闸对旧 mod 完全失效",
+        };
+    }
+
+    const reqRv = req.rotationVariant;
+    if (!Number.isInteger(reqRv)) {
+        /* 没请求 rv（req.rotationVariant === null）：此时游戏自动定向是既有语义，
+           不该判红 —— 但也**没有东西可自证**，必须如实说 undecidable。 */
+        return {
+            ok: false,
+            undecidable: true,
+            reason: `place 没有请求 rotationVariant（requested.rotationVariant=${JSON.stringify(reqRv)}）`
+                + " —— 游戏自动定向，无 rv 可自证",
+            evidence: { requested_rotation: req.rotation ?? null, actual: r.actual || null },
+        };
+    }
+
+    const act = (r.actual && typeof r.actual === "object") ? r.actual : {};
+    evidence.requested_rv = reqRv;
+    evidence.actual_rv = act.rotationVariant === undefined ? null : act.rotationVariant;
+    evidence.actual_code = act.code === undefined ? null : act.code;
+    evidence.expected_code = beltCode(reqRv);
+    evidence.mismatch = r.mismatch === undefined ? null : r.mismatch;
+
+    if (r.mismatch === true) {
+        return {
+            ok: false,
+            reason: `place 自己报了 mismatch=true（requested rv=${reqRv}/rot=${JSON.stringify(req.rotation ?? null)}，`
+                + `actual rv=${JSON.stringify(act.rotationVariant)}/rot=${JSON.stringify(act.rotation)}）`
+                + " —— 请求的变体没有被落地",
+            evidence,
+            hint: "belt 的 rv 会被相邻格重算；整块拓扑要用 paste_blueprint（它走 immutable 操作）",
+        };
+    }
+    if (!Number.isInteger(act.rotationVariant)) {
+        return {
+            ok: false,
+            reason: `place 的 actual.rotationVariant 不是整数（${JSON.stringify(act.rotationVariant)}）—— 读回值不可用`,
+            evidence,
+        };
+    }
+    if (act.rotationVariant !== reqRv) {
+        return {
+            ok: false,
+            reason: `place 的 actual.rotationVariant=${act.rotationVariant} ≠ requested=${reqRv}`,
+            evidence,
+        };
+    }
+    /* ★ 核心判据：code 必须由 rv 唯一决定 ★
+       rv 对上了但 code 不对 ⇒ 落地的是另一种建筑，或者 belt 表与 rv 的对应关系变了。
+       两个来源（读回的 code 与 belt-rules 命题 A）必须一致。 */
+    const wantCode = beltCode(reqRv);
+    if (act.code !== wantCode) {
+        return {
+            ok: false,
+            reason: `place 的 actual.code=${JSON.stringify(act.code)} ≠ 1+rotationVariant=${wantCode}`
+                + `（requested rv=${reqRv}）—— 落地的东西不是那个变体`,
+            evidence,
+            hint: "belt-rules 命题 A：code === 1 + rv（1906/1906 实机验证）",
+        };
+    }
+    return { ok: true, reason: null, evidence };
+}
+
+/* ══════════════════════════ G11 并发写不丢 ══════════════════════════ */
+
+/**
+ * 一批并发写之后，实体计数的增量必须等于预期。
+ *
+ * ★ 修复前的真实形态 ★
+ * 同时发 12 个 `place`，一部分返回 `ok:true` 而实体根本没建出来 ——
+ * "成功"的数量和"世界里多出来的数量"对不上，而且从单个返回值看不出来。
+ * 根因是写操作各自独立执行（只有 load_save/new_game 串行化），现在全部走 `worldChain`。
+ *
+ * ★ 这条闸不自己发请求 ★
+ * 它只做计数判定；并发请求是集成测试的事（本文件的单测必须零 RPC）。
+ * 调用方模式：
+ *   const before = (await obs()).entities.length;
+ *   const rs = await Promise.all([...12 个 place...]);
+ *   const after = (await obs()).entities.length;
+ *   gateG11NoConcurrentLoss(before, after, 12);
+ *
+ * 判据：
+ *   · `after - before !== expectedDelta` → 红（少建 = 丢了；多建 = 重复执行）
+ *   · 输入不是整数 / delta 为负 → 红（读数本身不可信）
+ *
+ * @param {number} beforeCount
+ * @param {number} afterCount
+ * @param {number} expectedDelta  并发写成功了多少个
+ */
+export function gateG11NoConcurrentLoss(beforeCount, afterCount, expectedDelta) {
+    const evidence = { before_count: beforeCount, after_count: afterCount, expected_delta: expectedDelta };
+    const allInts = [beforeCount, afterCount, expectedDelta].map(Number.isInteger);
+    if (!allInts.every(v => v)) {
+        return {
+            ok: false,
+            reason: `计数不是整数（before=${JSON.stringify(beforeCount)}, after=${JSON.stringify(afterCount)}, `
+                + `expected=${JSON.stringify(expectedDelta)}）—— 无法判定`,
+            evidence,
+            hint: "obs 读失败时 before/after 常是 undefined —— 先确认两次 obs 都成功了",
+        };
+    }
+    if (expectedDelta < 0) {
+        return { ok: false, reason: `expectedDelta=${expectedDelta} 为负 —— 输入不成立`, evidence };
+    }
+    const delta = afterCount - beforeCount;
+    evidence.actual_delta = delta;
+    if (delta !== expectedDelta) {
+        const lost = expectedDelta - delta;
+        return {
+            ok: false,
+            reason: `并发写之后实体数只变了 ${delta}，预期 ${expectedDelta}`
+                + (lost > 0 ? ` —— 丢了 ${lost} 个（返回值说成功，世界里没有）`
+                    : ` —— 多出 ${-lost} 个（重复执行或蓝图被补实体）`),
+            evidence,
+            hint: "写操作必须全部走同一条 worldChain；丢的那几个可以从返回值里逐个读回验证",
+        };
+    }
+    return { ok: true, reason: null, evidence };
+}
+
+/* ══════════════════════════ G12 截图 region ══════════════════════════ */
+
+/**
+ * 截图必须真的拍到了请求的那块地，而且真的画出东西了。
+ *
+ * ★ 旧实现的三个硬缺陷（都是实测踩到的）★
+ *   1. `root.canvas.toDataURL()` 把 HUD 一起截进去 —— hub 面板盖住了钌切割机。
+ *   2. 相机是插值移动的，截到的是过期画面。
+ *   3. 没有 region，只能先挪相机，结果受窗口尺寸/DPI 影响，不可复现。
+ *
+ * 新实现自己建离屏 canvas、自建 DrawParameters、相机瞬移、region 指定 bbox，
+ * 并回 `world_rect` / `drew` / `skipped` 供断言。
+ *
+ * 判据：
+ *   · 给了 `region` 时，`world_rect.cells` 必须**覆盖**请求的 bbox（不是"大致附近"）
+ *   · `drew` 不能为空（一层都没画 ⇒ 图是空的，而 toDataURL 仍会回一张底色图）
+ *   · `skipped[]` 里带 `error` 的项（不是带 `reason` 的项）→ 红：
+ *       `reason` 是"按设计跳过"（比如 hud 默认关），`error` 是"本该画却抛错"
+ *
+ * 调用方式：
+ *   const shot = await rpc("screenshot", { region });
+ *   gateG12ScreenshotRegion(shot, region);
+ *
+ * @param {object} shotResult  screenshot RPC 的返回
+ * @param {number[]} [requestedRegion]  请求的 [x0,y0,x1,y1]；省略时不比对取景
+ */
+export function gateG12ScreenshotRegion(shotResult, requestedRegion) {
+    const s = shotResult && typeof shotResult === "object" ? shotResult : {};
+    const evidence = {};
+    if (!s || typeof s !== "object" || !Object.keys(s).length) {
+        return { ok: false, reason: "screenshot 没有返回任何东西 —— 无法判定", evidence };
+    }
+
+    const drew = Array.isArray(s.drew) ? s.drew : null;
+    const skipped = Array.isArray(s.skipped) ? s.skipped : [];
+    evidence.drew = drew;
+    evidence.skipped_steps = skipped.map(x => x && x.step);
+
+    if (!drew) {
+        return { ok: false, reason: "截图返回里没有 drew 数组 —— 无法判定画了什么", evidence };
+    }
+    /* ★ 先判 error，再判空 ★
+       顺序是有意的：全是 error 时 drew 也可能是空的，先说"哪一步抛了错"更有用。 */
+    const errored = skipped.filter(x => x && x.error !== undefined && x.error !== null);
+    if (errored.length) {
+        evidence.errors = errored.slice(0, 5);
+        return {
+            ok: false,
+            reason: `截图有 ${errored.length} 个绘制步骤抛错（${errored.map(x => x.step).join("/")}）`
+                + ` —— 画出来的图缺层，不是"完整的世界"`,
+            evidence,
+            hint: "error 表示该画的没画成；reason 才是按设计跳过（比如 hud 默认关）",
+        };
+    }
+    if (!drew.length) {
+        return {
+            ok: false,
+            reason: "截图一层都没画出来（drew 为空）—— 拿到的是一张底色图",
+            evidence,
+            hint: "可能 DrawParameters 构造失败或游戏版本不匹配",
+        };
+    }
+
+    if (Array.isArray(requestedRegion)) {
+        const want = requestedRegion.map(Number);
+        evidence.requested_region = want;
+        const wr = s.world_rect && Array.isArray(s.world_rect.cells) ? s.world_rect.cells : null;
+        evidence.world_rect_cells = wr;
+        if (!wr || wr.length !== 4) {
+            return {
+                ok: false,
+                reason: "给了 region 但截图没有返回 world_rect.cells —— 无法确认拍到的是哪块地",
+                evidence,
+            };
+        }
+        const [rx0, ry0, rx1, ry1] = want;
+        const [wx0, wy0, wx1, wy1] = wr.map(Number);
+        const covers = wx0 <= Math.min(rx0, rx1) && wy0 <= Math.min(ry0, ry1)
+            && wx1 >= Math.max(rx0, rx1) && wy1 >= Math.max(ry0, ry1);
+        evidence.covers = covers;
+        if (!covers) {
+            return {
+                ok: false,
+                reason: `截图取景 ${JSON.stringify(wr)} 没有覆盖请求的 bbox ${JSON.stringify(want)}`
+                    + " —— 画面里缺了要看的格子",
+                evidence,
+                hint: "region 是格坐标；mod 会按 margin 外扩，只应更大不应更小",
+            };
+        }
+    }
+
+    return { ok: true, reason: null, evidence };
+}
+
 /* ══════════════════════════ 回滚 ══════════════════════════ */
 
 /**
@@ -1466,7 +1824,28 @@ export async function runGates(intent, opts = {}) {
 
     // ── G-1 时钟 ──
     const clock = await gateClock(opts.probeTicks || 600);
-    if (!record("G-1-clock", clock)) return { ok: false, results, fatal: true };
+
+    /* ── G9 世界真的可用 ──
+       必须在任何 obs 之前：load_save/new_game 会回 ok:true 而 world 其实没建起来，
+       此时 `obs` 要么抛错要么给出上一个世界的残影，之后所有判据都建立在假数据上。
+       取不到 status / debug_app_state 时 G9 自己会报 undecidable（红），不会 fail-open。
+
+       ★ 时钟闸红了也照样跑 G9 ★
+       `debug_loop` 第一行就是 `requireRoot()`：root 为空时它直接抛 1003，
+       于是 G-1 先红、reason 是泛化的「读不到 debug_loop（游戏没进世界？）」——
+       而「为什么读不到、能不能重试」正是 G9 要回答的。
+       不把 G9 挂上去的话，最需要「必须重启进程」这句话的场景恰好看不到它。 */
+    let worldStatus = null, appState = null;
+    try { worldStatus = await rpc("status", {}); } catch (e) { /* 老桥没有 status */ }
+    try { appState = await rpc("debug_app_state", {}); } catch (e) { /* 老 mod 没有这个 RPC */ }
+    const g9 = gateG9WorldReady({ status: worldStatus, appState });
+
+    if (!record("G-1-clock", clock)) {
+        /* 只为解释根因：fatal 已经由时钟闸决定，这里不再改变判定。 */
+        record("G9-world", g9);
+        return { ok: false, results, fatal: true };
+    }
+    if (!record("G9-world", g9)) return { ok: false, results, fatal: true };
 
     const before = await snapshot();
 
@@ -1495,6 +1874,19 @@ export async function runGates(intent, opts = {}) {
     });
     const g3 = await gateG3(intent, dry);
     if (!record("G3-clearance", g3)) return { ok: false, results };
+
+    /* ── G12 截图 region（可选）──
+       只有调用方显式给了 `opts.screenshotRegion` 才跑：G9 已经证明世界可用，
+       截图是给"人要看一眼"的产物，不该在每次建线时都渲染一张 4K 图。
+       失败**不回滚** —— 截图坏掉说明不了工厂坏掉，把它当成致命错误会拆掉好好的线。 */
+    if (Array.isArray(opts.screenshotRegion)) {
+        try {
+            const shot = await rpc("screenshot", { region: opts.screenshotRegion });
+            record("G12-screenshot", gateG12ScreenshotRegion(shot, opts.screenshotRegion));
+        } catch (e) {
+            record("G12-screenshot", { ok: false, reason: `screenshot RPC 失败：${e.message}` });
+        }
+    }
 
     if (!opts.apply) {
         results.push({ id: "apply", ok: true, reason: null, skipped: true, note: "未给 --apply，停在这里（零写入）" });

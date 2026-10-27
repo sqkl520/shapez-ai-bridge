@@ -27,6 +27,7 @@ import http from "node:http";
 import {
     entityCells, expectedCells, gateG3, gateG4, gateG6, gateG6b,
     gateG7flow, gateG8chains, gateIntentMatchesBlueprint, itemsRegionFor,
+    gateG9WorldReady, gateG10RvSelfcheck, gateG11NoConcurrentLoss, gateG12ScreenshotRegion,
     expectedRateOf, runGates,
 } from "./gates.mjs";
 import { encodeBlueprint, decodeBlueprint } from "../shared/blueprint.mjs";
@@ -793,8 +794,208 @@ console.log("\n── ⑪ itemsRegionFor：debug_items 的 region 来自 bbox �
     ok(region.every(Number.isInteger), "region 全是整数");
 }
 
-/* ═════════ ⑫ runGates 主流程（§5.3(5) 以前零覆盖） ═════════ */
-console.log("\n── ⑫ runGates：主流程的参数顺序 / 基线顺序 / region 来源 ──");
+/* ═════════ ⑫ gateG9：世界真的可用（不是「状态切了但 world 没建」） ═════════ */
+console.log("\n── ⑫ gateG9：root_present / in_game / APP_ERROR_OCCURED ──");
+{
+    /* 必绿：健康的 InGameState —— root 真的建起来了 */
+    const good = gateG9WorldReady({
+        status: { in_game: true, tick: 100 },
+        appState: { root_present: true, app_error_occurred: false, state_key: "InGameState", ingame_stage: "s10_gameRunning" },
+    });
+    ok(good.ok, "root_present=true & in_game=true & 未崩溃 → 绿", good.reason);
+    eq(good.evidence.root_present, true, "evidence 记录 root_present");
+
+    /* 必红 1：状态切到了 InGameState，但 root 没建 —— 本轮修复的那个假成功 */
+    const noRoot = gateG9WorldReady({
+        status: { in_game: false },
+        appState: { root_present: false, app_error_occurred: false, state_key: "InGameState", ingame_stage: "s3_loading" },
+    });
+    ok(!noRoot.ok, "root_present=false（状态切了但 world 没建）→ 红", noRoot.reason);
+    ok(/world 没有建起来/.test(noRoot.reason), 'reason 明确说「world 没有建起来」', noRoot.reason);
+    ok(/s3_loading/.test(noRoot.reason), "reason 带上 ingame_stage，能区分「卡在哪一步」", noRoot.reason);
+
+    /* 必红 2：只有 status 的 in_game=false（没取到 debug_app_state 也要判红） */
+    const noApp = gateG9WorldReady({ status: { in_game: false } });
+    ok(!noApp.ok, "只有 in_game=false（拿不到 debug_app_state）→ 红", noApp.reason);
+    ok(/in_game=false/.test(noApp.reason), 'reason 说「in_game=false」', noApp.reason);
+
+    /* ★ 必红 1b：两个来源互相矛盾（status.in_game=true 但 root_present=false）★
+       这是**唯一**能把 `root_present` 分支单独钉住的夹具：
+       只给 in_game=false 的话，`in_game` 分支会先命中，root_present 那条判据
+       即使被删掉也能靠 in_game 判红 —— 变异体存活。
+       矛盾本身就是证据：两个 RPC 对"世界在不在"给了不同答案，必须判红。 */
+    const contradictory = gateG9WorldReady({
+        status: { in_game: true },
+        appState: { root_present: false, app_error_occurred: false, state_key: "InGameState", ingame_stage: "s4_generating" },
+    });
+    ok(!contradictory.ok, "in_game=true 但 root_present=false（两个来源矛盾）→ 红", contradictory.reason);
+    ok(/root_present=false/.test(contradictory.reason), "reason 指出 root_present=false", contradictory.reason);
+    ok(/s4_generating/.test(contradictory.reason), "矛盾时仍报出卡在哪个 stage", contradictory.reason);
+
+    /* 必红 3：崩溃标志 —— 这条要能说出「必须重启进程」 */
+    const crashed = gateG9WorldReady({
+        status: { in_game: false },
+        appState: { root_present: false, app_error_occurred: true, state_key: "InGameState" },
+    });
+    ok(!crashed.ok, "app_error_occurred=true → 红", crashed.reason);
+    ok(/APP_ERROR_OCCURED/.test(crashed.reason), "reason 点名 APP_ERROR_OCCURED", crashed.reason);
+    ok(/必须重启/.test(crashed.hint || ""), 'hint 明确说「必须重启游戏进程」', crashed.hint);
+
+    /* ★ 崩溃标志即使 root 还在也必须红：它会让之后每一次 moveToState 静默跳过 */
+    const crashedButRoot = gateG9WorldReady({
+        status: { in_game: true },
+        appState: { root_present: true, app_error_occurred: true, state_key: "InGameState" },
+    });
+    ok(!crashedButRoot.ok, "root 还在但 APP_ERROR_OCCURED=true → 仍红（下一次切状态会静默失败）", crashedButRoot.reason);
+    ok(/必须重启/.test(crashedButRoot.hint || ""), "仍然提示必须重启", crashedButRoot.hint);
+
+    /* ★ 字段缺失 ≠ 世界可用：拼错字段名不许静默变绿 */
+    const empty = gateG9WorldReady({});
+    ok(!empty.ok, "空快照（两个字段都没有）→ 红，不许 fail-open", empty.reason);
+    eq(empty.undecidable, true, "空快照标 undecidable");
+    const nullish = gateG9WorldReady(null);
+    ok(!nullish.ok, "null 快照 → 红（不许把 undefined 当 false 之外的东西）", nullish.reason);
+
+    /* 平铺形态也要认（调用方可能已把两份 RPC 合并成一个对象） */
+    const flat = gateG9WorldReady({ in_game: true, root_present: true, app_error_occurred: false });
+    ok(flat.ok, "平铺形态 {in_game, root_present} 也能判绿", flat.reason);
+}
+
+/* ═════════ ⑬ gateG10：place 的 rv 自证 ═════════ */
+console.log("\n── ⑬ gateG10：actual.code === 1 + requested.rotationVariant ──");
+{
+    const mk = (rv, rv2 = rv, code = 1 + rv2, mismatch = false) => ({
+        ok: true, op: "place", applied: 1, mismatch,
+        requested: { rotation: 90, rotationVariant: rv },
+        actual: { rotation: 90, rotationVariant: rv2, code },
+    });
+
+    ok(gateG10RvSelfcheck(mk(1)).ok, "requested rv=1 / actual rv=1 code=2 → 绿");
+    ok(gateG10RvSelfcheck(mk(0)).ok, "requested rv=0 / actual rv=0 code=1 → 绿（直带也要能过）");
+    ok(gateG10RvSelfcheck(mk(2)).ok, "requested rv=2 / actual rv=2 code=3 → 绿");
+
+    /* 必红 1：rv 对了但 code 不对 —— 核心判据（变异体：把这条改成恒真） */
+    const badCode = gateG10RvSelfcheck(mk(1, 1, 1));
+    ok(!badCode.ok, "actual.code=1 而 requested rv=1（应为 2）→ 红", badCode.reason);
+    ok(/1\+rotationVariant=2|1 \+ 1/.test(badCode.reason) || /≠ 1\+rotationVariant/.test(badCode.reason),
+        "reason 写出 code 与 1+rv 的对照", badCode.reason);
+    eq(badCode.evidence.expected_code, 2, "evidence.expected_code=2");
+
+    /* 必红 2：mismatch=true */
+    const mm = gateG10RvSelfcheck(mk(1, 1, 2, true));
+    ok(!mm.ok, "mismatch=true → 红（即使 code 恰好对）", mm.reason);
+    ok(/mismatch/.test(mm.reason), "reason 说 mismatch", mm.reason);
+
+    /* 必红 3：actual.rv 与 requested 不同（游戏把变体改了） */
+    const rvDiff = gateG10RvSelfcheck(mk(1, 0, 1));
+    ok(!rvDiff.ok, "actual.rotationVariant=0 ≠ requested=1 → 红", rvDiff.reason);
+
+    /* 必红 4：没有 requested 字段（旧版 mod）→ undecidable，不许报绿 */
+    const legacy = gateG10RvSelfcheck({ ok: true, op: "place", applied: 1, actual: { rotation: 90, rotationVariant: 0, code: 1 } });
+    ok(!legacy.ok, "没有 requested 字段（旧版 mod）→ 红/undecidable", legacy.reason);
+    eq(legacy.undecidable, true, "缺 requested 标 undecidable（不是 fail-open 绿）");
+    ok(/旧版 mod/.test(legacy.reason), 'reason 说明是「旧版 mod」', legacy.reason);
+
+    /* 没请求 rv（null）：游戏自动定向是既有语义，但也没有东西可自证 */
+    const auto = gateG10RvSelfcheck({
+        ok: true, applied: 1, mismatch: false,
+        requested: { rotation: 0, rotationVariant: null },
+        actual: { rotation: 0, rotationVariant: 0, code: 1 },
+    });
+    ok(!auto.ok, "requested.rotationVariant=null → 红/undecidable", auto.reason);
+    eq(auto.undecidable, true, "未请求 rv 时标 undecidable");
+
+    /* applied=0：什么都没放下，自证无意义 */
+    ok(!gateG10RvSelfcheck({ ok: true, applied: 0, requested: { rotationVariant: 1 }, actual: { rotationVariant: 1, code: 2 } }).ok,
+        "applied=0 → 红");
+
+    /* 空返回 */
+    ok(!gateG10RvSelfcheck({}).ok, "place 返回空对象 → 红");
+    ok(!gateG10RvSelfcheck(null).ok, "place 返回 null → 红");
+}
+
+/* ═════════ ⑭ gateG11：并发写不丢 ═════════ */
+console.log("\n── ⑭ gateG11：after − before 必须 === expectedDelta ──");
+{
+    ok(gateG11NoConcurrentLoss(10, 22, 12).ok, "10 → 22，预期 +12 → 绿（12/12 成功）");
+    ok(gateG11NoConcurrentLoss(0, 12, 12).ok, "0 → 12，预期 +12 → 绿");
+    eq(gateG11NoConcurrentLoss(10, 22, 12).evidence.actual_delta, 12, "evidence 记录实际增量");
+
+    /* 必红 1：少了 —— 返回值说成功，世界里没有 */
+    const lost = gateG11NoConcurrentLoss(10, 20, 12);
+    ok(!lost.ok, "10 → 20，预期 +12（丢了 2 个）→ 红", lost.reason);
+    ok(/丢了 2 个/.test(lost.reason), 'reason 明确说「丢了 2 个」', lost.reason);
+
+    /* 必红 2：多了 —— 重复执行 */
+    const extra = gateG11NoConcurrentLoss(10, 25, 12);
+    ok(!extra.ok, "10 → 25，预期 +12（多出 3 个）→ 红", extra.reason);
+    ok(/多出 3 个/.test(extra.reason), 'reason 明确说「多出 3 个」', extra.reason);
+
+    /* 必红 3：计数不是整数（obs 读失败时常见） */
+    ok(!gateG11NoConcurrentLoss(undefined, 22, 12).ok, "before=undefined → 红（读数不可信）");
+    ok(!gateG11NoConcurrentLoss(10, 22.5, 12).ok, "after 非整数 → 红");
+
+    /* 必红 4：负的预期增量 */
+    ok(!gateG11NoConcurrentLoss(10, 8, -2).ok, "expectedDelta 为负 → 红（输入不成立）");
+
+    /* 对照：0 增量 */
+    ok(gateG11NoConcurrentLoss(10, 10, 0).ok, "10 → 10，预期 +0 → 绿");
+}
+
+/* ═════════ ⑮ gateG12：截图 region 覆盖与绘制完整性 ═════════ */
+console.log("\n── ⑮ gateG12：world_rect 覆盖 bbox / drew 非空 / skipped 无 error ──");
+{
+    const shot = (over = {}) => ({
+        png_base64: "iVBORw0KGgo=", w: 800, h: 600, zoom: 2,
+        hud: false,
+        world_rect: { cells: [-11, -13, 24, 6] },
+        drew: ["mapBackground", "beltItems", "mapForeground", "hub"],
+        skipped: [{ step: "hud", reason: "按需关闭（默认不画，避免遮挡世界）" }],
+        ...over,
+    });
+    const region = [-10, -12, 23, 5];
+
+    const g = gateG12ScreenshotRegion(shot(), region);
+    ok(g.ok, "world_rect 覆盖 region 且 drew 非空 → 绿", g.reason);
+    eq(g.evidence.covers, true, "evidence.covers=true");
+
+    /* 必绿：skipped 里只有 reason（按设计跳过）不算错 */
+    ok(gateG12ScreenshotRegion(shot({ skipped: [{ step: "hub", reason: "hideHubPanel" }] }), region).ok,
+        "skipped 里只有 reason（按设计跳过）→ 仍绿");
+
+    /* 必红 1：取景没覆盖请求的 bbox（右边少了 1 格）*/
+    const narrow = gateG12ScreenshotRegion(shot({ world_rect: { cells: [-11, -13, 22, 6] } }), region);
+    ok(!narrow.ok, "world_rect 右边界少 1 格 → 红", narrow.reason);
+    ok(/没有覆盖/.test(narrow.reason), 'reason 说「没有覆盖」', narrow.reason);
+
+    /* 必红 2：drew 为空 —— 拿到的是一张底色图 */
+    const blank = gateG12ScreenshotRegion(shot({ drew: [] }), region);
+    ok(!blank.ok, "drew 为空 → 红（拿到的是一张底色图）", blank.reason);
+    ok(/一层都没画/.test(blank.reason), 'reason 说「一层都没画出来」', blank.reason);
+
+    /* 必红 3：skipped 里有 error（不是 reason）*/
+    const err = gateG12ScreenshotRegion(shot({
+        skipped: [{ step: "hub", error: "draw failed: no texture" }],
+    }), region);
+    ok(!err.ok, "skipped 里有 error → 红", err.reason);
+    ok(/hub/.test(err.reason), "reason 点名抛错的那一步（hub）", err.reason);
+    ok(/绘制步骤抛错/.test(err.reason), 'reason 说「绘制步骤抛错」而不是「跳过」', err.reason);
+
+    /* 必红 4：给了 region 但没回 world_rect */
+    ok(!gateG12ScreenshotRegion(shot({ world_rect: null }), region).ok,
+        "给了 region 但 world_rect 缺失 → 红（无法确认拍到哪块地）");
+
+    /* 必红 5：没有 drew 数组 */
+    ok(!gateG12ScreenshotRegion(shot({ drew: undefined }), region).ok, "drew 缺失 → 红");
+    ok(!gateG12ScreenshotRegion({}).ok, "截图返回空对象 → 红");
+
+    /* 不请求 region 时只判绘制完整性（不比对 bbox） */
+    ok(gateG12ScreenshotRegion(shot({ world_rect: null })).ok,
+        "未请求 region 时不比对 world_rect → 只判 drew（绿）");
+}
+
+/* ═════════ 十六 runGates 主流程（§5.3(5) 以前零覆盖） ═════════ */
+console.log("\n── ⑯ runGates：主流程的参数顺序 / 基线顺序 / region 来源 / G9 位置 ──");
 
 /** 起一个假桥，按 phase 返回预设响应，并记录每一次 RPC。 */
 async function withMockBridge(fn) {
@@ -836,6 +1037,31 @@ async function withMockBridge(fn) {
     const handle = (method, params) => {
         if (method === "debug_loop") {
             return { tick, logic_budget_ms: 8, speed: "regular", tick_rate: 120 };
+        }
+        if (method === "status") {
+            return { in_game: true, tick, speed: "regular", allow_write: true, allow_step: true };
+        }
+        if (method === "debug_app_state") {
+            return {
+                state_key: "InGameState", root_present: true, app_error_occurred: false,
+                ingame_stage: "s10_gameRunning", mod_version: "0.1.0",
+            };
+        }
+        if (method === "screenshot") {
+            /* 照 mod 的语义回一份 world_rect：region 外扩 margin=1，且右下是**格子边界**。
+               它必须覆盖请求的 bbox —— 否则 G12 会红（那是 mod 的 bug 形态，不是这里要测的）。 */
+            const p = params || {};
+            const rg = Array.isArray(p.region) ? p.region : null;
+            const cells = rg
+                ? [Math.min(rg[0], rg[2]) - 1, Math.min(rg[1], rg[3]) - 1,
+                    Math.max(rg[0], rg[2]) + 1, Math.max(rg[1], rg[3]) + 1]
+                : null;
+            return {
+                png_base64: "iVBORw0KGgo=", w: 800, h: 600,
+                hud: false, world_rect: cells ? { cells } : null,
+                drew: ["mapBackground", "beltItems", "mapForeground"],
+                skipped: [{ step: "hud", reason: "按需关闭（默认不画，避免遮挡世界）" }],
+            };
         }
         if (method === "act") {
             if (params.op === "step") { tick += (params.ticks || 0) / 120; return { ok: true }; }
@@ -927,6 +1153,8 @@ const loadFlow = () => import(new URL(`./gates.mjs?flow=${++flowSeq}`, import.me
         res.results.filter(r => !r.ok).map(r => r.id + ": " + r.reason));
     eq(res.results[0].id, "G2'-source", "G2' 在时钟闸之前跑（坏蓝图不碰游戏）");
     eq(res.results[1].id, "G-1-clock", "G2' 之后是时钟闸");
+    eq(res.results[2].id, "G9-world", "G9 紧跟时钟闸、在第一次 obs 之前（位置回归锁）");
+    ok(res.results[2].ok, "G9 在健康世界里判绿");
     ok(res.results.some(r => r.id === "G4-landing" && r.ok), "G4 绿（参数顺序是 before, after）");
     ok(res.results.some(r => r.id === "G7-flow@t0" && r.ok), "G7 在 t+0 判过一次");
     ok(res.results.some(r => r.id === "G7-flow@t60" && r.ok), "G7 在 t+60s 又判过一次");
@@ -1007,6 +1235,215 @@ const loadFlow = () => import(new URL(`./gates.mjs?flow=${++flowSeq}`, import.me
     eq(calls.filter(c => c.method === "debug_items").length, 0, "--plan 时不采 debug_items");
     ok(out.results.some(r => r.id === "G2'-source" && r.ok), "--plan 也会跑 G2'");
     ok(out.results.some(r => r.id === "G3-clearance" && r.ok), "--plan 跑到 G3");
+}
+
+{
+    /* 流程 4b：G9 的位置回归锁 —— status / debug_app_state 必须早于第一次 obs。
+       顺序错的话，"world 没建起来"这件事会在 obs 抛错或给出残影之后才被发现。 */
+    const far = mkL4([0, 0]);
+    const { out, calls } = await withMockBridge(async (h, state, snap) => {
+        h.obsBefore = snap(far, [{ kind: "belt", dx: 60, dy: 60, code: 1, rot: 0 }]);
+        h.dry = { would_apply: far.entities.length, blocked: [], destroys: [], would_delete: 0, unknown_code: [] };
+        const mod = await loadFlow();
+        return mod.runGates(far, { apply: false });
+    });
+    ok(out.results.some(r => r.id === "G9-world" && r.ok), "流程：健康世界下 G9 绿");
+    ok(calls.some(c => c.method === "status"), "runGates 真的调了 status");
+    ok(calls.some(c => c.method === "debug_app_state"), "runGates 真的调了 debug_app_state");
+    {
+        const iStatus = calls.findIndex(c => c.method === "status");
+        const iApp = calls.findIndex(c => c.method === "debug_app_state");
+        const iObs = calls.findIndex(c => c.method === "obs");
+        ok(iStatus >= 0 && iObs >= 0 && iStatus < iObs, "status 在第一次 obs 之前被调用", { iStatus, iObs });
+        ok(iApp >= 0 && iObs >= 0 && iApp < iObs, "debug_app_state 在第一次 obs 之前被调用", { iApp, iObs });
+    }
+}
+
+{
+    /* 流程 4c：G9 红 → fatal，零 obs、零 paste。
+       独立假桥：debug_app_state 报 root_present=false + APP_ERROR_OCCURED=true。 */
+    const far = mkL4([0, 0]);
+    const calls = [];
+    let tick = 100;
+    const server = http.createServer((req, res) => {
+        let body = "";
+        req.on("data", c => body += c);
+        req.on("end", () => {
+            const msg = JSON.parse(body);
+            calls.push(msg.method);
+            let result;
+            if (msg.method === "debug_loop") result = { tick, logic_budget_ms: 8, speed: "regular", tick_rate: 120 };
+            else if (msg.method === "act") {
+                if (msg.params && msg.params.op === "step") tick += (msg.params.ticks || 0) / 120;
+                result = { ok: true };
+            } else if (msg.method === "status") result = { in_game: false };
+            else if (msg.method === "debug_app_state") {
+                result = { state_key: "InGameState", root_present: false, app_error_occurred: true, ingame_stage: "s2_loading" };
+            } else result = {};
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
+        });
+    });
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const prev = process.env.SHAPEZ_BRIDGE_URL;
+    process.env.SHAPEZ_BRIDGE_URL = `http://127.0.0.1:${server.address().port}`;
+    let out;
+    try {
+        const mod = await loadFlow();
+        out = await mod.runGates(far, { apply: true });
+    } finally {
+        if (prev === undefined) delete process.env.SHAPEZ_BRIDGE_URL; else process.env.SHAPEZ_BRIDGE_URL = prev;
+        server.close();
+    }
+    ok(out.ok === false, "流程：G9 红（root 没建起来）→ runGates 整体红");
+    eq(out.fatal, true, "G9 红是 fatal（世界不可用，后面全部无意义）");
+    ok(out.results.some(r => r.id === "G9-world" && !r.ok), "G9 报红");
+    ok(/必须重启/.test(out.results.find(r => r.id === "G9-world").hint || ""),
+        "G9 的 hint 说必须重启进程");
+    eq(calls.filter(m => m === "obs").length, 0, "G9 红时一个 obs 都没采（不拿假数据做判据）");
+    /* ⚠️ 时钟闸本来就发过一次 `act step`（它在 G9 之前，是设计如此），
+       所以这里不能断言"零 act"，只能断言"没有会改世界的 act"。 */
+    eq(calls.filter(m => m === "act").length, 1, "G9 红时只有时钟闸那次 act step（之后一个 act 都没发）");
+}
+
+{
+    /* 流程 4c-2：真实形态 —— root 为空时 `debug_loop` 自己就抛 1003，
+       于是 G-1 先红（reason 是泛化的「读不到 debug_loop」）。
+       G9 必须**照样跑**，把"为什么读不到"和"能不能重试"讲出来；
+       不跑的话，最需要「必须重启进程」的场景恰好看不到它。★回归锁★ */
+    const far = mkL4([0, 0]);
+    const calls = [];
+    const server = http.createServer((req, res) => {
+        let body = "";
+        req.on("data", c => body += c);
+        req.on("end", () => {
+            const msg = JSON.parse(body);
+            calls.push(msg.method);
+            let payload;
+            if (msg.method === "debug_loop") {
+                payload = { jsonrpc: "2.0", id: msg.id, error: { code: 1003, name: "not_in_game", message: "Game world is not loaded" } };
+            } else if (msg.method === "status") {
+                payload = { jsonrpc: "2.0", id: msg.id, result: { in_game: false } };
+            } else if (msg.method === "debug_app_state") {
+                payload = {
+                    jsonrpc: "2.0", id: msg.id,
+                    result: { state_key: "InGameState", root_present: false, app_error_occurred: true, ingame_stage: "s2_loading" },
+                };
+            } else {
+                payload = { jsonrpc: "2.0", id: msg.id, result: {} };
+            }
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify(payload));
+        });
+    });
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const prev = process.env.SHAPEZ_BRIDGE_URL;
+    process.env.SHAPEZ_BRIDGE_URL = `http://127.0.0.1:${server.address().port}`;
+    let out;
+    try {
+        const mod = await loadFlow();
+        out = await mod.runGates(far, { apply: true });
+    } finally {
+        if (prev === undefined) delete process.env.SHAPEZ_BRIDGE_URL; else process.env.SHAPEZ_BRIDGE_URL = prev;
+        server.close();
+    }
+    eq(out.fatal, true, "时钟闸读不到 root → fatal");
+    ok(out.results.some(r => r.id === "G-1-clock" && !r.ok), "G-1 报红");
+    const g9r = out.results.find(r => r.id === "G9-world");
+    ok(!!g9r, "G-1 红之后 G9 仍然跑了（不早退丢弃根因）");
+    ok(g9r && g9r.ok === false, "G9 也报红");
+    ok(g9r && /必须重启/.test(g9r.hint || ""), "G9 的 hint 给出可执行结论：必须重启进程", g9r && g9r.hint);
+    eq(calls.filter(m => m === "obs").length, 0, "世界不可用时一个 obs 都没采");
+}
+
+{
+    /* 流程 4d：G12 只有在 opts.screenshotRegion 给了才跑，且它红了**不回滚** */
+    const far = mkL4([0, 0]);
+    const region = [-2, -4, 24, 3];
+    const { out, calls } = await withMockBridge(async (h, state, snap) => {
+        h.obsBefore = snap(far, [{ kind: "belt", dx: 60, dy: 60, code: 1, rot: 0 }]);
+        h.dry = { would_apply: far.entities.length, blocked: [], destroys: [], would_delete: 0, unknown_code: [] };
+        const mod = await loadFlow();
+        return mod.runGates(far, { apply: false, screenshotRegion: region });
+    });
+    ok(out.results.some(r => r.id === "G12-screenshot" && r.ok), "给了 screenshotRegion → G12 跑了且绿");
+    const shots = calls.filter(c => c.method === "screenshot");
+    eq(shots.length, 1, "只截一次");
+    ok(jEq(shots[0].params.region, region), "screenshot 收到的 region 就是调用方给的那个", shots[0].params.region);
+    ok(shots[0].params.hud === undefined, "不主动传 hud（默认不画 HUD，避免遮挡世界）");
+}
+
+{
+    /* 流程 4d-2：G12 红了**不回滚** —— 截图坏掉说明不了工厂坏掉，
+       把它当致命错误会拆掉一条其实没问题的线。 */
+    const far = mkL4([0, 0]);
+    const region = [-2, -4, 24, 3];
+    const calls = [];
+    let tick = 100;
+    const server = http.createServer((req, res) => {
+        let body = "";
+        req.on("data", c => body += c);
+        req.on("end", () => {
+            const msg = JSON.parse(body);
+            calls.push(msg.method);
+            let result;
+            if (msg.method === "debug_loop") result = { tick, logic_budget_ms: 8, speed: "regular", tick_rate: 120 };
+            else if (msg.method === "act") {
+                if (msg.params && msg.params.op === "step") { tick += (msg.params.ticks || 0) / 120; result = { ok: true }; }
+                else if (msg.params && msg.params.op === "paste_blueprint") {
+                    result = msg.params.dry_run
+                        ? { would_apply: far.entities.length, blocked: [], destroys: [], would_delete: 0, unknown_code: [] }
+                        : { applied: far.entities.length };
+                } else result = { ok: true };
+            } else if (msg.method === "status") result = { in_game: true };
+            else if (msg.method === "debug_app_state") result = { root_present: true, app_error_occurred: false, state_key: "InGameState" };
+            else if (msg.method === "obs") {
+                result = {
+                    entities: far.entities.map((e, i) => ({
+                        uid: 1000 + i, x: far.anchor[0] + e.dx, y: far.anchor[1] + e.dy, code: e.code, type: e.kind, r: e.rot,
+                    })),
+                    goal: { requirement: { shape: far.goal }, upgrade_levels: {} },
+                    hub: {}, tick: 100, truncated: false,
+                };
+            } else if (msg.method === "screenshot") {
+                // ★ 故意坏掉：一层都没画 ── G12 必须红，但整条流程不该因此回滚
+                result = { png_base64: "", w: 1, h: 1, world_rect: { cells: [-3, -5, 25, 4] }, drew: [], skipped: [] };
+            } else if (msg.method === "production") result = {};
+            else result = {};
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
+        });
+    });
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const prev = process.env.SHAPEZ_BRIDGE_URL;
+    process.env.SHAPEZ_BRIDGE_URL = `http://127.0.0.1:${server.address().port}`;
+    let out;
+    try {
+        const mod = await loadFlow();
+        out = await mod.runGates(far, { apply: false, screenshotRegion: region });
+    } finally {
+        if (prev === undefined) delete process.env.SHAPEZ_BRIDGE_URL; else process.env.SHAPEZ_BRIDGE_URL = prev;
+        server.close();
+    }
+    ok(out.results.some(r => r.id === "G12-screenshot" && !r.ok), "流程：drew 为空 → G12 报红");
+    /* ★ 关键：G12 红不等于工厂坏 —— 不回滚、不早退，流程照样跑完 --plan，
+       最后 ok:false 只是如实报告"截图坏了"。若把 G12 接到回滚分支上，这条会红。 */
+    ok(out.planOnly === true, "G12 红后流程照常走完（planOnly=true，没有被当成致命错误）");
+    /* --plan 本来就有两次 act：时钟闸的 step + G3 的 dry_run paste。G12 不该再加任何一次。 */
+    eq(calls.filter(m => m === "act").length, 2, "G12 红后没有多发任何 act（plan 模式只有 step + dry_run paste）");
+}
+
+{
+    /* 流程 4e：没给 screenshotRegion → 完全不截图（默认路径零额外开销） */
+    const far = mkL4([0, 0]);
+    const { out, calls } = await withMockBridge(async (h, state, snap) => {
+        h.obsBefore = snap(far, [{ kind: "belt", dx: 60, dy: 60, code: 1, rot: 0 }]);
+        h.dry = { would_apply: far.entities.length, blocked: [], destroys: [], would_delete: 0, unknown_code: [] };
+        const mod = await loadFlow();
+        return mod.runGates(far, { apply: false });
+    });
+    eq(calls.filter(c => c.method === "screenshot").length, 0, "没给 screenshotRegion 时一次 screenshot 都不发");
+    ok(!out.results.some(r => r.id === "G12-screenshot"), "结果里没有 G12 这条");
 }
 
 {
