@@ -429,6 +429,9 @@ class Mod extends shapez.Mod {
                 case "debug_canvas_api":
                     result = this.debugCanvasApi();
                     break;
+                case "debug_app_state":
+                    result = this.debugAppState();
+                    break;
                 default:
                     this.sendError(id, -32601, "method_not_found", "Unknown method: " + method);
                     return;
@@ -2633,6 +2636,67 @@ class Mod extends shapez.Mod {
     }
 
     /**
+     * 诊断：应用/状态机的内部健康度。
+     *
+     * 为什么需要它：`new_game` / `load_save` 偶尔会把游戏搞成「状态切到了 InGameState，
+     * 但 world 没建起来」的死局，而且 RPC 还回 `ok:true`。只能重启进程才能恢复。
+     * 外部看到的现象是 `status.in_game === false`，看不出为什么。
+     *
+     * 这里把判断"为什么进不去"需要的几个内部量一次报全：
+     *   · `APP_ERROR_OCCURED` —— 游戏自己的崩溃标志。`state_manager.js:58` 一旦它
+     *     为真，**所有** `moveToState` 都会被静默跳过（只打一行 console.warn），
+     *     这就是"切状态成功但什么都没发生"的直接原因。
+     *   · `InGameState.stage` —— 加载分 s1..s10 十步，卡在哪一步能区分
+     *     "还没开始加载" 和 "加载到一半崩了"。
+     *   · `root` 是否存在 —— 状态对了但没有 root 就是半死。
+     */
+    debugAppState() {
+        const out = {
+            state_key: null,
+            app_error_occurred: null,
+            state_manager_keys: null,
+            root_present: !!this.root,
+            mod_version: "0.1.0",
+        };
+        try {
+            const st = this.app && this.app.stateMgr && this.app.stateMgr.currentState;
+            out.state_key = st && st.getKey ? st.getKey() : null;
+            // 加载阶段：s1..s10。只在 InGameState 上有意义
+            if (st && typeof st.stage === "string") out.ingame_stage = st.stage;
+            if (st && st.stage !== undefined && typeof st.stage !== "string") out.ingame_stage = String(st.stage);
+            if (st && st.savegame) {
+                out.savegame = {
+                    internal_id: st.savegame.internalId || null,
+                    is_saveable: typeof st.savegame.isSaveable === "function" ? !!st.savegame.isSaveable() : null,
+                };
+            }
+            // 状态机里注册了哪些 state（能看出 InGameState 在不在）
+            const mgr = this.app && this.app.stateMgr;
+            if (mgr && mgr.stateClasses) out.state_manager_keys = Object.keys(mgr.stateClasses);
+        } catch (e) {
+            out.state_error = String(e && e.message ? e.message : e);
+        }
+        try {
+            out.app_error_occurred = !!(window).APP_ERROR_OCCURED;
+        } catch (e) {
+            out.app_error_error = String(e && e.message ? e.message : e);
+        }
+        try {
+            out.page_visible = !!(this.app && this.app.pageVisible);
+            out.focused = !!(this.app && this.app.focused);
+        } catch (e) { /* 忽略 */ }
+        // 加载覆盖层：卡住时它通常是显示的
+        try {
+            const st = this.app && this.app.stateMgr && this.app.stateMgr.currentState;
+            if (st && st.loadingOverlay) {
+                out.loading_overlay_attached = typeof st.loadingOverlay.isAttached === "function"
+                    ? !!st.loadingOverlay.isAttached() : null;
+            }
+        } catch (e) { /* 忽略 */ }
+        return out;
+    }
+
+    /**
      * 截取世界画面。
      *
      * 旧实现是 `root.canvas.toDataURL()` —— 它有三个硬缺陷，都是实测踩到的：
@@ -3209,23 +3273,42 @@ class Mod extends shapez.Mod {
             }
         }
         this.app.stateMgr.moveToState("InGameState", { savegame: sg });
-        // `moveToState` 在游戏的状态机里可能被**静默忽略**（fade 保护 / 同名状态重入）。
-        // 之前这里无条件回 ok:true，于是「加载失败」在外面看起来和「加载成功」一模一样 ——
-        // 实测过一次：连续三次 load_save 全回 ok，而游戏一直停在 MainMenuState。
-        // 所以必须等到真的进了游戏再回 ok，否则如实报错。
-        const entered = await this.waitFor(
-            () => {
-                const st = this.app.stateMgr.currentState;
-                return !!st && st.getKey && st.getKey() === "InGameState";
-            },
-            15000
-        );
-        if (!entered) {
-            throw this.rpcError(2003, "mod_error",
-                "load_save: game refused to enter InGameState (stayed in main menu)",
-                "The state machine may be mid-transition. Retry, or restart the game if it persists.");
+        return this.awaitWorldReady("load_save");
+    }
+
+    /**
+     * 等世界真的建起来，再回 ok。
+     *
+     * 为什么不能只看状态名：`moveToState("InGameState")` 只是换了状态对象，
+     * 真正的 world 是 InGameState 加载完 s1..s10 之后才 `gameStarted.dispatch(root)`。
+     * 中间任何一步崩了，状态名仍然是 InGameState 而 root 永远是 null ——
+     * 实测就是这个形态：RPC 回 ok:true，`status.in_game` 却是 false，只能重启进程。
+     *
+     * 所以判据必须是 **`this.root` 非空**（它只由 `gameStarted` 信号注入），
+     * 而不是 `currentState.getKey() === "InGameState"`。
+     */
+    async awaitWorldReady(opLabel, timeoutMs = 60000) {
+        const ok = await this.waitFor(() => !!this.root, timeoutMs);
+        if (ok) {
+            return { ok: true, op: opLabel, loading: true };
         }
-        return { ok: true, op: "load_save", internal_id: id, loading: true };
+        const diag = this.debugAppState();
+        // 分清两种失败，对症下药：
+        //   ① APP_ERROR_OCCURED=true  ⇒ 游戏已经崩过，**任何** moveToState 都会被
+        //      state_manager.js:58 静默跳过。只能重启进程，重试没用。
+        //   ② 没崩但 root 迟迟不来  ⇒ 加载中途卡住，可以重试。
+        const crashed = diag.app_error_occurred === true;
+        throw this.rpcError(2003, "mod_error",
+            opLabel + ": 状态切到了 " + (diag.state_key || "?")
+                + "，但 world 没有建起来（root 仍为空）"
+                + (crashed ? "；且 APP_ERROR_OCCURED=true" : ""),
+            JSON.stringify({
+                diagnosis: crashed
+                    ? "游戏已处于崩溃状态：state_manager.js:58 会让后续所有 moveToState 静默跳过。必须重启游戏进程，重试无效。"
+                    : "加载卡住：可能停在中途某个 stage。可以重试，反复卡住则需重启。",
+                retry_worthwhile: !crashed,
+                detail: diag,
+            }));
     }
 
     async newGame(p) {
@@ -3257,20 +3340,12 @@ class Mod extends shapez.Mod {
             throw this.rpcError(2002, "game_rejected", "could not create savegame (slot limit?): " + e);
         }
         this.app.stateMgr.moveToState("InGameState", { savegame: sg, gameModeId: mode });
-        // 同 loadSave：`moveToState` 可能被状态机静默忽略，必须等到真进去了再回 ok。
-        const entered = await this.waitFor(
-            () => {
-                const st = this.app.stateMgr.currentState;
-                return !!st && st.getKey && st.getKey() === "InGameState";
-            },
-            15000
-        );
-        if (!entered) {
-            throw this.rpcError(2003, "mod_error",
-                "new_game: game refused to enter InGameState (stayed in main menu)",
-                "The state machine may be mid-transition. Retry, or restart the game if it persists.");
-        }
-        return { ok: true, op: "new_game", game_mode: mode, internal_id: sg && sg.internalId ? sg.internalId : null };
+        const ready = await this.awaitWorldReady("new_game");
+        return {
+            ...ready,
+            game_mode: mode,
+            internal_id: sg && sg.internalId ? sg.internalId : null,
+        };
     }
 
     waitFor(predicate, timeoutMs) {
