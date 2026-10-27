@@ -27,6 +27,116 @@ import { buildWorld } from "./connect.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SAVE = path.resolve(HERE, "../../../research/ai-plan/live-L4-entities.json");
+const SRC = path.resolve(HERE, "remove.mjs");
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * A. 变异验证 (`--mutate`)：把实现的某个判据**改坏**，测试必须变红。
+ *
+ * 为什么要有这一步：一个只在"正确实现"上全绿的测试集，
+ * 无法证明它**真的在检查**那件事 —— 它可能只是在跑一遍代码。
+ * 变异测试是唯一能证明"检查器有判断力"的离线手段。
+ *
+ * 做法：读 remove.mjs 源码 → 字符串替换成变异体 → 写临时文件 →
+ * 生成一个只改 import 路径的测试副本 → 用子进程跑它 → 断言它**红了**、
+ * 而且红的条数与预期一致（不要求具体哪几条，只要求"处理这条判据的用例被抓住"）。
+ *
+ * 用法：node src/agent/macros/remove.test.mjs --mutate
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+const MUTANTS = [
+    {
+        id: "M1-would-disconnect-always-empty",
+        why: "把 would_disconnect 检查改成恒空（任务书点名的变异）",
+        from: "const wouldDisconnect = analyzeRemoval(c0, picked.map(p => p.uid));",
+        to: "const wouldDisconnect = []; /* MUTANT */",
+        expectRed: 4,
+    },
+    {
+        id: "M2-trash-offset-by-one",
+        why: "把 portCellOf 的 DIRV 偏移去掉 → trash 落在槽位格而不是喷口格",
+        from: "const portCellOf = (origin, q) => [origin[0] + q.cell[0] + DIRV[q.dir][0], origin[1] + q.cell[1] + DIRV[q.dir][1]];",
+        to: "const portCellOf = (origin, q) => [origin[0] + q.cell[0], origin[1] + q.cell[1]]; /* MUTANT */",
+        expectRed: 5,
+    },
+    {
+        id: "M3-replace-deletes-all-belts",
+        why: "replace_run 删光 region 内全部带子（不再区分「被新建筑覆盖」）",
+        from: "        if (placedCells.has(key(b.x, b.y))) {",
+        to: "        if (true) { /* MUTANT */",
+        expectRed: 5,
+    },
+    {
+        id: "M4-remove-silently-skips-missing-uid",
+        why: "删不存在的 uid 时静默跳过（而不是 endpoint_not_found 整单拒绝）",
+        from: '            if (!rec) { bad.push({ uid, why: "不在当前世界（obs 过期或已被删）" }); continue; }',
+        to: "            if (!rec) { continue; } /* MUTANT */",
+        expectRed: 3,
+    },
+    {
+        id: "M5-replace-ignores-wasteRoles",
+        why: "replace_run 的 trash 不再看 wasteRoles（销毁没人签字也放行）",
+        from: "        const wasteRoles = primary.tpl.wasteRoles || [];",
+        to: '        const wasteRoles = ["left", "right", "primary", "secondary"]; /* MUTANT */',
+        expectRed: 2,
+    },
+    {
+        id: "M6-trash-unused-ignores-wasteRoles",
+        why: "trash_unused 不再要求 confirm_waste",
+        from: "    if (!wasteRoles.includes(port.role) && !opts.confirm_waste) {",
+        to: "    if (false) { /* MUTANT */",
+        expectRed: 1,
+    },
+];
+
+if (process.argv.includes("--mutate")) {
+    const { spawnSync } = await import("node:child_process");
+    const os = await import("node:os");
+    const srcText = fs.readFileSync(SRC, "utf8");
+    const selfText = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "remove-mut-"));
+    let bad = 0;
+    console.log(`变异验证：${MUTANTS.length} 个变异体\n`);
+    for (const m of MUTANTS) {
+        if (!srcText.includes(m.from)) {
+            console.log(`\x1b[31m✗ ${m.id}\x1b[0m\n      锚点未找到（实现已改？）: ${m.from.slice(0, 70)}`);
+            bad++;
+            continue;
+        }
+        const mutantPath = path.join(tmpDir, "remove.mutant.mjs");
+        const testPath = path.join(tmpDir, "remove.test.mutant.mjs");
+        fs.writeFileSync(mutantPath, srcText.replace(m.from, m.to));
+        /* 测试副本：只把 relatives 换成指向真目录的绝对路径，其余逐字照抄 ——
+           保证跑的是**同一份测试**，不是另写的一套。 */
+        const rewritten = selfText
+            .replace('from "./remove.mjs"', `from ${JSON.stringify("file://" + mutantPath.replace(/\\/g, "/"))}`)
+            .replace('from "./contract.mjs"', `from ${JSON.stringify("file://" + path.resolve(HERE, "contract.mjs").replace(/\\/g, "/"))}`)
+            .replace('from "./connect.mjs"', `from ${JSON.stringify("file://" + path.resolve(HERE, "connect.mjs").replace(/\\/g, "/"))}`)
+            .replace('from "../../ai/belt-rules.mjs"', `from ${JSON.stringify("file://" + path.resolve(HERE, "../../ai/belt-rules.mjs").replace(/\\/g, "/"))}`)
+            .replace(
+                'const SAVE = path.resolve(HERE, "../../../research/ai-plan/live-L4-entities.json");',
+                `const SAVE = ${JSON.stringify(SAVE)};`)
+            .replace(
+                'const SRC = path.resolve(HERE, "remove.mjs");',
+                `const SRC = ${JSON.stringify(SRC)};`);
+        fs.writeFileSync(testPath, rewritten);
+        const r = spawnSync(process.execPath, [testPath], { encoding: "utf8" });
+        const out = (r.stdout || "") + (r.stderr || "");
+        const red = (out.match(/^✗/gm) || []).length;
+        const crashed = /SyntaxError|ReferenceError|TypeError/.test(out) && red === 0;
+        const caught = r.status !== 0 && red === m.expectRed;
+        if (caught) {
+            console.log(`\x1b[32m✓ ${m.id}\x1b[0m  红 ${red}/${m.expectRed} 条 —— ${m.why}`);
+        } else {
+            bad++;
+            console.log(`\x1b[31m✗ ${m.id}\x1b[0m  期望红 ${m.expectRed} 条，实得 ${red} 条`
+                + `（退出码 ${r.status}${crashed ? "，疑似崩溃而不是断言失败" : ""}）\n       ${m.why}`);
+        }
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    console.log(`\n${bad === 0 ? "\x1b[32m全部变异被抓\x1b[0m" : `\x1b[31m${bad} 个变异逃逸\x1b[0m`}`);
+    process.exitCode = bad ? 1 : 0;
+    process.exit();
+}
 
 let pass = 0, fail = 0;
 const results = [];
@@ -329,10 +439,9 @@ t("replace_run：只给 cutter 不给 trash → 合法（两个输出都还有�
     /* 这一条纠正了我最初的直觉，值得写进测试以免将来"顺手加个 trash"：
        region = [4,-14,5,-13]，cutter origin (4,-13) ⇒ 左槽喷 (4,-14)（region 内、被删）、
        右槽喷 (5,-14)（region 内、保留）。
-       左槽喷口那格 (4,-14) 被删掉后是**空**的 —— 但 trashSpecs 为空，
-       所以「空着没人接」这件事不会被判成 orphaned-output（它没有实体可归因）。
-       故本宏如实返回 ok，并把 kept 列出来让调用方自己看。
-       真要为左槽销货，就该给 trash（见下一条）。 */
+       左槽喷口那格 (4,-14) 被删后是**空**的，但 trashSpecs 为空 ⇒
+       「空着没人接」没有实体可归因，不会被判成 orphaned-output。
+       宏如实返回 ok，并把 kept 列出来让调用方自己看。 */
     const r = replaceRun({ region: L4_REGION, building: "cutter" }, CTX);
     assert.ok(r.ok, `应成功：${JSON.stringify(r.error)}`);
     eq(r.placed.length, 1);
@@ -341,10 +450,12 @@ t("replace_run：只给 cutter 不给 trash → 合法（两个输出都还有�
     ok(r.warnings.some(w => w.code === "kept-belts"), "保留的 (4,-14) 必须出现在 warning 里");
 });
 
-t("replace_run：region 把 (5,-14) 也圈进 footprint → 右槽 orphaned-output，hint 指路加 trash", () => {
-    /* region = [4,-14,5,-14]：cutter footprint 只能放 (4,-14)（2×1 需要 (4,-14)(5,-14)），
-       于是 deque 掉 (5,-14) 这条保留带 ⇒ 右槽喷口那格空了 ⇒ orphaned-output。 */
-    const r = replaceRun({ region: [4, -14, 5, -14], building: "cutter" }, CTX);
+t("replace_run：region 圈进没有下游的空域 → 右槽 orphaned-output，hint 指路加 trash", () => {
+    /* region = [4,-17,5,-17]：这 2 格都是带子，且是 x=4/x=5 竖线的**顶端**
+       （它们下面有货、上面 y=-16 是 balancer，不是带子）。
+       把 cutter 摆在这里 ⇒ 输出喷向 y=-18，(4,-18)=10132 有带子、(5,-18) 是空 ⇒
+       右槽 orphaned-output。这是程序化搜索确认过的 32 个 region 之一。 */
+    const r = replaceRun({ region: [4, -17, 5, -17], building: "cutter" }, CTX);
     eq(r.ok, false);
     eq(r.error.code, "precondition_failed");
     ok(r.firstConflict, "firstConflict 必须非空");
@@ -401,17 +512,19 @@ t("负例：未知建筑 / 隧道 / hub → unsupported_building（不静默降�
 });
 
 t("负例：building:\"belt\" 但 region 有空格 → precondition_failed（契约原义的「带子数===面积」）", () => {
-    /* [4,-17,5,-16]：4 格里只有 (4,-17)=10131 是带子，其余 3 格是空的
-       （x=5 在 y≤-16 已经断了）—— 这正是「框选偏了」的形态。 */
-    const r = replaceRun({ region: [4, -17, 5, -16], building: "belt" }, CTX);
+    /* region = [5,-18,6,-18]：只有 (5,-18) 是带子，(6,-18) 是空的。
+       注意机器检查**先**跑（那是误删 42 实体的形态），所以这里必须挑一个不含机器的盒子。
+       [4,-17,5,-16] 会先撞上 balancer 10085 的 footprint，得到 not_a_run —— 也正确，
+       但那样就测不到「空格」这条，所以用下面这个。 */
+    const r = replaceRun({ region: [5, -18, 6, -18], building: "belt" }, CTX);
     eq(r.ok, false);
     eq(r.error.code, "precondition_failed");
     ok(/空/.test(r.error.message), `message 要点出空格，实得：${r.error.message}`);
-    eq(r.error.detail.emptyCells.length, 3);
+    eq(r.error.detail.emptyCells, [[5, -18], [6, -18]]);
 
     /* 同一 region 走**机器**路径是允许的（扩展路径放宽到「带子或空格」）：
        这是两条路径的**有意差异**，必须显式断言，否则将来有人会把放宽也搬到 belt 路径上。 */
-    const m = replaceRun({ region: [4, -17, 5, -16], building: "cutter" }, CTX);
+    const m = replaceRun({ region: [5, -18, 6, -18], building: "cutter" }, CTX);
     ok(!(m.ok === false && m.error.code === "precondition_failed" && /空/.test(m.error.message)),
         "机器路径不应因空格被拒（它随后会以别的理由失败或成功）");
 });
@@ -428,14 +541,15 @@ t("契约原义：building:\"belt\" 按邻居反解 rv；现有存档自洽 → 
     }
 });
 
-t("负例：belt 路径遇到「只有一侧有邻居」→ 拒绝而不是猜（三选一不是唯一解）", () => {
-    /* (4,-14) 的上游 (4,-13) 在，但下游 (4,-15) 的 entry 被改坏成不朝它 ⇒ 只有入口有证据。
-       剩下的出口方向有 3 种合法解，宏必须拒绝。 */
-    const broken = ENTITIES.map(e => e.uid === UID.b4_15 ? { ...e, rotation_variant: 2, code: 3 } : e);
-    const r = replaceRun({ region: [4, -14, 4, -14], building: "belt" }, { entities: broken });
+t("负例：belt 路径「只有一侧有邻居证据」→ 拒绝而不是猜（三选一不是唯一解）", () => {
+    /* 构造单侧证据：(4,-13)=10209 的**上游** (4,-12)=10208 删掉，
+       于是本格只剩下游 (4,-14) 的 entry=bottom 作为证据（exit=top）。
+       入口面有 3 种合法解（left/right/bottom），宏必须拒绝。 */
+    const noUpstream = ENTITIES.filter(e => e.uid !== UID.b4_12);
+    const r = replaceRun({ region: [4, -13, 4, -13], building: "belt" }, { entities: noUpstream });
     eq(r.ok, false);
     eq(r.error.code, "precondition_failed");
-    ok(/不猜|3 种/.test(r.error.message + r.error.hint), `诊断要说明「不猜」：${r.error.message}`);
+    ok(/不猜|3 种/.test(r.error.message + r.error.hint), `诊断要说明「不猜」：${r.error.message} | ${r.error.hint}`);
 });
 
 t("契约原义：把某格的 rv 人为改坏 → 报 rv-drift 并按邻居解出正确值（这是本路径的用途）", () => {
@@ -608,7 +722,7 @@ t("每个失败返回都带 hint（可执行的下一步，不是只说「失败
         removeRun({ uids: [UID.cutter] }, CTX),
         removeRun({ uids: [UID.b4_13, UID.b4_15] }, CTX),
         replaceRun({ region: [4, -13, 5, -13], building: L4_BUILDING }, CTX),
-        replaceRun({ region: L4_REGION, building: "cutter" }, CTX),
+        replaceRun({ region: [4, -17, 5, -17], building: "cutter" }, CTX),
         replaceRun({ region: L4_REGION, building: ["cutter", { kind: "trash", port: "left" }] }, CTX),
         trashUnused({ outlet: { uid: UID.cutter, port: "left" } }, CTX),
         trashUnused({ outlet: { uid: UID.cutter } }, CTX),
