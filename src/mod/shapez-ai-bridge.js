@@ -426,6 +426,9 @@ class Mod extends shapez.Mod {
                 case "world_info":
                     result = this.worldInfo();
                     break;
+                case "debug_canvas_api":
+                    result = this.debugCanvasApi();
+                    break;
                 default:
                     this.sendError(id, -32601, "method_not_found", "Unknown method: " + method);
                     return;
@@ -2563,46 +2566,420 @@ class Mod extends shapez.Mod {
         return Math.round(100 * r) / 100;
     }
 
+    /**
+     * 诊断：把离屏绘制需要的构造器/字段在真实运行时的位置报出来。
+     *
+     * 这些名字在不同打包版本里可能不同（`DrawParameters` vs `gDrawParameters`），
+     * 猜错会让 screenshot 静默画不出东西 —— 与其猜，不如让游戏自己说。
+     */
+    debugCanvasApi() {
+        const root = this.requireRoot();
+        const shapez = (window).shapez || {};
+        const names = Object.keys(shapez).sort();
+        const pick = k => {
+            try { return typeof shapez[k]; } catch (e) { return "throw"; }
+        };
+        const interesting = {};
+        for (const k of names) {
+            if (/draw|param|rect|theme|global|config|atlas|sprite/i.test(k)) interesting[k] = pick(k);
+        }
+        // 从 root 侧找可用的 DrawParameters 实例
+        let sampleFromCore = null;
+        try {
+            const core = root.core || (root.app && root.app.gameCore) || null;
+            if (core) {
+                sampleFromCore = {
+                    core_keys: Object.keys(core).filter(k => /draw|param/i.test(k)),
+                    has_lastDrawParameters: !!core.lastDrawParameters,
+                };
+            }
+        } catch (e) { sampleFromCore = { error: String(e && e.message ? e.message : e) }; }
+        // 试着真的构造一次 DrawParameters 看会不会炸
+        let ctorTest = null;
+        try {
+            const C = shapez.DrawParameters || shapez.gDrawParameters;
+            if (typeof C === "function") {
+                const r = new C({ context: null, visibleRect: { x: 0, y: 0 }, desiredAtlasScale: "1.0", zoomLevel: 1, root });
+                ctorTest = { ok: true, keys: Object.keys(r) };
+            } else {
+                ctorTest = { ok: false, reason: "window.shapez 上没有 DrawParameters" };
+            }
+        } catch (e) { ctorTest = { ok: false, error: String(e && e.message ? e.message : e) }; }
+        return {
+            shapez_global_present: !!(window).shapez,
+            shapez_key_count: names.length,
+            interesting_shapez_keys: interesting,
+            drawParameters_ctor_test: ctorTest,
+            core_probe: sampleFromCore,
+            hub_component_names: (() => {
+                try {
+                    const out = [];
+                    for (const e of (root.entityMgr && root.entityMgr.entities) || []) {
+                        const sme = e.components && e.components.StaticMapEntity;
+                        if (sme && sme.code === 26) {
+                            out.push({ uid: e.uid, origin: sme.origin, comps: Object.keys(e.components) });
+                        }
+                    }
+                    return out.slice(0, 3);
+                } catch (e) { return [{ error: String(e && e.message ? e.message : e) }]; }
+            })(),
+            canvas: root.canvas ? { w: root.canvas.width, h: root.canvas.height } : null,
+            gameWidth: root.gameWidth,
+            gameHeight: root.gameHeight,
+            camera: { x: root.camera.center.x, y: root.camera.center.y, zoom: root.camera.zoomLevel },
+            tileSize: this.tileSize(),
+            dpi: this.deviceDPI(),
+        };
+    }
+
+    /**
+     * 截取世界画面。
+     *
+     * 旧实现是 `root.canvas.toDataURL()` —— 它有三个硬缺陷，都是实测踩到的：
+     *
+     *  1. **HUD 画在同一张 canvas 上**。`core.draw()` 的最后一步是 `root.hud.draw(params)`
+     *     （recon/upstream-full/src/js/game/core.js:490），所以工具栏、任务面板、
+     *     正在看的 hub 弹窗全都会被截进去，把世界内容挡住。
+     *     实测：钌切割机 `(4,-13)` 被 hub 面板完全遮住，截图里根本看不见。
+     *
+     *  2. **画面是"窗口现在什么样"，不是"我要看的那块"**。相机改位置是平滑插值
+     *     （`camera.js:983`，每步只走 0.8%），且 `shouldRender()` 在窗口不可见时
+     *     直接返回 false（`core.js:303-313`）—— 此时 canvas 停在上一帧，
+     *     截出来是过期画面。实测：设完 camera 等 3 秒截到的还是旧位置。
+     *
+     *  3. **没有区域捕获**。想截「某个 bbox 里有什么」只能先把相机挪过去，
+     *     而挪动本身受窗口尺寸与 DPI 影响，结果不可复现。
+     *
+     * 新实现不碰 `root.canvas`，而是**自己建一张离屏 canvas**，直接调用游戏自己的
+     * 绘制函数（`root.map.drawBackground` / `systems.belt.drawBeltItems` /
+     * `root.map.drawForeground` / `systems.hub.draw`），用**自建的临时相机**决定
+     * 看哪里。好处：
+     *
+     *  · 不带 HUD（因为压根不调 `root.hud.draw`）
+     *  · 不受窗口可见性影响（不依赖 `shouldRender()`）
+     *  · 相机是瞬移的（不需要插值，也不受 `clampToBounds` 干扰）
+     *  · 可以由 `region` 直接指定 bbox，结果可复现
+     *
+     * params:
+     *   region  [x0,y0,x1,y1]  世界格坐标；给了就按它取景（优先于 center/zoom）
+     *   center  [x,y]          世界格坐标，取景中心（region 未给时生效，默认相机当前中心）
+     *   zoom    number         缩放倍率（region 未给时生效，默认相机当前 zoom）
+     *   width/height           输出逻辑尺寸（默认取游戏窗口尺寸）
+     *   scale   0..1           输出缩放（在逻辑尺寸之基础上再缩放）
+     *   hud     bool           是否画 HUD（默认 false；只有排查 UI 问题才需要 true）
+     *   hideHubPanel bool      hub 面板不在 HUD 里，而是**烘焙进 hub 实体贴图**
+     *                          （systems/hub.js:51），所以默认截图仍然挡着一大片。
+     *                          true 时不画 hub sprite，改用红色色块标出 hub 的 4×4
+     *                          位置 —— 这样它周围原本被盖住的产线能看见。
+     *   margin  number         世界格的留白（默认 1）
+     *   maxSide number         输出长边上限像素（默认 4096，防 OOM）
+     *
+     * 返回：png_base64 + w/h + 实际取景（worldRect / zoom），便于复现与断言。
+     */
     async screenshot(p) {
         const root = this.requireRoot();
-        const scale = p.scale === undefined ? 1 : p.scale;
+        const params = p || {};
+
+        // ── 1. 决定输出画布尺寸（逻辑尺寸，不含 DPI）──
+        let outW = Number.isFinite(params.width) ? params.width : root.gameWidth;
+        let outH = Number.isFinite(params.height) ? params.height : root.gameHeight;
+        if (!(outW > 0) || !(outH > 0)) {
+            throw this.rpcError(2001, "invalid_action", "width/height 必须是正数");
+        }
+
+        // ── 2. 决定取景：region 优先，其次 center+zoom，最后沿用当前相机 ──
+        const cam = root.camera;
+        let camX, camY, zoom;
+        const region = params.region;
+        const wantHud = params.hud === true;
+        const margin = Number.isFinite(params.margin) ? params.margin : 1;
+        let worldRect = null;
+
+        if (Array.isArray(region)) {
+            if (region.length !== 4 || !region.every(Number.isFinite)) {
+                throw this.rpcError(2001, "invalid_action", "region 必须是 [x0,y0,x1,y1] 四个有限数");
+            }
+            const [ax, ay, bx, by] = region;
+            // region 是**格子**坐标。格子 (x,y) 覆盖世界像素 [x*ts, (x+1)*ts)。
+            // 取景到格子边界外扩 margin 格，这样最外圈格子完整可见、不切边。
+            const ts = this.tileSize();
+            const x0 = Math.min(ax, bx) - margin;
+            const y0 = Math.min(ay, by) - margin;
+            const x1 = Math.max(ax, bx) + 1 + margin;
+            const y1 = Math.max(ay, by) + 1 + margin;
+            const worldW = (x1 - x0) * ts;
+            const worldH = (y1 - y0) * ts;
+            // 世界像素 → 屏幕像素：zoom 就是这个倍率（camera.transform 用 zoom 缩放）
+            zoom = Math.min(outW / worldW, outH / worldH);
+            // 让这块矩形居中
+            const visW = outW / zoom;
+            const visH = outH / zoom;
+            camX = (x0 * ts + x1 * ts) / 2;
+            camY = (y0 * ts + y1 * ts) / 2;
+            worldRect = { cells: [x0, y0, x1 - 1, y1 - 1], px: [x0 * ts, y0 * ts, worldW, worldH], view: [camX - visW / 2, camY - visH / 2, visW, visH] };
+        } else {
+            if (Array.isArray(params.center)) {
+                if (params.center.length !== 2 || !params.center.every(Number.isFinite)) {
+                    throw this.rpcError(2001, "invalid_action", "center 必须是 [x,y]");
+                }
+                camX = params.center[0] * this.tileSize();
+                camY = params.center[1] * this.tileSize();
+            } else {
+                camX = cam.center.x;
+                camY = cam.center.y;
+            }
+            zoom = Number.isFinite(params.zoom) ? params.zoom : cam.zoomLevel;
+        }
+        if (!(zoom > 0) || !Number.isFinite(zoom)) {
+            throw this.rpcError(2001, "invalid_action", "zoom 必须是正数");
+        }
+        zoom = Math.max(0.01, Math.min(40, zoom));
+
+        // ── 3. 输出缩放 + 长边上限 ──
+        const scale = params.scale === undefined ? 1 : params.scale;
         if (typeof scale !== "number" || !(scale > 0) || scale > 1) {
             throw this.rpcError(2001, "invalid_action", "scale must be a number in (0,1]");
         }
-        const canvas = root.canvas;
-        if (!canvas || typeof canvas.toDataURL !== "function") {
-            throw this.rpcError(2003, "mod_error", "game canvas is not available");
+        const maxSide = Number.isFinite(params.maxSide) ? params.maxSide : 4096;
+        let cssW = Math.max(1, Math.round(outW * scale));
+        let cssH = Math.max(1, Math.round(outH * scale));
+        const longSide = Math.max(cssW, cssH);
+        if (longSide > maxSide) {
+            const k = maxSide / longSide;
+            cssW = Math.max(1, Math.round(cssW * k));
+            cssH = Math.max(1, Math.round(cssH * k));
         }
-        let src = canvas;
-        let w = canvas.width;
-        let h = canvas.height;
-        if (scale < 1) {
+
+        // ── 4. 建离屏 canvas，按设备像素密度放大（与游戏主 canvas 同口径）──
+        const dpi = this.deviceDPI();
+        const cv = document.createElement("canvas");
+        cv.width = Math.max(1, Math.round(cssW * dpi));
+        cv.height = Math.max(1, Math.round(cssH * dpi));
+        const ctx = cv.getContext("2d");
+        if (!ctx) throw this.rpcError(2003, "mod_error", "无法创建离屏 2D 上下文");
+        // 与游戏一致：先把上下文按 dpi 缩放，之后所有绘制都用逻辑像素
+        ctx.scale(dpi, dpi);
+        ctx.imageSmoothingEnabled = true;
+        try {
+            ctx.imageSmoothingQuality = "high";
+        } catch (e) { /* 老浏览器忽略 */ }
+
+        // 背景：用游戏自己的地图底色，避免透明 PNG 在不同查看器里变成黑/白
+        try {
+            const bg = (window).THEME && (window).THEME.map && (window).THEME.map.background;
+            ctx.fillStyle = bg || "#30343d";
+        } catch (e) {
+            ctx.fillStyle = "#30343d";
+        }
+        ctx.fillRect(0, 0, cssW, cssH);
+
+        // ── 5. 组装 DrawParameters（与 core.draw() 同形）──
+        const DrawParameters = this.drawParametersCtor();
+        if (!DrawParameters) {
+            throw this.rpcError(2003, "mod_error",
+                "找不到 DrawParameters 构造器 —— 无法离屏绘制。这通常意味着游戏版本与 mod 不匹配。",
+                "回退方案：传 { fallback: true } 走旧的 canvas 截图（会带 HUD）。");
+        }
+
+        // 视野矩形（世界像素）
+        const visW = cssW / zoom;
+        const visH = cssH / zoom;
+        const left = camX - visW / 2;
+        const top = camY - visH / 2;
+        const visibleRect = this.rectCtor(left, top, visW, visH);
+
+        // 纹理图集精度：与 core.draw 同一套阈值（core.js:400-406）
+        let desiredAtlasScale = "0.25";
+        const eff = (zoom / this.assetsDpi()) * dpi * this.assetsSharpness();
+        const lowQuality = !!(root.app && root.app.settings && root.app.settings.getAllSettings
+            && root.app.settings.getAllSettings().lowQualityTextures);
+        if (eff > 0.5 && !lowQuality) desiredAtlasScale = this.originalSpriteScale();
+        else if (eff > 0.35 && !lowQuality) desiredAtlasScale = "0.5";
+
+        const dparams = new DrawParameters({
+            context: ctx,
+            visibleRect,
+            desiredAtlasScale,
+            zoomLevel: zoom,
+            root,
+        });
+
+        // ── 6. 变换到世界空间（等价于 camera.transform，但用我们的 zoom/left/top）──
+        ctx.save();
+        ctx.transform(zoom, 0, 0, zoom, -zoom * left, -zoom * top);
+
+        const systems = root.systemMgr.systems;
+        const drew = [];
+        const skip = [];
+        // 世界内容。顺序照抄 core.draw()（core.js:452-490）——
+        // 少画一层就会缺元素（比如漏 drawBeltItems 就看不见带上的物品）。
+        // hub 的面板是**烘焙进实体贴图**的（systems/hub.js:51 redrawHubBaseTexture），
+        // 不是 HUD —— 所以跳过 `root.hud.draw` 拿不掉它。它会盖住 hub 周围 4×4 以上
+        // 一大片世界内容（实测遮住了钌切割机）。
+        // `hideHubPanel:true` 时不调 hub 系统的 draw，改用色块标出 hub 的位置：
+        // 既看得见"hub 在这"，又能看见它周围原本被盖住的产线。
+        const hideHubPanel = params.hideHubPanel === true;
+        const steps = [
+            ["mapBackground", () => root.map.drawBackground(dparams)],
+            ["beltItems", () => systems.belt && systems.belt.drawBeltItems(dparams)],
+            ["mapForeground", () => root.map.drawForeground(dparams)],
+            ...(hideHubPanel ? [] : [["hub", () => systems.hub && systems.hub.draw(dparams)]]),
+        ];
+        for (const [name, fn] of steps) {
+            try { fn(); drew.push(name); }
+            catch (e) { skip.push({ step: name, error: String(e && e.message ? e.message : e) }); }
+        }
+
+        // hub 位置标记：必须在世界内容**之后**画，否则被背景盖掉。
+        if (hideHubPanel) {
             try {
-                const c2 = document.createElement("canvas");
-                c2.width = Math.max(1, Math.round(canvas.width * scale));
-                c2.height = Math.max(1, Math.round(canvas.height * scale));
-                const ctx = c2.getContext("2d");
-                ctx.imageSmoothingEnabled = true;
-                ctx.drawImage(canvas, 0, 0, c2.width, c2.height);
-                src = c2;
-                w = c2.width;
-                h = c2.height;
+                const hubEnts = (root.entityMgr && root.entityMgr.entities || [])
+                    // 组件名是 "Hub"（实测 debug_canvas_api 读出），不是 "HubComponent"
+                    .filter(e => e.components && (e.components.Hub || e.components.HubComponent));
+                const ts = this.tileSize();
+                for (const e of hubEnts) {
+                    const sme = e.components.StaticMapEntity;
+                    if (!sme) continue;
+                    const o = sme.origin;
+                    ctx.save();
+                    ctx.globalAlpha = 0.3;
+                    ctx.fillStyle = "#e8455f";
+                    ctx.fillRect(o.x * ts, o.y * ts, 4 * ts, 4 * ts);
+                    ctx.globalAlpha = 1;
+                    ctx.strokeStyle = "#e8455f";
+                    ctx.lineWidth = Math.max(1, 3 / zoom);
+                    ctx.strokeRect(o.x * ts, o.y * ts, 4 * ts, 4 * ts);
+                    ctx.restore();
+                }
+                skip.push({ step: "hub", reason: "hideHubPanel：不画面板，只画位置色块" });
             } catch (e) {
-                // 缩放失败不致命：退回原尺寸
-                src = canvas;
-                w = canvas.width;
-                h = canvas.height;
+                skip.push({ step: "hub-mark", error: String(e && e.message ? e.message : e) });
             }
         }
+        ctx.restore();
+
+        // ── 7. 可选：HUD（默认关）──
+        if (wantHud) {
+            try {
+                // HUD 需要屏幕空间参数：zoomLevel=1、可见矩形=整个逻辑画布
+                dparams.zoomLevel = 1;
+                dparams.visibleRect = this.rectCtor(0, 0, cssW, cssH);
+                ctx.save();
+                root.hud.draw(dparams);
+                ctx.restore();
+                drew.push("hud");
+            } catch (e) {
+                skip.push({ step: "hud", error: String(e && e.message ? e.message : e) });
+            }
+        } else {
+            skip.push({ step: "hud", reason: "按需关闭（默认不画，避免遮挡世界）" });
+        }
+
+        // ── 8. 导出 ──
         let url;
         try {
-            url = src.toDataURL("image/png");
+            url = cv.toDataURL("image/png");
         } catch (e) {
             throw this.rpcError(2003, "mod_error", "canvas.toDataURL failed: " + e);
         }
         const comma = url.indexOf(",");
         const b64 = comma >= 0 ? url.slice(comma + 1) : url;
-        return { png_base64: b64, w, h, scale };
+
+        if (!drew.length) {
+            throw this.rpcError(2003, "mod_error",
+                "一层都没画出来（所有绘制步骤都抛错）",
+                JSON.stringify(skip));
+        }
+
+        return {
+            png_base64: b64,
+            w: cv.width,
+            h: cv.height,
+            css_w: cssW,
+            css_h: cssH,
+            dpi,
+            zoom,
+            hud: wantHud,
+            hub_panel_hidden: params.hideHubPanel === true,
+            world_rect: worldRect,
+            view_px: [left, top, visW, visH],
+            drew,
+            skipped: skip,
+        };
+    }
+
+    /** 一格的世界像素数（globalConfig.tileSize，游戏里恒为 32）。 */
+    tileSize() {
+        try {
+            const g = (window).shapez && (window).shapez.globalConfig;
+            if (g && Number.isFinite(g.tileSize)) return g.tileSize;
+        } catch (e) { /* 下面兜底 */ }
+        return 32;
+    }
+
+    /** 设备像素比，与游戏 core.resize 用的是同一个来源。 */
+    deviceDPI() {
+        try {
+            const d = (window).devicePixelRatio;
+            if (Number.isFinite(d) && d > 0) return Math.min(3, d);
+        } catch (e) { /* 兜底 */ }
+        return 1;
+    }
+
+    assetsDpi() {
+        try {
+            const g = (window).shapez && (window).shapez.globalConfig;
+            if (g && Number.isFinite(g.assetsDpi)) return g.assetsDpi;
+        } catch (e) { /* 兜底 */ }
+        return 1;
+    }
+
+    assetsSharpness() {
+        try {
+            const g = (window).shapez && (window).shapez.globalConfig;
+            if (g && Number.isFinite(g.assetsSharpness)) return g.assetsSharpness;
+        } catch (e) { /* 兜底 */ }
+        return 1;
+    }
+
+    originalSpriteScale() {
+        return "1.0";
+    }
+
+    /** 找到一个可用的 DrawParameters 构造器（优先用游戏自带的，保证字段语义一致）。 */
+    drawParametersCtor() {
+        if (this._DrawParameters !== undefined) return this._DrawParameters;
+        const shapez = (window).shapez || {};
+        const cands = [
+            shapez.DrawParameters,
+            shapez.gDrawParameters,
+            shapez.DrawParametersCtor,
+        ];
+        for (const c of cands) if (typeof c === "function") { this._DrawParameters = c; return c; }
+        // 从已有对象反推：core 上可能挂着一份示例参数
+        try {
+            const root = this.root;
+            const p = root && root.core && root.core.lastDrawParameters;
+            if (p && p.constructor) { this._DrawParameters = p.constructor; return p.constructor; }
+        } catch (e) { /* 忽略 */ }
+        this._DrawParameters = null;
+        return null;
+    }
+
+    /** 找到一个可用的 Rectangle 构造器。 */
+    rectCtor(x, y, w, h) {
+        const shapez = (window).shapez || {};
+        const C = shapez.Rectangle || shapez.gRectangle;
+        if (typeof C === "function") return new C(x, y, w, h);
+        // 最小鸭子类型兜底：DrawParameters 只用到 visibleRect 的几个方法
+        return {
+            x, y, w, h,
+            getLeft() { return x; }, getTop() { return y; },
+            getRight() { return x + w; }, getBottom() { return y + h; },
+            getWidth() { return w; }, getHeight() { return h; },
+            containsPoint(px, py) { return px >= x && px < x + w && py >= y && py < y + h; },
+            expandedInAllDirections(d) { return this.constructor ? new this.constructor(x - d, y - d, w + 2 * d, h + 2 * d) : { x: x - d, y: y - d, w: w + 2 * d, h: h + 2 * d }; },
+        };
     }
 
     // ─────────────── 存档 ───────────────
