@@ -1,0 +1,38 @@
+{
+ "goal": "RuRu----",
+ "stages": {
+  "inspectGoal": {
+   "ok": true
+  },
+  "solveGoal": {
+   "ok": true
+  },
+  "rebuildDag": {
+   "ok": true
+  },
+  "mapOps": {
+   "ok": true
+  },
+  "pigmentGate": {
+   "ok": true
+  },
+  "placeStage": {
+   "ok": false,
+   "reason": "no-site-large-enough"
+  }
+ },
+ "ok": false,
+ "reason": "no-site-large-enough",
+ "failingNode": {
+  "nodeId": "n1",
+  "cell": [
+   4,
+   -13
+  ],
+  "check": "V9-unused-outlet"
+ },
+ "hint": "n1 的输出槽 0(left) 接不上 trash（直串+侧让 9 个候选全失败，末因 cell-occupied）",
+ "layout": null,
+ "entities": null,
+ "handoff": null
+}

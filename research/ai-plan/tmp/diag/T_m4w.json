@@ -1,0 +1,35 @@
+{
+ "goal": "RuRu----",
+ "stages": {
+  "inspectGoal": {
+   "ok": true
+  },
+  "solveGoal": {
+   "ok": true
+  },
+  "rebuildDag": {
+   "ok": true
+  },
+  "mapOps": {
+   "ok": true
+  },
+  "pigmentGate": {
+   "ok": true
+  },
+  "placeStage": {
+   "ok": false,
+   "reason": "emit:mismatch"
+  }
+ },
+ "ok": false,
+ "reason": "emit:mismatch",
+ "failingNode": {
+  "nodeId": "",
+  "cell": null,
+  "check": "V1-occupancy"
+ },
+ "hint": "place(P3) 收到违约输入（契约）：契约违反 layout.placements: 期望 占地 6,-6 与既有世界 occupancy 冲突（P5 的 V2/V1 会 fatal：paste 静默销毁既有带，C1），实得 \"mg:RuRuRuRu#bal0\"｜P3 抛了未收敛的契约错｜**P8 不修数据**：归因见 research/ai-plan/harness/NOTES.md",
+ "layout": null,
+ "entities": null,
+ "handoff": null
+}

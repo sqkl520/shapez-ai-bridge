@@ -1,0 +1,998 @@
+{
+ "ok": true,
+ "goal": "RuRu----",
+ "reason": null,
+ "failingNode": null,
+ "hint": null,
+ "site": {
+  "anchor": [
+   3,
+   34
+  ],
+  "hub": [
+   0,
+   30
+  ],
+  "hubPinned": true
+ },
+ "blueprint": "SZBP1.N4IgbiBcBMA0IHMKRARgHQFZ0DYTwHcoBtAZllIBYBdeAUxIHZYAGWVZtgTldh7ehs2ndr1Q4xYzJLapKM9uVli4y2agWohojQA5JGkRo0TlG6WdjzLSnbFWjta2PoF22tjdEYtaIAPYkAHYArgA2YbChEVHhkU68CUmJKdrevgC+QA",
+ "entities": [
+  {
+   "code": 7,
+   "dx": 0,
+   "dy": 17,
+   "rot": 0,
+   "nodeId": "n0",
+   "instanceIdx": 0,
+   "kind": "miner",
+   "rotationVariant": 0,
+   "inDir": null,
+   "outDir": "top"
+  },
+  {
+   "code": 9,
+   "dx": 0,
+   "dy": 9,
+   "rot": 0,
+   "nodeId": "n1",
+   "instanceIdx": 0,
+   "kind": "cutter",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 20,
+   "dx": 0,
+   "dy": 7,
+   "rot": 0,
+   "nodeId": "n1d0",
+   "instanceIdx": 0,
+   "kind": "trash",
+   "rotationVariant": 0,
+   "inDir": "top",
+   "outDir": null
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 16,
+   "rot": 0,
+   "nodeId": "belt@3,20",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 15,
+   "rot": 0,
+   "nodeId": "belt@3,19",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 14,
+   "rot": 0,
+   "nodeId": "belt@3,18",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 13,
+   "rot": 0,
+   "nodeId": "belt@3,17",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 12,
+   "rot": 0,
+   "nodeId": "belt@3,16",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 11,
+   "rot": 0,
+   "nodeId": "belt@3,15",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 10,
+   "rot": 0,
+   "nodeId": "belt@3,14",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 8,
+   "rot": 0,
+   "nodeId": "belt@4,12",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 7,
+   "rot": 0,
+   "nodeId": "belt@4,11",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 6,
+   "rot": 0,
+   "nodeId": "belt@4,10",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 5,
+   "rot": 0,
+   "nodeId": "belt@4,9",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 4,
+   "rot": 0,
+   "nodeId": "belt@4,8",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 3,
+   "rot": 0,
+   "nodeId": "belt@4,7",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 1,
+   "dy": 2,
+   "rot": 0,
+   "nodeId": "belt@4,6",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 0,
+   "rot": 0,
+   "nodeId": "belt@3,4",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 1,
+   "dx": 0,
+   "dy": 8,
+   "rot": 0,
+   "nodeId": "belt@3,12",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 0,
+   "inDir": "bottom",
+   "outDir": "top"
+  },
+  {
+   "code": 2,
+   "dx": 1,
+   "dy": 1,
+   "rot": 0,
+   "nodeId": "belt@4,5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 1,
+   "inDir": "bottom",
+   "outDir": "left"
+  },
+  {
+   "code": 3,
+   "dx": 0,
+   "dy": 1,
+   "rot": 270,
+   "nodeId": "belt@3,5",
+   "instanceIdx": 0,
+   "kind": "belt",
+   "rotationVariant": 2,
+   "inDir": "right",
+   "outDir": "top"
+  }
+ ],
+ "layout": {
+  "grid": "22 rows",
+  "rows": [
+   {
+    "level": 0,
+    "y": 21,
+    "nodeIds": [
+     "n0"
+    ]
+   },
+   {
+    "level": 1,
+    "y": 13,
+    "nodeIds": [
+     "n1"
+    ]
+   }
+  ],
+  "placements": [
+   {
+    "nodeId": "n0",
+    "op": "mine",
+    "kind": "miner",
+    "cell": [
+     3,
+     21
+    ],
+    "rot": 0,
+    "footprint": [
+     1,
+     1
+    ]
+   },
+   {
+    "nodeId": "n1",
+    "op": "cut",
+    "kind": "cutter",
+    "cell": [
+     3,
+     13
+    ],
+    "rot": 0,
+    "footprint": [
+     2,
+     1
+    ]
+   },
+   {
+    "nodeId": "n1d0",
+    "op": "trash",
+    "kind": "trash",
+    "cell": [
+     3,
+     11
+    ],
+    "rot": 0,
+    "footprint": [
+     1,
+     1
+    ]
+   }
+  ],
+  "channels": [
+   {
+    "from": {
+     "nodeId": "n0",
+     "cell": [
+      3,
+      21
+     ],
+     "slot": "top",
+     "outDir": "top"
+    },
+    "to": {
+     "nodeId": "n1",
+     "cell": [
+      3,
+      13
+     ],
+     "slot": "bottom",
+     "inDir": "bottom"
+    },
+    "lane": null,
+    "payload": "RuRuRuRu",
+    "slotRole": "primary",
+    "ordinal": 0
+   },
+   {
+    "from": {
+     "nodeId": "n1",
+     "cell": [
+      4,
+      13
+     ],
+     "slot": "top",
+     "outDir": "top"
+    },
+    "to": {
+     "nodeId": "hub",
+     "cell": [
+      3,
+      3
+     ],
+     "slot": "bottom",
+     "inDir": "bottom"
+    },
+    "lane": 5,
+    "payload": "RuRu----",
+    "laneAxis": "row",
+    "slotRole": "out",
+    "ordinal": null
+   },
+   {
+    "from": {
+     "nodeId": "n1",
+     "cell": [
+      3,
+      13
+     ],
+     "slot": "top",
+     "outDir": "top"
+    },
+    "to": {
+     "nodeId": "n1d0",
+     "cell": [
+      3,
+      11
+     ],
+     "slot": "bottom",
+     "inDir": "bottom"
+    },
+    "lane": null,
+    "payload": "RuRu----",
+    "slotRole": "discard",
+    "ordinal": 0
+   }
+  ],
+  "lanes": [
+   {
+    "row": 5,
+    "column": null,
+    "channelIds": [
+     "chHub"
+    ]
+   }
+  ],
+  "hubConnection": {
+   "entry": [
+    3,
+    4
+   ],
+   "side": "bottom",
+   "dir": 0
+  },
+  "bbox": [
+   2,
+   18
+  ],
+  "occupancy": [
+   {
+    "cell": [
+     0,
+     0
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     1,
+     0
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     2,
+     0
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     3,
+     0
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     0,
+     1
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     1,
+     1
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     2,
+     1
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     3,
+     1
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     0,
+     2
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     1,
+     2
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     2,
+     2
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     3,
+     2
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     0,
+     3
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     1,
+     3
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     2,
+     3
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   },
+   {
+    "cell": [
+     3,
+     3
+    ],
+    "state": "solid",
+    "who": "hub",
+    "kind": "hub"
+   }
+  ],
+  "conflicts": [],
+  "cornerCount": 2,
+  "meta": {
+   "placeVersion": "0.5.0",
+   "demandPerSec": 0,
+   "instanceIdx": 0,
+   "scope": {
+    "layers": 1,
+    "wires": false,
+    "tunnels": false,
+    "rotatedMachines": false,
+    "maxFanIn": 2
+   },
+   "wasteRoles": [
+    {
+     "nodeId": "n1",
+     "outIdx": 0,
+     "role": "left",
+     "waste": false
+    }
+   ],
+   "trashCount": 1,
+   "tunnelCount": 0,
+   "beltTiles": 18,
+   "minerCells": {
+    "n0": [
+     3,
+     21
+    ]
+   },
+   "minerResources": {
+    "n0": "RuRuRuRu"
+   },
+   "cornerCells": [
+    [
+     4,
+     5
+    ],
+    [
+     3,
+     5
+    ]
+   ],
+   "longestSingleBeltRow": 7,
+   "longestSingleBeltCol": 0,
+   "depthNormalized": null
+  }
+ },
+ "validation": {
+  "pass": true,
+  "checks": [
+   {
+    "id": "V1-occupancy",
+    "status": "pass",
+    "evidence": {
+     "cell": [
+      3,
+      21
+     ],
+     "nodeId": "n0",
+     "expected": "落点矩形全空（r=0 包围盒）",
+     "actual": "22 格全空（机器 3 台 + 带子 18 格）",
+     "note": "决策 D1：机器恒 r=0 → 无需旋转包围盒；三态占用与冲突矩阵一律走 P1 的 Grid.placementConflicts"
+    }
+   },
+   {
+    "id": "V2-no-overwrite-existing-belt",
+    "status": "pass",
+    "evidence": {
+     "cell": null,
+     "nodeId": null,
+     "expected": "规划区 ∩ replaceableBeltCells = ∅",
+     "actual": "0 格重叠（既有可替换格 0 个，全在规划区外）",
+     "note": "破坏半径的最终凭据是 paste dry_run（mod 缺口 → MOD-GAPS.md）；本闸只判零重叠"
+    }
+   },
+   {
+    "id": "V3-belt-fixed-point",
+    "status": "pass",
+    "evidence": {
+     "cell": [
+      3,
+      20
+     ],
+     "nodeId": "belt@3,20",
+     "expected": "computeBelt(含机器邻居) 不动点 = 设计的 (r,rv)",
+     "actual": "18/18 全是不动点；施工顺序合规",
+     "note": "includesMachineNeighbors=true（邻居含机器 7 次、带子 30 次）—— 现成 proto 脚本只喂带子，其 82.5% 不可复用；stride=4 ⇒ originalRotation=rotation（bridge:814），不动点成立即绕过 R2"
+    }
+   },
+   {
+    "id": "V4-slot-alignment",
+    "status": "pass",
+    "evidence": {
+     "cell": null,
+     "nodeId": null,
+     "expected": "端点 ∈ 模板槽位 + 通道走通 + 链闭合 + 出口有 acceptor + 生产槽有供料",
+     "actual": "3 条通道 / 18 带格全对齐",
+     "note": "槽位真值 = P2 OP_TEMPLATES + rotateSlot（v1 机器恒 r=0）；带向真值 = src/ai/belt-rules.mjs（**不 import proto 那份**）"
+    }
+   },
+   {
+    "id": "V5-degree",
+    "status": "pass",
+    "evidence": {
+     "cell": null,
+     "nodeId": null,
+     "expected": "每节点入度 ≤ 输入槽数（stacker/mixer=2、cutter=1、trash=4）+ 无退化自环",
+     "actual": "3 个落点、3 条通道全满足",
+     "note": "无 N>2 汇合（有的话先二化成树，redteam:147）；quad cutter 的 4 路输出越界 → 归 V8"
+    }
+   },
+   {
+    "id": "V6-crossing",
+    "status": "pass",
+    "evidence": {
+     "cell": null,
+     "nodeId": null,
+     "expected": "两股流不穿格 + 车道分行 + 不穿机器占地",
+     "actual": "0 处",
+     "note": "车道分行 → 不需要隧道（v1 无隧道）"
+    }
+   },
+   {
+    "id": "V7-throughput",
+    "status": "not-applicable",
+    "evidence": {
+     "cell": null,
+     "nodeId": "n0",
+     "expected": "demandPerSec",
+     "actual": "0",
+     "note": "v1 口径：0 = 只要能跑通，不做吞吐判定（plan §0）；瓶颈已算出 = miner@0.4/s；拐角 2 个 → 有效带长 17.56（derate 0.976，机器限速 ⇒ 只报告不折进判定）"
+    }
+   },
+   {
+    "id": "V8-scope",
+    "status": "pass",
+    "evidence": {
+     "cell": null,
+     "nodeId": null,
+     "expected": "单层/无 wire/无隧道/机器 r=0/入度≤2/全新址",
+     "actual": "6 项全满足",
+     "note": "scope 是契约的一部分（§2.1）。C3 wire 无 immutable 豁免、C4 隧道 smartplace 删带；chargeMode=false ⇒ god-mode 口径（C7）"
+    }
+   },
+   {
+    "id": "V9-unused-outlet",
+    "status": "pass",
+    "evidence": {
+     "cell": null,
+     "nodeId": null,
+     "expected": "每个未接走的输出槽必须有 trash",
+     "actual": "0 个空转输出槽",
+     "note": "被接走的走 V4；这里只管 mustDiscardUnused 机器的剩余槽（陷阱表 #7）"
+    }
+   },
+   {
+    "id": "V10-unlock-report",
+    "status": "pass",
+    "evidence": {
+     "cell": null,
+     "nodeId": "n0",
+     "expected": "当前等级 L4 的可用机器集",
+     "actual": "3 台机器全部在可用集内",
+     "note": "L3 用 level-2 目标 ----CuCu：miner/cutter/trash 在 L1 完成即解锁 ⇒ 两种口径都成立（C7）。solver 默认开 cutQuad ⇒ L11 目标会用到 L16 建筑（redteam:198），清单在此显形"
+    }
+   },
+   {
+    "id": "S1-shape-replay",
+    "status": "pass",
+    "evidence": {
+     "cell": null,
+     "nodeId": "nRuRuRuRu",
+     "expected": "2 个节点 hash 相等",
+     "actual": "2/2 相等",
+     "note": "shape-ops 重放每个节点（DESIGN:93 Level-1）；cut 左右列语义按上游 shape_definition_manager.js:92 与 proto/shape-ops.mjs:103"
+    }
+   }
+  ],
+  "errors": [],
+  "beltSim": {
+   "tilesChecked": 18,
+   "fixedPoints": 18,
+   "drift": [],
+   "includesMachineNeighbors": true
+  },
+  "shapeReplay": [
+   {
+    "nodeId": "nRuRuRuRu",
+    "expectedHash": "RuRuRuRu",
+    "actualHash": "RuRuRuRu",
+    "equal": true
+   },
+   {
+    "nodeId": "nRuRu----",
+    "expectedHash": "RuRu----",
+    "actualHash": "RuRu----",
+    "equal": true
+   }
+  ],
+  "throughput": {
+   "demandPerSec": 0,
+   "bottleneck": {
+    "nodeId": "n0",
+    "ratePerSec": 0.4
+   },
+   "rowsRequired": 1,
+   "rowsPlanned": 1
+  },
+  "suppressed": []
+ },
+ "stats": {
+  "machines": {
+   "miner": 1,
+   "cutter": 1,
+   "trash": 1
+  },
+  "beltTiles": 18,
+  "trash": 1,
+  "bbox": [
+   2,
+   18
+  ],
+  "corners": 2,
+  "estThroughputPerSec": 0.4,
+  "bottleneck": "miner@0.4",
+  "blueprintCost": 100,
+  "chargeMode": "false",
+  "longestSingleBeltRow": 7,
+  "longestSingleBeltCol": 0
+ },
+ "scope": {
+  "layers": 1,
+  "wires": false,
+  "tunnels": false,
+  "rotatedMachines": false,
+  "maxFanIn": 2
+ },
+ "stages": {
+  "inspectGoal": {
+   "ok": true
+  },
+  "solveGoal": {
+   "ok": true
+  },
+  "rebuildDag": {
+   "ok": true
+  },
+  "mapOps": {
+   "ok": true
+  },
+  "pigmentGate": {
+   "ok": true
+  },
+  "placeStage": {
+   "ok": true
+  },
+  "routeStage": {
+   "ok": true
+  },
+  "entities": {
+   "ok": true
+  },
+  "siteStage": {
+   "ok": true
+  },
+  "worldFrameV1": {
+   "ok": true
+  },
+  "validateStage": {
+   "ok": true
+  },
+  "emitStage": {
+   "ok": true
+  },
+  "done": {
+   "ok": true
+  }
+ },
+ "provenance": {
+  "harnessVersion": 1,
+  "placeVersion": "0.5.0",
+  "routeSchemaVersion": 1,
+  "validatorVersion": 1,
+  "emittedVia": "strict",
+  "solver": {
+   "argv": [
+    "D:\\Projects\\rea\\Project work\\shapez\\research\\ai-player\\proto\\solver.mjs",
+    "RuRu----",
+    "--no-cutquad",
+    "--json"
+   ],
+   "ops": {
+    "mine": 1,
+    "cut": 1
+   },
+   "stats": {
+    "expanded": 2,
+    "generated": 14,
+    "stackPairs": 0,
+    "capped": false
+   },
+   "ms": 8,
+   "known": 15
+  },
+  "seed": 55013,
+  "level": 4,
+  "cutQuadAllowed": false,
+  "channelOrder": "asis",
+  "gapTries": 0,
+  "gap": {
+   "rowGap": 8,
+   "colGap": 3
+  },
+  "minerCells": [
+   {
+    "nodeId": "n0",
+    "cell": [
+     3,
+     51
+    ],
+    "shape": "RuRuRuRu"
+   }
+  ],
+  "demandPerSec": 0,
+  "cornerCostTiles": 1.56,
+  "routeAttempts": [
+   {
+    "gap": 0,
+    "rowGap": 8,
+    "colGap": 3,
+    "order": "asis",
+    "ok": true,
+    "reason": null,
+    "laneColumn": 0,
+    "belt": 18,
+    "corners": 2
+   }
+  ],
+  "laneColumnUnresolved": 0,
+  "worldPlacement": {
+   "anchor": [
+    0,
+    30
+   ],
+   "hub": [
+    0,
+    30
+   ],
+   "hubInferred": [
+    0,
+    30
+   ],
+   "hubPinned": true,
+   "pasteAt": [
+    3,
+    34
+   ],
+   "designAnchor": [
+    3,
+    4
+   ],
+   "designHubLocal": [
+    -4,
+    -4
+   ],
+   "hubLocal": [
+    0,
+    0
+   ],
+   "worldFrameV1": {
+    "ok": true,
+    "worldRect": [
+     3,
+     34,
+     4,
+     51
+    ],
+    "hubRect": [
+     0,
+     30,
+     3,
+     33
+    ]
+   }
+  }
+ },
+ "roundtrip": {
+  "ok": true,
+  "stride": 4,
+  "decodedCount": 21,
+  "intentCount": 21,
+  "eLength": null,
+  "diff": [],
+  "beltCodeBad": [],
+  "orderBad": [],
+  "summary": {
+   "format_version": 2,
+   "exported_from": "1.5.6",
+   "anchor": [
+    3,
+    34
+   ],
+   "count": 21,
+   "bounds": [
+    2,
+    18
+   ],
+   "by_code": {
+    "1": 16,
+    "2": 1,
+    "3": 1,
+    "7": 1,
+    "9": 1,
+    "20": 1
+   },
+   "text_length": 181
+  },
+  "summaryErr": null
+ },
+ "handoff": null
+}

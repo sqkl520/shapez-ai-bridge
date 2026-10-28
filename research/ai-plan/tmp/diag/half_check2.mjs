@@ -1,0 +1,11 @@
+import * as S from "file:///D:/Projects/rea/Project%20work/shapez/research/ai-player/proto/shape-ops.mjs";
+console.log("exports:", Object.keys(S).join(", "));
+const src = S.parse("RuRuRuRu");
+const h = S.cutHalf(src);
+const fmt = x => JSON.stringify(x.layers);
+console.log("h[0]:", fmt(h[0]));
+console.log("h[1]:", fmt(h[1]));
+const goal = S.parse("RuRu----");
+console.log("goal:", fmt(goal));
+console.log("h[0]===goal?", fmt(h[0])===fmt(goal));
+console.log("h[1]===goal?", fmt(h[1])===fmt(goal));

@@ -615,13 +615,14 @@
     "stackPairs": 1592,
     "capped": false
    },
-   "ms": 19,
+   "ms": 30,
    "known": 1614
   },
   "seed": 43391,
   "level": 5,
   "cutQuadAllowed": false,
   "channelOrder": "asis",
+  "seedWasDefaulted": false,
   "gapTries": 0,
   "gap": {
    "rowGap": 8,

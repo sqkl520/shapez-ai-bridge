@@ -1,0 +1,12 @@
+import { rpc } from "./rpc.mjs";
+const r = await rpc("new_game", { game_mode: "regularMode" }, 120000);
+console.log("new_game:", JSON.stringify(r));
+await new Promise(r=>setTimeout(r,3000));
+console.log("status:", JSON.stringify(await rpc("status")));
+const o = await rpc("obs", { max_entities: 5000, include_hub: true, include_resources: true, max_resources: 20000, region: [-80,-80,80,80] }, 120000);
+console.log("keys:", Object.keys(o).join(","));
+console.log("goal:", JSON.stringify(o.goal));
+console.log("hub:", JSON.stringify((o.entities||[]).find(e=>e.type==="hub")));
+console.log("entities:", (o.entities||[]).length);
+console.log("resources n:", (o.resources||[]).length);
+console.log("resources sample:", JSON.stringify((o.resources||[]).slice(0,16)));

@@ -1,0 +1,38 @@
+{
+ "goal": "RuRu----",
+ "stages": {
+  "inspectGoal": {
+   "ok": true
+  },
+  "solveGoal": {
+   "ok": true
+  },
+  "rebuildDag": {
+   "ok": true
+  },
+  "mapOps": {
+   "ok": true
+  },
+  "pigmentGate": {
+   "ok": true
+  },
+  "placeStage": {
+   "ok": false,
+   "reason": "dag-not-placeable:column-conflict-unresolved"
+  }
+ },
+ "ok": false,
+ "reason": "dag-not-placeable:column-conflict-unresolved",
+ "failingNode": {
+  "nodeId": "n1",
+  "cell": [
+   7,
+   -12
+  ],
+  "check": "V6-crossing"
+ },
+ "hint": "hub 的 16 个入口都接不上：竖直收集带被占或需隧道绕行（scope.tunnels:false）",
+ "layout": null,
+ "entities": null,
+ "handoff": null
+}
