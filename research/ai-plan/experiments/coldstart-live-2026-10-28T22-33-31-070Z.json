@@ -1,0 +1,275 @@
+{
+  "generated_at": "2026-10-28T22:33:31.070Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "must_remove_uids": [
+      10209,
+      10149,
+      10143
+    ],
+    "must_place": [
+      {
+        "kind": "cutter",
+        "origin": [
+          4,
+          -13
+        ]
+      },
+      {
+        "kind": "trash",
+        "origin": [
+          4,
+          -14
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "runs": 5,
+    "mode": "live",
+    "truth_all_visible": 5,
+    "truth_partial_visible": 0,
+    "truth_none_visible": 0,
+    "picked_any_truth": 2,
+    "picked_all_truth": 1,
+    "plan_ok": 2,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 7525,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The cutter is fed only through L4, whose inputs come from the empty balancers L5/L6, so the cutter gets nothing and the hub receives nothing; give the cutter a direct ore source at its input cell.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B100\",\"asCell\":true},\"facing\":\"top\",\"machine\":\"miner\",\"opts\":{\"replace_belts\":true}},\"why\":\"cutter's only feed runs back into the dead L5/L6 balancer chain; placing a miner on the cutter's input belt feeds it directly as the recipe requires (mine then cut)\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10058
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 2,
+      "mentioned_uids": [
+        10058
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10058
+      ],
+      "removed_truth": [],
+      "removed_extra": [
+        10058
+      ],
+      "exact_match": false,
+      "placed": [
+        "miner@-8,-10"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 2,
+      "prompt_chars": 7525,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The factory has a cutter but nothing feeding it; route miner ore into the cutter and its cut half to the hub.\",\"calls\":[{\"macro\":\"connect\",\"args\":{\"from\":{\"$ref\":\"B112\"},\"to\":{\"$ref\":\"B100\"}},\"why\":\"C1's input belt is empty; feed it the mined RuRuRuRu run so it can be cut\"},{\"macro\":\"connect\",\"args\":{\"from\":{\"$ref\":\"B84\"},\"to\":{\"$ref\":\"H1\",\"asCell\":true}},\"why\":\"deliver one cut half from the cutter to the hub so goal shapes arrive\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10138,
+        10058,
+        10059,
+        10000
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "unsupported_macro:connect",
+      "ops": null,
+      "mentioned_uids": [
+        10138,
+        10058,
+        10059,
+        10000
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 3,
+      "prompt_chars": 7525,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The recipe needs the mined four-quadrant shape cut in half, so I convert a segment of the miner-to-balancer belt runs in place into a cutter with the waste half trashed, letting the cut half continue on toward the hub.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B64\",\"B70\",\"B82\",\"B91\",\"B98\",\"B106\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"right\"}]},\"why\":\"turn this mined-shape run into a cut line whose kept half keeps flowing downstream\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B63\",\"B69\",\"B81\",\"B90\",\"B97\",\"B105\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"right\"}]},\"why\":\"cut the parallel branch too so the merged balancer output is entirely the halved shape\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10151,
+        10150,
+        10149,
+        10148,
+        10147,
+        10146,
+        10144,
+        10143,
+        10209,
+        10208,
+        10206,
+        10139
+      ],
+      "selected_truth": [
+        10149,
+        10143,
+        10209
+      ],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:occupied",
+      "ops": null,
+      "mentioned_uids": [
+        10151,
+        10150,
+        10149,
+        10148,
+        10147,
+        10146,
+        10144,
+        10143,
+        10209,
+        10208,
+        10206,
+        10139
+      ],
+      "mentioned_truth": [
+        10149,
+        10143,
+        10209
+      ]
+    },
+    {
+      "run": 4,
+      "prompt_chars": 7525,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"No fault is flagged yet, so I follow the recipe: cut the mined RuRuRuRu in the miner output line that feeds the balancer, sending the waste half to trash.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B90\",\"B81\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"right\"}]},\"why\":\"The mined RuRuRuRu run currently reaches the balancer uncut; converting a two-belt stretch of that run into cutter + trash performs the required cut step and dumps the unused half.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10208,
+        10209
+      ],
+      "selected_truth": [
+        10209
+      ],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:occupied",
+      "ops": null,
+      "mentioned_uids": [
+        10208,
+        10209
+      ],
+      "mentioned_truth": [
+        10209
+      ]
+    },
+    {
+      "run": 5,
+      "prompt_chars": 7525,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"C1's feed line is dead (its balancer inputs have no sources), so I put a miner directly on the belt feeding the cutter, and also cut the live miner run that leads through the balancer chain to the hub.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B100\",\"asCell\":true},\"facing\":\"top\",\"machine\":\"miner\",\"opts\":{\"replace_belts\":true}},\"why\":\"B100 is the belt that feeds cutter C1 from a starved balancer; mining there restores ore into the already-wired cutter\"},{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B105\",\"asCell\":true},\"facing\":\"top\",\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"cut the live miner run that continues up into the balancer chain toward the hub, so half shapes are delivered instead of whole ones\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10058,
+        10139
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10058,
+        10139
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10058,
+        10139,
+        10146
+      ],
+      "removed_truth": [],
+      "removed_extra": [
+        10058,
+        10139,
+        10146
+      ],
+      "exact_match": false,
+      "placed": [
+        "miner@-8,-10",
+        "cutter@4,-10"
+      ],
+      "placed_match": false
+    }
+  ]
+}
