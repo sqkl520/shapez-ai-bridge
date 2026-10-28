@@ -13,15 +13,49 @@ const BRIDGE = path.join(__dirname, "bridge.mjs");
 
 let pass = 0;
 let fail = 0;
-async function check(name, fn) {
-    try {
-        await fn();
-        pass++;
-        console.log("PASS", name);
-    } catch (e) {
-        fail++;
-        console.log("FAIL", name, "->", (e && e.message) || e);
+/**
+ * 异步 check —— 返回 thenable，而不是裸 Promise。
+ * 裸 Promise 被漏 await 时无法观测（文件尾部 process.exit 会把它连同断言一起吞掉，
+ * test/mod_selftest.mjs 已经这样假绿过 4 次）。thenable 的 then/catch/finally
+ * 只有在真被 await 时才会被引擎调用 ⇒ 可以据此判定"有人等过它"。
+ */
+const unconsumed = new Set();
+function check(name, fn) {
+    const run = (async () => {
+        try {
+            await fn();
+            pass++;
+            console.log("PASS", name);
+        } catch (e) {
+            fail++;
+            console.log("FAIL", name, "->", (e && e.message) || e);
+        }
+    })();
+    const handle = { name };
+    unconsumed.add(handle);
+    return {
+        then(onFulfilled, onRejected) {
+            unconsumed.delete(handle);
+            return run.then(onFulfilled, onRejected);
+        },
+        catch(onRejected) {
+            unconsumed.delete(handle);
+            return run.catch(onRejected);
+        },
+        finally(onFinally) {
+            unconsumed.delete(handle);
+            return run.finally(onFinally);
+        },
+    };
+}
+/** 收尾闸：漏 await 的 check 一律 FAIL（否则它的断言从未执行，却也不计入失败）。 */
+function assertNoUnconsumedChecks() {
+    if (unconsumed.size === 0) return true;
+    fail += unconsumed.size;
+    for (const h of unconsumed) {
+        console.log("FAIL", h.name, "-> check 未被 await（该用例的断言从未执行）");
     }
+    return false;
 }
 function assert(c, m) {
     if (!c) throw new Error(m || "assertion failed");
@@ -193,8 +227,12 @@ try {
             return code === 1001 || code === 1005;
         }, 4000);
         assert(closed, "connection rejected");
-        // 关键：连上后又掉线，说明是被桥接主动断开
-        assert(bad.readyState !== 1 || true, "ok");
+        // 关键：连上后又掉线，说明是被桥接主动断开。
+        // 注意：早先这里是 `bad.readyState !== 1 || true` —— `|| true` 让断言恒真，
+        // 等于什么都没测。桥接主动断开后，客户端要么已 CLOSED(3) / CLOSING(2)，
+        // 要么仍停在 OPEN(1) 但上面的 rpcHttp 已证明连接被丢弃；后者用 bad.close() 收尾即可。
+        // 这里改成可判假的断言：只要 readyState 是可观测值，就要求它不在 CONNECTING(0)。
+        assert(bad.readyState !== 0, "fake mod must have completed the handshake before being dropped");
         bad.close();
     });
 
@@ -435,5 +473,6 @@ try {
 }
 
 await sleep(300);
+assertNoUnconsumedChecks();
 console.log("\n" + (fail === 0 ? "ALL " + pass + " CHECKS PASSED" : pass + " passed, " + fail + " FAILED"));
 process.exit(fail === 0 ? 0 : 1);

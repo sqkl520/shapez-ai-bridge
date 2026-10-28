@@ -90,6 +90,11 @@ function makeStubEntity({ root, origin, rotation, originalRotation, rotationVari
         root,
         uid: 0,
         layer: layer || "regular",
+        // 真机 entity 身上带着 meta 引用吗？没有。但 canDeleteBuilding 是问
+        // staticComp.getMetaBuilding().getIsRemovable(root)，所以桩里必须能反查到 meta。
+        // 早先桩用 `uid !== 99` 冒充"可删性"，导致 constant_producer（62，removable=false）
+        // 被当成可删 —— 正好把 delete{uid} 的 2002 用例放过（那条用例当时还没 await）。
+        buildingId,
         registered: false,
         destroyed: false,
         queuedForDestroy: false,
@@ -185,7 +190,10 @@ const stubShapez = {
         // 仓库 21（buildings/storage.js:22-30，2×2）：序列化还原的实机自证目标 ——
         // storedCount/storedItem 是判断"还原的是实体还是空壳"的关键字段。
         21: { metaInstance: stubMeta("storage", 2, 2, 21, "regular", false), variant: "default", rotationVariant: 0 },
-        26: { metaInstance: stubMeta("hub", 4, 4, 26, "regular", false), variant: "default", rotationVariant: 0 },
+        // hub 在真机里永远不可删（canDeleteBuilding → getIsRemovable() === false）。
+        // 早先这里漏了第 6 参，靠 deleteEntityByUid 桩里 "uid===99" 的假规则兜着 ——
+        // 那条规则在 delete{uid} 用例里会把 constant_producer 误判成可删。
+        26: { metaInstance: stubMeta("hub", 4, 4, 26, "regular", false, false), variant: "default", rotationVariant: 0 },
         // 62 = constant_producer（buildings/constant_producer.js:34）：**放得下、删不掉**。
         // 实机实测：place 成功、delete 返回 2002 not_removable。tx 的可逆性预检必须拦住它。
         62: { metaInstance: stubMeta("constant_producer", 1, 1, 62, "regular", false, false), variant: "default", rotationVariant: 0 },
@@ -970,16 +978,68 @@ function wiredMod() {
 
 const tickAsync = (ms = 0) => new Promise(r => setTimeout(r, ms));
 
-/** 异步版 check：错误也要计入 pass/fail，而不是把整个进程抛崩（那样后面的用例就不跑了）。 */
-async function checkAsync(name, fn) {
-    try {
-        await fn();
-        pass++;
-        console.log("PASS", name);
-    } catch (e) {
-        fail++;
-        console.log("FAIL", name, "->", (e && e.message) || e);
+/**
+ * 异步版 check：错误也要计入 pass/fail，而不是把整个进程抛崩（那样后面的用例就不跑了）。
+ *
+ * ⚠️ 这个函数被踩过 4 次「忘了 await」：`checkAsync(...)` 返回 Promise，没人等它，
+ * 文件尾部 `process.exit(0)` 一执行，用例连第一个 await 都回不来 —— 断言一次都没跑，
+ * 却也不计入 fail，于是「87 条声明、84 条真跑」静默假绿。
+ *
+ * 防复发的做法（返回 **thenable** 而不是裸 Promise）：
+ *   1. 调用即登记到 `unconsumed`（按调用序号）。
+ *   2. 只有真正被 await / .then() 时才把自己从 `unconsumed` 里摘掉 ——
+ *      `await x` 对 thenable 会走 `then`，所以「有人等」这件事可以被观测到。
+ *   3. 裸 Promise 做不到这一点：await 裸 Promise 不触发我们写的任何钩子。
+ *   4. 文件尾部 `assertNoUnconsumedChecks()` 在 `process.exit` 之前执行：
+ *      还有登记项 ⇒ 有人忘了 await ⇒ 直接 FAIL 并 exit 1。
+ */
+const unconsumed = new Set();
+function checkAsync(name, fn) {
+    const run = (async () => {
+        try {
+            await fn();
+            pass++;
+            console.log("PASS", name);
+        } catch (e) {
+            fail++;
+            console.log("FAIL", name, "->", (e && e.message) || e);
+        }
+    })();
+    const handle = { name, done: false };
+    unconsumed.add(handle);
+    return {
+        // await 一个 thenable 时引擎会调用 then(resolve, reject) ⇒ 这里就是「被消费」的证据。
+        then(onFulfilled, onRejected) {
+            unconsumed.delete(handle);
+            handle.done = true;
+            return run.then(onFulfilled, onRejected);
+        },
+        catch(onRejected) {
+            unconsumed.delete(handle);
+            handle.done = true;
+            return run.catch(onRejected);
+        },
+        finally(onFinally) {
+            unconsumed.delete(handle);
+            handle.done = true;
+            return run.finally(onFinally);
+        },
+    };
+}
+
+/**
+ * 文件收尾闸：任何 checkAsync 返回的 thenable 若没被 await/.then/.catch/.finally 消费，
+ * 就说明那条用例的断言永远不会执行 ⇒ 必须让整个测试失败。
+ * 返回 true 表示干净；否则打印每条漏 await 的用例名并计入 fail。
+ */
+function assertNoUnconsumedChecks() {
+    if (unconsumed.size === 0) return true;
+    fail += unconsumed.size;
+    for (const h of unconsumed) {
+        console.log("FAIL", h.name, "-> checkAsync 未被 await（该用例的断言从未执行）");
     }
+    console.log("\n" + unconsumed.size + " 条 checkAsync 漏了 await —— 上面的用例是假绿，已计为 FAIL");
+    return false;
 }
 
 /**
@@ -1169,8 +1229,16 @@ function roundtripRoot() {
                 try { return fn(); } finally { root.immutableOperationRunning = false; }
             },
             tryDeleteBuilding(entity) {
-                const meta = { getIsRemovable: () => entity.uid !== 99 };
-                if (entity.uid === 99) return false;   // 模拟 hub：不可删
+                // 与真机 logic.canDeleteBuilding 同一条尺子：问 meta 的 getIsRemovable(root)，
+                // 不是按 uid 猜。桩里 code → 变体 → metaInstance（STUB_BUILDING_META 是按
+                // buildingId 索引的，不是按 code，所以必须经 gBuildingVariants 转一次）。
+                const code = entity.components.StaticMapEntity && entity.components.StaticMapEntity.code;
+                const info = stubShapez.gBuildingVariants[code];
+                const meta = info && info.metaInstance;
+                const removable = meta && typeof meta.getIsRemovable === "function"
+                    ? !!meta.getIsRemovable(root)
+                    : true;
+                if (!removable) return false;
                 root.systemMgr.systems.belt.onBeltRemoved(entity);
                 root.map.removeStaticEntity(entity);
                 root.entityMgr.destroyEntity(entity);
@@ -1440,9 +1508,9 @@ check("deleteEntityByUid: 不可删（hub 形态）→ ok:false reason:not_remov
     const m = newMod();
     const { root, spawn } = roundtripRoot();
     m.root = root;
+    // hub 的不可删性来自 meta（stubMeta("hub", ..., removable=false)），不是 uid 编号。
     const hub = spawn(26, 0, 0);
-    hub.uid = 99;   // 桩里 99 = 不可删
-    const res = m.deleteEntityByUid(99);
+    const res = m.deleteEntityByUid(hub.uid);
     assert(res.ok === false && res.reason === "not_removable", "got " + JSON.stringify(res));
 });
 
@@ -2090,7 +2158,7 @@ await checkAsync("tx: 会产出「放得下但删不掉」的建筑 → 执行�
     assert(root.map.getLayerContentXY(60, -46, "regular") === null, "tile must be empty");
 });
 
-checkAsync("tx: place_path 也走同一条可逆性预检", async () => {
+await checkAsync("tx: place_path 也走同一条可逆性预检", async () => {
     const m = newMod();
     const { root } = txWorld();
     m.root = root;
@@ -2105,7 +2173,7 @@ checkAsync("tx: place_path 也走同一条可逆性预检", async () => {
     assert(root.entityMgr.entities.length === 0, "nothing placed");
 });
 
-checkAsync("tx: 可删的建筑不受预检影响（belt 正常通过）", async () => {
+await checkAsync("tx: 可删的建筑不受预检影响（belt 正常通过）", async () => {
     const m = newMod();
     const { root } = txWorld();
     m.root = root;
@@ -2113,7 +2181,7 @@ checkAsync("tx: 可删的建筑不受预检影响（belt 正常通过）", async
     assert(res.ok === true, "belt is removable ⇒ tx must pass; failures=" + JSON.stringify(res.failures));
 });
 
-checkAsync("delete{uid}: 不可删建筑 → 2002 且 detail 说清是哪类", async () => {
+await checkAsync("delete{uid}: 不可删建筑 → 2002 且 detail 说清是哪类", async () => {
     const m = newMod();
     const { root, spawn } = txWorld();
     m.root = root;
@@ -2130,5 +2198,7 @@ check("tx 是写操作（进串行链）", () => {
     assert(m.rpcTouchesWorld("act", { op: "tx" }) === true, "tx must be serialized on worldChain");
 });
 
+// 收尾闸：任何漏了 await 的 checkAsync 都必须在这里变成 FAIL，绝不能静默退出。
+assertNoUnconsumedChecks();
 console.log("\n" + (fail === 0 ? "ALL " + pass + " CHECKS PASSED" : pass + " passed, " + fail + " FAILED"));
 process.exit(fail === 0 ? 0 : 1);

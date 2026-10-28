@@ -38,6 +38,14 @@ let pass = 0, fail = 0;
 const failures = [];
 
 function ok(cond, label, extra) {
+    // 防同类假绿：ok(await gateG3(...)) 若有人误写 `ok(gateG3(...))`（漏 await），
+    // cond 就是恒真的 Promise ⇒ 这条断言永远不会红。Promise 是橙色真值，必须当场判死。
+    if (cond && typeof cond.then === "function") {
+        fail++;
+        failures.push(label + " [Promise 被当成布尔了 —— 多半漏了 await]");
+        console.log("✗ " + label + "  [cond 是 Promise，断言无效；漏了 await 吗？]");
+        return;
+    }
     if (cond) { pass++; console.log("✓ " + label); }
     else { fail++; failures.push(label); console.log("✗ " + label + (extra ? "  " + JSON.stringify(extra) : "")); }
 }
@@ -1932,4 +1940,5 @@ if (fail) {
     console.log("失败项：");
     for (const f of failures) console.log("  ✗ " + f);
 }
+
 process.exit(fail ? 1 : 0);
