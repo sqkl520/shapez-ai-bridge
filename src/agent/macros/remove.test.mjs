@@ -19,10 +19,11 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { OPP, DIRV, beltEntry, beltExit } from "../../ai/belt-rules.mjs";
-import { validateMacroResult, lintNoBareCoords } from "./contract.mjs";
+import { validateMacroResult, lintNoBareCoords, isPendingRef } from "./contract.mjs";
 import {
     removeRun, replaceRun, trashUnused, analyzeRemoval, makeContext, MACRO_IMPLS,
 } from "./remove.mjs";
+import { insertMachine, applyToWorld } from "./place.mjs";
 import { buildWorld } from "./connect.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -56,14 +57,14 @@ const MUTANTS = [
         why: "把 portCellOf 的 DIRV 偏移去掉 → trash 落在槽位格而不是喷口格",
         from: "const portCellOf = (origin, q) => [origin[0] + q.cell[0] + DIRV[q.dir][0], origin[1] + q.cell[1] + DIRV[q.dir][1]];",
         to: "const portCellOf = (origin, q) => [origin[0] + q.cell[0], origin[1] + q.cell[1]]; /* MUTANT */",
-        expectRed: 5,
+        expectRed: 13,
     },
     {
         id: "M3-replace-deletes-all-belts",
         why: "replace_run 删光 region 内全部带子（不再区分「被新建筑覆盖」）",
         from: "        if (placedCells.has(key(b.x, b.y))) {",
         to: "        if (true) { /* MUTANT */",
-        expectRed: 5,
+        expectRed: 14,
     },
     {
         id: "M4-remove-silently-skips-missing-uid",
@@ -77,12 +78,19 @@ const MUTANTS = [
         why: "replace_run 的 trash 不再看 wasteRoles（销毁没人签字也放行）",
         from: "        const wasteRoles = primary.tpl.wasteRoles || [];",
         to: '        const wasteRoles = ["left", "right", "primary", "secondary"]; /* MUTANT */',
-        expectRed: 2,
+        expectRed: 1,
     },
     {
         id: "M6-trash-unused-ignores-wasteRoles",
         why: "trash_unused 不再要求 confirm_waste",
         from: "    if (!wasteRoles.includes(port.role) && !opts.confirm_waste) {",
+        to: "    if (false) { /* MUTANT */",
+        expectRed: 1,
+    },
+    {
+        id: "M7-chain-cut-gate-always-open",
+        why: "语义闸失效：trash 剪断一条仍在供货的活链也不要求签字（E2E §4 V9 的静默通过形态）",
+        from: "    if (planCuts.length && !trashSpecs.every(t => t.confirmWaste)) {",
         to: "    if (false) { /* MUTANT */",
         expectRed: 1,
     },
@@ -125,6 +133,7 @@ if (process.argv.includes("--mutate")) {
            带花括号的多行 import 那行里没有 `from`。 */
         const rewritten = selfText
             .replaceAll('"./remove.mjs"', JSON.stringify(pathToFileURL(mutantPath).href))
+            .replaceAll('"./place.mjs"', JSON.stringify(uri("place.mjs")))
             .replaceAll('"./contract.mjs"', JSON.stringify(uri("contract.mjs")))
             .replaceAll('"./connect.mjs"', JSON.stringify(uri("connect.mjs")))
             .replaceAll('"../../ai/belt-rules.mjs"', JSON.stringify(uri("../../ai/belt-rules.mjs")))
@@ -291,19 +300,22 @@ t("remove_run：删带子**中间一段**只断 2 处，且断的是留下的邻
     ok(mid.would_disconnect.some(w => w.uid === UID.b4_14 && w.kind === "starved-belt"));
 });
 
-t("remove_run：删**线的末端**只断 1 处（该格没有下游，断的只有上游的去路）", () => {
-    /* (4,-9) uid=10138 的 entry=bottom ⇒ 上游是 (4,-10)=10139；exit=top ⇒ 下游是 (4,-10)。
-       等一下 —— 逐格读：
-         (4,-9)  entry=bottom（来自 4,-10）  exit=top（去 4,-10）？不可能同格。
-       实际数据：10138@(4,-9) r=0 rv=0 ⇒ entry=bottom, exit=top
-         ⇒ 上游格 = (4,-9)+DIRV[bottom] = (4,-8) —— 那格在存档里是空的（x=4 竖线到 -9 为止）
-       ⇒ (4,-9) 是**链首**（无上游），它的下游是 (4,-10)。
-       所以删它只断 1 处：下游 (4,-10) 失去供料 = starved-belt。 */
+t("remove_run：删**线的末端**断 2 处 —— 下游饿死 + 上游矿机失去唯一去处", () => {
+    /* ⚠️ 这条用例的期望值被修正过一次，值得留痕（原期望是 1，错的）：
+       旧注释说「(4,-8) 在存档里是空的」——**假的**。逐格读存档：
+         (4,-8) uid=10081 是 **miner**（r=0），它的 ejector 喷格 = (4,-9)；
+         (4,-9) uid=10138 entry=bottom ⇒ 正好从矿机接货，exit=top ⇒ 下游 (4,-10)=10139。
+       所以删 (4,-9) 断两处：下游 10139 饿死 + 矿机 10081 的唯一输出没去处。
+       旧实现只报 1 处，因为 `inLink()` 用 `portAtCell.get(上格)` 查端口 ——
+       而 portAtCell 的键是**端口的带格**（= 本带自己那格），不是机器本体格，
+       因此「被机器喷的带子」永远查不到供料方。那是个真 bug，已修（按 slot 比）。 */
     const r = removeRun({ uids: [10138] }, CTX);
     assert.ok(r.ok, JSON.stringify(r.error));
-    eq(r.would_disconnect.length, 1);
-    eq(r.would_disconnect[0].kind, "starved-belt");
-    eq(r.would_disconnect[0].uid, 10139);   // (4,-10)，它的唯一供料方就是被删的 (4,-9)
+    eq(r.would_disconnect.length, 2);
+    eq(r.would_disconnect.map(x => [x.kind, x.uid]), [
+        ["starved-belt", 10139],        // (4,-10)，唯一供料方就是被删的 (4,-9)
+        ["orphaned-output", 10081],     // (4,-8) 矿机的唯一去处被删
+    ]);
 });
 
 t("remove_run：孤立的一段（无上下游）→ 0 处断开，返回空数组而不是省略字段", () => {
@@ -764,6 +776,224 @@ t("每个失败返回都带 hint（可执行的下一步，不是只说「失败
             `${r.macro}/${r.error.code} 缺可执行 hint：${JSON.stringify(r.error)}`);
         ok(validateMacroResult(r).ok, `${r.macro}/${r.error.code} 的失败信封不合契约`);
     }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 4b. 缺陷 1：宏之间的串接（计划态 pending 引用）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+t("缺陷 1【关键】：insert_machine → trash_unused 用上一步的 pending 串接，必须绿", () => {
+    /* E2E §2 实测的断链：`insert_machine` 返回 uid:null（计划态没有 uid），
+       而 trash_unused 的 outlet.uid 要求 >=0 ⇒ bad_type。于是「宏不能组合」。
+       现在 insert_machine 额外返回 `pending`（自描述：footprint + 每个槽的世界格），
+       trash_unused 认它，不需要世界里有这台机器。 */
+    // (9,-13) 是一条线的末端（uid 10193，出口 top 指向 (9,-14) 空），放 cutter 会把
+    // (9,-14) 这条既有带替换掉；这里用一块空地，语义最干净：cutter 左右两槽都空。
+    const a = insertMachine({ at: [20, -40], facing: "top", machine: "cutter" }, CTX);
+    assert.ok(a.ok, `上一步必须成功：${JSON.stringify(a.error)}`);
+    eq(a.pending.uid, null, "计划态 —— 这正是以前串不上的原因");
+
+    const b = trashUnused({ outlet: { pending: a.pending, port: "left" }, opts: { confirm_waste: true } }, CTX);
+    assert.ok(b.ok, `宏必须能串接：${JSON.stringify(b.error)}`);
+    eq(b.trashCell, [20, -41], "cutter left 槽（槽格 (20,-40) 面 top）的喷口格 = (20,-41)");
+    eq(b.outletPort.role, "left");
+    eq(b.pending.token, "trash_unused:trash@20,-41", "trash 本身也是计划态，可继续往下串");
+});
+
+t("缺陷 1：串接链的几何与真实世界一致（pending 的槽位格 === 落地后 obs 会给出的格）", () => {
+    /* 用真实落点 (9,-13)：insert_machine 替换 (9,-14) 后，pending 描述的槽位格
+       必须与「applyToWorld 折进世界、再读一眼」得到的格一致 —— 否则 pending 只是
+       另一套自说自话的坐标。 */
+    const a = insertMachine({ at: [9, -13], facing: "top", machine: "cutter" }, CTX);
+    assert.ok(a.ok, JSON.stringify(a.error));
+    const folded = applyToWorld(a, CTX);
+    const synth = folded.entities.find(e => e.uid === -1);
+    assert.ok(synth, "applyToWorld 必须给出合成实体");
+    eq([synth.type, synth.x, synth.y], ["cutter", 9, -13]);
+    /* 折叠后的世界也必须能被 trash_unused 当 ctx 用（世界模型认得合成实体），
+       且两条路径（pending / 折进世界后的 cell）给出**同一个喷口格** —— 否则 pending
+       只是另一套自说自话的坐标。 */
+    const viaPending = trashUnused({ outlet: { pending: a.pending, port: "right" }, opts: { confirm_waste: true } }, CTX);
+    const viaCell = trashUnused({ outlet: { cell: [9, -13], port: "right" }, opts: { confirm_waste: true } }, folded.ctx);
+    assert.ok(viaPending.ok, JSON.stringify(viaPending.error));
+    assert.ok(viaCell.ok, JSON.stringify(viaCell.error));
+    eq(viaPending.trashCell, [10, -14], "cutter right 槽（槽格 (10,-13) 面 top）的喷口格");
+    eq(viaCell.trashCell, viaPending.trashCell, "pending 的几何必须与落地后的世界一致");
+});
+
+t("缺陷 1：两种 pending 拼法都认 —— `{outlet:a.pending}` 与 `{outlet:{pending:a.pending,port}}`", () => {
+    /* 任务书给的串接写法就是最自然的那种：`trashUnused({outlet: a.something}, ctx)`。
+       要求调用方再包一层 {pending:…} 是形式税，而且两条拼法行为不同才是陷阱。
+       裸传时 port 缺省 auto：单输出机器可直接用，多输出必须包一层点名（否则 ambiguous_port）。 */
+    const single = insertMachine({ at: [20, -40], facing: "top", machine: "miner" }, CTX);
+    assert.ok(single.ok, JSON.stringify(single.error));
+    const b = trashUnused({ outlet: single.pending, opts: { confirm_waste: true } }, CTX);
+    /* miner 的单输出槽喷口 = origin + top? 不 —— miner 的槽格是 origin、面 top ⇒ 喷格 (20,-41) */
+    assert.ok(b.ok, `裸传 pending 必须能解析：${JSON.stringify(b.error)}`);
+    eq(b.trashCell, [20, -41]);
+
+    const cutter = insertMachine({ at: [20, -40], facing: "top", machine: "cutter" }, CTX);
+    assert.ok(cutter.ok);
+    /* 裸传多输出 pending：auto 不足以确定 → ambiguous_port（不猜哪一路是废料） */
+    const amb = trashUnused({ outlet: cutter.pending, opts: { confirm_waste: true } }, CTX);
+    eq(amb.ok, false);
+    eq(amb.error.code, "ambiguous_port");
+});
+
+t("缺陷 1 负例：给 pending 一个不存在的 port → bad_type，并列出可用角色", () => {
+    const a = insertMachine({ at: [20, -40], facing: "top", machine: "cutter" }, CTX);
+    assert.ok(a.ok);
+    const b = trashUnused({ outlet: { pending: a.pending, port: "primary" }, opts: { confirm_waste: true } }, CTX);
+    eq(b.ok, false);
+    eq(b.error.code, "bad_type");
+    ok(/left.*right|right.*left/.test(b.error.hint), `hint 要列出可用角色：${b.error.hint}`);
+});
+
+t("缺陷 1 负例：pending 是 honest 的 —— 喷口格已被带子接货时绝不抢（port_already_bound）", () => {
+    /* L4 的真实形态：cutter@(4,-13) 的 left 槽喷口 (4,-14) 上已有带子 10143，
+       而它正朝机器接货（entry=bottom=OPP[top]）⇒ 那是下游，不是废料。 */
+    const a = insertMachine({ at: [4, -13], facing: "top", machine: "cutter" }, CTX);
+    assert.ok(a.ok, JSON.stringify(a.error));
+    const b = trashUnused({ outlet: { pending: a.pending, port: "left" }, opts: { confirm_waste: true } }, CTX);
+    eq(b.ok, false);
+    eq(b.error.code, "port_already_bound");
+    eq(b.error.detail.boundTo, 10143);
+});
+
+t("缺陷 1：replace_run 的 placed[] 每台新建筑也带 pending（打包宏同样可继续串）", () => {
+    const r = replaceRun({ region: L4_REGION, building: L4_BUILDING }, CTX);
+    assert.ok(r.ok, JSON.stringify(r.error));
+    const cutter = r.placed.find(p => p.kind === "cutter");
+    assert.ok(cutter.pending && isPendingRef(cutter.pending), "placed[].pending 必须是合法 PendingRef");
+    eq(cutter.pending.ports.in.map(q => [q.role, q.slot, q.cell]), [["primary", [4, -13], [4, -12]]]);
+    eq(cutter.pending.ports.out.map(q => [q.role, q.slot, q.cell]),
+        [["left", [4, -13], [4, -14]], ["right", [5, -13], [5, -14]]],
+        "planForOrigin 的 q.cell 已是**带格**；pending 必须给出同一口径（slot 反推回来）");
+    /* 下游消费：给这台计划态 cutter 的 right 槽接 trash —— 它接货的带子 10150 还在 */
+    const t = trashUnused({ outlet: { pending: cutter.pending, port: "right" }, opts: { confirm_waste: true } }, CTX);
+    eq(t.ok, false);
+    eq(t.error.code, "port_already_bound", "10150 正从 right 槽接货 ⇒ 绝对不能塞 trash");
+});
+
+t("缺陷 1：applyToWorld(replace_run) → 得到 180-3+2 = 179 实体的世界，且删集合逐 uid 正确", () => {
+    const r = replaceRun({ region: L4_REGION, building: L4_BUILDING }, CTX);
+    assert.ok(r.ok);
+    const out = applyToWorld(r, CTX);
+    eq(out.entities.length, ENTITIES.length - r.removed.length + r.placed.length);
+    for (const rm of r.removed) assert.ok(!out.entities.some(e => e.uid === rm.uid), `uid=${rm.uid} 应已删`);
+    const synth = out.entities.filter(e => e.uid < 0).map(e => [e.uid, e.type, e.x, e.y]);
+    eq(synth, [[-1, "cutter", 4, -13], [-2, "trash", 4, -14]]);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 4c. 缺陷 2：replace_run 的 consequences（与 remove_run 同口径）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+t("缺陷 2：replace_run 报出「谁指向 removed 格」—— 10148@(5,-12) 被 cutter 机身吃掉", () => {
+    /* E2E §3.5 的漏报：10148 的出口指向 (5,-13)，那里改造后是 cutter 的**第二格机身**。
+       cutter 唯一的输入槽在 (4,-13)（槽格），所以 (5,-13) 不会收货 ⇒ 真断线。
+       旧实现只报 kept/removed 一侧 + sideEffects 的 kept-belt-starved，这条静默消失。 */
+    const r = replaceRun({ region: L4_REGION, building: L4_BUILDING }, CTX);
+    assert.ok(r.ok, JSON.stringify(r.error));
+    const orphan = r.consequences.orphaned_outputs;
+    eq(orphan.map(x => x.uid), [10148], "精确到 uid");
+    eq(orphan[0].cell, [5, -12]);
+    eq(orphan[0].eatenBy.type, "cutter");
+    eq(orphan[0].eatenBy.cell, [4, -13], "吃掉它的是 cutter 的 origin");
+    ok(/机身/.test(orphan[0].why), `why 必须说清真断线的机理：${orphan[0].why}`);
+    /* 10208@(4,-12) 指向 (4,-13) 是**合法**的：那里正好是 cutter 输入槽的带格 */
+    ok(!orphan.some(x => x.uid === 10208), "10208 指向输入槽带格，不能误报成断线");
+    ok(r.warnings.some(w => w.code === "cut-upstream-feeds"), "必须浮到 warnings，不能只藏在字段里");
+});
+
+t("缺陷 2：consequences 与 remove_run 同形（四个数组恒在场，调用方不必判 ok 再取字段）", () => {
+    const r = replaceRun({ region: L4_REGION, building: L4_BUILDING }, CTX);
+    const rm = removeRun({ uids: [UID.b4_13, UID.b5_13, UID.b4_14] }, CTX);
+    assert.ok(r.ok && rm.ok);
+    for (const k of ["orphaned_outputs", "starved_belts", "starved_machines", "opaque"]) {
+        ok(Array.isArray(rm.consequences[k]), `remove_run.consequences.${k} 必须是数组`);
+        ok(Array.isArray(r.consequences[k]), `replace_run.consequences.${k} 必须是数组`);
+    }
+    eq(r.consequences.starved_belts.map(x => x.uid), [10144],
+        "10144 失去上游（它原本从被删的 (4,-14) 接货，而新机器的 left 槽接的是 trash）");
+    ok(Array.isArray(r.consequences.consumed_by_machine), "replace_run 多一档：被新机器接力的带子");
+});
+
+t("缺陷 2：consumed_by_machine 与 starved_belts 互补 —— 10150 是接力，不是断线", () => {
+    /* cutter 的 right 槽喷口 (5,-14)，正是保留下来的 10150；它 entry=bottom=OPP[top] ⇒ 从机器接货。
+       这是「接力」，旧实现把它算进 sideEffects 的 kept-belt-starved + starved-belt 两条。 */
+    const r = replaceRun({ region: L4_REGION, building: L4_BUILDING }, CTX);
+    assert.ok(r.ok);
+    eq(r.consequences.consumed_by_machine.map(x => x.uid), [10150]);
+    ok(!r.consequences.starved_belts.some(x => x.uid === 10150), "接力不是饿死");
+    ok(r.warnings.some(w => w.code === "consumed-by-machine"));
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 4d. 缺陷 3：dry_run 语义（恒 true = 本宏不写世界；调用方意图单列）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+t("缺陷 3：dry_run 恒 true（零写操作），调用方的 dry-run 意图在 requested_dry_run", () => {
+    /* E2E §3.5 实测：不传 opts.dry_run 时返回 dry_run:false，被误读成「已写入」。
+       实际什么都没写。现在 dry_run 恒 true，planned_only 恒 true，意图单列。 */
+    for (const opts of [undefined, {}, { dry_run: true }, { dry_run: false }]) {
+        const r = replaceRun({ region: L4_REGION, building: L4_BUILDING, ...(opts ? { opts } : {}) }, CTX);
+        assert.ok(r.ok, JSON.stringify(r.error));
+        eq(r.dry_run, true, `opts=${JSON.stringify(opts)} 时 dry_run 必须恒 true`);
+        eq(r.planned_only, true);
+        eq(r.requested_dry_run, opts ? opts.dry_run === true : false,
+            "requested_dry_run 才是「本次有没有要求 dry-run」");
+    }
+    const fail = replaceRun({ region: [4, -13, 5, -13], building: L4_BUILDING }, CTX);
+    eq(fail.ok, false);
+    eq(fail.dry_run, true, "失败信封同口径");
+    eq(fail.planned_only, true);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 4e. 语义收紧：trash 剪断活链必须签字（E2E §4 V9 的静默通过）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+t("语义闸【V9】：trash 指 right 且不签字 → 拒绝（会剪断仍在供货的 10150→10151）", () => {
+    /* E2E §4 V9：trash 指 right 会删掉 10150（右槽下游！）、保留 10143，仅 1 条 kept-belts warning。
+       这是**静默的数据损失**。现在判据可机器检查：喷口格上的带子还有没有下游。
+       10150 下游是 10151 ⇒ 剪活链 ⇒ 必须 confirm_waste（wasteRoles 免签不算数）。 */
+    const r = replaceRun({
+        region: L4_REGION,
+        building: ["cutter", { kind: "trash", port: "right" }],   // right ∈ wasteRoles，旧实现直接放行
+    }, CTX);
+    eq(r.ok, false);
+    eq(r.error.code, "precondition_failed");
+    ok(/仍在供货|活链/.test(r.error.message), `message 要说清是活链：${r.error.message}`);
+    eq(r.error.detail.cuts[0].uid, 10150);
+    eq(r.error.detail.cuts[0].downstream, 10151);
+    ok(/confirm_waste/.test(r.error.hint));
+});
+
+t("语义闸【V9 正例】：签字后放行，并如实报 trash-cuts-chain（签了字也要留痕）", () => {
+    const r = replaceRun({
+        region: L4_REGION,
+        building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }],
+    }, CTX);
+    assert.ok(r.ok, JSON.stringify(r.error));
+    eq(r.removed.map(x => x.uid), [10150, 10209, 10149], "V9 的形态：删掉的是右槽下游 10150");
+    ok(r.warnings.some(w => w.code === "trash-cuts-chain"), "必须出现剪链警告");
+    const w = r.warnings.find(x => x.code === "trash-cuts-chain");
+    ok(/10150/.test(w.detail) && /10151/.test(w.detail), `detail 要指名被剪的链：${w.detail}`);
+});
+
+t("语义闸：L4 正解（left + confirm_waste）仍然通过 —— 闸门是签字，不是禁止唯一正解", () => {
+    const r = replaceRun({ region: L4_REGION, building: L4_BUILDING }, CTX);
+    assert.ok(r.ok, `L4 正解不能因新闸被拒：${JSON.stringify(r.error)}`);
+    eq(r.removed.map(x => x.uid).sort((a, b) => a - b), [10143, 10149, 10209]);
+});
+
+t("语义闸：落点带子是死端时不需要额外签字（接一个死路 ≠ 剪一条活链）", () => {
+    /* 铜线死路 (-10,-3) 的出口 (-10,-4) 是空的 ⇒ 从带子末端接 trash（trash_unused 路径）
+       本来就没有链可剪。这条用例守住「闸门只对活链生效」，防止它退化成"处处要签字"。 */
+    const r = trashUnused({ outlet: { uid: UID.cu_deadend } }, CTX);
+    assert.ok(r.ok, JSON.stringify(r.error));
+    eq(r.trashCell, [-10, -4]);
 });
 
 /* ══════════════════════════════════════════════════════════════════════════

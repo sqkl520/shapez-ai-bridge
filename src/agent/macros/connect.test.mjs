@@ -170,6 +170,64 @@ t("verifyChain 负例⑥：空链必须红（不许把什么都没生成当成�
     assert.equal(verifyChain([]).ok, false);
 });
 
+/* ── 负例⑦：面闭合对、但记录的 (rot,rv) 不是 solveTurn 的唯一解 ──
+ *
+ * 这一条专门锁 `verifyChain` 里**单格自身复解**那段判据（connect.mjs:601-604）：
+ *   `solveTurn(entry, exit)` 必须解出与记录**完全相同**的 (rotation, rotationVariant)。
+ *
+ * 为什么负例①~③抓不到它：
+ *   · ① rv1↔rv2 互换会**改变出口面**，先被面闭合判据截胡（breaks 里没有「单格自身不自洽」）；
+ *   · ③ 单格 rv 改成 1 同理（本夹具下该格 exit 从 top 变 left，也是面闭合先报）；
+ *   · ② 整链 +180° 改的是 rotation，会让每一格的面**整体**转 180°，同样是面闭合/位置先报。
+ * 所以这条判据此前**从未被独立触发**：把 `if (!re || re.rotation !== … || …)` 弱化成 `if (!re)`，
+ * 36 条测试全绿（变异报告 C3）。
+ *
+ * 下面用**手写单格**构造"面看起来闭合、但复解对不上"的三种形态。每格都单独成链（不配对），
+ * 这样面闭合/位置连续两条判据根本没有输入可用，只能由单格复解这一段来判。 */
+t("verifyChain 负例⑦：单格 (rot,rv) 与 solveTurn 复解不符必须红（面闭合无法兜底）", () => {
+    /* 三类"面看起来对、其实解不出来"的格子。`entry`/`exit` 由 beltEntry/beltExit 从
+       (rv, rotation) 反算，所以只要重解不唯一/无解，这一段就必须报「单格自身不自洽」。 */
+    const probes = [
+        /* ① rv=3 不存在（合法 rv 只有 0/1/2）⇒ 面全 undefined，solveTurn 无解。
+           这是"静默传入了非法 rv"的形态：面判据看到 undefined===undefined 会放过。 */
+        { name: "rv=3（非法变体）", cell: { x: 0, y: 0, rotation: 0, rotationVariant: 3, code: 4 } },
+        /* ② rotation 不是 90° 的整数倍 ⇒ 面被量化到最近象限，面看起来"等于" 0° 的格子，
+           但 solveTurn 返回的 rotation 是 0，与记录的 30 不符 —— 只有复解能抓到。 */
+        { name: "rotation=30（非象限角）", cell: { x: 0, y: 0, rotation: 30, rotationVariant: 1, code: 2 } },
+        /* ③ rotation=450 等价于 90，但记录值与 solveTurn 的规范化结果不同。 */
+        { name: "rotation=450（等价的非规范写法）", cell: { x: 0, y: 0, rotation: 450, rotationVariant: 1, code: 2 } },
+    ];
+    for (const p of probes) {
+        const v = verifyChain([p.cell]);
+        assert.equal(v.ok, false, `${p.name}：单格链必须红，实得 ${JSON.stringify(v)}`);
+        assert.ok(v.breaks.some(b => /单格自身不自洽/.test(b.why)),
+            `${p.name}：必须由「单格自身不自洽」报红（而不是别的判据），实得 ${JSON.stringify(v.breaks)}`);
+    }
+
+    /* 正例对照：同一段代码对**正确**的单格必须放行，否则上一条可能只是"见单格就红"。 */
+    for (const rv of [0, 1, 2]) {
+        for (let s = 0; s < 4; s++) {
+            const rotation = s * 90;
+            const cell = { x: 0, y: 0, rotation, rotationVariant: rv, code: beltCode(rv) };
+            assert.ok(verifyChain([cell]).ok, `rv=${rv} rotation=${rotation} 是合法单格，不应报红`);
+        }
+    }
+});
+
+t("verifyChain 负例⑧：面闭合 + 位置连续都对，但单格复解不唯一的链必须红", () => {
+    /* 这条把负例⑦放回**多格链**里：如果只测单格，有人可能把「单格复解」写成只对长度 1 生效。
+       构造方法：先取一条正确的 L 链，再把**中间格**换成一个"面相同、但 (rot,rv) 不是唯一解"的写法。
+       面相同的等价写法只有一种（rotation 相差 360° 的整数倍），所以这里用 rotation+360
+       —— 面完全相同、位置不变、面闭合全过，只有复解会因为 450 !== 90 报红。 */
+    const ch = L_PATH();
+    const i = 2;
+    const tweaked = ch.cells.map((x, k) => k === i ? { ...x, rotation: x.rotation + 360 } : x);
+    const v = verifyChain(tweaked);
+    assert.equal(v.ok, false, "rotation+360（面等价、非规范）必须红");
+    assert.ok(v.breaks.some(b => b.at === i && /单格自身不自洽/.test(b.why)),
+        `必须由第 ${i} 格的「单格自身不自洽」报红，实得 ${JSON.stringify(v.breaks)}`);
+});
+
 function ok_true(v, msg) { assert.equal(v, true, msg); }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -410,6 +468,116 @@ t("allow_replace：路径上的旧带子被允许覆盖，并给出回滚警告"
     assert.ok(r.warnings.some(w => w.code === "replacing-belts"), "必须给出删旧带的回滚警告");
     // 回滚警告里要能数出要删几格
     assert.ok(/3 格/.test(r.warnings.find(w => w.code === "replacing-belts").detail), "应报出要覆盖 3 格旧带");
+});
+
+t("占用检查·负例：rebind 但不给 allow_replace，踩旧带子必须 occupied（不许静默铺上去）", () => {
+    /* ★ 这一条专门锁 `checkOccupancy`（connect.mjs:639）本身。★
+     *
+     * 现有三条"撞墙"用例挡的都是**机器**，走 `fits()` / `noteBlocked` 那条路
+     * （connect.mjs:766-774、804-814），根本不经过 `checkOccupancy`。
+     * 唯一踩旧带子的用例给了 `allow_replace: true`。
+     * 所以把 `checkOccupancy` 的返回整体改成 `{ok:true, firstConflict:null}`，
+     * 36 条测试全绿 —— 而实际行为退化成"把 5 格新带子直接铺在 3 条既有带子上并报成功"。
+     *
+     * 夹具设计（每一步都有理由，改之前先读）：
+     *   · 矿机在 (0,6)，出口格 (0,5)；切割机在 (0,0)，入口格 (0,1)。
+     *   · 两条旧带子放在 (0,3)、(0,2) —— **不贴矿机出口**，所以不会先命中更早的
+     *     port_already_bound（见上一条用例的注释）。
+     *   · 两个 balancer 放在 (±1, 1..4)，把两侧堵死，让"绕开旧带子"在 max_cells 内无解；
+     *     这样只剩"踩着旧带子走过去"这一条候选 —— 正是要判的那条。
+     *     注意用 `variant: "merger"`（1×1）；`default` balancer 是 2×1，右半边会盖到 (0,·) 上，
+     *     冲突会先落到"机器"而不是"旧带子"，那条判据就又测不到了。
+     *   · `max_cells: 6` 让 7 格以上的绕行方案也出局，夹具因此是**确定性**的。
+     *   · rebind:true 是为了让判据落到占用检查，而不是更早的端口占用判据。 */
+    const ents = [
+        { uid: 1, type: "miner", x: 0, y: 6, r: 0 },
+        { uid: 2, type: "cutter", x: 0, y: 0, r: 0 },
+        { uid: 10, type: "belt", x: 0, y: 3, r: 0, rotation_variant: 0 },
+        { uid: 11, type: "belt", x: 0, y: 2, r: 0, rotation_variant: 0 },
+    ];
+    let uid = 100;
+    for (let y = 1; y <= 4; y++) {
+        ents.push({ uid: uid++, type: "balancer", variant: "merger", x: -1, y, r: 0 });
+        ents.push({ uid: uid++, type: "balancer", variant: "merger", x: 1, y, r: 0 });
+    }
+
+    const r = connect({ from: { uid: 1 }, to: { uid: 2, port: "primary" }, opts: { rebind: true, max_cells: 6 } }, { entities: ents });
+    assert.equal(r.ok, false, `踩旧带子且未给 allow_replace ⇒ 必须失败；实得 ok=true, cells=${JSON.stringify(r.cells && r.cells.map(c => [c.x, c.y]))}`);
+    eq(r.error.code, "occupied", `错误码必须是 occupied，实得 ${r.error && r.error.code}: ${r.error && r.error.message}`);
+    assert.equal(r.cells, null, "失败结果不得带回一条可执行路径（否则调用方会照着铺）");
+    assert.equal(r.cells_planned, 0, "失败时 cells_planned 必须为 0");
+    eq(r.warnings, [], "失败时不应给任何 replacing-belts 之类的警告");
+    // 冲突必须指向**旧带子**，而不是两侧的机器（机器会先被 fits() 拦掉，那就测不到这条判据了）
+    assert.ok(r.firstConflict, `firstConflict 必须非空，实得 ${JSON.stringify(r.firstConflict)}`);
+    eq(r.firstConflict.what, "belt", `冲突对象必须是 belt，实得 ${r.firstConflict.what}`);
+    eq(r.firstConflict.uid, 10, `应指向最靠近源端的旧带子 uid=10，实得 ${r.firstConflict.uid}`);
+    eq([r.firstConflict.x, r.firstConflict.y], [0, 3], "冲突格必须是旧带子的格");
+
+    // 正例对照：同一个夹具给 allow_replace 就必须成功，且报告的覆盖格数正好 2
+    // （不然上一条可能只是"这个夹具永远失败"）。
+    const ok2 = connect({ from: { uid: 1 }, to: { uid: 2, port: "primary" }, opts: { rebind: true, max_cells: 6, allow_replace: true } }, { entities: ents });
+    assert.ok(ok2.ok, `allow_replace=true 时必须能铺上去，实得 ${JSON.stringify(ok2.error)}`);
+    const warn = ok2.warnings.find(w => w.code === "replacing-belts");
+    assert.ok(warn, "allow_replace=true 必须给出 replacing-belts 警告");
+    assert.ok(/2 格/.test(warn.detail), `应报出要覆盖 2 格旧带，实得 ${warn.detail}`);
+    const covered = ok2.cells.filter(c => (c.x === 0 && c.y === 3) || (c.x === 0 && c.y === 2));
+    eq(covered.length, 2, "选中的路径必须真的经过那两格旧带");
+    assert.ok(verifyChain(ok2.cells).ok);
+});
+
+t("占用检查·自重叠：路径自己踩自己必须 occupied(self-overlap)，不许返回带重复格的 cells", () => {
+    /* ★ 这一条专门锁 `checkOccupancy` 的 self-overlap 分支（connect.mjs:644-645）。★
+     *
+     * 在补这条之前，`grep self-overlap connect.test.mjs` 零命中 —— 整个文件里这条判据
+     * 从未被触发过（变异报告 C6：删掉这个分支，36 条全绿）。
+     *
+     * 为什么普通夹具碰不到它：
+     *   `candidateShapes` 的每次 solve 都独立生成一条不自交的折线，但**6 转角枚举**里
+     *   存在"走出去再折回来"的几何（例如 t4>l1>b1>r1 会第二次经过同一条竖线的一格）。
+     *   正常排序下这些候选永远排在无重复的短路径之后，所以只有**目标贴得极近、
+     *   且绕行空间被封死**时它才会被选中。
+     *
+     * 下面三个夹具是这个形态的三个实例（由穷举 frontier 搜出来的，不是手调）：
+     *   miner 喷 top，trash 用某个侧向入口吃 bottom/left/right —— 两端只隔 1-2 格，
+     *   任何"无重复"的走法都要超出 6 转角预算，只剩一条自己折回来的。
+     * 判据：原实现报 `occupied` + `firstConflict.what === "self-overlap"`；
+     * 变异体（删掉该分支）会返回 ok:true 且 cells 里有重复格 —— 正是要拦的事故。 */
+    const cases = [
+        { name: "miner(-3,-3) → trash(-4,-4) primary#1", m: [-3, -3], t: [-4, -4], port: { role: "primary", index: 1 } },
+        { name: "miner(-3,-3) → trash(-2,-4) primary#3", m: [-3, -3], t: [-2, -4], port: { role: "primary", index: 3 } },
+        { name: "miner(-3,-2) → trash(-4,-3) primary#1", m: [-3, -2], t: [-4, -3], port: { role: "primary", index: 1 } },
+    ];
+    for (const c of cases) {
+        const ents = [
+            { uid: 1, type: "miner", x: c.m[0], y: c.m[1], r: 0 },
+            { uid: 2, type: "trash", x: c.t[0], y: c.t[1], r: 0 },
+        ];
+        const r = connect({ from: { uid: 1 }, to: { uid: 2, port: c.port } }, { entities: ents });
+        assert.equal(r.ok, false, `${c.name}：自重叠路径必须被拒，实得 ok=true cells=${JSON.stringify(r.cells && r.cells.map(x => [x.x, x.y]))}`);
+        eq(r.error.code, "occupied", `${c.name}：错误码必须是 occupied，实得 ${r.error && r.error.code}`);
+        assert.ok(r.firstConflict, `${c.name}：firstConflict 必须非空`);
+        eq(r.firstConflict.what, "self-overlap", `${c.name}：冲突类型必须是 self-overlap（不是撞机器/撞带子），实得 ${r.firstConflict.what}`);
+        assert.equal(r.cells, null, `${c.name}：拒绝时不得带回路径`);
+    }
+
+    /* 正例对照：同一对端点换一个**可达**的入口，必须能连上且路径无重复格 ——
+       否则上一条可能只是"这对端点永远连不上"。 */
+    const good = connect({ from: { uid: 1 }, to: { uid: 2, port: { role: "primary", index: 0 } } },
+        { entities: [
+            { uid: 1, type: "miner", x: 0, y: 6, r: 0 },
+            { uid: 2, type: "trash", x: 3, y: 0, r: 0 },
+        ] });
+    if (good.ok) {
+        const seen = new Set();
+        for (const x of good.cells) {
+            const k = `${x.x},${x.y}`;
+            assert.ok(!seen.has(k), `成功返回的路径不得有重复格（${k}）`);
+            seen.add(k);
+        }
+    } else {
+        /* 该几何在 v1 里可能没有 ≤6 转角的解；只要错误不是 self-overlap 就算这条对照成立。 */
+        assert.notEqual(good.error.code, "occupied", `对照夹具不该报 occupied：${good.error && good.error.message}`);
+    }
 });
 
 t("契约错误码：uid 不存在 / 无 acceptor / 自连 / 裸坐标", () => {

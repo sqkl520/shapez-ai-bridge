@@ -46,9 +46,15 @@
  *
  * 返回 = 契约 MacroResult（{ok, macro, cells_planned, cells_placed, first_mismatch, changed,
  *        warnings, error, dry_run}）+ 本宏诊断字段：
- *        insert_machine → { origin, rotation, facing, cells, ports:{in,out}, wiring:[…],
- *                           removed_uids, expected_code, footprint, unlock }
+ *        insert_machine → { origin, rotation, facing, site, cells, ports:{in,out}, wiring:[…],
+ *                           removed_uids, expected_code, footprint, unlock, pending:PendingRef }
  *        extend_line    → { cells, from, start, terminal:{cell,exit}, terminal_orphaned, firstConflict }
+ *
+ * 计划态串接（E2E 验收缺陷 1）：`insert_machine` 的 `pending` 是**自描述**的实体引用
+ * （footprint + 每个槽位的世界格/面），下游宏（`trash_unused` 等）不需要世界里有它就能解析：
+ *     const a = insertMachine(...);   trash_unused({ outlet: { ...a.pending, port: "left" } }, ctx)
+ * 要把它折进世界（让别的宏按格看到它占地），用 `applyToWorld(result, ctx)`；
+ * 合成 uid 是负数（**不是**游戏 uid），真落盘仍必须走 tx + 重新 obs。
  *
  * 离线自测：node src/agent/macros/place.test.mjs
  */
@@ -470,6 +476,7 @@ export function insertMachine(a, b, c, d, e) {
 
     /* ── ③ origin：两种形态不混用（一个走算术、一个不走） ── */
     let origin;
+    let site = null;          // {mode, candidates, chosen_by} —— 多解时如实回报依据
     if (at.kind === "origin") {
         origin = [at.cell[0], at.cell[1]];
     } else {
@@ -482,14 +489,37 @@ export function insertMachine(a, b, c, d, e) {
             });
         }
         if (cands.length > 1) {
-            return failure("insert_machine", {
-                code: "ambiguous_site", field: "at",
-                message: `[${at.cell}] 可反解出 ${cands.length} 个 origin（高 ${tpl.footprint[1]} 宽 ${tpl.footprint[0]}），宏不猜`,
-                hint: "改用 origin 形态 `at:[x,y]` 直接指定左上角，或换一格不产生多解的落点。",
-                candidates: cands.map(c2 => ({ origin: c2 })),
+            /* 多解（2×1 / 2×2 机器）：以前直接 ambiguous_site —— 于是契约承诺的
+               「调用方一个坐标都不给」在多格机器上永远做不到（E2E 缺陷 4）。
+               现在先按**语义**判：`at.cell` 是机器输入槽的落点格（= 货流进机器的入口）
+               的那个 origin。插进一段带子时，调用方指的那一格正是「要喂给机器的那格」，
+               所以它有唯一语义，不是猜。
+               仍然多解 ⇒ 不猜，报 ambiguous_site 并给出可直接用的 at。 */
+            const hits = cands.filter(o => {
+                const g = machineGeometry(tpl, o, rotation);
+                return g.inputs.some(p => cellKey(p.slot) === cellKey(at.cell));
             });
+            if (hits.length === 1) {
+                origin = hits[0];
+                /* 消歧依据进 `site`（诊断字段），不进 warnings：warning 码是契约闭集，
+                   这里不是"要处理的风险"，而是"宏替你把多解收窄了"的事实记录。 */
+                site = {
+                    mode: "any-cell", candidates: cands, chosen_by: "input-slot",
+                    why: `{cell:${JSON.stringify(at.cell)}} 可反解出 ${cands.length} 个 origin；`
+                        + `只有 ${JSON.stringify(hits[0])} 让这一格成为机器的**输入槽槽格**（machine 自己那格），据此选定`,
+                };
+            } else {
+                return failure("insert_machine", {
+                    code: "ambiguous_site", field: "at",
+                    message: `[${at.cell}] 可反解出 ${cands.length} 个 origin（高 ${tpl.footprint[1]} 宽 ${tpl.footprint[0]}），且这一格不是唯一的输入槽落点`,
+                    hint: `改用 origin 形态 \`at:[x,y]\` 直接指定左上角。候选：${cands.map(c2 => JSON.stringify(c2)).join(" / ")}`,
+                    candidates: cands.map(c2 => ({ origin: c2 })),
+                });
+            }
+        } else {
+            origin = cands[0];
+            site = { mode: "any-cell", candidates: cands, chosen_by: "unique" };
         }
-        origin = cands[0];
     }
 
     /* ── ④ 世界模型必须存在：没有 obs 就无从谈"格子空不空" ── */
@@ -731,6 +761,7 @@ export function insertMachine(a, b, c, d, e) {
         origin: [origin[0], origin[1]],
         rotation,
         facing: facingOut,
+        site,
         machine: { kind: machine.kind, variant: machine.variant },
         footprint: [tpl.footprint[0], tpl.footprint[1]],
         cells: geom.cells.map(([x, y]) => ({ x, y })),
@@ -747,6 +778,12 @@ export function insertMachine(a, b, c, d, e) {
             out: geom.outputs.map(p => ({ role: p.role, slot: p.slot, cell: p.cell, dir: p.dir })),
         },
         wiring,
+        /* ── 计划态引用：让下游宏（trash_unused / remove_run via applyToWorld）能消费 ── */
+        pending: pendingRefOf({
+            macro: "insert_machine", kind: machine.kind, variant: machine.variant,
+            origin, rotation, cells: geom.cells,
+            inputs: geom.inputs, outputs: geom.outputs,
+        }),
         removed_uids: replacedUniq.map(r => r.uid),
         /* 执行方读回时要对的值（契约 invariant：读回 code 必须等于 op-templates 的 code） */
         expected_code: tpl.code,
@@ -756,6 +793,92 @@ export function insertMachine(a, b, c, d, e) {
     const chk = validateMacroResult(result);
     if (!chk.ok) return failure("insert_machine", { code: "internal", field: chk.error.field, message: `返回值不合契约：${chk.error.message}` });
     return result;
+}
+
+/* ═══════════════════════════════ 4b. 计划态引用（PendingRef） ═══════════════════════════════ */
+
+/**
+ * 把本宏算出的机器几何打包成一个**计划态实体引用**。
+ *
+ * 为什么需要（E2E 验收缺陷 1）：宏是纯规划器，`insert_machine` 的产物没有 uid
+ * （uid 由 tx 分配）。下游宏（`trash_unused` 等）原本只认 `uid>=0`，于是
+ * 「insert_machine → trash_unused」在计划态断链 —— 而组合正是这套设计的核心。
+ *
+ * 这个引用是**自描述**的：带 footprint 与每个槽位的世界格/面，下游宏不需要世界里有它
+ * 也能按几何解析。要把它折进世界（让 `remove_run`/`connect` 看到它占地），用 `applyToWorld`。
+ *
+ * @returns {object} 形状见 contract.mjs 的 PENDING_REF_SPEC
+ */
+export function pendingRefOf({ macro, kind, variant = "default", origin, rotation = 0, cells, inputs = [], outputs = [], token = null }) {
+    const conv = q => ({
+        role: q.role, index: q.index || 0,
+        slot: [q.slot[0], q.slot[1]], cell: [q.cell[0], q.cell[1]],
+        dir: q.dir, face: q.dir,
+    });
+    return {
+        pending: true,
+        token: token || `${macro}:${kind}@${origin[0]},${origin[1]}`,
+        macro, kind, variant, rotation,
+        origin: [origin[0], origin[1]],
+        cells: cells.map(c => [c[0], c[1]]).sort((a, b) => (a[1] - b[1]) || (a[0] - b[0])),
+        ports: { in: inputs.map(conv), out: outputs.map(conv) },
+        uid: null,      // 计划态没有 uid；applyToWorld 后才有（负数是合成 uid，不是游戏 uid）
+    };
+}
+
+/**
+ * 把一次（或多次）宏调用的**计划产物折进世界**，得到一个可继续喂给下游宏的新 ctx。
+ *
+ * 语义边界（必须诚实）：
+ *   · 写进新 entities 的机器带**合成负 uid**（-1, -2…），它只在本进程内有效，
+ *     **不是**游戏 uid，也绝不能出现在 `intent.removes[].expect` 里；
+ *   · 只做「删旧 + 加新」两件事，不校验、不落盘、不碰游戏；
+ *   · 真正的落盘仍必须走 tx，落地后重新 obs 拿真 uid。
+ *
+ * @param {object|object[]} resultOrResults 宏返回值（单个 / 数组）
+ * @param {{entities:Array}} [ctx]         当前世界（可选；给了就基于它生成新世界）
+ * @returns {{entities:Array, added:Array<{token,uid,kind,origin}>, removed:number[], ctx:{entities:Array}}}
+ */
+export function applyToWorld(resultOrResults, ctx = {}) {
+    const results = Array.isArray(resultOrResults) ? resultOrResults : [resultOrResults];
+    const base = Array.isArray(ctx.entities) ? ctx.entities.slice() : [];
+    const removed = [];
+    for (const r of results) {
+        if (!r || typeof r !== "object") continue;
+        const rm = (r.changed && Array.isArray(r.changed.removed_uids)) ? r.changed.removed_uids
+            : (Array.isArray(r.removed_uids) ? r.removed_uids : []);
+        for (const u of rm) if (Number.isInteger(u) && u >= 0) removed.push(u);
+        for (const it of (Array.isArray(r.removes) ? r.removes : [])) {
+            if (it && Number.isInteger(it.uid) && it.uid >= 0) removed.push(it.uid);
+        }
+    }
+    const removedSet = new Set(removed);
+    const entities = base.filter(e => !removedSet.has(e.uid));
+
+    /* 收集 pending：单机 (r.pending) 与多建筑 (r.placed[].pending) 都认；同一 token 只加一次 */
+    const pend = [];
+    const seen = new Set();
+    const push = p => {
+        if (!p || p.pending !== true || seen.has(p.token)) return;
+        seen.add(p.token);
+        pend.push(p);
+    };
+    for (const r of results) {
+        if (!r || typeof r !== "object") continue;
+        push(r.pending);
+        for (const it of (Array.isArray(r.placed) ? r.placed : [])) push(it.pending);
+    }
+    const added = [];
+    pend.forEach((p, i) => {
+        const uid = -(i + 1);           // 合成 uid：负数 ⇒ 一眼能看出「不是游戏 uid」
+        entities.push({
+            uid, type: p.kind, variant: p.variant,
+            x: p.origin[0], y: p.origin[1], r: p.rotation,
+            rotation_variant: 0, layer: "regular", synthetic: true,
+        });
+        added.push({ token: p.token, uid, kind: p.kind, origin: [p.origin[0], p.origin[1]] });
+    });
+    return { entities, added, removed: [...removedSet], ctx: { entities } };
 }
 
 /* ═══════════════════════════════ 5. extend_line ═══════════════════════════════ */
@@ -1108,6 +1231,7 @@ function failure(macro, err) {
         dry_run: true,
         /* 诊断字段保持形状稳定：调用方不必先判 ok 再取字段 */
         origin: null, rotation: null, facing: null, cells: null, ports: null, wiring: null,
+        pending: null,
         removed_uids: [],
         reason: err.message,
         firstConflict: err.firstConflict || (err.detail && err.detail.firstConflict) || null,

@@ -43,8 +43,18 @@
  *   eject 要求 belt.entry === OPP[q.face]，accept 要求 belt.exit === OPP[q.face]。
  *   （机器紧贴机器 = 0 格连接：eject 的 cell 正好是对方 accept 的 slot，同上式推出。）
  *
- * ⚠️ 本文件**零游戏写操作**：三个宏都只规划 + 自证，`dry_run` 恒为 true；
+ * ⚠️ 本文件**零游戏写操作**：三个宏都只规划 + 自证，`dry_run` **恒为 true**；
  *    真正的 delete/place 由调用方（tx）执行。返回值里的 changed/removed/placed 是**计划**。
+ *    「调用方有没有要求 dry-run」是另一件事，单列在 `requested_dry_run`（+ `planned_only:true`）。
+ *    以前 replace_run 把 opts.dry_run 直接写进 dry_run，于是 dry_run:false 被误读成「已写入」
+ *    —— 实际什么都没写（E2E 验收缺陷 3）。
+ *
+ * ⓘ 宏之间的**串接**：`replace_run` 的每台新建筑、`trash_unused` 的垃圾桶都返回 `pending`
+ *   （计划态实体引用，见 contract.PENDING_REF_SPEC）。下游宏可以直接把它当 outlet/endpoint：
+ *       const a = replace_run(...);            // 计划态
+ *       trash_unused({ outlet: a.placed[0].pending, port: "right" }, ctx)
+ *   要把它折进世界（例如让 remove_run/connect 看到它占地），用 place.mjs 的 `applyToWorld()`；
+ *   合成 uid 是负数（不是游戏 uid），真正落盘仍走 tx + 重新 obs。
  *
  * 用法：
  *   removeRun({ uids:[10209,10149,10143] }, ctx)
@@ -188,8 +198,12 @@ function inLink(belt, ctx) {
             : { type: "mismatch", uid: m.uid, cell: [m.x, m.y] };
     }
     if (rec.type === "underground_belt") return { type: "opaque", uid: rec.uid, cell: c };
-    const q = (ctx.portAtCell.get(keyOf(c)) || [])
-        .find(p => p.kind === "eject" && p.uid === rec.uid && p.face === OPP[belt.entry]);
+    /* 机器 ejssctor：槽格 == 上格，面朝 OPP[本带 entry]（即朝本带喷）。
+       ⚠️ 不能用 portAtCell 查这里：portAtCell 的键是**端口的带格**（q.cell），
+       而紧贴的机器 q.cell = 本带自己那格，不是上格 c —— 用 c 去查永远查不到（旧实现的 bug：
+       被机器喷的带子被误判成 starved）。直接按槽格比。 */
+    const q = (ctx.machines.get(rec.uid) || { eject: [] }).eject
+        .find(p => eqCell(p.slot, c) && p.face === OPP[belt.entry]);
     return q ? { type: "machine", uid: rec.uid, port: q, cell: c } : null;
 }
 
@@ -269,7 +283,12 @@ function okResult(macro, planned, extras = {}, warnings = []) {
         first_mismatch: null,
         changed: { added_uids: [], removed_uids: [] },
         warnings, error: null,
+        /* 语义（E2E 缺陷 3）：本宏**永不写世界**，所以 dry_run 恒 true；
+           「调用方有没有要求 dry-run」是另一件事，单列在 requested_dry_run。
+           以前 replace_run 把 opts.dry_run 直接写进 dry_run，于是 dry_run:false 被误读成
+           「已经写入」—— 实际什么都没写。 */
         dry_run: true,
+        planned_only: true,
         ...extras,
     };
     const chk = validateMacroResult(r);
@@ -304,9 +323,12 @@ function failure(macro, err, extras = {}) {
         warnings: [],
         error: e,
         dry_run: true,
+        planned_only: true,
         reason: err.message,
         // 三个宏共用的诊断槽位，恒在场（失败 = 什么都没做，所以是空集而不是"没有这个字段"）
         removed: [], placed: [], kept: [], would_disconnect: [],
+        consequences: { orphaned_outputs: [], starved_belts: [], starved_machines: [], opaque: [] },
+        sideEffects: [],
         firstConflict: null,
         ...extras,
     };
@@ -743,6 +765,8 @@ function planForOrigin(origin, primary, trashSpecs, region, ctx, spec) {
     }];
 
     const conflicts = [];
+    /** 落点上的带子还有下游 ⇒ 接 trash = 把一条活链永久剪断（要求签字，见下方语义闸） */
+    const cutsChains = [];
 
     /* trash 落点 = 被点名输出槽的喷口格（role 已在枚举前校验过，这里是纯几何） */
     for (const t of trashSpecs) {
@@ -780,6 +804,20 @@ function planForOrigin(origin, primary, trashSpecs, region, ctx, spec) {
                     why: `trash 落点 (${target[0]},${target[1]}) 是隧道 uid=${rec.uid}`,
                 });
                 continue;
+            }
+            /* 「trash 把一条**还在供货的链**剪断」——语义闸（E2E §4 V9 的静默通过）。
+               判据是可机器检查的：落点上的带子自己有没有活下游。
+                 · 没有下游（死端）→ 接 trash 是收尾，wasteRoles 签字就够；
+                 · 有下游 → trash 会把这条链永久切断，比"接一个死路"危险一个量级，
+                   即使 role ∈ wasteRoles 也必须签字（confirm_waste）。
+               为什么不是"一律拒绝"：L4 的 left 槽正是这种形态（(4,-14)→(4,-15) 还接着
+               balancer），而 L4 的正解就是把它销毁 —— 拒绝等于禁止唯一正解。
+               所以闸门是**必须为这次剪断签字**，而不是替调用方判断目标形状。 */
+            const tb = rec ? ctx.belts.get(rec.uid) : null;
+            if (tb) {
+                const dn = outLink(tb, ctx);
+                if (dn && dn.type === "belt") cutsChains.push({ cell: target, uid: tb.uid, downstream: dn.uid, downstreamCell: dn.cell });
+                else if (dn && dn.type === "machine") cutsChains.push({ cell: target, uid: tb.uid, downstream: dn.uid, downstreamCell: dn.cell });
             }
         }
         placed.push({
@@ -870,7 +908,77 @@ function planForOrigin(origin, primary, trashSpecs, region, ctx, spec) {
         }
     }
 
-    return { placed, removed, kept, conflicts, sideEffects };
+    /* ── 谁能"吃掉"一条链接：新建筑（机器）的槽位 ──
+       一条既有带子的出口指向某格时，改造后那一格可能是：
+         · 新机器的**输入槽槽格**（合法：货被机器吃进去）→ 不算断
+         · 新机器的**机身**（机器没有朝向这一格的输入槽）→ 货被机身吃掉，**真断线**
+         · 新机器的输出槽槽格 → 也不会收货（输出槽是喷的）→ 真断线
+       后者就是验收报告 §3.5 的 10148@(5,-12) 指向 (5,-13)（cutter 第二个机身格）。
+       旧实现只在「被删带子自己的下游是带子」时报 starved-belt，**从不看"谁指向被删格"**，
+       于是这条真断线静默消失 —— 打包宏的诊断比 remove_run 的 consequences 还弱。 */
+    const removedSet = new Set(removed.map(r => keyOf(r.cell)));
+    /* consumed：改造后**由新放的机器**接手的既有带子（机器人 → 带子）。
+       这是合法的「接力」，以前被 starved-belt 误报（10144 就是这种形态：
+       它原本从被删的 (4,-14) 接货，改造后由新机器的 ejector 供料）。
+       判据必须是「供料方是新机器」，不能只是「该格上有个 accept 槽」——
+       后者会把闸道/既有机器的既有连接也算进来。 */
+    const synthUids = new Set(placed.map(p => synthUid(p)));
+    const consumed = [];
+    for (const rec of c1.world.byUid.values()) {
+        const b = c1.belts.get(rec.uid);
+        if (!b || removedUids.has(b.uid)) continue;
+        const il = inLink(b, c1);
+        if (!il || il.type !== "machine" || !synthUids.has(il.uid)) continue;
+        consumed.push({
+            kind: "consumed-by-machine", uid: b.uid, cell: [b.x, b.y],
+            byMachine: il.uid,
+            slot: { role: il.port.role, index: il.port.index, cell: il.port.cell, face: il.port.face },
+            why: `(${b.x},${b.y}) uid=${b.uid} 原本从被替换的走线接货，改造后由新机器的输出槽 ${il.port.role} 供料`
+                + `（喷口 ${JSON.stringify(il.cell)}）—— 这是接力，不是断线`,
+        });
+    }
+
+    /* ── 「谁指向被删格」：这一侧以前完全没报（E2E §3.5 的漏报） ──
+       判据：某条**保留的**带子 exit 指向的格，被新建筑占用、且那里没有朝它的输入槽。
+       这不依赖 removed 是哪条带子，而是按**格子所有权**判 —— 因为吃掉链接的是
+       机器的机身，不是某条被删带子。 */
+    const cutFeeds = [];
+    for (const rec of c1.world.byUid.values()) {
+        const b = c1.belts.get(rec.uid);
+        if (!b || removedUids.has(b.uid)) continue;               // 只看活下来的带子
+        const oc = [b.x + DIRV[b.exit][0], b.y + DIRV[b.exit][1]];
+        if (!removedSet.has(keyOf(oc))) continue;                 // 它指向的格没被改造 → 与本次无关
+        /* 原世界里它真的接着吗？（避免把"本来就是死路"算成本次后果） */
+        const was = outLink(ctx.belts.get(b.uid), ctx);
+        if (!was || was.type === "mismatch") continue;
+        /* 改造后：目标格上是新建筑。有输入槽朝它 → 接力；否则 → 被机身吃掉 */
+        const occ = c1.world.cells.get(keyOf(oc));
+        if (!occ) {
+            /* 目标格变成空的：下游没了（被删且没东西顶上） */
+            cutFeeds.push({
+                kind: "orphaned-output", uid: b.uid, cell: [b.x, b.y],
+                why: `(${b.x},${b.y}) uid=${b.uid} 的唯一去处 ${JSON.stringify(oc)} 被删且没有新建筑顶替，之后无处可去`,
+            });
+            continue;
+        }
+        const owner = c1.world.byUid.get(occ.uid);
+        if (!owner) continue;
+        /* 合法接力：owner 有一个 accept 槽，它的**带格**正好是本带自己那格，
+           且面朝 OPP[本带 exit]（即从这个方向收货）。这才是 F3 的口径。
+           （不能用 portAtCell.get(目标格) 判：portAtCell 的键是端口的**带格**，
+             对本带而言就是本带自己那格，不是它指向的目标格。） */
+        const into = (c1.machines.get(owner.uid) || { accept: [] }).accept
+            .find(q => eqCell(q.cell, [b.x, b.y]) && q.face === OPP[b.exit]);
+        if (into) continue;                                        // 合法接力
+        cutFeeds.push({
+            kind: "orphaned-output", uid: b.uid, cell: [b.x, b.y],
+            why: `(${b.x},${b.y}) uid=${b.uid} 的出口指向 ${JSON.stringify(oc)}，那里现在被 `
+                + `${owner.type} uid=${owner.uid} 的机身占着（没有朝这一格的输入槽）—— 货被机身吃掉`,
+            eatenBy: { type: owner.type, uid: owner.uid, cell: [owner.x, owner.y] },
+        });
+    }
+
+    return { placed, removed, kept, conflicts, sideEffects, consumed, cutFeeds, cutsChains };
 }
 
 /**
@@ -1306,11 +1414,52 @@ export function replaceRun(a, b) {
             message: fc.why,
             hint: hintByWhat[fc.what] || "调整 region / building 后重试。",
             detail: { firstConflict: fc, tried: cands.length },
-        }, { firstConflict: fc, flow, building: primary.kind, dry_run: dryRun });
+        }, { firstConflict: fc, flow, building: primary.kind, requested_dry_run: dryRun });
     }
 
-    const { placed, removed, kept, conflicts: _ig } = pick.plan;
+    const { placed, removed, kept, conflicts: _ig, consumed, cutFeeds } = pick.plan;
     void _ig;
+
+    /* ── 语义闸：trash 想剪断一条**还在供货的链** → 必须签字 ──
+       放在硬校验段之后、挑定 origin 之后：它不是几何问题，不该逐 origin 重复判断。
+       E2E §4 V9 实测：trash 指到 right（模板默认废料侧）会删掉 10150，而 10150 下游
+       还接着 10151 —— 旧实现只发一条 kept-belts，几乎静默通过。静默的数据损失必须被拒。 */
+    /* ── 语义闸：trash 落点上的带子**还有下游** ⇒ 必须签字（E2E §4 V9 的静默通过）──
+       为什么不是"一律拒绝"：L4 的 left 槽正是这种形态（(4,-14)→(4,-15) 还接着 balancer），
+       而 L4 的正解就是把它销毁 —— 拒绝等于禁止唯一正解。所以闸门是「必须签字」，
+       而不是替调用方判断目标形状。
+       为什么 confirm_waste 够用：它现在的语义被收紧成「我知道这会永久销毁**这条带子的下游**」。
+       旧实现里它对 role ∈ wasteRoles 的调用是免签的，于是 V9（trash 指 right，
+       删掉仍在供货的 10150）只发一条 kept-belts 就通过 —— 静默的数据损失。 */
+    const planCuts = pick.plan.cutsChains || [];
+    if (planCuts.length && !trashSpecs.every(t => t.confirmWaste)) {
+        const cut = planCuts[0];
+        return failure(A, {
+            code: "precondition_failed", field: `${trashSpecs[0].at}.confirm_waste`,
+            message: `trash 会剪断一条**仍在供货**的链：喷口格 ${JSON.stringify(cut.cell)} 上的带子 uid=${cut.uid} `
+                + `还有下游 ${cut.downstream}${cut.downstreamCell ? `@(${cut.downstreamCell[0]},${cut.downstreamCell[1]})` : ""}`,
+            hint: "confirm_waste 是**一次签字覆盖两层后果**：① 这一侧是废料；② 即使该 role ∈ 模板 wasteRoles、"
+                + "即使喷口格上的带子还有下游，也确认要永久销毁。"
+                + "接 trash 是永久销毁一条活链，比「接一个死路」危险一个量级，所以不可省。"
+                + `本次会剪：${planCuts.map(c => `${c.uid}→${c.downstream}`).join(", ")}。`,
+            detail: { cuts: planCuts },
+        }, { flow, building: primary.kind });
+    }
+
+    /* ── consequences：与 remove_run 同一口径（缺陷 2）──
+       remove_run 报的是「删了哪些链接」；replace_run 是「删 + 放」，所以还要多一档
+       `consumed_by_machine`（上游被新机器吃进去 = 合法接力，不该报成断线）。
+       以前 replace_run 只给 sideEffects（kept/starved），**从不报"谁指向被删格"**，
+       于是 E2E 那条 10148@(5,-12)→(5,-13)（cutter 第二格机身）静默消失。 */
+    const consequences = {
+        orphaned_outputs: cutFeeds,
+        starved_belts: pick.plan.sideEffects.filter(s => s.code === "starved-belt")
+            .map(s => ({ kind: "starved-belt", uid: s.uid, cell: s.cell,
+                why: `uid=${s.uid}@(${s.cell[0]},${s.cell[1]}) 原本从被替换的走线接货，改造后再没有供料方` })),
+        starved_machines: [],
+        consumed_by_machine: consumed,
+        opaque: [],
+    };
 
     const warnings = [];
     if (primary.tpl.verifiedOnLive === false) {
@@ -1328,6 +1477,24 @@ export function replaceRun(a, b) {
             hint: "这是设计：region 里不是所有带子都该删。执行前请逐条确认它们确实该留下。",
         });
     }
+    /* 谁指向被改造的格：以前完全静默（E2E §3.5）。现在必须浮到 warnings，
+       因为这是**真断线**（货被机身吃掉），不是"可能"的副作用。 */
+    if (cutFeeds.length) {
+        warnings.push({
+            code: "cut-upstream-feeds",
+            detail: `${cutFeeds.length} 条既有带子的出口指向本次改造的格，而那里现在是机身（不是输入槽）——`
+                + `货会被机身吃掉：${cutFeeds.map(c => `${c.uid}@(${c.cell[0]},${c.cell[1]})→${JSON.stringify((c.eatenBy || {}).cell || [])}`).join(", ")}`,
+            hint: "这是 remove_run 的 orphaned_outputs 在打包宏里的等价物。"
+                + "要么把 region/机器朝向改到让那一侧成为输入槽，要么把这些带子一起纳入改造（会真删货流）。",
+        });
+    }
+    if (consumed.length) {
+        warnings.push({
+            code: "consumed-by-machine",
+            detail: `${consumed.length} 条既有带子的出口正好落在新机器的输入槽槽格上 —— 这是接力，不是断线`,
+            hint: "不需要处理；这条 warning 的存在是为了让「断线」与「接力」在日志里可区分。",
+        });
+    }
     for (const p of placed) {
         if (p.kind !== "trash") continue;
         const served = (placed.find(x => x.kind !== "trash") || {}).ports || [];
@@ -1340,6 +1507,15 @@ export function replaceRun(a, b) {
             });
         }
     }
+    /* 已签字剪断活链 ⇒ 如实回报（用户签了字不等于可以不留痕） */
+    if (planCuts.length) {
+        warnings.push({
+            code: "trash-cuts-chain",
+            detail: `confirm_waste 已签字：trash 会永久销毁仍在供货的 ${planCuts.map(c =>
+                `uid=${c.uid}@(${c.cell[0]},${c.cell[1]}) →${c.downstream}`).join(", ")}`,
+            hint: "这是目标形状要求的销毁；执行后这些下游（含在途物品）不复存在，必须进 plan 的 destroys。",
+        });
+    }
 
     /* 契约的 first_mismatch 只在「逐格读回不符」时非空；这里是计划态，故恒 null。 */
     const extras = {
@@ -1349,9 +1525,33 @@ export function replaceRun(a, b) {
         placed: placed.map(p => ({
             ...p,
             cells: p.cells.map(c => c.slice()),
+            /* 每台新建筑都带**计划态引用**（E2E 缺陷 1）：下游宏可以拿
+               `r.placed[i].pending` 直接当 outlet，不必等 tx 落盘 + 重读 obs。 */
+            pending: {
+                pending: true,
+                token: `replace_run:${p.kind}@${p.origin[0]},${p.origin[1]}`,
+                macro: "replace_run", kind: p.kind, variant: p.variant,
+                rotation: p.rotation || 0,
+                origin: [p.origin[0], p.origin[1]],
+                cells: p.cells.map(c => [c[0], c[1]]),
+                ports: {
+                    /* planForOrigin 的 q.cell 已经是**带格**（slot + DIRV[face]），
+                       与 machineGeometry 的约定一致；slot 要反推回来。 */
+                    in: (p.ports || []).filter(q => q.kind === "accept")
+                        .map(q => ({ role: q.role, index: q.index || 0,
+                            slot: [q.cell[0] - DIRV[q.face][0], q.cell[1] - DIRV[q.face][1]],
+                            cell: q.cell.slice(), dir: q.face, face: q.face })),
+                    out: (p.ports || []).filter(q => q.kind === "eject")
+                        .map(q => ({ role: q.role, index: q.index || 0,
+                            slot: [q.cell[0] - DIRV[q.face][0], q.cell[1] - DIRV[q.face][1]],
+                            cell: q.cell.slice(), dir: q.face, face: q.face })),
+                },
+                uid: null,
+            },
         })),
         kept,
         sideEffects: pick.plan.sideEffects,
+        consequences,
         firstConflict: null,
         building: primary.kind,
         summary: { removed: removed.length, placed: placed.length, kept: kept.length },
@@ -1363,7 +1563,9 @@ export function replaceRun(a, b) {
         })),
         changes: placed.reduce((s, p) => s + p.cells.length, 0),
         changed: { added_uids: [], removed_uids: removed.map(r => r.uid) },
-        dry_run: dryRun,
+        /* 「没要求 dry-run」≠「已写入」（缺陷 3）。dry_run 恒 true（本宏零写），
+           调用方的意图单列，名字自解释。 */
+        requested_dry_run: dryRun,
     };
     return okResult(A, removed.length + placed.reduce((s, p) => s + p.cells.length, 0), extras, warnings);
 }
@@ -1412,6 +1614,130 @@ export function trashUnused(a, b) {
 
     /* ── 解析 outlet → 实体 ── */
     let rec = null;
+    /* 计划态引用（E2E 缺陷 1 的正解）：上一个宏（insert_machine / replace_run）刚规划、
+       **还没落盘**的实体。它不在世界里，但它自带槽位世界格 —— 对 trash_unused 来说，
+       「该槽有没有接收方 / 喷口哪一格」全部可以从这份几何算出来。
+       这条路径是「宏能组合」的关键：调用方不必先 tx + 重读 obs 才能给机器挂垃圾桶。 */
+    if (outlet.pending !== undefined) {
+        const p = outlet.pending;
+        const ejects = p.ports.out.map(q => ({
+            kind: "eject", role: q.role, index: q.index, slot: q.slot.slice(),
+            cell: q.cell.slice(), vel: q.face, face: q.face, uid: null,
+        })).sort((a, b) => byYX(a.cell, b.cell) || cmpStr(a.role, b.role));
+        if (!ejects.length) {
+            return failure(A, {
+                code: "endpoint_not_a_port", field: "outlet.pending",
+                message: `${p.kind}（计划态）没有 ejector（输出槽）`,
+                hint: `这台 ${p.kind} 只收不产。trash 接的是**源**；给它挂垃圾桶没有意义。`,
+            });
+        }
+        let port = null;
+        const sel = outlet.port;
+        if (sel === "auto" || sel === undefined) {
+            if (ejects.length === 1) port = ejects[0];
+            else {
+                return failure(A, {
+                    code: "ambiguous_port", field: "outlet.port",
+                    message: `${p.kind}（计划态）有 ${ejects.length} 个输出槽，auto 不足以确定`,
+                    hint: `点名其中一个：${ejects.map(x => `"${x.role}"`).join(" / ")}。`,
+                    candidates: ejects.map(x => ({ role: x.role, index: x.index, cell: x.cell })),
+                });
+            }
+        } else if (typeof sel === "string") {
+            const hit = ejects.filter(x => x.role === sel);
+            if (hit.length === 1) port = hit[0];
+            else {
+                return failure(A, {
+                    code: hit.length ? "ambiguous_port" : "bad_type", field: "outlet.port",
+                    message: hit.length
+                        ? `port="${sel}" 在这台计划态机器上命中 ${hit.length} 个输出槽`
+                        : `port="${sel}" 不是 ${p.kind}（计划态）的输出槽`,
+                    hint: `可用角色：${ejects.map(x => x.role).join(", ")}。`,
+                    candidates: ejects.map(x => ({ role: x.role, index: x.index, cell: x.cell })),
+                });
+            }
+        } else if (sel && isInt(sel.entry)) {
+            port = ejects[sel.entry] || null;
+            if (!port) {
+                return failure(A, {
+                    code: "bad_type", field: "outlet.port.entry",
+                    message: `entry=${sel.entry} 越界（0..${ejects.length - 1}）`,
+                    hint: "entry 是出口槽的确定序索引（先 y 再 x）。",
+                });
+            }
+        } else if (sel && typeof sel.role === "string") {
+            port = ejects.filter(x => x.role === sel.role)[sel.index] || null;
+            if (!port) {
+                return failure(A, {
+                    code: "bad_type", field: "outlet.port",
+                    message: `{role:"${sel.role}",index:${sel.index}} 在计划态机器上不存在`,
+                    hint: `可用角色：${ejects.map(x => x.role).join(", ")}。`,
+                });
+            }
+        }
+        /* 喷口格：世界里有东西就不能放（世界是**当前世界**，不含本 pending 自己） */
+        const target = [port.cell[0], port.cell[1]];
+        const occ0 = c0.world.cells.get(keyOf(target));
+        if (occ0) {
+            const oRec = c0.world.byUid.get(occ0.uid);
+            /* 那格上的带子**是不是正从这台（计划态）机器接货**？
+               entry === OPP[槽面] ⇔ 它朝机器���货。是 ⇒ port_already_bound（绝不抢）；
+               不是 ⇒ 只是占位（occupied），replace_belt 才让位。 */
+            const ob = oRec && oRec.type === "belt" ? c0.belts.get(oRec.uid) : null;
+            if (ob && ob.entry === OPP[port.face]) {
+                return failure(A, {
+                    code: "port_already_bound", field: "outlet.port",
+                    message: `计划态 ${p.kind} 的 "${port.role}" 喷口格已经有带子 uid=${ob.uid} 接货`,
+                    hint: `这条带子是从这台机器接货的下游，不是废料。要真销毁它先 remove_run({uids:[${ob.uid}]})，`
+                        + "并确认这一路确实是废料。本宏绝不抢既有货流。",
+                    detail: { boundTo: ob.uid, target },
+                });
+            }
+            if (oRec && oRec.type === "belt") {
+                if (!opts.replace_belt) {
+                    return failure(A, {
+                        code: "occupied", field: "outlet.port",
+                        message: `计划态 ${p.kind} 的 "${port.role}" 喷口格 ${JSON.stringify(target)} 被带子 uid=${oRec.uid} 占着`,
+                        hint: `该带子不是从这台机器接货（机器还没落地）。传 opts.replace_belt=true 让 trash 顶掉它，`
+                            + `或先 remove_run({uids:[${oRec.uid}]})。`,
+                        detail: { target, beltUid: oRec.uid },
+                    });
+                }
+            } else {
+                return failure(A, {
+                    code: "occupied", field: "outlet.port",
+                    message: `计划态 ${p.kind} 的 "${port.role}" 喷口格 ${JSON.stringify(target)} 被 ${oRec ? oRec.type : occ0.type} 占着`,
+                    hint: "trash 必须正好在喷口格（4 边全收 ≠ 位置无关）。",
+                    detail: { target },
+                });
+            }
+        }
+        const tplP = templateByBuildingVariant(p.kind, p.variant);
+        const wasteP = (tplP && tplP.wasteRoles) || [];
+        if (!wasteP.includes(port.role) && !opts.confirm_waste) {
+            return failure(A, {
+                code: "precondition_failed", field: "opts.confirm_waste",
+                message: `${p.kind} 的 "${port.role}" 槽不在模板 wasteRoles（${wasteP.length ? wasteP.join(",") : "空"}）里`,
+                hint: `确认 "${port.role}" 这一路确实是废料后传 opts.confirm_waste=true。`,
+                detail: { role: port.role, wasteRoles: wasteP },
+            });
+        }
+        return okResult(A, 1, {
+            trashCell: target,
+            outletPort: { kind: "pending-eject", uid: null, role: port.role, index: port.index, cell: target, dir: port.face },
+            replaced_belt_uid: null,
+            trash: { kind: "trash", cell: target, forPort: { uid: null, role: port.role, index: port.index } },
+            /* 组合链的关键：trash 也是计划态，下游/执行器按同一个 token 体系认领 */
+            pending: {
+                pending: true, token: `trash_unused:trash@${target[0]},${target[1]}`,
+                macro: A, kind: "trash", variant: "default", rotation: 0,
+                origin: [target[0], target[1]], cells: [[target[0], target[1]]],
+                ports: { in: [], out: [] }, uid: null,
+            },
+            changed: { added_uids: [], removed_uids: [] },
+        }, []);
+    }
+
     if (outlet.uid !== undefined) {
         rec = c0.world.byUid.get(outlet.uid) || null;
     } else if (outlet.cell !== undefined) {

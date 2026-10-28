@@ -47,6 +47,25 @@
  * 推论：公开 ABI 里**端点最多 2 个**（connect 的 from/to）、**落点最多 1 个**
  * （insert_machine.at），**computed 一个都不许有**。
  * `lintNoBareCoords()` 按这个上界做机器检查。
+ *
+ * ### `region` 为什么是 endpoint 而不是 computed（v2 裁定）
+ *
+ * `replace_run.region` 曾靠 lint 里一份 `cellish` 白名单放行（`region` 出现在名单里），
+ * 那等于「契约第一原则给自己开了个后门」。v2 的裁定不是删掉它，而是**证明它属于端点类**：
+ *
+ *   1. 它是**选集**，不是**推导**：值来自「obs 里被选中的那几条带子的 (min/max x, min/max y)」，
+ *      调用方是照着实体列表圈一块，宏**从不计算它**（对比 computed：路径格、solveTurn 的 rv、
+ *      footprint 展开格，都是宏算完才存在的东西）。
+ *   2. 按可机器检查的判据：把 region 挪 1 格，改变的是「**要动哪些东西**」（端点判据），
+ *      不是「这条东西怎么走」（computed / choice）。它和 `connect.to={uid}` 同构，
+ *      只是被指名的实体是一组而不是一个。
+ *   3. 它不是**被算出来的**数字：`len ≤ 到最近障碍的距离` 那种「你必须先数格子」才是 computed；
+ *      `region` 不要求调用方做任何算术 —— 「region 面积 === 带子数」这条由**宏**逐格核对，
+ *      不等就拒绝并列出反例（调用方不需要数字符）。
+ *
+ * 因此 lint **不再维护按参数名的白名单**：坐标容器只有「在 `MACRO_SPECS` 里被声明为
+ * endpoint/site 且类型含坐标的那几个参数」才放行，名单从规格表**派生**（见 `lintNoBareCoords`）。
+ * 新增一个坐标参数而忘了声明 coordClass，lint 会立刻红 —— 白名单式的豁免不再可能。
  */
 export const COORD_CLASSES = Object.freeze(["endpoint", "site", "choice", "computed"]);
 
@@ -129,6 +148,250 @@ export const ERROR_CODES = Object.freeze({
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * 1b. warnings 的闭集与分级（v2）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 警告级别。**三档，且每一档都有确定的调用方动作** —— 这是本节的唯一目的：
+ * `ok:true` + 非空 warnings 必须是**可判定**的，不能像 v1 那样把
+ * `kept-belts`（看一眼就行）与 `rotation_not_live_verified`（根本没实机验证）
+ * 混在同一个数组里让 LLM 自己猜。
+ *
+ * | severity  | 调用方动作 |
+ * |-----------|-----------|
+ * | `info`    | 可以不读。宏已经按最合理的解释办了（例如 hub 入口是宏自己选的、rv-drift 本就是这个宏的用途）。 |
+ * | `warn`    | **必须读**，并且**必须把 detail 里的对象纳入执行计划**（进 tx 的 destroys，或执行后读回自证）。不阻断，但不处理就是漏做了计划的一部分。 |
+ * | `error`   | 宏认为「这一单不该算成功」。调用方**必须按 `ok:false` 处理**（停手 / 回滚 / 重规划）。 |
+ *             出现 `error` 级警告说明**实现与契约不一致**（契约要求它直接拒绝），
+ *             必须在报告里点名，不许当作普通警告消费。 |
+ *
+ * 判定口径（`worstSeverity`）：一条 `error` 就压过一切；其次 `warn`；没有警告 = `null`。
+ */
+export const WARNING_SEVERITIES = Object.freeze(["info", "warn", "error"]);
+
+/** severity 的排序权重（仅供 worstSeverity 用） */
+const SEVERITY_RANK = Object.freeze({ info: 0, warn: 1, error: 2 });
+
+/**
+ * warnings[].code 的**闭集**。新增警告必须先在这里登记（含级别与处置），
+ * 否则 `validateMacroResult` 判红 —— 与 ERROR_CODES 同一纪律。
+ *
+ * `canonical:false` 的条目是**实现里已经存在的非规范拼写**（横线/下划线/单复数不统一）。
+ * 它们被收进闭集是为了让现有实现仍合法，但**新代码不得使用**；
+ * 看到它们时应按 `aliasOf` 指向的规范码理解。合并动作留给实现方（本文件不改实现）。
+ */
+export const WARNING_CODES = Object.freeze({
+    /* ── 「覆盖既有带子」：同一件事，实现里有三种拼写（见下方 alias 条目） ── */
+    "replacing-belts": {
+        severity: "warn", macro: "connect / insert_machine / trash_unused",
+        what: "本单会销毁既有带子（allow_replace / replace_belts / replace_belt 打开时）",
+        action: "把要删的 uid（connect 在 detail 里给格数，insert_machine 给 removed_uids，"
+            + "trash_unused 给 replaced_belt_uid）纳入 tx 的 destroys；不处理 = 覆盖没有回滚。",
+    },
+    replacing_belts: {
+        severity: "warn", macro: "insert_machine",
+        canonical: false, aliasOf: "replacing-belts", deprecated: true,
+        what: "（历史拼写）insert_machine 目前实际发出的码：footprint 内有既有带子被替换销毁",
+        action: "按 replacing-belts 理解；把 removed_uids 纳入 tx 的 destroys。"
+            + "规范名是 replacing-belts（横线），新代码不得使用本拼写（合并留给实现方）。",
+    },
+    "replacing-belt": {
+        severity: "warn", macro: "trash_unused",
+        canonical: false, aliasOf: "replacing-belts", deprecated: true,
+        what: "（历史拼写）trash_unused 目前实际发出的码（单数）：opts.replace_belt=true 时喷口格带子被销毁",
+        action: "按 replacing-belts 理解；把 replaced_belt_uid 纳入 tx 的 destroys。"
+            + "规范名是 replacing-belts，新代码不得使用本拼写（合并留给实现方）。",
+    },
+
+    /* ── connect ── */
+    "hub-entry-chosen": {
+        severity: "info", macro: "connect",
+        what: "to 指向 hub 且没给 entry：宏按「拐角数→格数」自己选了一个入口",
+        action: "不需要处理；不想要就显式给 to.port={entry:N}。",
+    },
+    both_rebind_and_allow_replace: {
+        severity: "warn", macro: "connect",
+        what: "opts.rebind 与 opts.allow_replace 同时为 true —— 抢口 + 剪旧线，最危险的一次调用",
+        action: "确认你就是**整段重铺**（旧口要抢、旧路要剪）；只解其中一个错误码时，"
+            + "把另一个关掉再调 —— 它们各自对应 port_already_bound / occupied，不能互相顶替。",
+    },
+
+    /* ── insert_machine ── */
+    facing_ignored: {
+        severity: "info", macro: "insert_machine",
+        what: "机器没有输出槽且不可旋转（trash），facing 无意义被忽略",
+        action: "不需要处理。真要接垃圾桶请用 trash_unused（它会检查 outlet 是否真没去处）。",
+    },
+    input_not_fed: {
+        severity: "warn", macro: "insert_machine",
+        what: "某个输入槽的带格是空的 —— 没有上游供料，机器放下也不会工作",
+        action: "先用 connect 接上游，或换落点；不处理就是放了一台不转的机器。",
+    },
+    input_belt_wrong_direction: {
+        severity: "warn", macro: "insert_machine",
+        what: "输入槽的带格上有东西但接不上（方向反了 / 被别的机器占着）",
+        action: "执行方必须修（改向或换落点），否则机器不收货。",
+    },
+    output_not_connected: {
+        severity: "warn", macro: "insert_machine",
+        what: "某个输出槽的带格是空的 —— 产物没有去处，机器会因出口堵塞停转",
+        action: "执行后用 connect/extend_line/trash_unused 接下游；不处理就是放了一台会堵的机器。",
+    },
+    output_belt_wrong_direction: {
+        severity: "warn", macro: "insert_machine",
+        what: "输出槽的带格上的带子不从机器接货",
+        action: "执行方必须修，否则机器出口堵死。",
+    },
+    orphaned_upstream: {
+        severity: "warn", macro: "insert_machine",
+        what: "被替换的带子有上游正朝它喷，而本机在该方向没有输入槽 ⇒ 旧线会堵",
+        action: "换落点，或连带改上游（connect/remove_run）。不处理 = 机器能转但旧线剪断。",
+    },
+    orphaned_downstream: {
+        severity: "warn", macro: "insert_machine",
+        what: "被替换带子的下游原本从它接货，而本机在该方向没有输出槽 ⇒ 下游断供",
+        action: "同上：换落点或连带改下游。",
+    },
+    rotation_not_live_verified: {
+        severity: "warn", macro: "insert_machine / extend_line",
+        what: "r≠0 的槽位公式只有 observed 级凭据（CAPABILITY_ASSUMPTIONS.rotated_machine_slots），且与旧结论冲突",
+        action: "落地后**必须**用 obs/debug_items 读回槽位邻接并逐条比对 wiring；任一 mismatch 即回滚并报 verification_failed。",
+    },
+    wiring_mismatch: {
+        severity: "warn", macro: "insert_machine",
+        what: "有槽位的 status=mismatch —— 机器放下去了，但某些口物理上接不上（见 wiring[]）",
+        action: "可以执行（机器确实放得下），但**执行前必须修**（改向/换落点/连带改线）；"
+            + "不修就是放了一台部分死口的机器。执行后仍 mismatch ⇒ 按 verification_failed 回滚。",
+        note: "与 replace_run 的对比（v2 裁定，取代旧的「任一 mismatch 即 ok=false」invariant）："
+            + "insert_machine 的落点可能「现在没接、下一步再接」（典型：先放机器再 trash_unused），"
+            + "所以它只警告；replace_run 是**定点改造一整段线**，改造完就该是通的，"
+            + "所以它对 orphaned-output 直接 precondition_failed。两者不是同一个语义，不要互相抄。",
+    },
+    world_unknown_entities: {
+        severity: "info", macro: "insert_machine",
+        what: "footprint 邻接的建筑不在 op-templates，其占地按 1×1 保守假设",
+        action: "通常不需要处理；落点检查可能因此漏判，风险自负。",
+    },
+    terminal_orphaned: {
+        severity: "warn", macro: "extend_line",
+        what: "延长后的末端指向的格没有接收方 —— 死端",
+        action: "要接到具体目标请改用 connect；不处理 = 一条断头带（货会堵在末端）。",
+    },
+
+    /* ── remove_run ── */
+    "would-disconnect": {
+        severity: "warn", macro: "remove_run",
+        what: "删除会让若干既有链接断开（orphaned_outputs / starved_belts / starved_machines）",
+        action: "**报告不拒绝**。执行后必须立刻用 insert_machine / trash_unused 补上断点，不许停在中间态。",
+    },
+    "stranded-items-unknown": {
+        severity: "info", macro: "remove_run",
+        what: "宏零写操作、不读 debug_items，被删带子上的在途物品数无法离线确定（stranded_items=null）",
+        action: "不需要处理；要在计划里写死这个数，执行前自己读一次 debug_items。",
+    },
+
+    /* ── replace_run ── */
+    "rv-drift": {
+        severity: "info", macro: "replace_run",
+        what: "现有 (r,rv) 与邻居反解不符 —— 这正是 building=\"belt\" 路径的用途",
+        action: "不需要处理；执行 tx 后逐格读回 code（1+rv），不等即 verification_failed。",
+    },
+    "variant-unverified": {
+        severity: "warn", macro: "replace_run",
+        what: "该机器变体的槽位映射未实机验证（op-templates.verifiedOnLive=false）",
+        action: "执行后必须用 debug_items 读回 boundAcceptor 自证，不等即失败。",
+    },
+    "kept-belts": {
+        severity: "warn", macro: "replace_run",
+        what: "region 内有带子没被任何新建筑占到，原样保留",
+        action: "**执行前逐条确认它们确实该留下**（它们是新机器的下游/上游时才对）；"
+            + "这是有意的保留，不是漏删 —— 但也可能是 region 圈太大。",
+    },
+    "internal-trash-offset": {
+        severity: "error", macro: "replace_run",
+        what: "trash 落点与输出槽喷口不一致（trash 偏一格就完全收不到货）",
+        action: "按 ok:false 处理并上报 —— 这是宏的 bug，不是调用错。",
+    },
+    "cut-upstream-feeds": {
+        severity: "warn", macro: "replace_run",
+        what: "既有带子的出口指向本次改造的格，而那一格现在是新机器的**机身**（没有朝它的输入槽）"
+            + "—— 货被机身吃掉，是真断线（E2E §3.5 实测：10148@(5,-12)→(5,-13)，cutter 2×1 的第二格）",
+        action: "执行前必须承认这条断线：要么把 region/机器朝向挪到让那一侧成为输入槽，"
+            + "要么把这些带子一起纳入改造。"
+            + "级别是 warn 而不是 error：L4 的正解本身就必然剪断 10148（2×1 机器的第二格就是机身），"
+            + "把它判成 error 等于禁止唯一正解 —— 与 remove_run 的 would-disconnect 同一口径：**报告，不阻止**。",
+    },
+    "consumed-by-machine": {
+        severity: "info", macro: "replace_run",
+        what: "既有带子的出口正好落在新机器的输入槽槽格上 —— 货被机器接力吃进去，是**合法**的",
+        action: "不需要处理。这条 warning 的作用是把「接力」与上面那条「被机身吃掉」在日志里分开。",
+    },
+    "trash-cuts-chain": {
+        severity: "warn", macro: "replace_run",
+        what: "confirm_waste=true 已签字：trash 会永久销毁一条**仍在供货**的链"
+            + "（喷口格上的带子还有下游；detail 列出被剪的 uid→下游）",
+        action: "这是目标形状要求的销毁（E2E §4 V9 的形态）。把被剪断的 uid 与在途物品纳入 plan 的 destroys；"
+            + "不签字时宏会直接拒绝（precondition_failed），所以出现本条 = 你确实签过字。"
+            + "签了字不等于可以不留痕。",
+    },
+
+    /* ── trash_unused 目前发的 "replacing-belt" 与顶部 alias 同一条（见 WARNING_CODES 开头） ── */
+});
+
+/**
+ * warnings[] 里**不该出现**的码：它们只在 `plan.sideEffects[]` 里出现
+ * （remove.mjs 的 `pick.plan.sideEffects` / replace_run 的 extras.sideEffects）。
+ * 收在这里是为了让「实现里出现的 code」都能被机器归类，而不是让测试对它们视而不见。
+ */
+export const SIDE_EFFECT_CODES = Object.freeze({
+    "kept-belt-starved": { what: "region 内保留的带子执行后没有上游（会空转）" },
+    "kept-belt-dead-end": { what: "region 内保留的带子执行后没有下游（会堵）" },
+    "starved-belt": { what: "与删除格相邻的既有带子执行后失去上游" },
+});
+
+/** 该 code 是否是规范拼写（false = 实现里的历史写法，只许读不许写） */
+export function isCanonicalWarningCode(code) {
+    const e = WARNING_CODES[code];
+    return !!(e && e.canonical !== false);
+}
+
+/** @param {Array<{code:string,severity?:string}>} warnings */
+export function worstSeverity(warnings) {
+    let worst = null;
+    for (const w of warnings || []) {
+        const declared = (WARNING_CODES[w.code] || {}).severity;
+        const s = w.severity || declared;
+        if (!s) continue;
+        if (worst === null || SEVERITY_RANK[s] > SEVERITY_RANK[worst]) worst = s;
+    }
+    return worst;
+}
+
+/**
+ * 「ok:true 且最高级别是 X」时调用方该做什么 —— 单一入口，LLM 只读这一段。
+ * @returns {{severity:string|null, ok:boolean, action:string}}
+ */
+export function warningVerdict(warnings) {
+    const s = worstSeverity(warnings);
+    if (s === "error") {
+        return {
+            severity: s, ok: false,
+            action: "按 ok:false 处理：停手 / 回滚 / 重规划。error 级警告表示实现与契约不一致（契约要求直接拒绝）。",
+        };
+    }
+    if (s === "warn") {
+        return {
+            severity: s, ok: true,
+            action: "可以执行，但必须把每条 warn 的 detail 对象纳入计划（进 tx destroys、或执行后读回自证），否则这一单是半成品。",
+        };
+    }
+    if (s === "info") {
+        return { severity: s, ok: true, action: "可以执行，警告可忽略。" };
+    }
+    return { severity: null, ok: true, action: "没有警告，按计划执行。" };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * 2. 校验工具（纯函数）
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -174,23 +437,80 @@ function rejectUnknownKeys(args, allowed, macro) {
     return null;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * 2b. 计划态实体引用（PendingRef）—— 让宏在**没有落盘**时也能串接
+ *
+ * 问题：宏是纯规划器，`insert_machine` 的产物没有 uid（uid 由 tx 分配）。
+ * 于是 `insert_machine → trash_unused` 这条链在计划态断掉：`uid:null` 喂不进
+ * `outlet.uid`（contract 要求 uid>=0）。验收实测就是这么断的（E2E §2）。
+ *
+ * 解法：让会放东西的宏额外返回一个**自描述**的 `pending` 引用 —— 它带着
+ * footprint 与每个槽位的世界格/面。下游宏**不需要世界里有它**就能按几何解析
+ * （trash_unused 只需要知道「哪个槽、喷口哪一格」）。要把它折进世界（例如让
+ * remove_run 按 cell 删掉它、或让 connect 看到它占地），用 `applyToWorld()`。
+ *
+ * 为什么不是「合成 uid」：负数 uid 会在 intent.removes[].expect 里变成假身份。
+ * pending 是**显式的计划态**，跨过 applyToWorld 才获得 uid。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** @typedef {object} PendingRef 计划态实体（尚未落盘） */
+export const PENDING_REF_SPEC = Object.freeze({
+    pending: "true —— 标识这是计划态实体引用，不是 uid/cell/hub",
+    token: "string —— 稳定标识（宏名@origin），applyToWorld 后按它找回合成 uid",
+    macro: "string —— 产生它的宏",
+    kind: "string —— 建筑/带子类型（cutter/trash/belt…）",
+    variant: "string",
+    rotation: "0|90|180|270",
+    origin: "[x,y] —— 机器 origin / 带子格",
+    cells: "[[x,y]…] —— footprint 的世界格（确定序：先 y 再 x）",
+    ports: "{in:[{role,index,cell,dir}], out:[…]} —— 槽位的世界格与面",
+    uid: "null | int —— 只有 applyToWorld 之后才有值（负数是合成 uid，不是游戏 uid）",
+});
+
+/** 结构判定（不判存在性）。下游宏用它决定走哪条解析路径。 */
+export function isPendingRef(v) {
+    return isObj(v)
+        && v.pending === true
+        && typeof v.token === "string" && v.token.length > 0
+        && typeof v.kind === "string"
+        && isCell(v.origin)
+        && Array.isArray(v.cells) && v.cells.length > 0 && v.cells.every(isCell)
+        && isObj(v.ports) && Array.isArray(v.ports.in) && Array.isArray(v.ports.out);
+}
+
 /**
- * 端点校验（结构层）：uid 与 cell 二选一。
+ * 端点校验（结构层）：uid / cell / hub / pending 四选一。
  * **不判断存在性** —— 那是运行时（宏实现）的事。
  */
 function validateEndpoint(v, field) {
+    /* 直接传上一个宏的 `pending`（整个对象，不是 {pending:…}）也算端点 ——
+       这是「宏能组合」最自然的写法：
+           const a = insert_machine(...);  trash_unused({ outlet: a.pending })
+       要求调用方再包一层 {pending: …} 是纯粹的形式税，而且两条写法都必须认，
+       否则同一个值在两种拼法下行为不同。 */
+    if (isPendingRef(v)) {
+        if (v.port !== undefined) {
+            const p = validatePort(v.port, `${field}.port`);
+            if (!p.ok) return p;
+        }
+        return ok({ pending: v, ...(v.port !== undefined ? { port: v.port } : { port: "auto" }) });
+    }
     if (!isObj(v)) {
         return fail("bad_type", field,
-            `${field} 必须是 {uid} 或 {cell:[x,y]} 或 {hub:{...}} 形式的端点对象`,
-            "端点指名一个**已存在**的实体。obs.entities[] 里能直接拿 uid。");
+            `${field} 必须是 {uid} / {cell:[x,y]} / {hub:{...}} / {pending:PendingRef} 形式的端点对象`,
+            "端点指名一个**已存在**的实体（或上一个宏返回的 pending）。obs.entities[] 里能直接拿 uid。");
     }
-    const hasUid = v.uid !== undefined;
+    /* ⚠️ uid === null 必须当成「没给」：PendingRef 的 uid 在计划态恒为 null
+       （uid 由 tx 分配）。把它算成「给了 uid」会让 pending 端点永远 bad_type ——
+       这正是「宏不能组合」的第二种形态。 */
+    const hasUid = v.uid !== undefined && v.uid !== null;
     const hasCell = v.cell !== undefined;
     const hasHub = v.hub !== undefined;
-    const n = [hasUid, hasCell, hasHub].filter(Boolean).length;
+    const hasPending = v.pending !== undefined;
+    const n = [hasUid, hasCell, hasHub, hasPending].filter(Boolean).length;
     if (n !== 1) {
         return fail("bad_type", field,
-            `${field} 必须在 uid / cell / hub 中**恰好给一个**（现在给了 ${n} 个）`,
+            `${field} 必须在 uid / cell / hub / pending 中**恰好给一个**（现在给了 ${n} 个）`,
             "同时给多个时宏无法判断你想要哪个 —— 与 place 的 rv/orig 别名冲突同一类错误。");
     }
     const port = v.port;
@@ -199,9 +519,14 @@ function validateEndpoint(v, field) {
         if (!p.ok) return p;
     }
     for (const k of Object.keys(v)) {
-        if (!["uid", "cell", "hub", "port"].includes(k)) {
+        if (!["uid", "cell", "hub", "pending", "port"].includes(k)) {
             return fail("unknown_field", `${field}.${k}`, `${field} 不认识键 '${k}'`);
         }
+    }
+    if (hasPending && !isPendingRef(v.pending)) {
+        return fail("bad_type", `${field}.pending`,
+            `${field}.pending 不是合法的计划态引用`,
+            "直接把上一个宏返回值里的 `.pending` 传进来，不要自己拼字段（它带 footprint 与槽位世界格）。");
     }
     if (hasUid && !isInt(v.uid)) {
         return fail("bad_type", `${field}.uid`, `${field}.uid 必须是整数（obs 的 uid）`, `实得 ${JSON.stringify(v.uid)}`);
@@ -229,6 +554,7 @@ function validateEndpoint(v, field) {
         ...(hasUid ? { uid: v.uid } : {}),
         ...(hasCell ? { cell: [v.cell[0], v.cell[1]] } : {}),
         ...(hasHub ? { hub: { ...hubRef } } : {}),
+        ...(hasPending ? { pending: v.pending } : {}),
         ...(port !== undefined ? { port } : { port: "auto" }),
     });
 }
@@ -337,14 +663,21 @@ export function validateConnectArgs(args) {
  *
  * 在 at 放一台机器，朝向 facing。footprint、rotation、旋转后的 origin、槽位世界格全部内部算。
  *
- * `at` 的确切语义（**v1 定死**，理由见下）：
- *   游戏里 `place{x,y,r}` 的 x/y 就是 `origin`（`static_map_entity.js:117` `this.origin`），
- *   而 `getTileSpaceBounds()`（同文件 :127-141）在 r=180/270 时让**可见 bbox** 向负方向长，
- *   origin 本身**不动**。所以「机器站上去的任意一格」在 r≠0 时是多义的 ——
- *   同一组格子可能对应 1~2 个 origin。v1 把两种意图拆成两种形状，不猜：
- *     · `[x,y]`                    → 直接给 **origin**（来自 obs `entities[].x/y` 或上一宏返回值）
- *     · `{cell:[x,y], part:"any"}` → 给「机器要占的其中一格」，宏按 footprint 反解 origin；
- *                                    命中多个 → `ambiguous_site` 并列出候选，不猜。
+ * `at` 的确切语义（**v2 定死：一种形状，一种算术**）：
+ *   游戏里 `place{x,y,r}` 的 x/y 就是 `origin`，而 `getTileSpaceBounds()` 在 r=180/270 时让
+ *   **可见 bbox** 向负方向长，origin 本身**不动**。所以「机器站上去的任意一格」在 r≠0 时
+ *   可能对应 1~2 个 origin。v1 曾把两种意图拆成两种形状（`[x,y]` = origin / `{cell}` = 任意格），
+ *   结果**默认形状恰好是错的那个**：obs 给的是 x/y，LLM 会天然填 `[x,y]`，而真实意图
+ *   （「在这条带上插一台」）对应的是 `{cell}`。v2 的裁定：
+ *     · **推荐且唯一有名字的形态是 `at:{cell:[x,y]}`** —— 「机器要占的其中一格」，
+ *       那颗格通常是 obs 里那条带子的格。宏按 footprint 反解 origin：
+ *       唯一解 → 采用；多解但**只有一解让这一格成为机器的输入槽槽格** → 采用并回报 `site.chosen_by`；
+ *       仍多解 → `ambiguous_site` 并列出候选（不猜）。
+ *     · `[x,y]` 裸数组**仍然接受**（向后兼容，且它是 obs `entities[].x/y` 的字面值），
+ *       语义 = 「这就是 origin」，宏不做算术。两者**不做同一个算术**，所以归一化结果里
+ *       必须带 `kind` 区分（`"any-cell"` / `"origin"`），实现按 kind 分支，不许自己嗅形状。
+ *     · 万一你只想「换掉 obs 里那台机器」，用 `origin` 形态最省事（无需反解）；
+ *       想「在这条带上插一台」，用 `{cell}` —— 这是两者的**唯一选择口径**。
  *
  * `facing` 的定义（最容易被误用，故写死）：
  *   **机器 primary output 喷射的**世界方向。不是 `place.r`、不是输入来向、不是 rv。
@@ -353,7 +686,14 @@ export function validateConnectArgs(args) {
  *       painter(default) 的 primary output 在局部是 right，所以 facing="right" ⇒ r=0。
  *   两者 r 都是 0 但世界流向不同 —— 这正是"facing 不是 r"的证明。
  *
- * @param {{at:Cell|{cell:Cell,part?:"any"}, facing:Face, machine:string|{kind:string,variant?:string}, opts?:object}} args
+ * `facing` 的必填性（v2 统一成**一处**判据，schema / 文档 / 运行期三处一致）：
+ *   `required` 取决于**机器**，不取决于这个参数本身 —— 所以 params 里写 `required:false`，
+ *   必填性由下面这条规则在运行期判定，并且 `MACRO_SPECS.insert_machine.paramRules` 里
+ *   用同一句话机器可读地重复一遍（契约测试会核对三处文本一致）：
+ *   **「有输出槽且可旋转」的机器 facing 必填（缺失 → ambiguous_site）；其余（trash 这类
+ *   无输出 + 不可旋转，或几何四向等价）可省略，省略后宏取 r=0 并回报 `facing_ignored`。**
+ *
+ * @param {{at:Cell|{cell:Cell,part?:"any"}, facing?:Face, machine:string|{kind:string,variant?:string}, opts?:object}} args
  * @returns {Validation}
  */
 export function validateInsertMachineArgs(args) {
@@ -558,14 +898,23 @@ export function validateExtendLineArgs(args) {
 /**
  * replace_run(region, building, opts?)
  *
- * 把 #region 内的带子**原位换成另一种建筑**，保持每格的 entry/exit 拓扑不变
- * （新建筑若支持 rv/rotation，由宏按每格邻接反解）。
- * 只在 region 内**全部是带子**时执行；含任何机器 → not_a_run（整单拒绝）。
+ * 把 #region 内的带子**原位换成另一种建筑**。
  *
- * `building` 在本版支持矩阵里只有 "belt"（用途：修复被游戏重算坏的 rv）。
- * 隧道需要 sender/receiver 成对，属于 out_of_scope；传了就明确报错，不静默降级。
+ * `building` 三种形态（**这是唯一真值**，实现与文档都以此为准）：
+ *   · `"belt"`                      → 原位换带，逐格保持 entry/exit 拓扑（用途：修复被游戏重算坏的 rv）。
+ *                                     region 内**每格都必须是带子**；有空格 → precondition_failed。
+ *   · `"cutter"` / `{kind,variant?}` → 换 1 台机器。region 内**可以有空格**（它只是框一块地），
+ *                                     但不许有机器/hub；机器按 footprint 展开，被覆盖的带子删掉，
+ *                                     没被覆盖的**原样保留**并在 warnings 里报 `kept-belts`。
+ *   · `[...]`                       → 机器数组，给「1 台主动机器 + 它的垃圾桶」用（L4 就是这个形态）。
+ *                                     数组里**恰好 1 台主动机器**（有输出槽的），其余只能是 trash；
+ *                                     每台 trash **必须**点名 port（宏绝不猜哪一路是废料）。
  *
- * @param {{region:BBox, building:string|{kind:string,variant?:string}, opts?:object}} args
+ * 两条路径的差异是**有意设计**，写死在这里而不是靠测试反推：
+ *   带路径要求「每格都是带子」（它要复用每格 rv）；机器路径要求「是带子或空格、不是机器」
+ *   （它要能圈一块含空地的断口）。两者都拒绝机器 —— 那是误删 42 实体那次事故的形态。
+ *
+ * @param {{region:BBox, building:string|{kind:string,variant?:string,port?:string,confirm_waste?:boolean}|Array, opts?:object}} args
  * @returns {Validation}
  */
 export function validateReplaceRunArgs(args) {
@@ -578,41 +927,111 @@ export function validateReplaceRunArgs(args) {
     if (!isBBox(args.region)) {
         return fail("bad_type", "region",
             `${A}.region 必须是闭区间包围盒 [x0,y0,x1,y1]，且 x0<=x1, y0<=y1`,
-            "region 是**唯一**允许出现包围盒的宏参数，但它必须与 obs 的既有实体对齐 —— "
-            + "宏会逐格校验，含机器整单拒绝。");
+            "region 指名的是 obs 里**已被选中的那几条带子**（取它们的 min/max 坐标），"
+            + "不是让你算出来的落点。宏会逐格核对（带子路径要求每格都是带、机器路径不许有机器）。");
     }
     if (args.building === undefined) return fail("missing_field", "building", `${A} 缺 building`);
-    let kind = null, variant = "default";
-    if (typeof args.building === "string") kind = args.building;
-    else if (isObj(args.building)) {
-        for (const k of Object.keys(args.building)) {
-            if (!["kind", "variant"].includes(k)) {
-                return fail("unknown_field", `building.${k}`, `${A}.building 不认识 '${k}'`);
+
+    /* 三种形态归一成统一的 specs 数组；`beltOnly` 标记走契约原义的带路径 */
+    const rawList = Array.isArray(args.building) ? args.building : [args.building];
+    if (rawList.length === 0) {
+        return fail("bad_type", "building", `${A}.building 不能是空数组`,
+            '给一台机器（"cutter"）或一列建筑（["cutter", {kind:"trash", port:"left"}]）。');
+    }
+    const specs = [];
+    for (let i = 0; i < rawList.length; i++) {
+        const at = rawList.length > 1 ? `building[${i}]` : "building";
+        const x = rawList[i];
+        if (typeof x === "string") {
+            if (!/^[a-z][a-z0-9_]{0,31}$/.test(x)) {
+                return fail("bad_type", at, `${at} 必须是小写建筑标识`, `实得 ${JSON.stringify(x)}`);
+            }
+            /* 数组里不允许再出现 "belt"：那会和字符串形态的语义（逐格反解 rv）混起来。 */
+            if (rawList.length > 1 && x === "belt") {
+                return fail("bad_type", at,
+                    `${A}.building 数组里不能再出现 "belt"`,
+                    '带子形态必须整个参数就是 "belt"（它走逐格 rv 反解）；'
+                    + "机器数组只列机器与 trash。");
+            }
+            /* 结构上就能判死的两种建筑（不依赖存档），字符串形态也要在这里拦住 —— 否则
+               `building:"underground_belt"` 会绕过下面对象分支的检查，变成「契约说拒、校验器放过」。 */
+            if (x === "underground_belt") {
+                return fail("unsupported_building", at,
+                    "隧道需要 sender/receiver 成对建模，v1 范围外",
+                    "明确报错而不是静默降级 —— 逐格替换隧道会得到一半的隧道。");
+            }
+            if (x === "hub") {
+                return fail("unsupported_building", at,
+                    "hub 不能被 replace_run 放置",
+                    "hub 是固定目标（16 入口），不参与改造；要接线用 connect 到 hub。");
+            }
+            specs.push({ kind: x, variant: "default" });
+            continue;
+        }
+        if (!isObj(x)) {
+            return fail("bad_type", at,
+                `${at} 必须是字符串或 {kind, variant?, port?, confirm_waste?}`,
+                '例如 "cutter" 或 {kind:"trash", port:"left", confirm_waste:true}。');
+        }
+        for (const k of Object.keys(x)) {
+            if (!["kind", "variant", "port", "confirm_waste"].includes(k)) {
+                return fail("unknown_field", `${at}.${k}`, `${at} 不认识键 '${k}'`,
+                    "允许：kind, variant, port, confirm_waste。坐标一律不给 —— 落点由 region 与建筑几何内部解。");
             }
         }
-        kind = args.building.kind;
-        variant = args.building.variant === undefined ? "default" : args.building.variant;
-    } else {
-        return fail("bad_type", "building", `${A}.building 必须是字符串或 {kind,variant}`);
+        if (typeof x.kind !== "string" || !/^[a-z][a-z0-9_]{0,31}$/.test(x.kind)) {
+            return fail("bad_type", `${at}.kind`, `${at}.kind 必须是小写建筑标识`,
+                `例如 "cutter"、"trash"；实得 ${JSON.stringify(x.kind)}。`);
+        }
+        if (x.variant !== undefined && typeof x.variant !== "string") {
+            return fail("bad_type", `${at}.variant`, `${at}.variant 必须是字符串`, "缺省 default。");
+        }
+        if (x.port !== undefined && (typeof x.port !== "string" || !/^[a-z][a-z0-9_]{0,31}$/.test(x.port))) {
+            return fail("bad_type", `${at}.port`, `${at}.port 必须是槽位角色名（如 "left"）`,
+                "它是 choice 不是坐标；{role,index} 形态在 replace_run 里不支持（trash 的输出槽角色唯一）。");
+        }
+        if (x.confirm_waste !== undefined && typeof x.confirm_waste !== "boolean") {
+            return fail("bad_type", `${at}.confirm_waste`, `${at}.confirm_waste 必须是布尔`);
+        }
+        /* 这两个是**结构上就能判死**的（不依赖存档）：隧道要 sender/receiver 成对，hub 是固定目标。
+           放在校验器里而不是只留给运行期，是为了让「契约声明」与「最先拒绝的地方」是同一处。 */
+        if (x.kind === "underground_belt") {
+            return fail("unsupported_building", `${at}.kind`,
+                "隧道需要 sender/receiver 成对建模，v1 范围外",
+                "选择明确报错而不是静默降级 —— 逐格替换隧道会得到一半的隧道。");
+        }
+        if (x.kind === "hub") {
+            return fail("unsupported_building", `${at}.kind`,
+                "hub 不能被 replace_run 放置",
+                "hub 是固定目标（16 入口），不参与改造；要接线用 connect 到 hub。");
+        }
+        specs.push({
+            kind: x.kind,
+            variant: x.variant === undefined ? "default" : x.variant,
+            ...(x.port !== undefined ? { port: x.port } : {}),
+            confirm_waste: x.confirm_waste === true,
+        });
     }
-    if (typeof kind !== "string" || !/^[a-z][a-z0-9_]{0,31}$/.test(kind)) {
-        return fail("bad_type", "building", `${A}.building(kind) 必须是小写建筑标识`);
-    }
-    if (kind !== "belt") {
-        return fail("unsupported_building", "building",
-            `${A} 在本版只支持 building="belt"（实得 "${kind}"）`,
-            "隧道需要 sender/receiver 成对建模（v1 范围外）；wire 要换层；机器请用 insert_machine。"
-            + "这里明确报错而不是静默降级 —— 静默降级正是 paste 静默覆盖旧带那次事故的形态。");
-    }
+    const beltOnly = specs.length === 1 && specs[0].kind === "belt";
+
     const opts = args.opts === undefined ? {} : args.opts;
     if (!isObj(opts)) return fail("bad_type", "opts", `${A}.opts 必须是对象`);
     for (const k of Object.keys(opts)) {
         if (!["dry_run"].includes(k)) return fail("unknown_field", `opts.${k}`, `${A}.opts 不认识 '${k}'`);
     }
+    if (opts.dry_run !== undefined && typeof opts.dry_run !== "boolean") {
+        return fail("bad_type", "opts.dry_run", "opts.dry_run 必须是布尔");
+    }
     return ok({
         region: [args.region[0], args.region[1], args.region[2], args.region[3]],
-        building: { kind, variant },
-        opts: { dry_run: opts.dry_run === true },
+        /* `building` 一律归一成**数组**（单一形状，调用方不必再判类型）；
+           `mode` 是唯一的路径开关，实现按它分支，不再自己嗅 building 的形状。
+           带路径的数组恒为 `[{kind:"belt",variant:"default"}]`。 */
+        building: specs,
+        mode: beltOnly ? "belt" : "machines",
+        opts: {
+            dry_run: opts.dry_run === true,
+        },
     });
 }
 
@@ -701,30 +1120,50 @@ export const MACRO_SPECS = Object.freeze({
         params: [
             { name: "from", type: "Endpoint", required: true, coordClass: "endpoint", description: "源端口。uid 来自 obs；port 缺省 auto（该实体只有一个输出槽时合法）。" },
             { name: "to", type: "Endpoint", required: true, coordClass: "endpoint", description: "宿端口。必须指向**已存在**的实体；要到空地请先放宿、或改用 build_line。" },
-            { name: "opts.rebind", type: "boolean", required: false, description: "源端口已被别的接收方占用时，是否允许改接（会让旧的那条饿死）。默认 false。" },
-            { name: "opts.allow_replace", type: "boolean", required: false, description: "是否允许覆盖路径上的既有带子（只覆盖带子，永不覆盖机器）。默认 false。" },
+            { name: "opts.rebind", type: "boolean", required: false, description: "**口上**的开关：from.port 已被别的接收方占着时，是否允许改接（会让旧那条断流）。默认 false。" },
+            { name: "opts.allow_replace", type: "boolean", required: false, description: "**路上**的开关：是否允许覆盖路径上的既有带子（只覆盖带子，永不覆盖机器）。默认 false。" },
             { name: "opts.max_cells", type: "int 1..5000", required: false, description: "路径格数上限，默认 2000。超了说明不是「连一条线」。" },
             { name: "opts.prefer", type: "shortest|fewest_turns|reuse_existing", required: false, description: "路径偏好，默认 fewest_turns（拐角有代价）。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只算不写，返回计划。" },
         ],
+        /**
+         * rebind（口上）与 allow_replace（路上）**不是同一个开关**，各自对应一个错误码：
+         *   port_already_bound / target_already_fed → 只有 rebind 能解
+         *   occupied（路径上的带子）              → 只有 allow_replace 能解
+         * 两者都开 = 一次调用同时抢口 + 剪旧线，是最危险的组合，只在「整段重铺」时才对。
+         * 契约不合并它们（合并会让「只想覆盖路径一格」变成「顺带抢口」）；
+         * 但**同时为 true 时实现必须发 `both_rebind_and_allow_replace` 警告**（warn 级），
+         * 逼调用方确认这不是「顺手都开上」。
+         */
+        optsRelation: {
+            independent: ["opts.rebind", "opts.allow_replace"],
+            bothTrueWarning: "both_rebind_and_allow_replace",
+        },
         preconditions: [
+            /* 前 4 条是**调用方能检查、能补救**的：违反时的错误码都能靠改参数解开。 */
             "from 与 to 都能在**当前 obs** 里解析到唯一实体（uid 优先；cell 必须是该实体 origin）。",
             "from 解析出的端口是 ejector；to 解析出的端口是 acceptor。",
             "from.port 当前**没有** bound acceptor（已有则需 opts.rebind=true，否则 port_already_bound）。",
             "to.port 当前**没有**供料方（否则 target_already_fed）。",
-            "路径首格 = from 出口格，末格 = to 入口格的前一格；两端方向必须与既有实体的朝向一致（宏不得为接线而改动机器朝向）。",
             "路径经过的格：空 → 可用；belt → 仅 allow_replace=true 时可覆盖并计 cost；机器/hub → occupied（整单失败）。",
             "路径格数 ≤ opts.max_cells。",
-            "mod 支持 tx（事务）——否则 tx_unavailable。",
-            "v1 不支持隧道穿越；需要跨线时返回 no_path 并在 error.detail 里给出被挡的走廊，而不是偷偷用隧道。",
+            /* 下面 3 条是**实现自证**，调用方既预知不了也补救不了 —— 单独标出来，不与上面同权并列。
+               （v1 把它们混在同一个数组里，等于把「你必须先 obs」与「mod 有没有 tx」说成同一优先级。） */
+            "【实现自证，调用方无需预判】路径首格 = from 出口格，末格 = to 入口格的前一格；"
+                + "两端方向必须与既有实体的朝向一致（宏不得为接线而改动机器朝向）。违反 → no_path。",
+            "【实现自证】mod 支持 tx（事务）——否则 tx_unavailable（不是参数错，重试无意义）。",
+            "【实现自证】v1 不支持隧道穿越；需要跨线时返回 no_path 并在 error.detail 里给出被挡的走廊，而不是偷偷用隧道。",
         ],
         whenNotToUse: [
             "宿不存在时不要用：connect 不接受「连到某个空格」。先把宿（机器/垃圾桶/hub）放好。",
-            "要新建一整条产线（矿机→工序→hub）时不要用：那是 build_line，会一次规划矿位与工序。",
+            "要新建一整条产线（矿机→工序→hub）时不要用：那是 build_line（`src/agent/macros/build_line.mjs`），会一次规划矿位与工序。",
             "想把一条带的侧面「接进」另一条直线带时不要用：带子只接收同向货流（BELT-TOPOLOGY-RULES 规则 1），"
                 + "侧向汇入必须让下游带子转向，那需要改既有拓扑 —— connect 会以 no_path / occupied 拒绝，而不是硬接。",
             "源端口已经有接收方时不要用（除非你**就是要**抢过来并接受旧支路断流，此时显式 rebind=true）。",
-            "两台机器紧贴、槽位本来就对齐时不要用：那是 0 格连接，用 insert_machine 后直接验证 boundAcceptor 即可。",
+            /* v1 曾写「两台机器紧贴时用 insert_machine 后直接验证 boundAcceptor」—— 那是 gate 的事，
+               不是这个宏的动作。改成「本宏对这种情况本来就不该被调用」。 */
+            "两台机器紧贴、槽位本来就对齐（0 格连接）时不要用：那是**不需要铺带**的情形，"
+                + "调用 connect 只会得到 0 格路径；连接是否存在由 gate（G6b boundAcceptor）判定，不是 connect 的动作。",
         ],
         returns: "MacroResult（cells_planned = 计划铺的带格数；cells_placed = 读回一致的格数；first_mismatch = 第一处 code/rotation/rv 与计划不符）",
         lowerOps: ["obs", "debug_items", "place（逐格，按 rv 自证）", "paste_blueprint（带 rv 的精确拐角）", "delete{uid}（A1 交付；覆盖旧带时）", "tx（A1 交付）"],
@@ -740,62 +1179,85 @@ export const MACRO_SPECS = Object.freeze({
         name: "insert_machine",
         summary: "放一台 machine 并朝向 facing；footprint/origin/槽位由宏算，调用方只指一格。",
         params: [
-            { name: "at", type: "[x,y] | {cell:[x,y],part:\"any\"}", required: true, coordClass: "site", description: "`[x,y]` = 机器 origin（来自 obs 的 entities[].x/y，或上一宏返回值）；`{cell}` = 机器要占的其中一格（通常是那条带子），宏反解 origin。v1 拆成两种形状是为了不猜 180/270 的多解。" },
-            { name: "facing", type: "Face", required: false, coordClass: "choice", description: "primary output 的世界喷射方向。**旋转不变以外的机器必填**；不给且机器有多个朝向时 → ambiguous_site。" },
+            { name: "at", type: "{cell:[x,y],part?:\"any\"} | [x,y]", required: true, coordClass: "site", description: "**默认用 `{cell:[x,y]}`**：机器要占的其中一格（通常是 obs 里那条带子的格），宏反解 origin；多解时若只有一解让这格成为机器的输入槽槽格则采用（`site.chosen_by=\"input-slot\"`），仍多解即 ambiguous_site。`[x,y]` 裸数组 = 直接给 origin（obs 的 entities[].x/y），向后兼容、宏不做算术。选择口径只有一句：**「在这条带上插一台」用 {cell}；「就是 obs 里那台机器/那个坐标」用 [x,y]。** 两者走不同算术，归一化后 at.kind ∈ any-cell|origin。" },
+            { name: "facing", type: "Face", required: false, coordClass: "choice", description: "primary output 的世界喷射方向。**必填性取决于机器**（不是这个参数）：有输出槽且可旋转的机器必填（缺失 → ambiguous_site）；无输出槽/不可旋转（trash）或四向等价的机器可省略（省略后 r=0，并回 facing_ignored 警告）。" },
             { name: "machine", type: "string|{kind,variant}", required: true, description: "建筑标识，如 \"cutter\"；变体如 {kind:\"painter\",variant:\"mirrored\"}。" },
             { name: "opts.replace_belts", type: "boolean", required: false, description: "footprint 内的带子是否让位（默认 true）。机器永远不会被让位。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只算不写。" },
         ],
+        /** 机器可读的 facing 规则 —— schema / description / precondition 三处必须说同一句话（契约测试逐一核对） */
+        paramRules: {
+            facing: {
+                requiredWhen: "machine 有输出槽且可旋转（ROTATABLE !== false）",
+                optionalWhen: "machine 无输出槽（trash）或几何四向等价；省略后 rotation=0",
+                missingCode: "ambiguous_site",
+                ignoredWarning: "facing_ignored",
+            },
+            at: {
+                recommendedForm: "{cell:[x,y]}",
+                forms: { "any-cell": "反解 origin（唯一解 / 唯一输入槽解 → 采用；仍多解 → ambiguous_site）", origin: "直接采用，不做算术" },
+                disambiguation: "多解时优先取「让 at.cell 成为机器输入槽槽格」的那个 origin；采用依据进返回值 site.chosen_by（unique | input-slot），不进 warnings。",
+            },
+        },
         preconditions: [
             "at 的格必须是 obs 里真实存在的格（带子 / 空 / 上一宏返回值）；宏不接受「凭空算出来的格」。",
-            "`{cell}` 形态下，按 machine+facing 的 footprint 反解 origin：命中恰好 1 个 → 采用；命中 >1 → ambiguous_site 并列出候选（不猜）。",
-            "`facing` 缺失且机器在 4 向上几何不同（cutter/painter/mixer/stacker/rotater/miner）→ ambiguous_site。"
-                + "只有 ROTATABLE=false（trash/hub）或几何四向等价时才允许省略。",
+            "`{cell}` 形态下，按 machine+facing 的 footprint 反解 origin：命中恰好 1 个 → 采用；"
+                + "命中 >1 时，若只有一解让 `at.cell` 成为机器的**输入槽槽格**则采用（依据写入返回值 `site.chosen_by=\"input-slot\"`）；"
+                + "仍有多解 → ambiguous_site 并列出候选（不猜）。",
+            "`facing` 缺失且机器在 4 向上几何不同（有输出槽且可旋转：cutter/painter/mixer/stacker/rotater/miner）→ ambiguous_site。"
+                + "只有无输出槽/不可旋转（trash）或几何四向等价时才允许省略，省略后 rotation=0 并回 facing_ignored。",
             "机器 footprint（按 facing 解出的 rotation 展开、按 getTileSpaceBounds 的 origin 语义）内，**每一格**必须是：空 / 带子（且 replace_belts=true）。",
             "footprint 覆盖到任何机器或 hub → blocked_by_machine（整单失败，绝不删机器）。",
             "机器必须在该存档已解锁（查 op-templates 的 unlockLevel）；未解锁 → precondition_failed。",
             "若 footprint 内有带子被替换，它们必须能被 serialize 快照（tx）；否则 tx_unavailable。",
         ],
         whenNotToUse: [
-            "周围没有带子/机器可接时不要用：孤立的机器不产不耗，只是占格。要新建整条线用 build_line。",
+            "周围没有带子/机器可接时不要用：孤立的机器不产不耗，只是占格。要新建整条线用 build_line（`src/agent/macros/build_line.mjs`）。",
             "机器是 4 边全收、方向无意义的建筑（trash）时不要用：用 trash_unused，它会检查 outlet 是否真的没去处。",
             "想「换一台机器」时不要用：insert_machine 不搬机器（uid 会变）。删旧再放新是有代价的动作，必须走显式计划（removes[] + tx）。",
             "想调整既有机器朝向时不要用：那是删除+重放，会丢运行期状态；朝向错误应该由 connect 的 no_path 或 G7/G8 报出来，不该靠重放掩盖。",
             "想放一台「占多格但你要规划它周围所有线」的机器时不要用：本宏只保证机器本身与它**已被带子覆盖**的旧拓扑兼容；周围接线用 connect。",
         ],
-        returns: "MacroResult + {origin:[x,y], rotation:0|90|180|270, cells:[[x,y]], removed_uids:[], wiring:[{slot,cell,dir,status}]}；wiring.status ∈ ok|nothing|mismatch",
+        returns: "MacroResult + {origin:[x,y], rotation:0|90|180|270, cells:[{x,y}], removed_uids:[], wiring:[{kind,role,slot,cell,dir,status,why?}], site:{mode,candidates,chosen_by,why?}, pending:PendingRef}；wiring.status ∈ ok|nothing|mismatch。**没有游戏 uid**：uid 由 tx 在执行后分配，计划态 added_uids 恒空。要给这台机器接下游，把返回值里的 `pending` 原样传给下游宏的端点（见 PENDING_REF_SPEC）；落盘之后才改用 obs 的真 uid。",
         lowerOps: ["obs", "op-templates（槽位/footprint/ROTATABLE 真值）", "delete{uid}（A1 交付）", "place", "tx（A1 交付）"],
         sideEffects: ["新增 1 台机器", "替换 footprint 内的带子（销毁其 uid，必须可回滚还原）", "不新建带子、不接线"],
         invariants: [
             "origin 由 `{cell}` 形态反解，或由 `[x,y]` 形态直接采用；**两种形态不得混用**（一个走算术、一个不走）。",
             "机器槽位的世界格 = origin + rotate(localCell)（origin 位移规则见 CAPABILITY_ASSUMPTIONS.rotated_machine_slots），不得由调用方给。",
             "落地后读回 code 必须等于 op-templates 给出的 code；不等即 verification_failed。",
-            "facing 反解出 r≠0 时，落地后必须用 debug_items/obs 读回**实际**槽位邻接并写进 wiring；"
-                + "任一 status=mismatch 即 ok=false（不静默接受「大概能用」）。",
+            "facing 反解出 r≠0 时，落地后必须用 debug_items/obs 读回**实际**槽位邻接并写进 wiring。",
+            /* v1 曾写「任一 status=mismatch 即 ok=false」，与实现（ok:true + warnings）打脸。
+               v2 的裁定：计划态只能警告；执行后的 mismatch 才判 ok=false。 */
+            "该槽位的邻接状态**必须逐条进 wiring**（ok|nothing|mismatch）；mismatch 必须同时出现在 warnings 里"
+                + "（`output_*_wrong_direction` / `wiring_mismatch`），不许静默接受「大概能用」。",
+            "mismatch **不阻断计划**（落点可能「先放机器、下一步再接」）；但执行后读回仍 mismatch ⇒ verification_failed 并回滚。",
         ],
     },
 
     remove_run: {
         name: "remove_run",
-        summary: "删掉一段带子（uid 优先，cells 次选）；整段原子删除。",
+        summary: "删掉一段带子（uids 指名的集合）；整段原子删除。",
         params: [
-            { name: "uids", type: "Uid[]", required: false, coordClass: "endpoint", description: "要删的带子 uid（来自 obs）。与 cells 二选一。" },
-            { name: "cells", type: "Cell[]", required: false, coordClass: "endpoint", description: "要删的带子 origin 格（来自 obs）。与 uids 二选一，必须逐格命中带子。" },
+            { name: "uids", type: "Uid[]", required: false, coordClass: "endpoint", description: "要删的带子 uid（来自 obs）。**这是唯一推荐通道**；与 cells **恰好二选一**（都给 → bad_type，都不给 → missing_field）。" },
+            { name: "cells", type: "Cell[]", required: false, coordClass: "endpoint", deprecated: true, description: "**已弃用，勿用**：拿不到 uid 时的历史通道。obs 永远给 uid，这条通道只多一个选错的机会，还把坐标重新放进公开 ABI。保留它是为了不破坏既有调用方；新调用必须用 uids。" },
             { name: "opts.allow_scattered", type: "boolean", required: false, description: "允许删不连通的多段。默认 false（不连通通常是选集错）。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只报告不执行。" },
         ],
+        /** 两个端点参数是**恰好二选一**，不是「都可省」。机器可读，供 A6 的 schema 生成器与契约测试共用。 */
+        exactlyOneOf: [["uids", "cells"]],
         preconditions: [
-            "每个 uid/cell 都解析到一个**带子**（belt / underground_belt）。任何一格解析到机器/hub → not_a_run，整单拒绝。",
+            "每个 uid（或弃用的 cell）都解析到一个**带子**（belt / underground_belt）。任何一格解析到机器/hub → not_a_run，整单拒绝。",
             "选集在 4-邻接下连通（除非 allow_scattered=true）。",
             "每一条带子都能被 serialize 快照（tx）；否则 tx_unavailable —— 不可恢复的删除一律不做。",
             "删除后必须报告 affected：哪些既有机器输出因此变成无去处（orphaned_outputs），哪些带上的物品被丢弃（stranded_items）。这两项**不阻止**执行，但必须如实出现。",
         ],
         whenNotToUse: [
-            "目的是给机器让位时不要单独用：insert_machine 自己会处理 footprint 内带子并保持原子性；拆成两步会在中间态留下「机器没放、带子已删」的断线。",
+            "目的是给机器让位时不要单独用：insert_machine 自己会处理 footprint 内带子并保持原子性；拆成两步会在中间态留下「机器没放、带子已删」的断线。"
+                + "（例外：**定点改造**整段线时 replace_run 一次做完，比 remove_run + insert_machine 两步更安全。）",
             "要清一大片区域时不要用：用 bulk_delete（带 dry_run 看 items 清单），remove_run 只用于**指名**的一段。",
-            "不确定某格是什么时不要用：先 obs；cells 解析到机器会被整单拒绝，这是设计（宁可失败，不可误删）。",
+            "不确定某格是什么时不要用：先 obs；cell 解析到机器会被整单拒绝，这是设计（宁可失败，不可误删）。",
         ],
-        returns: "MacroResult + {removed_uids, removed_cells, stranded_items:int, orphaned_outputs:[{uid,port,cell,dir}]}",
+        returns: "MacroResult + {removed_uids, removed_cells, stranded_items:int|null, orphaned_outputs:[{uid,port,cell,dir}]}；stranded_items 在离线计划态恒为 null（见 warnings 的 stranded-items-unknown）。",
         lowerOps: ["obs", "debug_items（settled 判断）", "delete{uid}（A1 交付）", "tx（A1 交付）"],
         sideEffects: ["销毁带子实体", "带上的在途物品消失（如实报告，不算失败）"],
         invariants: [
@@ -809,7 +1271,7 @@ export const MACRO_SPECS = Object.freeze({
         summary: "从一段带子的末端（或机器输出口）沿 dir 再接 len 格，首格由 from 的出口算。",
         params: [
             { name: "from", type: "Endpoint", required: true, coordClass: "endpoint", description: "既有带子的末端，或机器输出口。" },
-            { name: "len", type: "int 1..500", required: true, coordClass: "choice", description: "要新增的格数（不含 from 自身）。" },
+            { name: "len", type: "int 1..500", required: true, coordClass: "choice", description: "要新增的格数（不含 from 自身）。**不需要先数障碍**：填一个你可能需要的长度即可，宏会用 occupied + firstConflict 指出第一处被挡格 —— 那就是「到障碍还有多远」的查询结果。" },
             { name: "dir", type: "Face", required: false, coordClass: "choice", description: "世界方向；缺省沿用 from 当前出口（直行）。给不同方向 = 一个 90° 转弯。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只算不写。" },
         ],
@@ -818,20 +1280,24 @@ export const MACRO_SPECS = Object.freeze({
             "from 若是机器，必须是输出槽且该槽当前无接收方。",
             "dir 与 from 当前出口夹角 ∈ {0°, 90°}；180° 掉头 → precondition_failed（带子做不到同格掉头）。",
             "路径上 len 格必须全空（allow_replace 不在本宏提供 —— 需要覆盖就用 connect 或 replace_run）。",
-            "len ≤ 与最近障碍的距离；否则 occupied 并给出首个被挡格。",
+            /* v1 的「len ≤ 与最近障碍的距离」被删掉：那要求调用方先数格子，是 computed 的活。
+               同一件事由宏在规划后自查并回报 occupied + firstConflict 完成，调用方不需要那个数字。 */
+            "若 len 太长撞上障碍：整单失败 `occupied`，`firstConflict` 给出被挡的第一格 —— **调用方据此缩短 len 重调，不需要自己算距离**。",
         ],
         whenNotToUse: [
             "目标是一个具体的东西时不要用：extend_line 只保证「延长了」，不保证「接上了」。要接到某处请用 connect。",
-            "需要拐两个弯时不要用：一次只允许一个 90° 转向；多段请分多次调用（每次 from = 上次返回的 terminal）。",
+            "需要拐两个弯时不要用：一次只允许一个 90° 转向；多段请分多次调用 —— **闭环是**："
+                + "第 N 次返回 `terminal:{cell, exit, uid?}`，第 N+1 次的 `from` 直接给这个 terminal 的端点"
+                + "（`{cell}` 形态，或执行 tx 后 obs 拿 uid），`dir` 换成第二个弯的方向。",
             "为绕过障碍时不要用：那是布线，用 connect。",
         ],
-        returns: "MacroResult + {added_uids, cells, terminal:{cell, exit}, terminal_orphaned:boolean}",
+        returns: "MacroResult + {added_uids, cells, terminal:{cell, exit}, terminal_orphaned:boolean}；`terminal` 就是下一次 extend_line 的 `from`（宏间串联的唯一稳定通道）。",
         lowerOps: ["obs", "debug_items（末端 boundAcceptor 判定）", "place / place_path", "tx（A1 交付，用于失败回滚）"],
         sideEffects: ["新增带子实体", "不改既有实体"],
         invariants: [
             "首格 = from 的出口格 + dir 单位向量；末格出口 = dir。",
             "每格 (rotation, rv) 由 solveTurn 反解并读回自证。",
-            "terminal_orphaned=true 时必须出现在返回值里 —— 不许静默留下死端。",
+            "terminal_orphaned=true 时必须出现在返回值里（warning `terminal_orphaned`）—— 不许静默留下死端。",
         ],
     },
 
@@ -839,60 +1305,78 @@ export const MACRO_SPECS = Object.freeze({
         name: "replace_run",
         summary: "把 region 内的带子原位换成另一种建筑。building=\"belt\" 保持每格拓扑（修 rv）；building 为机器/机器数组时展开 footprint，删掉被覆盖的带、保留没被覆盖的。",
         params: [
-            { name: "region", type: "BBox", required: true, coordClass: "endpoint", description: "闭区间包围盒 [x0,y0,x1,y1]。逐格校验：全部必须是带子。" },
-            { name: "building", type: "string|{kind,variant}|Array", required: true, description: "目标建筑。\"belt\" = 原位换带（修 rv）；机器名或 [{kind,variant,port?,confirm_waste?}] = 展开 footprint 换机器。" },
-            { name: "opts.dry_run", type: "boolean", required: false, description: "只报告不执行。" },
+            { name: "region", type: "BBox", required: true, coordClass: "endpoint", description: "闭区间包围盒 [x0,y0,x1,y1]，取 obs 里**已被选中那几条带子**的 min/max 坐标。它不是算出来的落点（见 COORD_CLASSES 的 v2 裁定）。校验按模式不同：belt 模式要求每格都是带子；机器模式允许空格、不许机器。" },
+            { name: "building", type: "string|{kind,variant}|Array", required: true, description: "目标建筑。\"belt\" = 原位换带（修 rv）；机器名或 [{kind,variant,port?,confirm_waste?}] = 展开 footprint 换机器；数组里**恰好 1 台主动机器** + 若干 trash，trash **必须点名 port**。" },
+            { name: "opts.dry_run", type: "boolean", required: false, description: "只报告不执行。（本宏零写操作：返回值的 dry_run 恒 true，这个开关只进 requested_dry_run。）" },
         ],
         preconditions: [
-            "region 内**每一格**都是带子（belt / underground_belt）；含任何机器/hub/空格 → not_a_run 或 precondition_failed，列出前 5 个反例。",
-            "region 的边界必须与实体格对齐：宏会核对 region 内带子数 === region 面积；不等说明框选偏了（这是最常见的误删来源，PROTOCOL §5 记录过一次误删 42 个实体）。",
-            "目标 building 必须在支持矩阵内：belt 走原位换带；机器须在 op-templates 里有 footprint 与槽位定义。",
+            "region 内不允许有任何机器/hub（按 footprint 判，不按 origin 判）；碰到 → not_a_run，列出前 5 个反例。"
+                + "这是误删 42 实体那次事故的形态，任何模式都不放宽。",
+            "**belt 模式**（building === \"belt\"）：region 内**每一格**都是带子；有空格 → precondition_failed 并列出空格。",
+            "**机器模式**（building 为机器/数组）：region 内可以是带子或空格，但**至少要有一格带子**（否则「替换」无对象 → 用 insert_machine）。",
+            "region 的边界必须与实体格对齐（「框选偏了」最常见的形态）：宏逐格核对并列出反例，不让调用方自己数字。",
+            "机器模式：数组里**恰好 1 台主动机器**（有输出槽）；只给 trash → precondition_failed；多台主动机器 → out_of_scope（拆成多次）。",
+            "机器模式：每台 trash 必须点名 `port`（missing_field），且该 role 必须是主动机器的输出槽（否则 bad_type/ambiguous_port 并列出候选）。"
+                + "`confirm_waste:true` 是**一次签字覆盖两层后果**：① 这一侧是废料；② 即使该 role ∈ 模板 wasteRoles、"
+                + "即使喷口格上的带子还有下游（接 trash 会把一条活链永久剪断），也确认要销毁。"
+                + "所以它**不可省**，缺了 → precondition_failed（列出会剪的 uid→下游）。",
+            "机器模式：主动机器的朝向由 region 内带子的**流向**反解；流向不一致 → precondition_failed；反解出 r≠0 → out_of_scope（v1 只放 r=0）。",
+            "目标 building 必须在支持矩阵内：未知建筑 / hub / underground_belt → unsupported_building（不静默降级）。",
             "替换会销毁旧 uid 并产生新 uid —— 必须有 tx 与快照，否则 tx_unavailable。",
         ],
         whenNotToUse: [
-            "想删除带子时不要用：remove_run（replace 不减少实体数，用错会留下一条「换了个 uid 的同样的带子」）。",
+            "想删除带子时不要用：remove_run（belt 模式的 replace 不减少实体数，用错会留下一条「换了个 uid 的同样的带子」）。",
             "只想放一台机器、不需要处理它周边带子时，用 insert_machine 更直接（replace_run 会连带删除被 footprint 覆盖的带，并检查留下的带是否还连着）。",
             "想铺隧道时不要用：v1 明确不支持（sender/receiver 成对），会报 unsupported_building。",
             "region 框不准时不要用：先 bulk_delete dry_run 看 items，或用 remove_run(uids) 精确指名。",
         ],
-        returns: "MacroResult + {replaced_uids, removed_uids, added_uids, mismatched:[{cell,field,requested,actual}]}",
-        lowerOps: ["obs", "belt-rules（solveTurn）", "delete{uid}", "place", "tx（A1 交付）"],
-        sideEffects: ["销毁并重建 region 内每个带子（uid 全变）", "不改 region 外的任何实体"],
+        returns: "MacroResult + belt 模式 {mode:\"belt\", replaced_uids, removed_uids, added_uids, mismatched:[{cell,field,requested,actual}]}；机器模式 {mode:\"machines\", removed, placed, kept, summary:{removed,placed,kept}, flow, building}",
+        lowerOps: ["obs", "belt-rules（solveTurn）", "op-templates（footprint/槽位）", "delete{uid}", "place", "tx（A1 交付）"],
+        sideEffects: ["belt 模式：销毁并重建 region 内每个带子（uid 全变）", "机器模式：销毁被 footprint 覆盖的带、放机器（trash 按点名槽位）", "不改 region 外的任何实体"],
         invariants: [
-            "替换后每格的 entry/exit 与替换前逐格相等（用 belt-rules 双跑对拍）。",
+            "belt 模式：替换后每格的 entry/exit 与替换前逐格相等（用 belt-rules 双跑对拍）。",
+            "机器模式：**删除集合 === 「被新建筑 footprint 覆盖的 region 内带子」**，保留集合 === 其余带子，且保留的每一格都进 warnings 的 `kept-belts`。",
             "region 外的实体 uid 集合逐字节不变。",
         ],
     },
 
     trash_unused: {
         name: "trash_unused",
-        summary: "给一个没有去处的输出槽（必须显式指定 port）接垃圾桶。",
+        summary: "给一个没有去处的输出槽（必须显式指定 port）接垃圾桶。outlet 可以是机器输出槽，也可以是一段带子的末端。",
         params: [
-            { name: "outlet", type: "Endpoint", required: true, coordClass: "endpoint", description: "输出端口。单输出实体可给 port=\"auto\"；多输出（cutter 2 / cutter-quad 4）必须点名 left|right|quad0..3。" },
-            { name: "opts.confirm_waste", type: "boolean", required: false, description: "当该端口不属于模板声明的 wasteRoles 时，必须显式确认「这一路确实是废料」。默认 false → 拒绝。" },
+            { name: "outlet", type: "Endpoint", required: true, coordClass: "endpoint", description: "源端口：机器输出槽（{uid,port?}）**或一段带子的末端**（{uid}，垃圾桶落在它 exit 方向的下一格）**或上一个宏返回的 pending**（{pending,port?} —— 计划态，未落盘即可挂垃圾桶，见 PENDING_REF_SPEC）。多输出机器（cutter 2 / cutter-quad 4）必须点名 left|right|quad0..3。" },
+            { name: "opts.confirm_waste", type: "boolean", required: false, description: "当该端口不属于模板声明的 wasteRoles 时，必须显式确认「这一路确实是废料」。默认 false → 拒绝。这是**签字**，不是判断：宏查不出目标形状，只能要求调用方为销毁负责。" },
             { name: "opts.replace_belt", type: "boolean", required: false, description: "喷射方向的下一格若是带子，是否允许让位。默认 false。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只报告不执行。" },
         ],
         preconditions: [
-            "outlet 解析到唯一实体与**唯一** ejector 槽：port=\"auto\" 仅在该实体恰好 1 个 ejector 时合法，否则 ambiguous_port 并列出候选 role。",
+            "outlet 解析到唯一实体：机器（有 ejector 槽）或**带子**（取其 exit 面）。带子已接到下游 → port_already_bound（绝不抢）。",
+            "机器 outlet 解析到**唯一** ejector 槽：port=\"auto\" 仅在该实体恰好 1 个 ejector 时合法，否则 ambiguous_port 并列出候选 role。",
             "该槽当前 boundAcceptor === null（已经有接收方 → port_already_bound，绝不抢）。",
-            "喷射方向的下一格必须空，或是 opts.replace_belt=true 且为带子；机器/ hub → occupied。",
+            "喷射方向的下一格必须空，或是 opts.replace_belt=true 且为带子；机器/ hub → occupied；隧道 → out_of_scope。",
+            "**喷口格上的带子若还有下游（活链），即使 role ∈ wasteRoles 也必须 confirm_waste=true**；"
+                + "否则 precondition_failed。理由：这不是「给死路接垃圾桶」，而是把一条还在供货的链永久剪断 —— "
+                + "E2E §4 V9 实测旧实现只发一条 kept-belts 就通过，属静默数据损失。",
             "该槽的 role ∈ 模板 wasteRoles 时可直接执行；否则必须 confirm_waste=true。"
                 + "⚠️ wasteRoles 是**半切场景**的约定（'----CuCu' 要的是左列，右列才是废料），"
                 + "不是「这一侧永远没用」—— L4 的 RuRu---- 恰好要右列、丢左列。"
-                + "所以：目标形状决定哪一侧是废料，宏查不出目标，只能要求调用方签字。",
+                + "所以：目标形状决定哪一侧是废料，宏查不出目标，只能要求调用方签字。"
+                + "**这是有意保留的人工判断**（不是偷懒）：宏的输入里没有 goal。要把它机器化，"
+                + "必须先把「目标形状」变成 outlet 的一个参数（如 opts.keeps:\"left\"|\"right\"），"
+                + "而那会改 ABI —— 不在 v2 的范围，登记在此。",
         ],
         whenNotToUse: [
             "输出要接 hub 或下游工序时不要用：那是 connect。",
             "只是想暂时缓冲/合流时不要用：trash 是**永久销毁**，用 balancer。",
             "端口已经接了东西时不要用：先把那条拆掉（remove_run）并想清楚为什么它会空转。",
         ],
-        returns: "MacroResult + {trash_uid, cell, replaced_belt_uid?}",
+        returns: "MacroResult + {trashCell, outletPort:{kind:eject|belt-exit|pending-eject,...}, replaced_belt_uid?, trash:{…}, pending:{…}}"
+            + "（pending = 计划态 trash 引用，可继续喂给下游宏）",
         lowerOps: ["obs", "debug_items（boundAcceptor）", "op-templates（wasteRoles / slot 表）", "place", "delete{uid}（replace_belt 时）", "tx（A1 交付）"],
         sideEffects: ["新增 1 台 trash", "replace_belt=true 时销毁 1 格带子", "之后该槽的产物被永久销毁"],
         invariants: [
             "只在该槽**当前无接收方**时执行（执行前再查一次，避免 obs 过期）。",
-            "trash 必须正好落在喷口格；偏一格就完全收不到货（4 边全收，但不同格就是不同实体）。",
+            "trash 必须正好落在喷口格；偏一格就完全收不到货（4 边全收，但不同格就是不同实体）。带子 outlet 的喷口格 = 带子格 + exit 单位向量。",
         ],
     },
 });
@@ -1026,7 +1510,13 @@ export function validateMacroCall(name, args) {
  *   · `first_mismatch`= 第一处不一致（按路径/格顺序的**确定序**，不是随机序），
  *                      比的是读回的 code / rotation / rotation_variant，不是"有没有东西"。
  *                      只比存在性会让「放歪了的带子」通过 —— 正是 P7 F1/F2 记录的静默事故。
- *   · `error`         = 只在 ok=false 时非 null；与 `warnings` 互斥使用（警告不阻断）。
+ *   · `error`         = 只在 ok=false 时非 null。
+ *   · `warnings`      = ok=true 时**可以**非空；每一项的 code ∈ `WARNING_CODES`（闭集），
+ *                       severity ∈ `WARNING_SEVERITIES`（未写时取表里的声明）。
+ *                       **调用方唯一需要的判据是 `warningVerdict(warnings)`**：
+ *                       `info` → 忽略；`warn` → 可执行但必须按 detail 补齐计划；
+ *                       `error` → 按 ok:false 处理。`ok:true` + `error` 级警告是**实现 bug**，
+ *                       `validateMacroResult()` 会直接判红（不能让调用方去读一个会撒谎的 ok）。
  */
 export const RETURN_ENVELOPE = Object.freeze({
     required: ["ok", "cells_planned", "cells_placed", "first_mismatch"],
@@ -1036,11 +1526,13 @@ export const RETURN_ENVELOPE = Object.freeze({
         cells_planned: "int — 计划写入的格数",
         cells_placed: "int — 读回一致的格数",
         first_mismatch: "null | {cell, field, requested, actual}",
-        changed: "{added_uids:Uid[], removed_uids:Uid[]}",
-        warnings: "Array<{code, cell?, detail, hint?}>",
+        changed: "{added_uids:Uid[], removed_uids:Uid[]}（**计划态**，added_uids 恒空：uid 由 tx 分配）",
+        warnings: "Array<{code ∈ WARNING_CODES, severity?: info|warn|error, cell?, detail, hint?}>",
         error: "null | MacroError（code ∈ ERROR_CODES）",
         tick: "number — 结束时游戏时钟（便于对账）",
-        dry_run: "boolean — 本次是否只算未写",
+        dry_run: "boolean — **本次是否只算未写**（宏零写 ⇒ 恒 true；它不是「调用方有没有要求 dry-run」）",
+        requested_dry_run: "boolean? — 调用方传来的 opts.dry_run。与 dry_run 是两件事：把后者写成 false 会被读成「已经落盘了」",
+        pending: "PendingRef? — 计划态实体引用（见 PENDING_REF_SPEC）。放东西的宏用它当**下游宏的端点**，绕开「uid 由 tx 分配」的断链",
     },
 });
 
@@ -1089,6 +1581,42 @@ export function validateMacroResult(r) {
         return fail("precondition_failed", "cells_placed",
             `ok=true 但 cells_placed(${r.cells_placed}) !== cells_planned(${r.cells_planned})`,
             "原子执行下二者必须相等；不等说明有半成，必须 ok=false。");
+    }
+
+    /* ── warnings：闭集 + 级别（v2）。这一条把「ok:true 的语义」钉死 ── */
+    if (r.warnings !== undefined) {
+        if (!Array.isArray(r.warnings)) {
+            return fail("bad_type", "warnings", "warnings 必须是数组", "没有警告就给 []，不要省略成 undefined。");
+        }
+        for (let i = 0; i < r.warnings.length; i++) {
+            const w = r.warnings[i];
+            const at = `warnings[${i}]`;
+            if (!isObj(w) || typeof w.code !== "string") {
+                return fail("bad_type", at, `${at} 必须是 {code, detail, ...}`);
+            }
+            const decl = WARNING_CODES[w.code];
+            if (!decl) {
+                return fail("bad_type", `${at}.code`,
+                    `warnings[${i}].code "${w.code}" 不在闭集里`,
+                    `闭集：${Object.keys(WARNING_CODES).join(", ")}。`
+                    + "新增警告必须先登记到 WARNING_CODES（含 severity 与调用方动作），否则调用方无法分诊。");
+            }
+            if (w.severity !== undefined && !WARNING_SEVERITIES.includes(w.severity)) {
+                return fail("bad_type", `${at}.severity`,
+                    `${at}.severity 必须是 ${WARNING_SEVERITIES.join("|")}`, `实得 ${JSON.stringify(w.severity)}`);
+            }
+            if (w.severity !== undefined && w.severity !== decl.severity) {
+                return fail("precondition_failed", `${at}.severity`,
+                    `${at}.severity="${w.severity}" 与契约登记（${w.code} → ${decl.severity}）不符`,
+                    "级别由契约统一裁决，实现不得就地升降级；要改级别先改 WARNING_CODES。");
+            }
+            if (r.ok && decl.severity === "error") {
+                return fail("precondition_failed", at,
+                    `ok=true 但 warnings 里有 error 级警告 "${w.code}" —— 自相矛盾`,
+                    "error 级警告的契约语义是「这一单不该算成功」：实现必须直接返回 ok:false，"
+                    + "而不是用 ok:true 让调用方自己去读警告。");
+            }
+        }
     }
     return ok(r);
 }
@@ -1284,17 +1812,24 @@ export function checkRemovesAgainstObs(removes, entities) {
  * 规则（可执行，不靠人看）：
  *   1. 参数键不得命中 FORBIDDEN_ARG_KEYS。
  *   2. coordClass ∈ {endpoint, site} 的参数最多 2 个，其中 site 最多 1 个。
- *   3. 除 `cell` / `cells` / `region` / `at` 这四个**被契约点名**的参数外，
- *      任何数组型参数若其元素是 [int,int]，一律判红 —— 那是在传坐标序列。
+ *   3. 坐标容器（值为 cell / cells / bbox / `{cell}` 的参数）**必须**在 `MACRO_SPECS` 里
+ *      被声明为 endpoint 或 site；名单从规格表**派生**，不再有手写白名单。
+ *      任何数组型参数若其元素是 [int,int]，而对应参数没有这个 coordClass，一律判红。
+ *
+ * v2 改法（硬伤 2）：删掉 `cellish = {cell, cells, region, at}` 这份手写豁免表。
+ * 它的问题不是"放行 region"本身，而是"按**参数名**放行" —— 换个名字再写进表里就绕过去了，
+ * 且表里没有的坐标参数会被误伤（例如未来某个宏用 `target:{cell}`）。
+ * 现在的口径是「按**声明**放行」：`MACRO_SPECS[n].params[]` 里写了 coordClass 才放行，
+ * 于是「新增坐标参数」与「登记它属于哪一类」变成同一个动作，不可能只做一个。
  *
  * @param {string} name 宏名
  * @param {object} args
- * @returns {{ok:boolean, violations:string[]}}
+ * @returns {{ok:boolean, violations:string[], specEndpointCount:number, specSiteCount:number, coordParams:string[]}}
  */
 export function lintNoBareCoords(name, args) {
     const v = [];
     const spec = MACRO_SPECS[name];
-    if (!spec) return { ok: false, violations: [`未知宏 ${name}`] };
+    if (!spec) return { ok: false, violations: [`未知宏 ${name}`], specEndpointCount: 0, specSiteCount: 0, coordParams: [] };
     const a = args || {};
     for (const k of Object.keys(a)) {
         if (FORBIDDEN_ARG_KEYS.includes(k)) {
@@ -1310,14 +1845,36 @@ export function lintNoBareCoords(name, args) {
     const argSiteCount = spec.params.filter(p => p.coordClass === "site" && a[p.name] !== undefined).length;
     if (argEndpointCount > 2) v.push(`端点参数 ${argEndpointCount} 个，上界 2`);
     if (argSiteCount > 1) v.push(`落点参数 ${argSiteCount} 个，上界 1`);
-    const cellish = new Set(["cell", "cells", "region", "at"]);
+
+    /* 坐标容器的放行名单 = 规格表里被声明为 endpoint/site 的参数（按顶层键名） */
+    const declared = new Set(
+        spec.params
+            .filter(p => p.coordClass === "endpoint" || p.coordClass === "site")
+            .map(p => p.name.split(".")[0]),
+    );
     for (const [k, val] of Object.entries(a)) {
-        if (cellish.has(k)) continue;
-        if (Array.isArray(val) && val.length && val.every(x => Array.isArray(x) && x.length === 2 && x.every(isInt))) {
-            v.push(`参数 '${k}' 是坐标数组，但不在契约点名的 {cell,cells,region,at} 里`);
+        if (declared.has(k)) continue;
+        if (isCoordContainer(val)) {
+            v.push(`参数 '${k}' 是坐标容器，但没有在 MACRO_SPECS.${name}.params 里声明 coordClass `
+                + "(endpoint 或 site) —— 坐标参数必须登记属于哪一类");
         }
     }
-    return { ok: v.length === 0, violations: v, specEndpointCount: endpoints, specSiteCount: sites };
+    return {
+        ok: v.length === 0, violations: v,
+        specEndpointCount: endpoints, specSiteCount: sites,
+        coordParams: [...declared],
+    };
+}
+
+/** 值是否是坐标容器：[x,y] / [[x,y]…] / [x0,y0,x1,y1] / {cell} / {cells} / {region} 内嵌的坐标 */
+function isCoordContainer(val) {
+    if (isCell(val) || isBBox(val)) return true;
+    if (Array.isArray(val) && val.length && val.every(c => isCell(c))) return true;
+    if (isObj(val)) {
+        for (const key of ["cell", "region"]) if (val[key] !== undefined && (isCell(val[key]) || isBBox(val[key]))) return true;
+        if (Array.isArray(val.cells) && val.cells.length && val.cells.every(isCell)) return true;
+    }
+    return false;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1361,6 +1918,23 @@ if (isMain) {
     t("extend_line dir 非法被拒", !V(validateExtendLineArgs, { from: { uid: 5 }, len: 2, dir: 90 }).ok);
 
     t("replace_run 正常", V(validateReplaceRunArgs, { region: [3, -14, 5, -12], building: "belt" }).ok);
+    t("replace_run 机器形态（L4 的 cutter+trash）通过校验器", (() => {
+        const r = V(validateReplaceRunArgs, {
+            region: [4, -14, 5, -13],
+            building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }],
+        });
+        return r.ok && r.value.mode === "machines" && r.value.building.length === 2
+            && r.value.building[1].kind === "trash" && r.value.building[1].port === "left";
+    })());
+    t("replace_run 单机器字符串也通过", (() => {
+        const r = V(validateReplaceRunArgs, { region: [0, 0, 1, 0], building: "cutter" });
+        return r.ok && r.value.mode === "machines" && r.value.building[0].kind === "cutter";
+    })());
+    t("replace_run 数组里混 belt 被拒", (() => {
+        const r = V(validateReplaceRunArgs, { region: [0, 0, 1, 0], building: ["belt", "cutter"] });
+        return !r.ok && r.error.code === "bad_type";
+    })());
+    t("replace_run 空数组被拒", !V(validateReplaceRunArgs, { region: [0, 0, 1, 0], building: [] }).ok);
     t("replace_run 隧道明确拒绝", (() => {
         const r = V(validateReplaceRunArgs, { region: [0, 0, 1, 1], building: "underground_belt" });
         return !r.ok && r.error.code === "unsupported_building";
