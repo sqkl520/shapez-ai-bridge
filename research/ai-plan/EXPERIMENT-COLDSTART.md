@@ -502,3 +502,63 @@ prompt 里应该告诉模型的是一句可以机器生成的话：
 > `RuRu----` = `cutHalf(RuRuRuRu)` 取左半。不需要旋转。
 
 这类句子完全可以从 solver 自动生成，不需要手写。
+
+---
+
+## 17. 第五轮实验：形状代数接进 prompt 之后（2026-10-28T22:33）
+
+把 `proto/solver.mjs` 的配方接进 prompt（新增 `src/agent/loop/recipe.mjs`）后重跑。
+
+### 最直接的证据：`rotater` 从 4/5 变成 **0/5**
+
+第四轮：5 次里 4 次坚持要 rotater。
+第五轮：**一次都没提过 rotater**（grep 全文 0 命中）。
+
+而且模型开始**引用配方**：
+
+> "**The recipe needs** the mined four-quadrant shape cut in half, so I convert a segment
+> of the miner-to-balancer belt runs in place into a cutter with the waste half..."
+> （#3）
+
+> "No fault is flagged yet, so **I follow the recipe**: cut the mined RuRuRuRu in the
+> miner output line that feeds the balancer, sending the waste half to trash."
+> （#4）
+
+**配方确实被读了、被用了。** 这是五轮实验里第一次看到模型主动引用外部知识。
+
+### 指标汇总（五轮）
+
+| 轮次 | 关键改动 | 看到 | 选中全 3 | 精确 | rotater 误判 |
+|---|---|---|---|---|---|
+| 1 | — | 5/5 | 0/5 | 0/5 | — |
+| 2 | 修夹具+引导 | 5/5 | 1/5 | 0/5 | — |
+| 3 | 给矿图 | 5/5 | 2/5 | 0/5 | — |
+| 4 | `$path_of` | 5/5 | 0/5 | 0/5 | **4/5** |
+| **5** | **形状代数** | 5/5 | 1/5 | 0/5 | **0/5** ✅ |
+
+### 剩下的失败：几何，不是语义
+
+第五轮 5 次的失败码：
+
+| # | 选中 | 结果 | 模型在做什么 |
+|---|---|---|---|
+| 1 | 0/3 | plan ok | 想给 cutter 供料（"给它一台矿机"） |
+| 2 | 0/3 | `unsupported_macro:connect` | 想用 connect（实验脚本没接这个宏） |
+| 3 | **3/3** | `occupied` | **正确引用配方**，选了 x=4/x=5 两条链，但 region 太宽 |
+| 4 | 1/3 | `occupied` | 按配方选对了链，region 覆盖过多 |
+| 5 | 0/3 | plan ok | 想加矿机 + 切割机 |
+
+**#3 是最接近的一次**：三句都对——配方引用对、选的链对、机器对（cutter+trash/right）。
+只差 `region` 覆盖了整段 6 格而不是要改的 3 格。
+
+→ `occupied` 的原因是：链上有 balancer/机器，`replace_run` 的 region 不能跨过它们。
+
+### 结论
+
+**形状代数这一环成功了**（rotater 误判 4/5 → 0/5，模型开始引用配方）。
+
+现在剩下的**全部**是几何表达问题：`$path_of` 给出的是一段连续带子的**全部格子**，
+而 `replace_run` 需要的是一个**能放下 cutter 且不被 balancer 挡住的窗口**。
+这需要"沿链取一个长度恰好合适的窗口"的能力，而不是"整段"。
+
+这是一个**比前面几轮都更窄、更具体**的缺口。
