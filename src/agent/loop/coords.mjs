@@ -4,8 +4,8 @@
  * 三道关口，逐层可脚本检查（v1 §2.1 的 L-A / L-B / L-C）：
  *
  *   L-A  `assertNoHumanCoords(llmPlan)`  原始 LLM JSON 里不许有字面坐标（V1–V6）。
- *   L-B  `resolveRefs(llmPlan, handles, obs)`  把 `$ref` / `$uids` / `$bbox_of` 解析成
- *        uid / cell / bbox，并为**每一个**解析出的坐标打一个 provenance 标签。
+ *   L-B  `resolveRefs(llmPlan, handles, obs)`  把 `$ref` / `$uids` / `$bbox_of` / `$path_of`
+ *        解析成 uid / cell / bbox / 格集，并为**每一个**解析出的坐标打一个 provenance 标签。
  *   L-C  `assertProvenance(resolved, txPlan, obs)`  落盘前复核：每条 op 的坐标都能沿着
  *        标签回到「obs 里真实存在的那个实体」或「当轮宏返回值里的那个 token」。
  *
@@ -16,16 +16,41 @@
  * 所以本文件的 `checkTag` 一律**回到 obs 重新取值**再比对：
  *   · `obs:uid=7`     → obs 里必须有 uid=7，且被校验的值必须等于它的 (x,y)/uid；
  *   · `computed:bbox_of[B1,B2]` → 用**当前 obs** 重建句柄表、重新并集 footprint，必须相等；
+ *   · `computed:path_of[B1,B2]` → 同上，但**先重算格集与连续性**：bbox 投影只有在格集
+ *     恰好填满它时才算合法（否则「拐弯的链」会被静默扩成一块矩形 —— 见 §0 的裁决）；
  *   · `macro:<token>` → token 必须能在当轮 tx 计划/宏返回里找到（找不到就红）。
  *
- * ## 三种 provenance 的**唯一**合法形态
+ * ## 四种 provenance 的**唯一**合法形态
  *
  *   `obs:uid=N`                  来自 obs 的既有实体（`$ref` / `$uids` 解析结果）
  *   `macro:<token>`              来自宏返回的 pending / terminal / placed[].origin / cells[]
  *   `computed:bbox_of[H1,H2,...]` `$bbox_of` 的并集结果（标签里存**句柄**，不存坐标 ——
  *                                否则「可审计」就变成了「把坐标抄了两遍」）
+ *   `computed:path_of[H1,H2,...]` `$path_of` 的格集结果（同样存句柄；值可以是 4 元 region
+ *                                或 `[[x,y]…]` 格集 —— 重算后逐项比）
  *
  * 值是单个标签字符串；`$uids` 这种一对多的来源给**标签数组**（顺序与 uid 数组一致）。
+ *
+ * ## `$path_of` 的裁决（issue：「`$bbox_of` 会把拐弯的链静默扩成矩形」）
+ *
+ * 题目给了三选一：(a) 只给精确格集；(b) 只给最小矩形 + `contiguous` 标志；(c) 两者都给。
+ * **选 (c)，并且把「投影」放在解析层、按参数的声明类型决定**：
+ *
+ *   1. 算子本身（`handles.mjs#pathOf`）返回 `{cells, region, contiguous, area, holes}` ——
+ *      精确格集是**唯一**不可伪造的产物，region 只是它的一个函数。只给 (b) 会丢掉
+ *      「哪几格」，只给 (a) 又会让 `replace_run.region`（只吃 4 元 bbox）无法表达。
+ *   2. `resolveRefs` 按 `MACRO_SPECS[macro].params[].type` 选投影：
+ *        · `BBox`   → **只有** `contiguous === true` 才投影成 region，否则报 `PATH_NOT_RECT`
+ *                     （列出空洞格 + 原格集），**绝不**悄悄扩大；
+ *        · `Cell[]` → 永远投影成精确格集（`remove_run.cells` 本来就允许稀疏）；
+ *        · 其它位置 → `REF_SHAPE`（path_of 产出的是几何，不是身份）。
+ *
+ *   为什么这样能让「拐弯时宏必须拒绝」**可机器检查**：可检查性不在返回值里，而在
+ *   `resolveRefs(...).violations` 里 —— 非连续 ⇒ 一定有一条 `PATH_NOT_RECT`，且 `calls`
+ *   里**没有**这条调用（半解析的调用不进 calls）。任何「静默扩大」的实现都会让
+ *   `violations.length === 0` 且产出一个 region，测试对这两点同时断言。
+ *   若把 `contiguous` 直接塞给宏而不投影，宏只会回一个 `bad_type: region 必须是 [x0,y0,x1,y1]`
+ *   —— 那个报错无法区分「LLM 写错形态」与「链拐弯了」，模型下一轮会继续猜。
  *
  * ## 本文件发现的契约偏差（写在这里而不是只写在报告里）
  *
@@ -41,17 +66,18 @@
  *
  * 零依赖（只用 node 内置 + 仓库内只读模块），纯函数，无 IO。
  */
-import { MACRO_NAMES, lintNoBareCoords } from "../macros/contract.mjs";
-import { buildHandles, resolveHandle, bboxOf, HANDLE_RE } from "./handles.mjs";
+import { MACRO_NAMES, MACRO_SPECS, lintNoBareCoords } from "../macros/contract.mjs";
+import { buildHandles, resolveHandle, bboxOf, pathOf, HANDLE_RE } from "./handles.mjs";
 
 /* ══════════════════════════════════════════════════════════════════════════
- * 0. 三种坐标来源（唯一闭集）
+ * 0. 四种坐标来源（唯一闭集）
  * ══════════════════════════════════════════════════════════════════════════ */
 
 export const COORD_SOURCES = Object.freeze({
     OBS_REF: "$ref",
     OBS_REFS: "$uids",
     DERIVED_BBOX: "$bbox_of",
+    DERIVED_PATH: "$path_of",
 });
 
 /** 算子 → 它产生的 provenance 前缀。注意 `$ref` 两种形态都是 `obs:uid=`。 */
@@ -59,6 +85,7 @@ export const PROVENANCE_PREFIX = Object.freeze({
     OBS: "obs:uid=",
     MACRO: "macro:",
     COMPUTED: "computed:bbox_of[",
+    COMPUTED_PATH: "computed:path_of[",
 });
 
 /**
@@ -77,7 +104,14 @@ export const PROVENANCE_PREFIX = Object.freeze({
  * 按 v1 字面实现，`assertProvenance` 会对所有宏溯源判红（＝宏放的机器永远无法溯源）。
  * 这里把前缀放宽成 `[\w-]+(?::[\w-]+)*@`，即「宏名，可带冒号分段，最后跟 @」。
  */
-export const PROVENANCE_RE = /^(?:obs:uid=\d+|macro:[\w-]+(?::[\w-]+)*@[^|]+|computed:bbox_of\[.+?\])$/;
+export const PROVENANCE_RE = /^(?:obs:uid=\d+|macro:[\w-]+(?::[\w-]+)*@[^|]+|computed:(?:bbox|path)_of\[.+?\])$/;
+
+/**
+ * `computed:path_of[…]` 的**专属**前缀。单独导出是因为「重算 + 判连续」
+ * 与 bbox 的「重算 + 判相等」判据不同，调用方必须能区分（不能靠 `startsWith(COMPUTED)`
+ * 把两者混在一个分支里 —— 那正是「拐弯的链静默变矩形」会重新长出来的地方）。
+ */
+export const PATH_PROVENANCE_PREFIX = "computed:path_of[";
 
 /** 坐标形态正则（V4）。**不带 global**：带 g 的 RegExp 有 lastIndex 状态，跨调用会漏判。 */
 export const COORD_TEXT_RE = /\(?\s*-?\d{1,4}\s*,\s*-?\d{1,4}\s*\)?/;
@@ -112,14 +146,14 @@ export function assertNoHumanCoords(llmPlan, handles = null) {
 
     const walk = (node, path, parentKey) => {
         if (Array.isArray(node)) {
-            /* V1：任何 [int,int] —— 除非它整体是 $uids / $bbox_of 的值（那两个位置值必须是句柄，
-               所以真出现整数数组时 V5/REF_SHAPE 会另外抓；这里只是不重复报 V1）。 */
-            if (isIntArr(node, 2) && parentKey !== "$uids" && parentKey !== "$bbox_of") {
-                add(path, "V1", "字面坐标 [int,int] —— 坐标只能来自 $ref / $uids / $bbox_of", node);
+            /* V1：任何 [int,int] —— 除非它整体是 $uids / $bbox_of / $path_of 的值（那几个位置
+               值必须是句柄，所以真出现整数数组时 V5/REF_SHAPE 会另外抓；这里只是不重复报 V1）。 */
+            if (isIntArr(node, 2) && parentKey !== "$uids" && parentKey !== "$bbox_of" && parentKey !== "$path_of") {
+                add(path, "V1", "字面坐标 [int,int] —— 坐标只能来自 $ref / $uids / $bbox_of / $path_of", node);
             }
             /* V2：任何 [int,int,int,int]（region 算术） */
             if (isIntArr(node, 4)) {
-                add(path, "V2", "字面包围盒 [int,int,int,int] —— region 只能来自 $bbox_of", node);
+                add(path, "V2", "字面包围盒 [int,int,int,int] —— region 只能来自 $bbox_of / $path_of", node);
             }
             node.forEach((v, i) => walk(v, `${path}[${i}]`, null));
             return;
@@ -170,7 +204,7 @@ export function assertNoHumanCoords(llmPlan, handles = null) {
     };
 }
 
-/** 算子值里出现的句柄（$ref 单个；$uids/$bbox_of 数组）。 */
+/** 算子值里出现的句柄（$ref 单个；$uids/$bbox_of/$path_of 数组）。 */
 function handlesOf(opKey, v) {
     if (opKey === "$ref") return typeof v === "string" ? [v] : [];
     return Array.isArray(v) ? v : [];
@@ -193,7 +227,7 @@ function checkRefShape(opKey, v, path, add) {
             add(`${path}[${i}]`, "REF_SHAPE", `${opKey}[${i}] 必须是句柄字符串，实得 ${JSON.stringify(v[i])}`, v[i]);
         }
     }
-    if (opKey !== "$bbox_of" && new Set(v).size !== v.length) {
+    if (opKey !== "$bbox_of" && opKey !== "$path_of" && new Set(v).size !== v.length) {
         add(path, "REF_SHAPE", `${opKey} 里有重复句柄（重复通常是拼接选集时的 bug）`, v);
     }
 }
@@ -201,6 +235,36 @@ function checkRefShape(opKey, v, path, add) {
 /* ══════════════════════════════════════════════════════════════════════════
  * 2. resolveRefs —— L-B
  * ══════════════════════════════════════════════════════════════════════════ */
+
+/** `calls[0].args.region` → `region`（provenance 的路径口径，与 calls 里一致）。 */
+const relPath = p => String(p).split(".").slice(2).join(".");
+
+/**
+ * 目标参数**声明的**类型 → `"bbox" | "cells" | null`。
+ *
+ * 唯一真值来源是 `MACRO_SPECS[macro].params[].type`（不在这里抄第二份名单）：
+ *   `BBox`   → bbox 投影（只接受恰好填满的格集）
+ *   `Cell[]` → 精确格集投影
+ *   其它     → null（`$path_of` 用错地方 ⇒ REF_SHAPE）
+ *
+ * 嵌套参数（`opts.x`）不参与：`$path_of` 只能出现在顶层的坐标参数上。
+ *
+ * @param {string|null} macro
+ * @param {string} path 相对 args 的路径（`region` / `building[0].region` …）
+ * @returns {"bbox"|"cells"|null}
+ */
+export function argKindOf(macro, path) {
+    const rel = relPath(path);
+    if (!rel.includes(".") && !rel.includes("[")) {
+        const spec = MACRO_SPECS[macro];
+        const p = spec && Array.isArray(spec.params) ? spec.params.find(x => x.name === rel) : null;
+        if (p) {
+            if (p.type === "BBox") return "bbox";
+            if (p.type === "Cell[]") return "cells";
+        }
+    }
+    return null;
+}
 
 /**
  * 把 LLM 计划里的三种算子解析成 uid / cell / bbox，并给每个坐标打 provenance。
@@ -226,6 +290,11 @@ export function resolveRefs(llmPlan, handles, obs) {
         add("calls", "PLAN_SHAPE", "calls 必须是数组（LLM 计划 = {calls:[…]}）", llmPlan && llmPlan.calls);
         return { ok: false, calls, violations };
     }
+
+    /* `$path_of` 的投影要按**目标参数的声明类型**决定，而类型来自 `MACRO_SPECS[macro]`。
+       `resolveNode` 是递归闭包，没有宏名参数；用一个在每次 `forEach` 前写一次的局部变量，
+       比把宏名一路穿进 20 层递归更不容易漏（漏传会让投影静默退化到 REF_SHAPE）。 */
+    let currentMacro = null;
 
     const resolveNode = (node, path) => {
         if (Array.isArray(node)) {
@@ -295,6 +364,46 @@ export function resolveRefs(llmPlan, handles, obs) {
                     return null;
                 }
             }
+            if ("$path_of" in node) {
+                /* `$path_of` 的投影**必须**按目标参数的声明类型决定（见文件头的裁决）：
+                   `BBox` 只接受恰好填满的格集；`Cell[]` 接受精确格集。其它参数一律拒绝。
+                   投影失败 ⇒ 一条 violation + 返回 null（半解析的调用不进 calls）。 */
+                const list = Array.isArray(node.$path_of) ? node.$path_of : [];
+                const entries = list.map(h => (typeof h === "string" ? resolveHandle(handles, h) : null));
+                if (!list.length || entries.some(e => !e)) {
+                    add(path, "V5", "$path_of 里有句柄不在当轮句柄表里（OBS_STALE）", list);
+                    return null;
+                }
+                let p;
+                try {
+                    p = pathOf(entries.map(e => e.uid), obs);
+                } catch (e) {
+                    add(path, "V5", `$path_of 无法计算：${e.message}`, list);
+                    return null;
+                }
+                const tag = `${PROVENANCE_PREFIX.COMPUTED_PATH}${list.join(",")}]`;
+                const kind = argKindOf(currentMacro, path);
+                if (kind === "bbox") {
+                    /* ★ 关键：不连续就**拒绝**，绝不返回一个把它们都包住的矩形 ★
+                       这是整个算子的存在理由 —— 第三轮实验的 #1/#3/#5 全部源于「静默扩大」。 */
+                    if (!p.contiguous) {
+                        add(path, "PATH_NOT_RECT",
+                            `$path_of 指的 ${p.cells.length} 格没有填满它们的外接矩形 [${p.region}]：`
+                            + `空洞 ${JSON.stringify(p.holes)}${p.unique < p.cells.length ? "（且有重复格）" : ""}`
+                            + " —— 该参数只接受矩形，非连续选区必须拆成多次调用（或改用 agrees with 目标形状的连续段）",
+                            { cells: p.cells, region: p.region, holes: p.holes });
+                        return null;
+                    }
+                    return { value: p.region, prov: [[path, tag]] };
+                }
+                if (kind === "cells") {
+                    return { value: p.cells.map(c => [c[0], c[1]]), prov: [[path, tag]] };
+                }
+                add(path, "REF_SHAPE",
+                    `${path} 不是坐标参数（type=${JSON.stringify(kind)}），$path_of 只能给 region / cells`,
+                    { param: relPath(path), kind });
+                return null;
+            }
             const out = {};
             const prov = [];
             for (const [k, v] of Object.entries(node)) {
@@ -315,6 +424,7 @@ export function resolveRefs(llmPlan, handles, obs) {
             return;
         }
         if (call.args === undefined) { add(pj(at, "args"), "PLAN_SHAPE", "call 缺 args", undefined); return; }
+        currentMacro = macro;
         const before = violations.length;
         const r = resolveNode(call.args, pj(at, "args"));
         if (!r) return;   // 整个 args 就是一个算子且解析失败
@@ -370,7 +480,7 @@ export function getPath(obj, path) {
  */
 function checkTag(tag, value, { obs, knownTokens, opLike = null }) {
     if (typeof tag !== "string" || !PROVENANCE_RE.test(tag)) {
-        return { ok: false, why: `provenance 形态非法：${JSON.stringify(tag)}（只允许 obs:uid=N / macro:<token> / computed:bbox_of[…]）` };
+        return { ok: false, why: `provenance 形态非法：${JSON.stringify(tag)}（只允许 obs:uid=N / macro:<token> / computed:bbox_of[…] / computed:path_of[…]）` };
     }
     if (tag.startsWith(PROVENANCE_PREFIX.OBS)) {
         const uid = Number(tag.slice(PROVENANCE_PREFIX.OBS.length));
@@ -390,6 +500,45 @@ function checkTag(tag, value, { obs, knownTokens, opLike = null }) {
                 : { ok: false, why: `cell [${value}] ≠ uid=${uid} 的 origin [${e.x},${e.y}]` };
         }
         return { ok: false, why: `obs:uid= 标签被用在一个非 uid/cell 的值上：${JSON.stringify(value)}` };
+    }
+    /* `computed:path_of[…]` —— **先于** bbox 分支判断（两者前缀不同，但语义必须分开：
+       bbox 判「相等」，path 还要判「这组格真的填满了它」）。 */
+    if (tag.startsWith(PATH_PROVENANCE_PREFIX)) {
+        const inner = tag.slice(PATH_PROVENANCE_PREFIX.length, -1);
+        const hs = inner.split(",").map(s => s.trim()).filter(Boolean);
+        if (!hs.length) return { ok: false, why: "path_of 标签里没有句柄" };
+        const table = buildHandles(obs);
+        const uids = [];
+        for (const h of hs) {
+            const e = resolveHandle(table, h);
+            if (!e) return { ok: false, why: `path_of 标签里的句柄 ${h} 不在当前世界` };
+            uids.push(e.uid);
+        }
+        let p;
+        try { p = pathOf(uids, obs); } catch (e) { return { ok: false, why: e.message }; }
+
+        /* 形态 ①：4 元 region —— 必须等于重算的 region，**且**重算的格集必须真的填满它。
+           少了后一条，「拐弯的链」被改宽一格也能混过去（region 相等的是被改过的那份）。 */
+        if (isIntArr(value, 4)) {
+            if (!p.contiguous) {
+                return {
+                    ok: false,
+                    why: `path_of 标签对应的格集不连续（空洞 ${JSON.stringify(p.holes)}），`
+                        + `不能投影成 region —— 这个值是被人工扩出来的`,
+                };
+            }
+            const same = p.region.every((v, i) => v === value[i]);
+            return same ? { ok: true, why: null }
+                : { ok: false, why: `region 与重算不符：值 [${value}] ≠ 由 ${hs.join(",")} 重算的 [${p.region}]` };
+        }
+        /* 形态 ②：格集 —— 逐项逐位比（顺序也管住：重算是确定序，改序同样是改值） */
+        if (Array.isArray(value) && value.length && value.every(c => isIntArr(c, 2))) {
+            const same = value.length === p.cells.length
+                && value.every((c, i) => c[0] === p.cells[i][0] && c[1] === p.cells[i][1]);
+            return same ? { ok: true, why: null }
+                : { ok: false, why: `格集与重算不符：值 ${JSON.stringify(value)} ≠ 由 ${hs.join(",")} 重算的 ${JSON.stringify(p.cells)}` };
+        }
+        return { ok: false, why: `path_of 标签必须对应 [x0,y0,x1,y1] 或 [[x,y]…]，实得 ${JSON.stringify(value)}` };
     }
     if (tag.startsWith(PROVENANCE_PREFIX.COMPUTED)) {
         if (!isIntArr(value, 4)) return { ok: false, why: `bbox_of 标签必须对应 [x0,y0,x1,y1]，实得 ${JSON.stringify(value)}` };
@@ -576,13 +725,17 @@ export function assertProvenance(resolved, txPlan, obs, opts = {}) {
                 const tag = tagFor(f);
                 if (tag === undefined) { add(`${at}.provenance.${f}`, "MISSING_PROVENANCE", `place 的 ${f} 没有 provenance`, op); continue; }
                 /* bbox 的语义是「落在这块选区里」，不是「等于某个角」——
-                   所以 computed 标签走单独的包含性判据，不走 checkTag 的相等判据。 */
-                if (String(tag).startsWith(PROVENANCE_PREFIX.COMPUTED)) {
-                    const bb = bboxOfFromTag(String(tag), obs);
-                    if (!bb) { add(`${at}.provenance.${f}`, "COORD_PROVENANCE", `bbox 标签无法重算：${tag}`, tag); continue; }
+                   所以 computed 标签走单独的包含性判据，不走 checkTag 的相等判据。
+                   `path_of` 用**同一套**包含性判据：它投影出来的就是同一个 region（投影
+                   已在 L-B 保证连续），place 落点只要求落在里面。 */
+                if (String(tag).startsWith(PROVENANCE_PREFIX.COMPUTED)
+                    || String(tag).startsWith(PATH_PROVENANCE_PREFIX)) {
+                    const isPathTag = String(tag).startsWith(PATH_PROVENANCE_PREFIX);
+                    const bb = regionOfTag(String(tag), obs);
+                    if (!bb) { add(`${at}.provenance.${f}`, "COORD_PROVENANCE", `computed 标签无法重算：${tag}`, tag); continue; }
                     const inside = op.x >= bb[0] && op.x <= bb[2] && op.y >= bb[1] && op.y <= bb[3];
                     if (!inside) add(`${at}.provenance.${f}`, "COORD_PROVENANCE",
-                        `place 的 (${op.x},${op.y}) 不在 provenance bbox [${bb}] 内`, tag);
+                        `place 的 (${op.x},${op.y}) 不在 provenance ${isPathTag ? "选区" : "bbox"} [${bb}] 内`, tag);
                     continue;
                 }
                 /* ★ 把整个 op 传下去：`macro:` 标签里的 @x,y 必须与 op 的实际坐标一致 ★
@@ -599,11 +752,14 @@ export function assertProvenance(resolved, txPlan, obs, opts = {}) {
     return { ok: violations.length === 0, violations };
 }
 
-/** 从 `computed:bbox_of[H1,H2]` 标签重算 bbox（当前世界）；失败返回 null。 */
-function bboxOfFromTag(tag, obs) {
-    if (!String(tag).startsWith(PROVENANCE_PREFIX.COMPUTED)) return null;
-    const inner = String(tag).slice(PROVENANCE_PREFIX.COMPUTED.length, -1);
-    const hs = inner.split(",").map(s => s.trim()).filter(Boolean);
+/** 从 `computed:bbox_of[H1,H2]` / `computed:path_of[H1,H2]` 标签重算选区（当前世界）；失败返回 null。 */
+function regionOfTag(tag, obs) {
+    const s = String(tag);
+    const isPath = s.startsWith(PATH_PROVENANCE_PREFIX);
+    const prefix = isPath ? PATH_PROVENANCE_PREFIX : PROVENANCE_PREFIX.COMPUTED;
+    if (!s.startsWith(prefix)) return null;
+    const inner = s.slice(prefix.length, -1);
+    const hs = inner.split(",").map(x => x.trim()).filter(Boolean);
     if (!hs.length) return null;
     const table = buildHandles(obs);
     const uids = [];
@@ -612,5 +768,11 @@ function bboxOfFromTag(tag, obs) {
         if (!e) return null;
         uids.push(e.uid);
     }
-    try { return bboxOf(uids, obs); } catch { return null; }
+    try {
+        if (!isPath) return bboxOf(uids, obs);
+        /* path 标签：投影前必须重算并确认连续 —— 不连续 ⇒ 不存在合法的 region 投影，
+           返回 null（调用方判红）。只按 bboxOf 重算会让「被改宽一格的 region」混过去。 */
+        const p = pathOf(uids, obs);
+        return p.contiguous ? p.region : null;
+    } catch { return null; }
 }

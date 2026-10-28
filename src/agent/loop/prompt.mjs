@@ -175,8 +175,24 @@ const SYSTEM_PROMPT = [
     '     {"$ref":"B7"}                  one handle -> that entity',
     '     {"$ref":"B7","asCell":true}    one handle -> the cell it occupies',
     '     {"$uids":["B7","B8"]}          a set of handles -> the belts they name',
-    '     {"$bbox_of":["B7","B8"]}       a set of handles -> the box covering them',
+    '     {"$bbox_of":["B7","B8"]}       a set of handles -> the smallest box covering them',
+    '     {"$path_of":["B7","B8"]}       a set of handles -> EXACTLY the cells of those entities',
     "   Any other $-operator (offset, expand, arithmetic) is rejected. Handles must come from THIS prompt.",
+    /* ★ 第 11 条：`$bbox_of` vs `$path_of`（第三轮真 LLM 实验的直接产物）★
+     *
+     * 实测：模型把一段链的 7 个句柄交给 `$bbox_of`，得到的矩形顺带框进了它没指名的格子，
+     * 宏因此报 occupied / not_a_run / precondition_failed。而它「以为」自己只说那 7 格。
+     * 差别只在链拐弯或两条链并行时才出现 —— 直线链上两者相同，所以这不是模型能自己发现的。
+     * 写在这里是因为：不给这句话，模型没有理由知道这一层几何陷阱存在。 */
+    "11. To change a run of belts in place, use $path_of, NOT $bbox_of:",
+    "    $bbox_of returns the smallest RECTANGLE around the handles. When the run bends, or when",
+    "    two runs sit side by side, that rectangle also covers cells you did not name - and the",
+    "    macro will then refuse the call (occupied / not_a_run) even though your handles were right.",
+    "    $path_of returns exactly the cells of the named entities. If those cells do not fill their",
+    "    own rectangle (the run bends, or you picked across two separate runs), the call is REJECTED",
+    "    and the error tells you which cells are missing - split it into smaller calls instead of",
+    "    guessing a bigger region. On a straight one-wide run the two operators give the same region;",
+    "    that is the only case where $bbox_of is equally safe.",
     "6. Argument names must be copied verbatim from the macro card. Unknown or misspelled arguments",
     "   (e.g. source instead of from) are rejected and waste a round.",
     "7. A multi-CELL machine is addressed by ONE cell (use asCell) or by the handle of an existing",
@@ -219,7 +235,13 @@ const MACRO_EXAMPLES = Object.freeze({
     extend_line: { macro: "extend_line", args: { from: { $ref: "B7" }, len: 4, dir: "right" } },
     replace_run: {
         macro: "replace_run",
-        args: { region: { $bbox_of: ["B7", "B8", "B9"] }, building: [{ kind: "cutter" }, { kind: "trash", port: "left" }] },
+        /* 例子里用 `$path_of` 而不是 `$bbox_of`：链拐弯/并排时前者是唯一能表达的形态
+           （`$bbox_of` 会顺带框进没指名的格子，宏随即报 occupied / not_a_run ——
+           第三轮实验 5/5 次都栽在这一处，见 SYSTEM_PROMPT rule 11）。
+           trash 的 `port` 是 `"right"` 不是 `"left"`：cutter 只有右列是废料
+           （`op-templates.mjs` 的 `wasteRoles:["right"]`）。第三轮实验 #5 就是因为这里写了
+           left 而 `precondition_failed` —— 示例本身写错，模型照着抄，这一轮就白费了。 */
+        args: { region: { $path_of: ["B7", "B8", "B9"] }, building: [{ kind: "cutter" }, { kind: "trash", port: "right" }] },
     },
     trash_unused: { macro: "trash_unused", args: { outlet: { $ref: "C1", port: "left" }, opts: { confirm_waste: true } } },
 });
@@ -254,10 +276,30 @@ const LEGAL_VALUES = Object.freeze({
     replace_run: () => {
         try {
             const names = Object.keys(SUPPORTED_BUILDINGS);
-            return `building[].kind ∈ {${names.join(" | ")}}   ("belts are not a building here")`;
+            /* ★ trash 的 port 必须是**该机器真的会扔东西**的那一路（2026-10-28 第三轮实验 #5）★
+             *
+             * 实测：模型给了 `[cutter, trash(port:"left")]`，region 也选对了，宏却回
+             * `precondition_failed: cutter 的 "left" 槽不在模板 wasteRoles（right）里`。
+             * cutter 的两个输出是 left/right，但**只有 right 是废料**（半切后右列），
+             * 所以 trash 只能接 right。这句话不写出来，模型只能二选一猜。
+             *
+             * 值从 `templateByBuildingVariant` 的 `wasteRoles` 取（不手抄第二份真值）。
+             * ⚠️ 这是 warning 级的**唯一**来源：`wasteRoles` 缺失时**不输出**这一行，
+             *    而不是硬编码 "right" —— 硬编码就是第二份真值。 */
+            const w = wasteRolesOf("cutter");
+            const waste = w && w.length ? `   trash after a cutter must use port "${w.join('" or "')}" (that is the waste side; the other output is the kept half)` : "";
+            return `building[].kind ∈ {${names.join(" | ")}}   ("belts are not a building here")${waste}`;
         } catch { return null; }
     },
 });
+
+/** 一台机器的「注定是废料」的输出槽 role（来自 op-templates 的 `wasteRoles`，缺失返回 null）。 */
+function wasteRolesOf(kind) {
+    try {
+        const tpl = templateByBuildingVariant(kind, "default");
+        return tpl && Array.isArray(tpl.wasteRoles) && tpl.wasteRoles.length ? tpl.wasteRoles : null;
+    } catch { return null; }
+}
 
 function renderCard(name) {
     const spec = MACRO_SPECS[name];

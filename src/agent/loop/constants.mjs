@@ -65,6 +65,7 @@ export const DIAG_CODES = Object.freeze({
     MACRO_HALF_DONE: "macro returned ok:true but cells_placed !== cells_planned",
     PLAN_REJECTED: "planToTxOps rejected the merged plan",
     COORD_PROVENANCE: "a coordinate had no valid provenance tag",
+    PATH_NOT_RECT: "a $path_of selection does not fill its own bounding box, so the region parameter cannot express it",
 
     /* ── apply ── */
     TX_ROLLED_BACK: "tx rolled back",
@@ -201,6 +202,10 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["connect", 2],
     ]),
     COORD_PROVENANCE: cand([]),       // 视为 bug，必须人工
+    /* 非连续选区：**不是** bug，也不是模型笨 —— 是它把一条拐弯的链当成一条直线交过来了。
+       重试时给它 replace_run 是合理的（它可以拆成小的连续段）；但不能多给它别的宏，
+       那会让下一轮换一个宏继续猜。 */
+    PATH_NOT_RECT: cand([["replace_run", 5]]),
 
     /* ── apply ── */
     TX_ROLLED_BACK: cand([]),         // 先重读；按 failures[].code 再分派（表外逻辑）

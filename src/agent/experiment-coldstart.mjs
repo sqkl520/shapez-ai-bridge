@@ -268,7 +268,7 @@ function splitRefs(calls, handleToUid) {
     /* 定位类参数的键名（宏 ABI 的真值；`why`/`say` 不在其中） */
     const LOCATOR_KEYS = new Set([
         "region", "uids", "cells", "at", "outlet", "from", "to", "port",
-        "$ref", "$uids", "$bbox_of",
+        "$ref", "$uids", "$bbox_of", "$path_of",
     ]);
 
     const walkTargeted = v => {
