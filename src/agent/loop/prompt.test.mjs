@@ -646,6 +646,52 @@ console.log("\n── 10. $path_of 进 prompt ──");
     eq(hits.length, 0, "加了 $path_of 说明后，整份 prompt 仍然坐标 0 命中", { hits: hits.slice(0, 5) });
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * §R. 配方段（第五轮）：把 solver 的形状代数接进 prompt
+ *
+ * 第四轮真 LLM 实验：5 次里 4 次坚持要 rotater，而 `RuRu----` 只需要 cutter 切一半。
+ * 模型在形状代数上瞎猜 —— 而正确配方 `proto/solver.mjs` 早就算得出来。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+console.log("\n── §R. 配方段 —— 形状代数接进 prompt ──");
+{
+    const p = buildPrompt(baseOpts());
+    const all = p.system + "\n" + p.user;
+
+    ok(typeof p.blocks.s3_recipe === "string" && p.blocks.s3_recipe.length > 0,
+        "★ blocks.s3_recipe 非空（solver 可用时必须有配方）", p.blocks.recipe_unavailable);
+    ok(/## RECIPE/.test(all), "渲染文本里有 ## RECIPE 段");
+    ok(!!p.blocks.s3_recipe && p.blocks.s3_recipe.includes(baseOpts().goal),
+        "配方里含**本轮的**目标形状串（不是别的形状）", (p.blocks.s3_recipe || "").slice(0, 160));
+
+    /* L5 的目标是 Cu----Cu —— 它需要 cutter，但**不需要** rotater。 */
+    ok(/does NOT need.*rotater/.test(all),
+        "★ 配方明确说「不需要 rotater」（第四轮 4/5 次误判就栽在这）",
+        (p.blocks.s3_recipe || "").slice(0, 300));
+    ok(/cut/.test(p.blocks.s3_recipe || "") && /cutter/.test(p.blocks.s3_recipe || ""),
+        "配方说清了要用 cutter 切", p.blocks.s3_recipe);
+
+    /* 另跑一次 L4（RuRu----）：同一套断言，证明配方随目标变而不是硬编码 */
+    {
+        const { buildPrompt: bp } = await import("./prompt.mjs");
+        const l4obs = { ...L5, goal: { level: 4, requirement: { shape: "RuRu----", required: 70, delivered: 0 } } };
+        const p4 = bp({ ...baseOpts(), goal: "RuRu----", obs: l4obs });
+        ok(!!p4.blocks.s3_recipe && p4.blocks.s3_recipe.includes("RuRu----"),
+            "换目标 RuRu---- ⇒ 配方跟着变（含 RuRu----）", (p4.blocks.s3_recipe || "").slice(0, 160));
+        ok(/does NOT need.*rotater/.test(p4.blocks.s3_recipe || ""),
+            "RuRu---- 也不需要 rotater（第四轮失败的直接对象）");
+    }
+
+    /* 顺序：GOAL 在 RECIPE 之前（配方是"这个目标怎么造"的一部分） */
+    const iGoal = p.user.indexOf("## GOAL");
+    const iRecipe = p.user.indexOf("## RECIPE");
+    ok(iGoal >= 0 && iRecipe > iGoal, "RECIPE 紧跟在 GOAL 之后", { iGoal, iRecipe });
+
+    /* 坐标仍必须 0 —— 配方是形状层面的，不含世界坐标 */
+    ok(!coordRegex().test(p.blocks.s3_recipe || ""),
+        "配方段里没有坐标形态", p.blocks.s3_recipe);
+}
+
 /* ═══════════════════ 汇总 ═══════════════════ */
 
 console.log(`\n${pass} 通过 / ${fail} 失败`);
