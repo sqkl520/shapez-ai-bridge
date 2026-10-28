@@ -133,3 +133,40 @@ verify(post-apply) → ok=true
 
 诚实边界（写在文件头）：`FakeGame.apply` **只模拟 tx 的效果，不模拟 tx 的原子性/回滚/读回自证**。
 它能证明「loop 的决策链走通」，**不能**证明「宏在这张存档上真能落盘」。后者必须实机验。
+
+## F12（可能改变阶段 2 的整个设计）：L4 正解只需**一个** replace_run
+
+实测（L4 冷启动夹具 `test/fixtures/saves/L4-obs.json`，goal=`RuRu----`）：
+
+```js
+replace_run({ region: [4,-14, 5,-13],
+              building: ["cutter", {kind:"trash", port:"left", confirm_waste:true}] },
+            { entities: l4.entities })
+→ ok, cells_planned=6
+   removes: 10143@(4,-14) / 10209@(4,-13) / 10149@(5,-13)   ← 正好是"删 3 带"
+   placed:  cutter@(4,-13) rot=0 / trash@(4,-14) rot=0
+   warnings: kept-belts, cut-upstream-feeds, consumed-by-machine, trash-cuts-chain
+```
+
+**这意味着什么（非常重要）**：
+
+1. 阶段 2 的判据「L4 五 op 用 ≤5 个宏调用重写」——**实测只需 1 个**。
+2. 不需要 `connect`（那个在真实存档上 0/160 的宏）。
+3. 不需要人算坐标：`region` 是 bbox，机器落点由宏内部解；这正是 `connect` 等宏做不到的。
+4. 不需要多轮：一轮 replace_run 就是完整正解。
+
+**所以阶段 2 的 loop 应当围绕 `replace_run` 设计，而不是围绕 `connect`。**
+`replace_run` 才是唯一具备「给定一个区域，自己解出该放什么、放哪、朝向哪」能力的宏。
+
+**但这里有一个必须先回答的问题**：`region: [4,-14, 5,-13]` 这个 bbox 是怎么来的？
+- 如果是人算的 → 「没人算坐标」这条判据没通过，整个实验无意义。
+- 必须来自 `$bbox_of` 句柄组 → LLM 要能说出"这 3 条带子 + 那个 trash"，然后由 loop 算出 bbox。
+
+**这正是 `$bbox_of` 算子的价值所在**，也说明 Q2 的设计方向是对的。但契约要补一条：
+`$bbox_of` 算出的 bbox 必须**恰好**是 `replace_run` 想要的 region（含机器 footprint 与废料槽喷口格），
+否则宏会报 `precondition_failed`。这一点必须实测验证，不能假设。
+
+**下一步必须做的事**：构造一次**真正的冷启动**——LLM（mock）只看句柄表，输出
+`replace_run(region: $bbox_of([B1,B2,B3]), building: ["cutter", {kind:"trash",port:"left",confirm_waste:true}])`，
+loop 把它解析成具体的 region，宏跑通，tx 落盘，verify 通过，goal 推进。
+**这条链路跑通之前，阶段 2 不能声称达成。**
