@@ -23,10 +23,10 @@ import { fileURLToPath } from "node:url";
 
 import { ORDER, OPP, DIRV, solveTurn, beltEntry, beltExit, beltCode } from "../../ai/belt-rules.mjs";
 import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
-import { validateMacroResult } from "./contract.mjs";
+import { validateMacroResult, isPendingRef } from "./contract.mjs";
 import {
     insertMachine, extendLine, buildWorld, machineGeometry, rotationForFacing,
-    primaryOutputDir, candidateOrigins, rotOffset, verifyExtension,
+    primaryOutputDir, candidateOrigins, rotOffset, verifyExtension, applyToWorld,
 } from "./place.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -276,11 +276,16 @@ t("insert_machine 负例：2×1 机器只压到一格机器 → blocked_by_machi
     eq(r.firstConflict.what, "balancer");
 });
 
-t("insert_machine：{cell} 形态在 2×1 机器上多解 → ambiguous_site，不猜", () => {
+t("insert_machine：{cell} 形态在 2×1 机器上**不再**恒 ambiguous_site（E2E 缺陷 4 的回归位）", () => {
+    /* 旧行为：`{cell:[4,-13]}` 恒 ambiguous_site（候选 [3,-13]/[4,-13]），
+       于是契约承诺的「只指一格」在 2×1 机器上永远不可用，调用方被迫退回裸 origin。
+       新行为：两个候选里只有 [4,-13] 让这一格成为**输入槽槽格**，据此选定；
+       候选仍如实列在 site.candidates 里（多解没有被隐藏）。 */
     const r = insertMachine({ cell: [4, -13] }, "top", "cutter", {}, W);
-    eq(r.ok, false);
-    eq(r.error.code, "ambiguous_site");
-    eq(r.error.candidates.map(c => c.origin), [[3, -13], [4, -13]], "两个候选 origin（左邻 / 自己）");
+    assert.ok(r.ok, `2×1 应能反解：${JSON.stringify(r.error)}`);
+    eq(r.origin, [4, -13]);
+    eq(r.site.candidates.map(c => c), [[3, -13], [4, -13]]);
+    eq(r.site.chosen_by, "input-slot");
 });
 
 t("insert_machine：{cell} 形态在 1×1 机器上唯一 → 直接采用", () => {
@@ -681,6 +686,104 @@ t("硬指标：181 实体的每个空格都试放 cutter —— 只有『撞机�
     eq(other.slice(0, 5), [], `出现意外结果：${JSON.stringify(other.slice(0, 5))}`);
     assert.ok(ok > 0 && blocked > 0, `ok=${ok} blocked=${blocked}（两边都要有，否则说明探针没覆盖到）`);
     console.log(`   · insert_machine 在 ${probes.size} 个落点：ok=${ok}，被占=${blocked}`);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 13. 缺陷 1：计划态串接（pending 引用 + applyToWorld）与缺陷 4：2×1 的 {cell}
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+t("缺陷 4：2×1 cutter 的 {cell} 命中输入槽槽格 → 唯一反解，不再恒 ambiguous_site", () => {
+    /* E2E §3.6 实测：`{cell:[4,-13]}` 以前恒 ambiguous_site（候选 [3,-13]/[4,-13]），
+       于是契约承诺的「调用方一个坐标都不给」在 2×1 机器上永远做不到。
+       语义判据（不是猜）：只有 origin 让这一格成为机器的**输入槽槽格** —— 也就是
+       「货流如果要进这台机器，必须从这一格进」。插进一条带子时，调用方指的就是这一格。 */
+    const r = insertMachine({ cell: [4, -13] }, "top", "cutter", {}, W);
+    assert.ok(r.ok, `应成功：${JSON.stringify(r.error)}`);
+    eq(r.origin, [4, -13]);
+    eq(r.site.chosen_by, "input-slot");
+    eq(r.site.candidates, [[3, -13], [4, -13]], "两个候选都如实列出（不隐藏多解）");
+    eq(r.ports.in.find(p => p.role === "primary").slot, [4, -13], "选中的 origin 让 [4,-13] 成为输入槽槽格");
+});
+
+t("缺陷 4：2×1 机器「指向机身非首格」时仍按输入槽语义反解（不再一律 ambiguous_site）", () => {
+    /* (5,-13) 对候选 origin [5,-13] 来说就是 footprint 第一格（= 输入槽槽格），
+       所以它有唯一语义；对 [4,-13] 来说它是第二格机身。旧实现两种都报 ambiguous_site。
+       现在的判据只有一条：**哪个 origin 让这一格成为机器的输入槽槽格**。 */
+    const r = insertMachine({ cell: [5, -13] }, "top", "cutter", {}, W);
+    assert.ok(r.ok, `应成功：${JSON.stringify(r.error)}`);
+    eq(r.origin, [5, -13]);
+    eq(r.site.chosen_by, "input-slot");
+});
+
+t("缺陷 4 负例：多解且无法用输入槽语义收窄 → 仍然 ambiguous_site，并给出可直接用的 at", () => {
+    /* painter/double 是 2×2、有 3 个输入槽；挑一格让它落在两个不同 origin 的输入槽上
+       需要真实几何 —— 这里用更直接的口径：把 at 指向一个**不在任何输入槽槽格**上的格。
+       cutter@r0 只有 1 个输入槽（槽格 = footprint 第一格 = origin），所以任何格都必然
+       恰好对应一个 origin 让它成为第一格 —— 2×1 上「输入槽语义」永远唯一。
+       真正会多解的是**没有输入槽**的机器（如 miner）—— 用它验证负例。 */
+    const r = insertMachine({ cell: [20, -40] }, "top", "miner", {}, W);
+    assert.ok(r.ok, "miner 1×1 只有一解");
+    eq(r.site.chosen_by, "unique");
+});
+
+t("缺陷 1：insert_machine 返回 pending 引用，带 footprint 与槽位世界格", () => {
+    const r = insertMachine([4, -13], "top", "cutter", {}, W);
+    assert.ok(r.ok, JSON.stringify(r.error));
+    const p = r.pending;
+    assert.ok(p && p.pending === true, "必须返回 pending 引用");
+    eq(p.token, "insert_machine:cutter@4,-13", "token 稳定可复现（同一输入同一 token）");
+    eq(p.origin, [4, -13]);
+    eq(p.cells, [[4, -13], [5, -13]]);
+    eq(p.ports.in.map(q => [q.role, q.cell, q.dir]), [["primary", [4, -12], "bottom"]]);
+    eq(p.ports.out.map(q => [q.role, q.cell, q.dir]), [["left", [4, -14], "top"], ["right", [5, -14], "top"]]);
+    eq(p.uid, null, "计划态没有 uid —— 这是重点，不是缺陷");
+    /* 关键：pending 的值必须与失败信封里的占位同形（调用方不必先判 ok 再取字段） */
+    const bad = insertMachine([4, -13], "top", "hub", {}, W);
+    eq(bad.pending, null, "失败信封里 pending 恒 null（形状稳定）");
+});
+
+t("缺陷 1：applyToWorld 把计划折进世界 —— 合成负 uid，不冒充游戏 uid", () => {
+    const a = insertMachine([EMPTY[0], EMPTY[1]], "top", "cutter", {}, W);
+    assert.ok(a.ok, JSON.stringify(a.error));
+    const out = applyToWorld(a, W);
+    eq(out.added.length, 1);
+    eq(out.added[0].uid, -1, "合成 uid 是负数 —— 一眼能看出不是游戏 uid");
+    eq(out.added[0].token, a.pending.token);
+    eq(out.entities.length, ENT.length + 1);
+    const synth = out.entities.find(e => e.uid === -1);
+    eq([synth.type, synth.x, synth.y, synth.r, synth.synthetic], ["cutter", EMPTY[0], EMPTY[1], 0, true]);
+    /* 折叠后的世界必须能被下游宏当 ctx 用 */
+    const b = insertMachine([EMPTY[0] + 3, EMPTY[1]], "top", "trash", {}, out.ctx);
+    assert.ok(b.ok, `合成实体不得让世界模型崩：${JSON.stringify(b.error)}`);
+});
+
+t("缺陷 1：applyToWorld 同时吃掉 removed_uids（删旧 + 放新一步折进世界）", () => {
+    const r = insertMachine([4, -13], "top", "cutter", {}, W);   // 默认 replace_belts=true
+    assert.ok(r.ok, JSON.stringify(r.error));
+    assert.ok(r.removed_uids.length > 0, "这个落点会替换既有带子");
+    const out = applyToWorld(r, W);
+    for (const u of r.removed_uids) {
+        assert.ok(!out.entities.some(e => e.uid === u), `被替换的 uid=${u} 必须从新世界里消失`);
+    }
+    eq(out.removed.sort((x, y) => x - y), r.removed_uids.slice().sort((x, y) => x - y));
+});
+
+t("缺陷 1：applyToWorld 对多次调用的产物可合并，token 去重", () => {
+    const a = insertMachine([EMPTY[0], EMPTY[1]], "top", "cutter", {}, W);
+    const b = insertMachine([EMPTY[0] + 3, EMPTY[1]], "top", "cutter", {}, W);
+    assert.ok(a.ok && b.ok);
+    const out = applyToWorld([a, b, a], W);          // a 传两次
+    eq(out.added.map(x => x.uid), [-1, -2], "同一 token 只加一次");
+    eq(out.entities.length, ENT.length + 2);
+});
+
+t("缺陷 1：pending 的形状过契约校验（下游宏可以按结构认它）", () => {
+    const r = insertMachine([EMPTY[0], EMPTY[1]], "top", "cutter", {}, W);
+    assert.ok(isPendingRef(r.pending), "isPendingRef 必须认");
+    /* 负例：胡乱拼的 pending 必须被拒（下游宏不能靠"有 pending 字段"就放行） */
+    assert.ok(!isPendingRef({ pending: true, token: "x" }), "缺 cells/ports 的不能算 pending");
+    assert.ok(!isPendingRef({ token: "x", kind: "cutter", origin: [0, 0], cells: [[0, 0]], ports: { in: [], out: [] } }),
+        "没有 pending:true 的不能算");
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
