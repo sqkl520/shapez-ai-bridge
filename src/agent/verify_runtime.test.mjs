@@ -479,12 +479,61 @@ const clone = o => JSON.parse(JSON.stringify(o));
     const obs = mkObs(Object.values(ENT));
     const items = mkItems();
 
-    const mkReader = (o, it, prodBefore, prodAfter, steps) => ({
-        async obs() { return o; },
-        async debugItems() { return it; },
-        async production() { return steps.prodCalls++ === 0 ? prodBefore : prodAfter; },
-        async step(t) { steps.ticks += t; return { ok: true, advanced: t }; },
-    });
+    /**
+     * 假 reader。`production(p)` **按 p.slices 返回不同窗口**（与 mod 一致：
+     * `produced_total` / `delivered_total` 是最近 N 片的求和，不是累计量），
+     * 这样才能测出「拿 20 秒窗口减 60 秒窗口」这类错误。
+     *
+     * @param {object} o        obs
+     * @param {object} it       debug_items
+     * @param {object} prodBefore  第一次 production 的**每片**数据模板（未给 slices 时按 2 片）
+     * @param {object} prodAfter   之后 production 的每片数据模板（未给 slices 时按 6 片）
+     * @param {object} steps    {prodCalls, ticks, goalDelivered?}
+     */
+    const mkReader = (o, it, prodBefore, prodAfter, steps) => {
+        const mkProd = (tpl, slices, goalDelivered) => {
+            const per = tpl && tpl.per_slice ? tpl.per_slice : {};
+            const n = slices || 2;
+            const slice = {};
+            for (const k in per) slice[k] = per[k];
+            const produced_slices = Array.from({ length: n }, () => ({ ...slice }));
+            const total = {};
+            for (const sl of produced_slices) for (const k in sl) total[k] = (total[k] || 0) + sl[k];
+            const window = n * 10;
+            const perSec = {};
+            for (const k in total) perSec[k] = Math.round((total[k] / window) * 1000) / 1000;
+            return {
+                window_seconds: window, slice_seconds: 10, slices_returned: n,
+                produced_total: total, produced_per_sec: perSec,
+                delivered_total: tpl && tpl.delivered_per_slice ? (() => { const d = {}; for (const k in tpl.delivered_per_slice) d[k] = tpl.delivered_per_slice[k] * n; return d; })() : {},
+                delivered_per_sec: tpl && tpl.delivered_per_slice ? (() => { const d = {}; for (const k in tpl.delivered_per_slice) d[k] = Math.round((tpl.delivered_per_slice[k] / 10) * 1000) / 1000; return d; })() : {},
+                produced_slices,
+                delivered_slices: Array.from({ length: n }, () => (tpl && tpl.delivered_per_slice) ? { ...tpl.delivered_per_slice } : {}),
+                _goal_delivered: goalDelivered,
+            };
+        };
+        return {
+            async obs(p) {
+                // checkBehavior 用 obs 读 goal.requirement.delivered（累计量）
+                const gd = steps.goalDelivered !== undefined ? steps.goalDelivered : null;
+                if (p && p.max_entities === 1 && gd !== null) {
+                    return { ...o, goal: { ...(o.goal || {}), requirement: { ...((o.goal || {}).requirement || {}), delivered: gd } } };
+                }
+                return o;
+            },
+            async debugItems() { return it; },
+            async production(p) {
+                const n = (p && p.slices) || 2;
+                const first = steps.prodCalls++ === 0;
+                return mkProd(first ? prodBefore : prodAfter, n, null);
+            },
+            async step(t) {
+                steps.ticks += t;
+                if (steps.goalDeliveredAfterStep !== undefined) steps.goalDelivered = steps.goalDeliveredAfterStep;
+                return { ok: true, advanced: t };
+            },
+        };
+    };
 
     // ① 全绿：计划与 ops 形态都吃
     {
@@ -524,23 +573,80 @@ const clone = o => JSON.parse(JSON.stringify(o));
         eq(r.checks.length, 1, "verify 截断：obs 截断后不再往下判（只留 L0）");
     }
 
-    // ⑤ 行为检查：目标形状真的出现 → 绿；一件没有 → 红
+    /* ⑤ 行为检查（L4）—— 这一组测试专门钉死旧实现的两个假绿。
+     *
+     * 旧实现：`got = after.produced_total[shape]`、`was = before.produced_total[shape]`、
+     * 判据 `got <= 0 && was <= 0` 才红。两个病：
+     *   (a) `produced_total` 是**窗口求和**，before 用 slices:2（20s）、after 用 slices:6（60s），
+     *       两者不可相减；
+     *   (b) 只要老产线本来就在生产同一个形状，(got,was 都 > 0) ⇒ 一条**全死的线**也判绿。
+     * 实测 factcheck：before=99 / after=99 / delta=0 → 绿。
+     *
+     * 新判据：交付（delivered）必须真的发生，且用同口径（goal 累计增量 或 窗口内交付>0）。
+     */
     {
-        const steps = { prodCalls: 0, ticks: 0 };
-        const reader1 = mkReader(obs, items,
-            { produced_total: {} },
-            { produced_total: { CuCuCuCu: 40 }, produced_per_sec: { CuCuCuCu: 0.4 }, window_seconds: 60 }, steps);
-        const r1 = await verifyRuntime(PLAN, { reader: reader1, behavior: { shape: "CuCuCuCu", ticks: 2400 } });
-        ok(r1.ok, "verify 行为正例：production 里目标形状出现 → 绿", r1.checks.map(c => c.name + ":" + c.reason));
-        ok(steps.ticks === 2400, "verify 行为正例：真的推进了请求的 tick 数", steps.ticks);
+        // (1) 正例：交付真的发生了（goal 的累计 delivered 涨了）
+        {
+            const steps = { prodCalls: 0, ticks: 0, goalDelivered: 10, goalDeliveredAfterStep: 40 };
+            const reader = mkReader(obs, items,
+                { per_slice: { CuCuCuCu: 2 }, delivered_per_slice: { CuCuCuCu: 0 } },
+                { per_slice: { CuCuCuCu: 2 }, delivered_per_slice: { CuCuCuCu: 1 } }, steps);
+            const r = await verifyRuntime(PLAN, { reader, behavior: { shape: "CuCuCuCu", ticks: 2400 } });
+            ok(r.ok, "L4 正例：交付真的增量了 → 绿", r.checks.map(c => c.name + ":" + c.reason));
+            eq(steps.ticks, 2400, "L4 正例：真的推进了请求的 tick 数");
+        }
 
-        const steps2 = { prodCalls: 0, ticks: 0 };
-        const reader2 = mkReader(obs, items,
-            { produced_total: {} }, { produced_total: {}, produced_per_sec: {} }, steps2);
-        const r2 = await verifyRuntime(PLAN, { reader: reader2, behavior: { shape: "CuCuCuCu", ticks: 2400 } });
-        ok(!r2.ok, "verify 行为负例：跑完一件都没产出 → 红");
-        const l4 = r2.checks.find(c => c.name === "L4-behavior");
-        ok(l4 && !l4.ok, "verify 行为负例：红的正是 L4-behavior");
+        // (2) ★ 核心负例：老产线在产，但这条改动一件都没交付 → 必须红 ★
+        //     这正是旧实现会判绿的那种形态（produced 有、delivered 无、delta=0）
+        {
+            const steps = { prodCalls: 0, ticks: 0, goalDelivered: 99, goalDeliveredAfterStep: 99 };
+            const reader = mkReader(obs, items,
+                { per_slice: { CuCuCuCu: 5 }, delivered_per_slice: {} },
+                { per_slice: { CuCuCuCu: 5 }, delivered_per_slice: {} }, steps);
+            const r = await verifyRuntime(PLAN, { reader, behavior: { shape: "CuCuCuCu", ticks: 2400 } });
+            const l4 = r.checks.find(c => c.name === "L4-behavior");
+            ok(l4 && !l4.ok,
+                "L4 负例【旧 bug 回归】：老产线在产出（窗口内 30 件）但零交付、goal 无增量 → 必须红", l4 && l4.reason);
+            ok(/没交付|没通到终点|停滞/.test(l4.reason), "L4 负例：reason 必须说清是「产出但没交付」，不能笼统说没产出", l4.reason);
+            eq(l4.evidence.goal_delivered_delta, 0, "L4 负例：evidence 里 goal 增量是 0");
+            ok(l4.evidence.delivered_in_window_after === 0, "L4 负例：窗口内交付也是 0");
+        }
+
+        // (3) 负例：完全没产出也没交付
+        {
+            const steps = { prodCalls: 0, ticks: 0 };
+            const reader = mkReader(obs, items, { per_slice: {} }, { per_slice: {} }, steps);
+            const r = await verifyRuntime(PLAN, { reader, behavior: { shape: "CuCuCuCu", ticks: 2400 } });
+            ok(!r.ok, "L4 负例：一件都没产出 → 红");
+            const l4 = r.checks.find(c => c.name === "L4-behavior");
+            ok(l4 && !l4.ok && /没产出|没跑起来/.test(l4.reason), "L4 负例：红的正是 L4 且说「没产出」", l4 && l4.reason);
+        }
+
+        // (4) ★ 口径负例：证据里必须标明「窗口不可相减」 ★
+        //     旧实现把 20s 窗口减 60s 窗口当作 delta，物理上无意义
+        {
+            const steps = { prodCalls: 0, ticks: 0, goalDelivered: 0, goalDeliveredAfterStep: 0 };
+            const reader = mkReader(obs, items,
+                { per_slice: { CuCuCuCu: 1 } }, { per_slice: { CuCuCuCu: 1 } }, steps);
+            const r = await verifyRuntime(PLAN, { reader, behavior: { shape: "CuCuCuCu", ticks: 2400 } });
+            const l4 = r.checks.find(c => c.name === "L4-behavior");
+            ok(/不可相减/.test(l4.evidence.caveat || ""), "L4 口径：evidence 必须写明哪些数不能相减（防下一个人再踩）", l4.evidence.caveat);
+            ok(!("produced_delta" in l4.evidence), "L4 口径：不得再出现跨窗口的 produced_delta 字段");
+            ok(l4.evidence.produced_window_secs_before !== l4.evidence.produced_window_secs_after
+                || l4.evidence.produced_window_secs_before === 20,
+                "L4 口径：before/after 的窗口长度确实不同（正是旧 bug 的根源）",
+                [l4.evidence.produced_window_secs_before, l4.evidence.produced_window_secs_after]);
+        }
+
+        // (5) 速率判据：交付速率低于要求 → 红
+        {
+            const steps = { prodCalls: 0, ticks: 0, goalDelivered: 0, goalDeliveredAfterStep: 1 };
+            const reader = mkReader(obs, items,
+                { per_slice: { CuCuCuCu: 2 } }, { per_slice: { CuCuCuCu: 2 }, delivered_per_slice: { CuCuCuCu: 1 } }, steps);
+            const r = await verifyRuntime(PLAN, { reader, behavior: { shape: "CuCuCuCu", ticks: 2400, minPerSec: 999 } });
+            const l4 = r.checks.find(c => c.name === "L4-behavior");
+            ok(l4 && !l4.ok && /速率/.test(l4.reason), "L4 速率：低于 minPerSec → 红", l4 && l4.reason);
+        }
     }
 
     // ⑥ planId 找不到 → 结构化 error，不抛
