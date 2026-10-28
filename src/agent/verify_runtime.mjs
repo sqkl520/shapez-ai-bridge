@@ -732,8 +732,28 @@ export function checkFlow(plan, obs, items, opts = {}) {
 }
 
 /**
- * L4 行为（可选）：推进游戏 N tick，看 `production` 里目标形状真的出现。
+ * L4 行为（可选）：推进游戏 N tick，看目标形状的交付真的**增量**了。
+ *
  * 只在 `opts.behavior` 给出时运行；读的是游戏自己的时间片统计，不是估算。
+ *
+ * ★ 为什么不能比 `produced_total` 的差值（这是本文件最深的一个坑）★
+ *   `production()` 返回的 `produced_total` 是**最近 N 片的求和**（mod 的
+ *   `observeProduction`：`history[key].slice(-wantSlices)` 再 sum），**不是累计量**。
+ *   于是 `production({slices:2}).produced_total` 是 20 秒窗口，`production({slices:6})`
+ *   是 60 秒窗口 —— **两个不同长度的窗口相减，差值没有任何物理意义**。
+ *
+ *   更要命的是旧判据 `got <= 0 && was <= 0` 才判红：只要老产线本来就在生产同一个形状，
+ *   一条全死的线也判绿。实测（factcheck）：before=99 / after=99 / delta=0 → 绿。
+ *
+ *   正确判据必须落在**同一口径**上，三选一：
+ *     ① `delivered_slices` 逐片求和（每片固定 slice_seconds，天然同口径）；
+ *     ② `goal.requirement.delivered` 的增量（hub 的真实交付计数，最权威）；
+ *     ③ 单窗口的 `delivered_per_sec > minPerSec`（速率口径一致时可直接比）。
+ *   本实现用 ① 求增量、用 ② 交叉校验（两者都给就都要过）。
+ *
+ * ★ produced ≠ delivered ★
+ *   废料侧在产出而目标侧零交付，是 L4 这类改造最典型的失败形态。旧实现只读
+ *   `produced_total`，把"线在转"读成"关卡在推进"。这里两者都要看，且交付是硬判据。
  */
 export async function checkBehavior(plan, reader, opts = {}) {
     const b = opts.behavior;
@@ -742,20 +762,69 @@ export async function checkBehavior(plan, reader, opts = {}) {
     if (!shape) return { name: "L4-behavior", ok: false, reason: "行为检查缺目标形状（opts.behavior.shape）", evidence: {} };
     const ticks = b.ticks === undefined ? 2400 : b.ticks;      // 20 游戏秒 @120Hz
     const minPerSec = b.minPerSec === undefined ? 0 : b.minPerSec;
-    const before = await reader.production({ slices: 2 });
+
+    /* 前置：交付量的**同口径**基线。goal 的 delivered 是累计计数（hub 权威），
+       slices 的 delivered 是窗口求和 —— 两者分开记，不混。 */
+    const prodBefore = await reader.production({ slices: 2 });
+    const goalBefore = await readGoalDelivered(reader);
+
     await reader.step(ticks);
-    const after = await reader.production({ slices: 6 });
-    const got = (after.produced_total && after.produced_total[shape]) || 0;
-    const was = (before.produced_total && before.produced_total[shape]) || 0;
-    const rate = after.produced_per_sec ? (after.produced_per_sec[shape] || 0) : null;
-    const evidence = { shape, ticks, produced_before: was, produced_after: got, produced_delta: got - was, rate_per_sec: rate, window_seconds: after.window_seconds };
-    if (got <= 0 && was <= 0) {
-        return { name: "L4-behavior", ok: false, reason: `跑完 ${ticks} tick 后 ${shape} 一件都没产出 —— 这条线在游戏里没跑起来`, evidence };
+
+    const prodAfter = await reader.production({ slices: 6 });
+    const goalAfter = await readGoalDelivered(reader);
+
+    /* ① 同口径增量：逐片求和（每片都是 slice_seconds，窗口长度不同不影响） */
+    const sliceSum = (slices, s) => (Array.isArray(slices) ? slices : [])
+        .reduce((a, sl) => a + ((sl && sl[s]) || 0), 0);
+
+    const delAfter = sliceSum(prodAfter.delivered_slices, shape);
+    const delBefore = sliceSum(prodBefore.delivered_slices, shape);
+    /* 注意：before/after 的 slices 数不同，所以这两个绝对值不可相减。
+       增量只能用 **goal 的累计交付**，或只看 after 窗口内是否真有交付。 */
+    const prodAfterN = (prodAfter.produced_total && prodAfter.produced_total[shape]) || 0;
+    const prodBeforeN = (prodBefore.produced_total && prodBefore.produced_total[shape]) || 0;
+    const rate = prodAfter.delivered_per_sec ? (prodAfter.delivered_per_sec[shape] || 0) : null;
+
+    const goalDelta = (goalBefore !== null && goalAfter !== null) ? goalAfter - goalBefore : null;
+    const evidence = {
+        shape, ticks,
+        produced_window_before: prodBeforeN, produced_window_after: prodAfterN,
+        produced_window_secs_before: prodBefore.window_seconds, produced_window_secs_after: prodAfter.window_seconds,
+        delivered_in_window_after: delAfter, delivered_in_window_before: delBefore,
+        goal_delivered_before: goalBefore, goal_delivered_after: goalAfter, goal_delivered_delta: goalDelta,
+        rate_per_sec: rate, window_seconds: prodAfter.window_seconds,
+        /* 明确写出「哪些数字不能相减」，免得读 evidence 的人再踩一次 */
+        caveat: "produced_*/delivered_in_window_* 是窗口求和，before/after 窗口长度不同，不可相减；增量只看 goal_delivered_delta",
+    };
+
+    /* ── 判据一：交付必须真的发生（不是"产出过"） ── */
+    const deliveredHappened = delAfter > 0 || (goalDelta !== null && goalDelta > 0);
+    if (!deliveredHappened) {
+        /* 区分三种"没交付"，因为修法完全不同 */
+        const producedSomething = prodAfterN > 0;
+        const reason = !producedSomething && prodBeforeN <= 0
+            ? `跑完 ${ticks} tick 后 ${shape} 一件都没产出 —— 这条线在游戏里没跑起来`
+            : producedSomething
+                ? `${shape} 在产出（窗口内 ${prodAfterN} 件）但**一件都没交付**到 hub —— 货流没通到终点，或产物被丢弃`
+                : `${shape} 没有新产出，也没有新交付 —— 这条线处于停滞`;
+        return { name: "L4-behavior", ok: false, reason, evidence };
     }
-    if (rate !== null && rate < minPerSec) {
-        return { name: "L4-behavior", ok: false, reason: `${shape} 实测 ${rate}/s < 要求 ${minPerSec}/s`, evidence };
+
+    /* ── 判据二：速率（给了才判） ── */
+    if (rate !== null && minPerSec > 0 && rate < minPerSec) {
+        return { name: "L4-behavior", ok: false, reason: `${shape} 交付速率 ${rate}/s < 要求 ${minPerSec}/s`, evidence };
     }
+
     return { name: "L4-behavior", ok: true, reason: null, evidence };
+}
+
+/** 读 goal 的累计交付量（hub 权威计数）。读不到返回 null —— 不猜。 */
+async function readGoalDelivered(reader) {
+    try {
+        const o = await reader.obs({ max_entities: 1, include_hub: true });
+        const d = o && o.goal && o.goal.requirement && o.goal.requirement.delivered;
+        return typeof d === "number" ? d : null;
+    } catch { return null; }
 }
 
 /* ══════════════════════════ 主入口 ══════════════════════════ */
