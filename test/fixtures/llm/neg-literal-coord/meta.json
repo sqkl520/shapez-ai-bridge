@@ -1,0 +1,17 @@
+{
+  "scenario": "neg-literal-coord",
+  "goal": "RuRu----",
+  "obs": "test/fixtures/saves/L4-obs.json",
+  "items": null,
+  "notes": [
+    "`at: [4, -13]` is a literal coordinate pair typed by the model. This is clause V1 (Q2.3) and must be rejected before any tx.",
+    "parseLlmPlan deliberately does NOT catch it: V1 needs the JSON-tree walker in coords.mjs (assertNoHumanCoords), because the same shape is legal inside $bbox_of/$uids args. This fixture therefore asserts `parse_ok` AND `assertNoHumanCoords` red — two different layers, one fixture."
+  ],
+  "expect": {
+    "parse_ok": true,
+    "coord_guard": "V1",
+    "tx_count": 0,
+    "outcome": "halt",
+    "must_not_be_success": true
+  }
+}

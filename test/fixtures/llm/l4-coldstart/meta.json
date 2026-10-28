@@ -1,0 +1,18 @@
+{
+  "scenario": "l4-coldstart",
+  "goal": "RuRu----",
+  "obs": "test/fixtures/saves/L4-obs.json",
+  "items": null,
+  "notes": [
+    "round-01 is syntactically valid and uses only whitelisted macros + handle operators.",
+    "It is NOT required to execute successfully: this fixture exists to prove the mock path and the parser accept a well-formed plan. Success is decided by verify, never by the mock.",
+    "items: null documents the known gap — L4 has no matching debug_items dump (PHASE2-CONTRACT §Q7.1)."
+  ],
+  "expect": {
+    "max_rounds": 3,
+    "must_apply": true,
+    "must_verify": true,
+    "parse": "ok",
+    "forbid_codes": ["LLM_COORD", "LLM_EMPTY_PLAN", "LLM_UNKNOWN_MACRO"]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "say": "Build a full mining line to the hub.",
+  "calls": [
+    {
+      "macro": "build_line",
+      "args": {
+        "target": "RuRu----"
+      },
+      "why": "one call builds the whole line"
+    }
+  ]
+}
