@@ -482,3 +482,23 @@ replace_run(...trash:right)    → ok:true，删掉的 uid = [10149, 10150, 1020
 | 4 | **不知道目标形状要怎么造（要 rotater 吗）** | **形状代数** |
 
 每一轮修完，下一层问题就露出来。这不是原地打转——问题在**向更难、也更有价值的方向**移动。
+
+### 形状代数**已经存在**，只是没接进 prompt
+
+验证（用仓库里现成的 `research/ai-player/proto/shape-ops.mjs`）：
+
+```js
+const src = S.parse('RuRuRuRu');
+const h = S.cutHalf(src);
+// h[0] === 'RuRu----'  ← 目标的正确造法
+// 旋转 ≠ 目标           ← 确认不需要 rotater
+```
+
+`src/ai/compiler/compile.mjs:568` 早就用它做规划了（`SHAPE_OPS.cutHalf(parentShapes[0])`）。
+
+**所以这不是"需要新能力"，而是"已有的能力没接上"。**
+prompt 里应该告诉模型的是一句可以机器生成的话：
+
+> `RuRu----` = `cutHalf(RuRuRuRu)` 取左半。不需要旋转。
+
+这类句子完全可以从 solver 自动生成，不需要手写。
