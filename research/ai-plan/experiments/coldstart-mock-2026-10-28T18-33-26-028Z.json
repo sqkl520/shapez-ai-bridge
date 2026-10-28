@@ -1,0 +1,92 @@
+{
+  "generated_at": "2026-10-28T18:33:26.028Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "must_remove_uids": [
+      10209,
+      10149,
+      10143
+    ],
+    "must_place": [
+      {
+        "kind": "cutter",
+        "origin": [
+          4,
+          -13
+        ]
+      },
+      {
+        "kind": "trash",
+        "origin": [
+          4,
+          -14
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "runs": 1,
+    "mode": "mock",
+    "truth_all_visible": 1,
+    "truth_partial_visible": 0,
+    "truth_none_visible": 0,
+    "picked_any_truth": 1,
+    "picked_all_truth": 1,
+    "plan_ok": 1,
+    "exact": 1,
+    "placements_ok": 1
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 5370,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10143,
+        10209,
+        10149
+      ],
+      "selected_truth": [
+        10143,
+        10209,
+        10149
+      ],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "destroys": [
+        10143,
+        10149,
+        10209
+      ],
+      "removed_truth": [
+        10209,
+        10149,
+        10143
+      ],
+      "removed_extra": [],
+      "exact_match": true,
+      "placed": [
+        "cutter@4,-13",
+        "trash@4,-14"
+      ],
+      "placed_match": true
+    }
+  ]
+}

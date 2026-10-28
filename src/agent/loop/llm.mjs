@@ -457,8 +457,25 @@ export function parseLlmPlan(text) {
 
     const say = typeof obj.say === "string" ? obj.say : "";
     const coordRe = new RegExp(COORD_SRC);
+    /* ★ `say` 过长：**降级为警告，不整轮拒**（实测修正）★
+     *
+     * 2026-10-28 的真 LLM 实验：5 次尝试里第 5 次 `say` 写了 349 字符（上限 280），
+     * 整轮被判 `LLM_NARRATION` 作废 —— 但它的动作 `insert_machine(at=B135, cutter)`
+     * 是**结构合法**的，被拒的理由纯粹是"叙述太长"。
+     *
+     * 这是拿正确性给格式买单。红队在实现阶段就批评过这条，实测证实了。
+     * 现在：`say` 只是给人看的说明字段，长了就截断并记警告，**不影响计划是否成立**。
+     *
+     * 但**坐标泄漏（V4）仍必须硬拒** —— 那是安全边界，不是格式问题：
+     * LLM 一旦在自由文本里写出坐标，下一轮它就可能把这些数字"抄"进参数里，
+     * 从而绕开 `assertNoHumanCoords`（后者只看结构化字段）。两者性质不同，不能一起降级。
+     */
+    const sayWarnings = [];
     if (say.length > LLM_SAY_MAX) {
-        return fail("LLM_NARRATION", `say is ${say.length} chars > ${LLM_SAY_MAX}`, { chars: say.length });
+        sayWarnings.push({
+            code: "say_truncated",
+            detail: `say 是 ${say.length} 字符 > ${LLM_SAY_MAX}，已截断；不影响计划成立`,
+        });
     }
     if (coordRe.test(say)) {
         return fail("LLM_NARRATION", "say contains a coordinate-like number pair (V4)", { say: say.slice(0, 200) });
@@ -498,5 +515,11 @@ export function parseLlmPlan(text) {
         calls.push({ macro, args: c.args, why });
     }
 
-    return { ok: true, plan: { say, calls }, error: null };
+    return {
+        ok: true,
+        /* say 超长时截断（见上面的裁决）；plan.say 保持简洁，原文可在 llm_raw 里找到 */
+        plan: { say: say.length > LLM_SAY_MAX ? say.slice(0, LLM_SAY_MAX) : say, calls },
+        warnings: sayWarnings,
+        error: null,
+    };
 }

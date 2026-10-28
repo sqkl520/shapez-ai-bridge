@@ -1,0 +1,190 @@
+{
+  "generated_at": "2026-10-28T19:02:00.927Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "must_remove_uids": [
+      10209,
+      10149,
+      10143
+    ],
+    "must_place": [
+      {
+        "kind": "cutter",
+        "origin": [
+          4,
+          -13
+        ]
+      },
+      {
+        "kind": "trash",
+        "origin": [
+          4,
+          -14
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "runs": 5,
+    "mode": "live",
+    "truth_all_visible": 5,
+    "truth_partial_visible": 0,
+    "truth_none_visible": 0,
+    "picked_any_truth": 0,
+    "picked_all_truth": 0,
+    "plan_ok": 1,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 5370,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "",
+      "parsed": null,
+      "selected_uids": [],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": null,
+      "ops": null
+    },
+    {
+      "run": 2,
+      "prompt_chars": 5370,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The goal RuRu---- is the top half of the cut shape: the cutter's left output (B84) carries TL+BL (Ru--Ru--), so it needs one 90° turn before reaching the hub — inserting a rotator on that output belt is the smallest fix, leaving the by-product half to the existing trash line.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B84\",\"asCell\":true},\"machine\":\"rotator\",\"opts\":{\"replace_belts\":true}},\"why\":\"B84 is the cutter's left half (TL+BL filled); one rotation turns it into the required RuRu---- so the hub can start accepting deliveries.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10059
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:insert_machine:unsupported_building",
+      "ops": null
+    },
+    {
+      "run": 3,
+      "prompt_chars": 5370,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Trash the unwanted cutter output so only the requested RuRu---- half remains.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B85\",\"asCell\":true},\"machine\":\"trash\",\"opts\":{\"replace_belts\":true}},\"why\":\"C1's B84 side is the wanted half; B85 is the other half and should be consumed instead of blocking the line.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10077
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:insert_machine:occupied",
+      "ops": null
+    },
+    {
+      "run": 4,
+      "prompt_chars": 5370,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"No diagnosis and nothing is reaching the hub, so I want to convert the empty miner-fed run into the goal shape: cut the full shapes at the head of the M3 chain so the existing run toward the balancer/hub carries RuRu----.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B112\",\"asCell\":true},\"facing\":\"top\",\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"The M3 feed run is empty end-to-end; putting a cutter in-line at its head turns the mined full shape into the required half shape that the existing downstream belts already carry toward the balancer/hub, and replacing the occupied belt keeps the footprint atomic.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10138
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 3,
+      "destroys": [
+        10138,
+        10145
+      ],
+      "removed_truth": [],
+      "removed_extra": [
+        10138,
+        10145
+      ],
+      "exact_match": false,
+      "placed": [
+        "cutter@4,-9"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 5,
+      "prompt_chars": 5370,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"No diagnosis was produced, so I go for the goal directly: the hub already has feeder belts but nothing has been delivered, so I place a cutter on the belt that feeds the hub to turn full Ru shapes into the RuRu half the level wants; I leave the machine un-rotated and let the macro work out the footprint and slot alignment from the existing layout.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B135\",\"asCell\":true},\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"Put a cutter directly on the hub feed belt so shapes arrive cut as RuRu halves instead of full shapes, which is why delivery stays at zero\"}]}",
+      "parsed": {
+        "error": "LLM_NARRATION"
+      },
+      "selected_uids": [],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "parse:LLM_NARRATION",
+      "ops": null
+    }
+  ]
+}

@@ -37,7 +37,8 @@ import { buildPrompt } from "./loop/prompt.mjs";
 import { parseLlmPlan, makeClient } from "./loop/llm.mjs";
 import { assertNoHumanCoords, resolveRefs } from "./loop/coords.mjs";
 import { planToTxOps } from "./loop/planToTxOps.mjs";
-import { replaceRun } from "./macros/remove.mjs";
+import { replaceRun, removeRun } from "./macros/remove.mjs";
+import { insertMachine } from "./macros/place.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "../..");
@@ -134,6 +135,12 @@ async function attemptOnce({ runIndex, client, verbose }) {
         truth_visible: truthVisible,
         truth_visible_count: truthVisible.length,
         llm_error: llmErr,
+        /* ★ 保留模型原文 ★
+           没有它，"选中 0/3" 只是一个数字；有了它才能看出模型**为什么**选错
+           （实测第一次真 LLM：它把机器名写成 "rotator"（应为 "rotater"）、
+            选了 B84 而不是目标，且只想着"加一台"没想到"删三条"）。
+           诊断价值全在这段原文里。 */
+        llm_raw: raw,
         parsed: null,
         selected_uids: [],
         selected_truth: [],
@@ -167,10 +174,15 @@ async function attemptOnce({ runIndex, client, verbose }) {
     const res = resolveRefs(parsed.plan, handles, obs);
     if (!res.ok) { result.plan_why = `resolveRefs:${res.violations.map(v => v.rule).join(",")}`; return result; }
 
-    /* 调真宏 + 编排 */
+    /* 调真宏 + 编排
+     *
+     * 六个宏全接上 —— 只支持 replace_run 会让实验**系统性低估**模型：
+     * 实测 #1 里模型用了 insert_machine（合理选择），却被记成 unsupported_macro，
+     * 看起来像"它不会"，其实是"我们没让它跑"。这类测量偏差必须消掉。 */
+    const IMPLS = { replace_run: replaceRun, insert_machine: insertMachine, remove_run: removeRun };
     const calls = [];
     for (const c of res.calls) {
-        const impl = { replace_run: replaceRun }[c.macro];
+        const impl = IMPLS[c.macro];
         if (!impl) { result.plan_why = `unsupported_macro:${c.macro}`; return result; }
         const out = impl(c.args, { entities: obs.entities });
         calls.push({ macro: c.macro, args: c.args, result: out, provenance: c.provenance });
@@ -295,6 +307,20 @@ async function main() {
             for (const r of results) {
                 console.log(`  #${r.run} 看到 ${r.truth_visible_count}/3 · 选中 ${(r.selected_truth || []).length}/3 · `
                     + `${r.plan_ok ? "plan ok" : (r.plan_why || r.llm_error || "no output")}`);
+                /* 真 LLM 模式：把模型的原始调用摘要打出来，供人判断"错在哪一类"。
+                   只看 0/3 这个数字没有任何行动价值。 */
+                if (args.mode === "live" && r.llm_raw) {
+                    try {
+                        const pj = JSON.parse(String(r.llm_raw).replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, ""));
+                        for (const c of (pj.calls || [])) {
+                            const args_ = JSON.stringify(c.args || {});
+                            console.log(`       → ${c.macro} ${args_.length > 160 ? args_.slice(0, 160) + "…" : args_}`);
+                        }
+                        if (pj.say) console.log(`       say: ${String(pj.say).slice(0, 160)}`);
+                    } catch {
+                        console.log(`       原文(前 160)：${String(r.llm_raw).slice(0, 160)}`);
+                    }
+                }
             }
         }
         console.log("");
