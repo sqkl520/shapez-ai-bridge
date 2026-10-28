@@ -360,8 +360,23 @@ console.log("\n── 5. parseLlmPlan ──");
         "形状串/计数/秒数**不**误命中坐标正则");
     ok(parseLlmPlan('{"say":"the belt at x=-13 is stuck","calls":[{"macro":"remove_run","args":{}}]}').ok,
         "单个负数（无逗号）不算坐标 —— 与契约 V4 的口径一致");
-    eq(parseLlmPlan('{"say":"' + "z".repeat(LLM_SAY_MAX + 1) + '","calls":[{"macro":"remove_run","args":{}}]}').error.code,
-        "LLM_NARRATION", `say > ${LLM_SAY_MAX} 字符 → LLM_NARRATION`);
+    /* ★ say 过长：降级为警告，不整轮拒（2026-10-28 真 LLM 实验的修正）★
+     *
+     * 实测：5 次真 LLM 尝试里第 5 次 say 写了 349 字符（上限 280），整轮作废 ——
+     * 但它的动作 insert_machine(at=B135, cutter) 是结构合法的。
+     * 拿正确性给格式买单。现在：长了就截断 + 记警告，计划仍然成立。
+     *
+     * 但 say 里**出现坐标**仍然硬拒 —— 那是安全边界（LLM 可能下一轮把数字抄进参数，
+     * 绕开 assertNoHumanCoords）。上面两条断言（(4,-13) / 4, -13 → LLM_NARRATION）保留。 */
+    {
+        const longSay = "z".repeat(LLM_SAY_MAX + 1);
+        const r = parseLlmPlan('{"say":"' + longSay + '","calls":[{"macro":"remove_run","args":{}}]}');
+        ok(r.ok, "say 超长 → **仍然通过**（不再整轮拒）", r.error);
+        ok(r.plan.say.length === LLM_SAY_MAX, `plan.say 被截断到 ${LLM_SAY_MAX}`, r.plan.say.length);
+        ok(Array.isArray(r.warnings) && r.warnings.some(w => w.code === "say_truncated"),
+            "超长时带 say_truncated 警告（不静默）", r.warnings);
+        ok(r.plan.calls.length === 1, "计划本身完好无损", r.plan.calls);
+    }
 }
 
 /* ═══════════════════ 6. 真实夹具扫一遍 ═══════════════════ */

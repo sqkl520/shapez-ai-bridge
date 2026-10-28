@@ -1,0 +1,63 @@
+{
+  "generated_at": "2026-10-28T18:27:55.858Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "must_remove_uids": [
+      10209,
+      10149,
+      10143
+    ],
+    "must_place": [
+      {
+        "kind": "cutter",
+        "origin": [
+          4,
+          -13
+        ]
+      },
+      {
+        "kind": "trash",
+        "origin": [
+          4,
+          -14
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "runs": 1,
+    "mode": "mock",
+    "truth_all_visible": 0,
+    "truth_partial_visible": 0,
+    "truth_none_visible": 1,
+    "picked_any_truth": 0,
+    "picked_all_truth": 0,
+    "plan_ok": 0,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 5344,
+      "visible_handles": 58,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [],
+      "truth_visible_count": 0,
+      "llm_error": null,
+      "parsed": {
+        "error": "LLM_EMPTY_PLAN"
+      },
+      "selected_uids": [],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "parse:LLM_EMPTY_PLAN",
+      "ops": null
+    }
+  ]
+}

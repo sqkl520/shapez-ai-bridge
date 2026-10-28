@@ -40,6 +40,9 @@
 
 import { MACRO_NAMES, MACRO_SPECS } from "../macros/contract.mjs";
 import { BUDGET } from "./constants.mjs";
+/* 合法 machine 值来自 place.mjs 的 SUPPORTED_BUILDINGS —— 不在 prompt 里手抄第二份。
+   实测教训：模型写过 "rotator"（应为 "rotater"），整轮白费；卡片里摆出枚举就不该再犯。 */
+import { SUPPORTED_BUILDINGS } from "../macros/place.mjs";
 /* 只有 pickBeltsForGoal 用得到它们：判断带子的拓扑必须知道机器的真实占地
    （cutter 是 2×1，hub 是 4×4）与机器的**出口格**（判断"这条线最终流向哪里"）。
    按 1×1 算会把「挨着 cutter 第二格」的带子误判成孤立。 */
@@ -182,6 +185,22 @@ const SYSTEM_PROMPT = [
     "   that works with what IS listed.",
     "9. Prefer the smallest set of calls that can plausibly fix the top diagnosis. Explanations",
     "   belong in `say`/`why` and must not contain numbers that look like positions.",
+    "",
+    /* ★ 第 10 条：改造既有带子（2026-10-28 真 LLM 实验的直接产物）★
+     *
+     * 实测 5 次冷启动，模型**从不**删东西 —— 它一致地选 insert_machine
+     * （"在旁边加一台机器"），5/5 次都没想到可以把一段既有带子就地改造成机器。
+     * 而正解恰好是 replace_run：删三条带子在原地放 cutter+trash。
+     *
+     * 原因不是模型笨，是 prompt 里没有任何一句话说"改造既有产线"是允许且常见的。
+     * insert_machine 与 replace_run 在候选卡片里并列，模型没有理由优先后者。
+     */
+    "10. Most real tasks are MODIFICATIONS of an existing factory, not greenfield builds.",
+    "    Replacing a run of belts in place with a machine (replace_run) is the normal move;",
+    "    inserting a machine NEXT TO the existing run usually leaves the old run dead and is",
+    "    rarely what you want. If a diagnosis says a run delivers nothing, prefer converting",
+    "    that run over adding a parallel one. remove_run is also legitimate: sometimes the fix",
+    "    is to delete belts that lead nowhere.",
 ].join("\n");
 
 /* ══════════════════════════ 3. S2：宏卡片 ══════════════════════════ */
@@ -214,17 +233,50 @@ function renderParams(spec) {
     return ps.join(", ");
 }
 
+/**
+ * 每张卡片后面附的「合法值」提示。
+ *
+ * 为什么要单独一张表（2026-10-28 真 LLM 实验）：
+ *   实测 5 次里第 2 次模型写了 `"machine":"rotator"` —— 正确是 `rotater`。
+ *   宏正确地拒了（unsupported_building），但那一轮就白费了。
+ *   这不是模型笨，是**我们没把合法值告诉它**：`machine` 的类型写的是 `string|{kind,variant}`，
+ *   看着像自由文本。把枚举直接摆在卡片里，这类错就没了。
+ *
+ * 值不在这里手抄 —— 从 `place.mjs` 的 `SUPPORTED_BUILDINGS` 取，避免第二份真值。
+ */
+const LEGAL_VALUES = Object.freeze({
+    insert_machine: () => {
+        try {
+            const names = Object.keys(SUPPORTED_BUILDINGS);
+            return `machine ∈ {${names.join(" | ")}}   (note the spelling: "rotater", not "rotator")`;
+        } catch { return null; }
+    },
+    replace_run: () => {
+        try {
+            const names = Object.keys(SUPPORTED_BUILDINGS);
+            return `building[].kind ∈ {${names.join(" | ")}}   ("belts are not a building here")`;
+        } catch { return null; }
+    },
+});
+
 function renderCard(name) {
     const spec = MACRO_SPECS[name];
     const ex = MACRO_EXAMPLES[name];
     const notUse = (spec.whenNotToUse && spec.whenNotToUse[0]) || "";
-    return [
+    const lines = [
         `### ${name}`,
         sanitize(spec.summary).text.trim(),
         `params: ${sanitize(renderParams(spec)).text}`,
         `not when: ${clip(sanitize(notUse).text.trim(), 170)}`,
         `example: ${JSON.stringify(ex)}`,
-    ].join("\n");
+    ];
+    /* 合法值提示（防拼错）：见 LEGAL_VALUES 的注释 */
+    const lv = LEGAL_VALUES[name];
+    if (lv) {
+        const v = lv();
+        if (v) lines.push(`legal values: ${v}`);
+    }
+    return lines.join("\n");
 }
 
 /**

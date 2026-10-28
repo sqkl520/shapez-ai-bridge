@@ -1,0 +1,144 @@
+{
+  "generated_at": "2026-10-28T18:53:29.562Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "must_remove_uids": [
+      10209,
+      10149,
+      10143
+    ],
+    "must_place": [
+      {
+        "kind": "cutter",
+        "origin": [
+          4,
+          -13
+        ]
+      },
+      {
+        "kind": "trash",
+        "origin": [
+          4,
+          -14
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "runs": 3,
+    "mode": "live",
+    "truth_all_visible": 3,
+    "truth_partial_visible": 0,
+    "truth_none_visible": 0,
+    "picked_any_truth": 1,
+    "picked_all_truth": 1,
+    "plan_ok": 0,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 5370,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The goal needs a two-quadrant half shape, so a cutter must sit on the stream feeding the hub; I put a cutter on the first hub feed and a trash on the next so the waste half is consumed.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B135\",\"asCell\":true},\"machine\":{\"kind\":\"cutter\"},\"opts\":{\"replace_belts\":true}},\"why\":\"cut the full shape right where it enters the hub so the matching half is what gets delivered\"},{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B136\",\"asCell\":true},\"machine\":{\"kind\":\"trash\"},\"opts\":{\"replace_belts\":true}},\"why\":\"absorb the other half next to the cutter so the cut does not jam\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10074,
+        10032
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "unsupported_macro:insert_machine",
+      "ops": null
+    },
+    {
+      "run": 2,
+      "prompt_chars": 5370,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Nothing is delivered even though the hub already has belt B135/B136/B137 feeding it, so the incoming stream is the wrong shape; I convert that run into cutter+trash right at the hub so the RuRu---- half is what enters and the other half is discarded.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B135\",\"B136\",\"B137\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\"}]},\"why\":\"Cut the shapes on the only belts that are guaranteed to reach the hub, keeping the goal half and trashing the other.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:out_of_scope",
+      "ops": null
+    },
+    {
+      "run": 3,
+      "prompt_chars": 5370,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Goal is a half shape (RuRu----); the visible miner feed runs only carry full shapes into the balancers, so cut them in place with a cutter and trash the byproduct half, per the documented replace_run pattern.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B63\",\"B69\",\"B81\",\"B90\",\"B97\",\"B105\",\"B112\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\"}]},\"why\":\"Miners feed full shapes straight into L3; cut the run so L3 receives the required half and the byproduct is trashed.\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B64\",\"B70\",\"B82\",\"B91\",\"B98\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\"}]},\"why\":\"Second feed into L3 needs the same cut so both balancer inputs carry matching half shapes.\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10144,
+        10143,
+        10209,
+        10208,
+        10206,
+        10139,
+        10138,
+        10151,
+        10150,
+        10149,
+        10148,
+        10147
+      ],
+      "selected_truth": [
+        10143,
+        10209,
+        10149
+      ],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:precondition_failed",
+      "ops": null
+    }
+  ]
+}
