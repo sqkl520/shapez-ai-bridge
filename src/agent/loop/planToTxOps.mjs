@@ -639,6 +639,53 @@ export function planToTxOps(calls, ctx = {}) {
         });
     }
 
+    /* ── R13：**实质删除必须与「LLM 指名的对象」一致** ──
+     *
+     * 这是本轮最危险的一类漏洞的防线（2026-10-29 实测发现）：
+     *   LLM 说「改 B69/B81/B82」（故意不写坐标，只给句柄），
+     *   `$bbox_of` 算出 `[4,-14, 5,-13]`，
+     *   `replace_run` 在这个矩形里挑落点，结果删掉了 `[10150, 10209, 10149]`
+     *   —— 其中 `10150`(B70) **没有被点名**，而被点名的 `10143`(B69) **反而没动**。
+     *   而 `replace_run` 返回 **ok:true**，没有任何拒绝信号。
+     *
+     * 实测复现（L4 真实存档）：
+     *   $bbox_of(["B69","B81","B82"]) → region [4,-14,5,-13]
+     *   → 实际删除 [10150,10209,10149]，期望 [10209,10149,10143]
+     *
+     * 危害等级：**高于任何一次 explicit failure**。一个"成功"的 tx 会在世界里
+     * 删掉 LLM 从未指名的东西，而 L1 落地检查只看"计划声明的有没有落地"，
+     * 看不见"多删了谁"（那要靠 undeclaredDestruction，但前提是计划里声明正确）。
+     *
+     * 判据：如果调用方（resolveRefs）在 args 里留下了「指名句柄 → uid」的对照
+     * （`ctx.namedUids`，由 loop 在解析 `$uids`/`$path_of` 时填），
+     * 那么**每一个被删除的 uid 都必须在这个对照里**。
+     * 没给对照时不判（保持向后兼容），但要记一条警告 —— 不许静默。
+     */
+    const named = ctx.namedUids instanceof Set ? ctx.namedUids
+        : Array.isArray(ctx.namedUids) ? new Set(ctx.namedUids) : null;
+    if (named && named.size && deleteUids.length) {
+        const extra = deleteUids.filter(u => !named.has(u));
+        if (extra.length) {
+            const who = extra.map(u => {
+                const e = entByUid.get(u);
+                return e ? `${u}@(${e.x},${e.y})` : String(u);
+            }).join(", ");
+            return reject(
+                "R13", "destroys_not_named",
+                `计划要删除 ${deleteUids.length} 个实体，其中 ${extra.length} 个**不在 LLM 指名的句柄里**：${who}。`
+                + `这通常是 $bbox_of 的矩形顺带框进了没点名的格子 —— 宏会"成功"但删错对象。`,
+                { deleted: deleteUids, extra, named: [...named] },
+            );
+        }
+    } else if (deleteUids.length) {
+        warnings.push({
+            code: "DESTROYS_UNNAMED_CHECK_SKIPPED",
+            source: "planToTxOps",
+            detail: `删除了 ${deleteUids.length} 个实体，但 ctx.namedUids 未提供 —— 无法断言"删的就是点名的那几个"`,
+            hint: "loop 应把 resolveRefs 得到的 uid 集合传进 ctx.namedUids；否则 $bbox_of 删错对象这类问题查不出来。",
+        });
+    }
+
     return {
         ok: true,
         ops,

@@ -601,6 +601,51 @@ console.log("\n── 9. L4 冷启动：BELTS 段含正解三条 ──");
     }
 }
 
+/* ═══════════════════ 10. $path_of 必须进 S1 / S2（否则模型不知道它存在） ═══════════════════
+ *
+ * 第三轮实验 §15 的修法只有在**模型看得见**时才成立。两个必要条件：
+ *   ① S1 的算子清单里有 `$path_of`，并且说清「链拐弯时用 path_of 而不是 bbox_of」；
+ *   ② S2 的 `replace_run` 卡片示例本身就示范正确用法（模型最常照着示例抄）。
+ * 另加一条不是本任务核心、但同源实证的修正：示例里 trash 的 port 必须是 cutter 的废料侧。
+ */
+console.log("\n── 10. $path_of 进 prompt ──");
+{
+    const p = buildPrompt(baseOpts());
+    const s1 = p.system, s2 = p.blocks.S2;
+
+    ok(s1.includes("$path_of"), "S1 的算子清单里列出 $path_of");
+    ok(/\$path_of[\s\S]{0,200}EXACTLY the cells/.test(s1),
+        "S1 说明了 $path_of 的语义（EXACTLY the cells，与外接矩形对比）");
+    /* 「链拐弯时用 path_of 而不是 bbox_of」—— 这是任务书点名要写清的一句 */
+    ok(/\$path_of,\s*NOT\s*\$bbox_of/i.test(s1),
+        "★ S1 明确写了『用 $path_of，不要用 $bbox_of』（rule 11 的第一句）");
+    ok(/bend|bends/i.test(s1) && /side by side|parallel/i.test(s1),
+        "★ S1 点名了两个触发场景：链拐弯 / 两条并排");
+    ok(/REJECTED/.test(s1) && /missing|hole|cells are not/i.test(s1),
+        "S1 说明了非连续会被拒绝，且报错里会给出缺的格（模型据此拆段，不用猜）");
+    /* 禁止清单仍然完整：新算子不能把「未知算子一律拒绝」这条冲掉 */
+    ok(/Any other \$-operator/.test(s1), "S1 仍然明确『其它 $ 算子一律拒绝』");
+
+    ok(s2.includes('"$path_of"'), "S2 的 replace_run 示例用 $path_of（示例即正确用法）");
+    ok(s2.includes('"$path_of"') && !/region":\{"\$bbox_of"/.test(s2),
+        "★ S2 的 region 示例**不再**示范 $bbox_of（避免模型抄错的那一半）");
+
+    /* cutter 的废料槽是 right（op-templates.wasteRoles），示例必须与真值一致。
+       值不手抄：从 op-templates 取，测试与实现消费同一份。 */
+    const { templateByBuildingVariant } = await import("../../ai/op-templates.mjs");
+    const tpl = templateByBuildingVariant("cutter", "default");
+    ok(tpl && tpl.wasteRoles.includes("right"), "（前置）cutter 的 wasteRoles = right");
+    ok(/trash",\s*"port":\s*"right"/.test(s1 === null ? "" : s2),
+        "★ S2 示例里 trash 的 port 是 right（不是 left —— 第三轮 #5 的 precondition_failed 真因）",
+        s2.match(/trash[^}]*\}/)?.[0]);
+    ok(/must use port "right"/.test(s2),
+        "★ S2 的 legal values 说清了 cutter 的 trash 只能接 right", s2.match(/legal values:.*$/m)?.[0]);
+
+    /* 最后：整份 prompt 仍然坐标 0 命中（新文字里不许夹带数字对） */
+    const hits = (p.system + "\n" + p.user).match(coordRegex()) || [];
+    eq(hits.length, 0, "加了 $path_of 说明后，整份 prompt 仍然坐标 0 命中", { hits: hits.slice(0, 5) });
+}
+
 /* ═══════════════════ 汇总 ═══════════════════ */
 
 console.log(`\n${pass} 通过 / ${fail} 失败`);

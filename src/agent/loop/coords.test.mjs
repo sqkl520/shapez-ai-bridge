@@ -55,8 +55,9 @@ ok(H.every(Boolean), "L4 的三个 uid 都拿到了句柄", H);
 
 {
     ok(Object.isFrozen(COORD_SOURCES), "COORD_SOURCES 冻结");
-    jEq(COORD_SOURCES, { OBS_REF: "$ref", OBS_REFS: "$uids", DERIVED_BBOX: "$bbox_of" },
-        "COORD_SOURCES 只有三种算子（唯一闭集）");
+    jEq(COORD_SOURCES, {
+        OBS_REF: "$ref", OBS_REFS: "$uids", DERIVED_BBOX: "$bbox_of", DERIVED_PATH: "$path_of",
+    }, "COORD_SOURCES 只有四种算子（唯一闭集）");
     ok(COORD_KEYS.includes("at") && COORD_KEYS.includes("region"), "V3 键清单含 at/region");
     ok(!COORD_KEYS.includes("len"), "V3 键清单**不含** len（len 是格数，不是坐标）");
     ok(!COORD_KEYS.includes("max_cells"), "V3 键清单不含 max_cells");
@@ -389,6 +390,267 @@ ok(H.every(Boolean), "L4 的三个 uid 都拿到了句柄", H);
     ok(!PROVENANCE_RE.test("macro:"), "空 token 非法");
     ok(!PROVENANCE_RE.test("computed:bbox_of[]"), "空 bbox 非法");
     ok(!PROVENANCE_RE.test("llm:says so"), "未知来源前缀非法");
+}
+
+/* ═══════════ 8. $path_of —— 精确格集 vs 外接矩形（第三轮实验 §15 的修法） ═══════════
+ *
+ * 这组测试的存在理由：`$bbox_of` 在**直线一宽**的链上与 `$path_of` 完全等价，
+ * 差别只在链拐弯或两条链并行时才出现。而第三轮真 LLM 实验的 5 次失败全部来自这个差别
+ * （`EXPERIMENT-COLDSTART.md` §15：occupied / not_a_run / precondition_failed）。
+ * 所以每一条正向断言都必须配一条「`$bbox_of` 确实会更大/更宽」的对照，
+ * 否则「`$path_of` 解决了问题」这句话无法证伪。
+ */
+
+console.log("\n── 8. $path_of ──");
+{
+    const { pathOf, footprintCells } = await import("./handles.mjs");
+    const { PATH_PROVENANCE_PREFIX } = await import("./coords.mjs");
+    const uidOf = h => t4.byHandle.get(h).uid;
+
+    /* ── 8.1 精确格集：不含额外的格子 ──
+       `B69/B81/B82` 是 x=4 上 y=-14..-13 的两格 + x=5 上 y=-13 的一格（一条拐弯的链段）。
+       外接矩形是 2×2 = 4 格，实际只有 3 格 —— 这正是 #5 那次「多框了一格」的形态。 */
+    {
+        const p = pathOf(["B69", "B81", "B82"].map(uidOf), l4);
+        jEq(p.cells, [[4, -14], [4, -13], [5, -13]], "$path_of 给精确格集（3 格，按输入顺序展开 footprint）");
+        eq(p.cells.length, 3, "格集恰好 3 格（不是矩形的 4 格）");
+        eq(p.area, 4, "外接矩形面积 4 —— 与格集长度不等，说明确实有缺口");
+        eq(p.contiguous, false, "★ 拐弯的链被判 contiguous:false");
+        jEq(p.holes, [[5, -14]], "★ 报出缺的那一格（而不是把 region 扩成 2×2）");
+        ok(!p.cells.some(c => c[0] === 5 && c[1] === -14),
+            "★ 格集里**没有** (5,-14) —— 它没被任何输入句柄指到");
+    }
+
+    /* ── 8.2 对照：同样的输入交给 $bbox_of，得到更大的矩形 ── */
+    {
+        const bb = bboxOf(["B69", "B81", "B82"].map(uidOf), l4);
+        jEq(bb, [4, -14, 5, -13], "$bbox_of 同样的输入 → 2×2 矩形（含没被点名的 (5,-14)）");
+        const p = pathOf(["B69", "B81", "B82"].map(uidOf), l4);
+        ok(bb[0] === p.region[0] && bb[1] === p.region[1] && bb[2] === p.region[2] && bb[3] === p.region[3],
+            "（对照）两者的 region/bbox 数值相同 —— 差别只在『格集有没有填满它』");
+        ok(p.cells.length < p.area, "（对照）bbox 覆盖 4 格而输入只有 3 格：多出的那一格就是 bbox 的病根");
+    }
+
+    /* ── 8.3 直线连续链：两者等价（避免「$path_of 处处更严」的误解） ── */
+    {
+        const hs = ["B97", "B90", "B81"].map(uidOf);
+        const p = pathOf(hs, l4);
+        jEq(p.cells, [[4, -11], [4, -12], [4, -13]], "直线段：格集 = 3 格");
+        eq(p.contiguous, true, "直线段：contiguous:true（可以投影成 region）");
+        jEq(p.region, bboxOf(hs, l4), "（对照）直线段上 region === bbox（两算子等价）");
+    }
+
+    /* ── 8.4 并排 2×2：格集恰好填满 → 可以投影（这不是「非连续」） ── */
+    {
+        const p = pathOf(["B69", "B70", "B81", "B82"].map(uidOf), l4);
+        eq(p.cells.length, 4, "并排两条链各取 2 格 = 4 格");
+        eq(p.area, 4, "外接矩形也是 4 格");
+        eq(p.contiguous, true, "★ 恰好填满 ⇒ contiguous:true（判据是『填满矩形』，不是『同一条链』）");
+        jEq(p.holes, [], "没有空洞");
+    }
+
+    /* ── 8.5 关键负例：不连续的格集 → 必须报错，**不能**返回把它们都包住的矩形 ──
+       `B69`(4,-14) 与 `B112`(4,-9) 之间隔着 4 条带子。若实现返回 region，那就是静默扩大 = bug。 */
+    {
+        const hs = ["B69", "B112"].map(uidOf);
+        const p = pathOf(hs, l4);
+        eq(p.cells.length, 2, "格集只有 2 格（B69 与 B112）");
+        eq(p.area, 6, "外接矩形 6 格（纵向 y=-14..-9）");
+        eq(p.contiguous, false, "★ 不连续 ⇒ contiguous:false");
+        jEq(p.holes, [[4, -13], [4, -12], [4, -11], [4, -10]],
+            "★ 空洞逐格报出（中间那 4 条带子被点名了吗？没有）");
+        ok(p.cells.length !== p.area, "★ 格数 ≠ 面积 —— 任何『用面积当格数』的实现都会在这里露馅");
+
+        /* 走完整的 resolveRefs：region 参数**必须**红，且 calls 里不能留下这条调用 */
+        const bad = resolveRefs({
+            calls: [{ macro: "replace_run", args: { region: { $path_of: ["B69", "B112"] }, building: "belt" } }],
+        }, t4, l4);
+        ok(!bad.ok, "★ 不连续选区喂给 replace_run.region ⇒ 解析失败（不是静默扩成矩形）", bad.violations);
+        ok(bad.violations.some(v => v.rule === "PATH_NOT_RECT"), "★ 报的是 PATH_NOT_RECT（专用码）",
+            bad.violations.map(v => v.rule));
+        eq(bad.calls.length, 0, "★ 失败的调用不进 calls（没有半个 args 往下走）");
+        /* 这条是「不许静默扩大」的**直接**断言：任何返回 region 的实现都会在这里红 */
+        ok(!bad.calls.some(c => Array.isArray(c.args.region)),
+            "★ 没有任何 call 带着一个 4 元 region 溜过去");
+        const reason = bad.violations.find(v => v.rule === "PATH_NOT_RECT").reason;
+        ok(/-13|-12|-11|-10/.test(reason), "★ 报错里列出了缺口坐标（模型能据此拆段，不用猜）", reason);
+    }
+
+    /* ── 8.6 正例：连续选区喂给 replace_run.region → 投影成 4 元 bbox，带 path_of 标签 ── */
+    {
+        const r = resolveRefs({
+            calls: [{
+                macro: "replace_run",
+                args: { region: { $path_of: ["B69", "B70", "B81", "B82"] }, building: "belt" },
+            }],
+        }, t4, l4);
+        ok(r.ok, "连续 $path_of → replace_run 解析为绿", r.violations);
+        jEq(r.calls[0].args.region, [4, -14, 5, -13], "region 投影成 4 元闭区间（宏只吃这个形态）");
+        eq(r.calls[0].provenance.region, `computed:path_of[B69,B70,B81,B82]`,
+            "provenance 是 computed:path_of[…]，存的是句柄不是坐标");
+        ok(PROVENANCE_RE.test(r.calls[0].provenance.region), "path_of 标签形态合法");
+        jEq(assertNoHumanCoords({
+            calls: [{ macro: "replace_run", args: { region: { $path_of: ["B69", "B70"] }, building: "belt" } }],
+        }, t4), { ok: true, violations: [], rulesRun: ["V1", "V2", "V3", "V4", "V5", "V6"], rulesSkipped: [] },
+        "V1 白名单放行 $path_of 的句柄数组（不误判成字面坐标）");
+    }
+
+    /* ── 8.7 Cell[] 参数：投影成精确格集（remove_run.cells 本来就允许稀疏） ── */
+    {
+        const r = resolveRefs({
+            calls: [{ macro: "remove_run", args: { cells: { $path_of: ["B69", "B81", "B82"] } } }],
+        }, t4, l4);
+        ok(r.ok, "Cell[] 位置接受非连续格集（不需要矩形）", r.violations);
+        jEq(r.calls[0].args.cells, [[4, -14], [4, -13], [5, -13]], "cells 拿到的是精确格集（3 格）");
+        eq(r.calls[0].provenance.cells, "computed:path_of[B69,B81,B82]", "cells 的 provenance 同样是 path_of");
+        /* 但真正的宏要 3 格都是带子 —— 这几格确实是，所以能过 */
+        const lint = r.calls.length === 1 && Array.isArray(r.calls[0].args.cells) && r.calls[0].args.cells.length === 3;
+        ok(lint, "cells 形态完整（长度为 3，不是矩阵）");
+    }
+
+    /* ── 8.8 用错位置：$path_of 给一个非坐标参数 → REF_SHAPE ── */
+    {
+        const r = resolveRefs({ calls: [{ macro: "remove_run", args: { uids: { $path_of: ["B69"] } } }] }, t4, l4);
+        ok(!r.ok && r.violations.some(v => v.rule === "REF_SHAPE"),
+            "负例：$path_of 用在 uids（身份参数）上 → REF_SHAPE", r.violations.map(v => v.rule));
+        eq(r.calls.length, 0, "负例：没有 call 溜过去");
+    }
+
+    /* ── 8.9 结构负例：空数组 / 幻觉句柄 ── */
+    {
+        const e1 = resolveRefs({ calls: [{ macro: "replace_run", args: { region: { $path_of: [] }, building: "belt" } }] }, t4, l4);
+        ok(!e1.ok && e1.violations.some(v => v.rule === "REF_SHAPE" || v.rule === "V5"),
+            "负例：$path_of:[] → 红", e1.violations.map(v => v.rule));
+        const e2 = resolveRefs({ calls: [{ macro: "replace_run", args: { region: { $path_of: ["B999"] }, building: "belt" } }] }, t4, l4);
+        ok(!e2.ok && e2.violations.some(v => v.rule === "V5"), "负例：$path_of 幻觉句柄 → V5", e2.violations);
+        /* V6 也认它（否则「未知算子」与「已知算子」的边界会说两套话） */
+        ok(Object.values(COORD_SOURCES).includes("$path_of"), "COORD_SOURCES 里有 $path_of（V6 的放行名单从它派生）");
+        const e3 = assertNoHumanCoords({ calls: [{ macro: "replace_run", args: { region: { $path_of: ["B69"] } } }] }, t4);
+        ok(e3.ok, "assertNoHumanCoords 对 $path_of 不报 V6", e3.violations);
+    }
+
+    /* ── 8.10 溯源变异：改格集 / 改 region 必须红 ── */
+    {
+        const plan = {
+            calls: [{
+                macro: "replace_run",
+                args: { region: { $path_of: ["B69", "B70", "B81", "B82"] }, building: "belt" },
+            }],
+        };
+        const res = resolveRefs(plan, t4, l4);
+        ok(res.ok, "（前置）连续 path_of 计划解析绿", res.violations);
+        const tx = () => ({
+            ops: [
+                { op: "place", building: "belt", x: 4, y: -13, r: 0,
+                    provenance: { x: res.calls[0].provenance.region, y: res.calls[0].provenance.region } },
+            ],
+        });
+        ok(assertProvenance(res, tx(), l4).ok, "正例：path_of 标签 + region 内的落点 → 绿");
+
+        /* ★ 变异 A（任务书点名）：改一个坐标 → 必须红 ★ */
+        const mA = structuredClone(res);
+        mA.calls[0].args.region[0] += 1;                       // x0 从 4 改成 5
+        const vA = assertProvenance(mA, tx(), l4);
+        ok(!vA.ok && vA.violations.some(v => v.rule === "COORD_PROVENANCE"),
+            "★ 变异：region[0] 加 1 → 红（标签没变、值变了）", vA.violations);
+        ok(vA.violations.some(v => /重算不符/.test(v.reason)),
+            "★ 红的原因是「与重算不符」（真的回到 obs 重算了）", vA.violations.map(v => v.reason));
+
+        /* 变异 B：把 region 改成覆盖更多格的更大矩形（这正是「静默扩大」的形态） */
+        const mB = structuredClone(res);
+        mB.calls[0].args.region = [4, -15, 5, -9];
+        ok(!assertProvenance(mB, tx(), l4).ok, "变异：region 被悄悄扩大 → 红（不许静默扩范围）");
+
+        /* 变异 C：标签里的句柄被换掉 */
+        const mC = structuredClone(res);
+        mC.calls[0].provenance.region = "computed:path_of[B69,B112]";
+        const vC = assertProvenance(mC, tx(), l4);
+        ok(!vC.ok && vC.violations.some(v => v.rule === "COORD_PROVENANCE"),
+            "变异：path_of 标签换成不连续的句柄集 → 红（不连续集合不存在合法 region 投影）", vC.violations);
+
+        /* 变异 D：标签换成幻觉句柄 */
+        const mD = structuredClone(res);
+        mD.calls[0].provenance.region = "computed:path_of[B999]";
+        ok(!assertProvenance(mD, tx(), l4).ok, "变异：path_of 标签引用幻觉句柄 → 红");
+
+        /* 变异 E：place 落点挪出选区 */
+        const tE = tx();
+        tE.ops[0].x = 99;
+        ok(!assertProvenance(res, tE, l4).ok, "变异：place 的 x 挪出 path_of 选区 → 红");
+    }
+}
+
+/* ═══════════ 9. 变异测试：把连续性检查改成恒真，测试必须红 ═══════════
+ *
+ * 契约的变异纪律（§2.4）要求「反着写一定红」。这一条针对 `$path_of` 的**核心判据**：
+ * 若把 `contiguous` 改成恒 `true`，`$path_of(B69,B112)` 就会安静地返回一个 6 格矩形，
+ * 于是「拐弯时宏必须拒绝」这件事**没有任何机器检查**——正是当前 `$bbox_of` 的病。
+ *
+ * 做法：把 `handles.mjs` **逐字复制**到临时目录，只改 `contiguous` 那一行，然后让
+ * `coords.mjs` 的副本 import 这个变异体（用 data: URL 不必要 —— 直接写文件更接近真实模块）。
+ * 判据：变异体下 `resolveRefs` 必须**返回绿 / 返回一个 region**，而原实现必须红。
+ * 两者都断言，缺任一条这个测试就变成恒真。
+ */
+console.log("\n── 9. 变异：连续性检查恒真 → 必须被抓 ──");
+{
+    const os = await import("node:os");
+    const { pathToFileURL } = await import("node:url");
+    const src = fs.readFileSync(path.join(HERE, "handles.mjs"), "utf8");
+    const ANCHOR = "const contiguous = dupes.length === 0 && cells.length === area;";
+    ok(src.includes(ANCHOR), "变异锚点存在（连续性判据只有这一行）", { found: src.includes(ANCHOR) });
+
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pathof-mut-"));
+    try {
+        /* 变异体：只把判据换成恒真，其余逐字照抄 */
+        const mutant = src.replace(ANCHOR, "const contiguous = true; // MUTANT: 恒真");
+        ok(mutant !== src, "变异体确实被改过（不是照抄）");
+        /* import 路径改成绝对 URL —— 临时目录里的相对路径会指到别处（实测会以
+           「模块找不到」退出，而那个退出码 1 会被误当成「变异被抓」）。 */
+        const uri = f => pathToFileURL(path.resolve(HERE, f)).href;
+        const fixed = mutant
+            .replace('"../../ai/op-templates.mjs"', JSON.stringify(uri("../../ai/op-templates.mjs")))
+            .replace('"../../ai/belt-rules.mjs"', JSON.stringify(uri("../../ai/belt-rules.mjs")))
+            .replace('"../verify_runtime.mjs"', JSON.stringify(uri("../verify_runtime.mjs")));
+        ok(!/from "\.\.?\//.test(fixed), "变异体的 import 全部换成绝对 URL（否则会假绿）");
+        const mPath = path.join(tmp, "handles.mutant.mjs");
+        fs.writeFileSync(mPath, fixed);
+        const M = await import(pathToFileURL(mPath).href);
+        ok(typeof M.pathOf === "function", "变异体可加载（pathOf 存在）");
+
+        /* ① 先确认变异体**真的**改变了行为：同一个非连续输入被判 contiguous:true */
+        const pm = M.pathOf(["B69", "B112"].map(h => t4.byHandle.get(h).uid), l4);
+        eq(pm.contiguous, true, "★ 变异体：不连续选区被判 contiguous:true（说明变异生效）");
+
+        /* ② 原实现下 resolveRefs 必红，变异体下同样的计划必绿 —— 两条都要断言。
+              只断言 ② 不够：原实现若也绿，这个测试就是恒真的。 */
+        const mkPlan = () => ({
+            calls: [{ macro: "replace_run", args: { region: { $path_of: ["B69", "B112"] }, building: "belt" } }],
+        });
+        const real = resolveRefs(mkPlan(), t4, l4);
+        ok(!real.ok && real.violations.some(v => v.rule === "PATH_NOT_RECT"),
+            "★ 原实现：同一计划报 PATH_NOT_RECT（对照组）", real.violations.map(v => v.rule));
+
+        /* ③ 变异体版的 coords.mjs：把它对 handles.mjs 的 import 指到变异体上，
+              看同一条判据链是否整段失效。这比只测 pathOf 更接近「测试会不会红」。 */
+        const coordsSrc = fs.readFileSync(path.join(HERE, "coords.mjs"), "utf8");
+        const coordsMut = coordsSrc
+            .replace('from "./handles.mjs"', `from ${JSON.stringify(pathToFileURL(mPath).href)}`)
+            /* 其余相对 import 也要换成绝对 URL —— 临时目录里的相对路径会指到别处，
+               子模块会以「模块找不到」崩掉，而那个崩溃**不是**「变异被抓」（假绿来源）。 */
+            .replace('"../macros/contract.mjs"', JSON.stringify(uri("../macros/contract.mjs")));
+        ok(!/from "\.\.?\//.test(coordsMut), "coords 变异体的 import 全部换成绝对 URL（否则会假绿）");
+        const cPath = path.join(tmp, "coords.mutant.mjs");
+        fs.writeFileSync(cPath, coordsMut);
+        const C = await import(pathToFileURL(cPath).href);
+        const mutated = C.resolveRefs(mkPlan(), M.buildHandles(l4, null), l4);
+        ok(mutated.ok, "★★ 变异体下同一计划**通过**（连续性检查失效 ⇒ 静默扩大）", mutated.violations.map(v => v.rule));
+        ok(mutated.calls.length === 1 && Array.isArray(mutated.calls[0].args.region) && mutated.calls[0].args.region.length === 4,
+            "★★ 变异体返回了一个 4 元 region（这就是 $bbox_of 的老病）", mutated.calls);
+        /* 这一切的结论：如果本文件的 8.5 断言被删，上面这个变异体就会全绿通过测试套件 */
+        ok(real.ok !== mutated.ok, "★ 原实现与变异体的判定**必须不同** —— 否则测试套件抓不到这个变异");
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
 }
 
 /* ═══════════ 汇总 ═══════════ */

@@ -235,6 +235,82 @@ export function bboxOf(uids, obs, table = null) {
     return [x0, y0, x1, y1];
 }
 
+/**
+ * `$path_of(handles)` → **这些句柄所指实体的精确格集**，外加它能不能投影成矩形。
+ *
+ * 为什么需要它（第三轮真 LLM 实验的直接产物，`EXPERIMENT-COLDSTART.md` §15）：
+ *   `$bbox_of` 给的是**最小外接矩形**，而 `replace_run.region` 要的是**恰好那几格**。
+ *   当链拐弯（L 形）或两条链并行时，矩形会顺带框进没被指名的格子 ——
+ *   实测 5 次里 #1 `occupied`、#3 `not_a_run`、#5 `precondition_failed` 全是这个来源。
+ *
+ * 语义（精确，不含近似）：
+ *   · `cells`      = 按**输入顺序**展开每个实体的 footprint 格（不是 bbox，不补洞）；
+ *   · `region`     = 覆盖这组格的**最小**闭区间矩形；
+ *   · `contiguous` = 这组格**恰好填满**那个矩形（无空洞、无重复）。
+ *   三者一起给，但**调用方不该把整个对象交给宏**：宏的 region 只吃 4 元 bbox。
+ *   投影规则在 `coords.mjs`（region ← 只有 contiguous 才允许；cells ← 永远精确）。
+ *
+ * ⚠️ 诚实边界：`contiguous` 只判「格集是否填满自己的外接矩形」，**不判拓扑**。
+ *    两条互不相邻但在矩形里恰好铺满的带子（例如并排 2×2）会被判 contiguous —
+ *    这对 `replace_run` 是正确的（它要的就是一块地），但「这是不是同一条链」
+ *    不在本算子的职责里（那要 `debug_items.paths`，本算子零 IO）。
+ *
+ * ⚠️ 另一个必须写出来的边界（第三轮实验 #5 的真实复盘）：
+ *    `$path_of` 修的是**「矩形比点名的格多」**这一类失败（#1 occupied / #3 not_a_run /
+ *    #5 的部分成因）。它**不**修「region 只有 1 格宽、2×1 机器放不下」——那种情况下
+ *    `$path_of` 与 `$bbox_of` 给出**完全相同**的 region（实测 #5 的 7 格直线链就是
+ *    contiguous:true、与 bbox 逐位相等）。所以「#5 会被 $path_of 救活」是**错的**：
+ *    它救的是同一段链的拐弯/并排形态，不是窄 region 本身。
+ *
+ * @param {Array<number|string>} uids 实体 uid（也接受句柄，需给第三参）
+ * @param {object} obs
+ * @param {object|null} [table]
+ * @returns {{cells:Array<[number,number]>, region:[number,number,number,number],
+ *            contiguous:boolean, area:number, holes:Array<[number,number]>, unique:number}}
+ * @throws 空列表 / uid 不在世界（程序错误：调用方应先用 resolveHandle 判过）
+ */
+export function pathOf(uids, obs, table = null) {
+    const list = Array.isArray(uids) ? uids : [uids];
+    if (!list.length) throw new Error("$path_of: 空列表 —— 空集没有格集（不要返回空数组假装成功）");
+    const ents = obs && Array.isArray(obs.entities) ? obs.entities
+        : (Array.isArray(obs) ? (() => { throw new Error("$path_of: 第二个参数是 obs（{entities:[…]}），不是 entities 数组"); })()
+            : []);
+    const byUid = new Map(ents.map(e => [e.uid, e]));
+    const cells = [];
+    for (const u of list) {
+        let e = null;
+        if (typeof u === "number") e = byUid.get(u) || null;
+        else if (table) {
+            const h = resolveHandle(table, u);
+            e = h ? byUid.get(h.uid) || null : null;
+        }
+        if (!e) throw new Error(`$path_of: ${typeof u === "number" ? `uid ${u}` : `句柄 ${u}`} 不在世界`);
+        for (const c of footprintCells(e).cells) cells.push(c);
+    }
+    const xs = cells.map(c => c[0]), ys = cells.map(c => c[1]);
+    const region = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    const area = (region[2] - region[0] + 1) * (region[3] - region[1] + 1);
+
+    const seen = new Set();
+    const dupes = [];
+    for (const c of cells) {
+        const k = KEY(c);
+        if (seen.has(k)) dupes.push(c);
+        seen.add(k);
+    }
+    /* 空洞：矩形内没被覆盖的格（只取前 8 个，用于报错；不改变判据） */
+    const holes = [];
+    for (let y = region[1]; y <= region[3] && holes.length < 8; y++) {
+        for (let x = region[0]; x <= region[2] && holes.length < 8; x++) {
+            if (!seen.has(KEY([x, y]))) holes.push([x, y]);
+        }
+    }
+    /* contiguous 的判据同时管住两种「不能投影成矩形」的形态：
+       ① 矩形里有洞（L 形链、跨链选集）；② 重复格（同一实体被点名两次，格数 > 面积）。 */
+    const contiguous = dupes.length === 0 && cells.length === area;
+    return { cells, region, contiguous, area, holes, unique: seen.size };
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * 5. describeEntity —— 给 LLM 看的短语（**绝不含坐标**）
  * ══════════════════════════════════════════════════════════════════════════ */

@@ -393,6 +393,73 @@ function l4Replace(game) {
     }
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * R13：实质删除必须与「LLM 指名的对象」一致
+ *
+ * 实测漏洞（2026-10-29）：LLM 说「改 B69/B81/B82」，$bbox_of 算出矩形，
+ * replace_run 在矩形里挑落点，**删掉了没点名的 10150(B70)，漏掉了点名的 10143(B69)**，
+ * 而宏返回 ok:true —— 没有任何拒绝信号。
+ *
+ * 这是最危险的一类：一个"成功"的 tx 会在世界里删掉 LLM 从未指名的东西。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+console.log("\n── R13. destroys 必须 ⊆ 指名句柄 ──");
+{
+    const FakeGame = (await import("../fake_game.mjs")).default;
+    const { buildHandles } = await import("./handles.mjs");
+    const { replaceRun } = await import("../macros/remove.mjs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+
+    const g = FakeGame.fromFiles(path.join(REPO, "test/fixtures/saves/L4-obs.json"), null, { goal: "RuRu----" });
+    const obs = g.observe({ max_entities: 50000, include_resources: true });
+    const H = buildHandles(obs, g.debugItems());
+
+    /* 这个 region 会让宏删掉 10150（B70，没被点名），而漏掉 10143（B69，被点名了） */
+    const r = replaceRun(
+        { region: [4, -14, 5, -13], building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+        { entities: obs.entities },
+    );
+    ok(r.ok, "（前置）宏本身成功", r.error);
+
+    /* ① 点名 [B69,B81,B82] = [10143,10209,10149] ⇒ 实际删了 10150 ⇒ 必须拒 */
+    {
+        const txp = planToTxOps(
+            [{ macro: "replace_run", args: {}, result: r, provenance: {} }],
+            { obs, handles: H, items: g.debugItems(), namedUids: [10143, 10209, 10149] },
+        );
+        ok(!txp.ok, "★ 删了未被点名的 10150 ⇒ 必须拒（否则「成功但换对象」）", txp.ok ? "竟然通过" : null);
+        ok(!txp.ok && txp.error.kind === "destroys_not_named",
+            "拒绝码是 destroys_not_named", txp.ok ? null : txp.error.kind);
+        ok(!txp.ok && /10150/.test(txp.error.message),
+            "拒绝信息点名了被误删的 10150", txp.ok ? null : txp.error.message.slice(0, 120));
+    }
+
+    /* ② 对照：点名包含全部实际删除的 uid ⇒ 通过（证明不是恒拒） */
+    {
+        const txp = planToTxOps(
+            [{ macro: "replace_run", args: {}, result: r, provenance: {} }],
+            { obs, handles: H, items: g.debugItems(), namedUids: [10150, 10209, 10149] },
+        );
+        ok(txp.ok, "（对照）点名完整时通过 —— 证明 R13 不是恒拒", txp.error);
+    }
+
+    /* ③ 没给 namedUids ⇒ 不判，但必须留警告（不许静默） */
+    {
+        const txp = planToTxOps(
+            [{ macro: "replace_run", args: {}, result: r, provenance: {} }],
+            { obs, handles: H, items: g.debugItems() },
+        );
+        ok(txp.ok, "没给 namedUids 时不拒（向后兼容）");
+        ok((txp.warnings || []).some(w => w.code === "DESTROYS_UNNAMED_CHECK_SKIPPED"),
+            "但必须带 DESTROYS_UNNAMED_CHECK_SKIPPED 警告 —— 不许静默跳过这道闸",
+            (txp.warnings || []).map(w => w.code));
+    }
+}
+
+
 /* ═══════════ 汇总 ═══════════ */
 
 console.log(`\nplanToTxOps 自测：${pass} 通过 / ${fail} 失败`);
