@@ -1,0 +1,248 @@
+{
+  "generated_at": "2026-10-28T19:13:00.236Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "must_remove_uids": [
+      10209,
+      10149,
+      10143
+    ],
+    "must_place": [
+      {
+        "kind": "cutter",
+        "origin": [
+          4,
+          -13
+        ]
+      },
+      {
+        "kind": "trash",
+        "origin": [
+          4,
+          -14
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "runs": 5,
+    "mode": "live",
+    "truth_all_visible": 5,
+    "truth_partial_visible": 0,
+    "truth_none_visible": 0,
+    "picked_any_truth": 1,
+    "picked_all_truth": 1,
+    "plan_ok": 1,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 6117,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The goal is a cut half-shape; convert the hub-feed belts in place into a cutter plus trash so the incoming shape is cut to the required half and the byproduct is sunk.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B135\",\"B136\",\"B137\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\"}]},\"why\":\"cut the delivered shape to the required half and discard the other half, in place on the hub feeds\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:out_of_scope",
+      "ops": null
+    },
+    {
+      "run": 2,
+      "prompt_chars": 6117,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The goal RuRu---- is a rotated half-shape; the hub feeders deliver 0 of it, so I convert the three belts entering the hub in place into rotaters so whatever half arrives gets rotated into the required top half.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B135\",\"asCell\":true},\"machine\":{\"kind\":\"rotater\"},\"opts\":{\"replace_belts\":true}},\"why\":\"Rotate the half carried by the first hub feeder into the goal orientation without leaving a dead belt.\"},{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B136\",\"asCell\":true},\"machine\":{\"kind\":\"rotater\"},\"opts\":{\"replace_belts\":true}},\"why\":\"Same in-place rotation on the second feeder in case it carries the other half.\"},{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B137\",\"asCell\":true},\"machine\":{\"kind\":\"rotater\"},\"opts\":{\"replace_belts\":true}},\"why\":\"Cover the third feeder so whichever line carries the left half yields the required top half.\"}]}",
+      "parsed": {
+        "calls": 3
+      },
+      "selected_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:insert_machine:ambiguous_site",
+      "ops": null
+    },
+    {
+      "run": 3,
+      "prompt_chars": 6117,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Goal is a cut-and-rotated half-square; a cutter (C1) already splits shapes, so I convert its two output belts into rotaters so whichever half reaches the hub becomes RuRu----.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B84\"]},\"building\":{\"kind\":\"rotater\"}},\"why\":\"rotate this cutter half into the needed RuRu---- orientation\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B85\"]},\"building\":{\"kind\":\"rotater\"}},\"why\":\"hedge the other cutter output so the correct half is rotated either way\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10059,
+        10077
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:precondition_failed",
+      "ops": null
+    },
+    {
+      "run": 4,
+      "prompt_chars": 6117,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"No diagnosis and nothing delivered despite three hub lanes being wired: the hub run lacks the cutter that turns mined full shapes into the half-shape RuRu----, so I insert a cutter right on the hub-entry belt to produce the target half at the hub.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B135\",\"asCell\":true},\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"place the shape-critical cutter on the delivery run into the hub so arriving full shapes are cut to the required half\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10074
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:insert_machine:ambiguous_site",
+      "ops": null
+    },
+    {
+      "run": 5,
+      "prompt_chars": 6117,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"No diagnosis, and the only belts exposed are the two empty chains feeding balancer L3, so I rebuild those runs in place (belt mode) to clear any wrong-variant/broken cells and get material flowing toward the hub.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B112\",\"B105\",\"B97\",\"B90\",\"B81\",\"B69\",\"B63\"]},\"building\":\"belt\"},\"why\":\"empty run into L3; in-place belt rebuild keeps every cell's topology and repairs bad belt cells\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B98\",\"B91\",\"B82\",\"B70\",\"B64\"]},\"building\":\"belt\"},\"why\":\"the other empty run into L3, same in-place belt rebuild\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10138,
+        10139,
+        10206,
+        10208,
+        10209,
+        10143,
+        10144,
+        10147,
+        10148,
+        10149,
+        10150,
+        10151
+      ],
+      "selected_truth": [
+        10209,
+        10143,
+        10149
+      ],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 24,
+      "destroys": [
+        10138,
+        10139,
+        10143,
+        10144,
+        10147,
+        10148,
+        10149,
+        10150,
+        10151,
+        10206,
+        10208,
+        10209
+      ],
+      "removed_truth": [
+        10209,
+        10149,
+        10143
+      ],
+      "removed_extra": [
+        10138,
+        10139,
+        10144,
+        10147,
+        10148,
+        10150,
+        10151,
+        10206,
+        10208
+      ],
+      "exact_match": false,
+      "placed": [
+        "belt@4,-15",
+        "belt@5,-15",
+        "belt@4,-14",
+        "belt@5,-14",
+        "belt@4,-13",
+        "belt@5,-13",
+        "belt@4,-12",
+        "belt@5,-12",
+        "belt@4,-11",
+        "belt@5,-11",
+        "belt@4,-10",
+        "belt@4,-9"
+      ],
+      "placed_match": false
+    }
+  ]
+}

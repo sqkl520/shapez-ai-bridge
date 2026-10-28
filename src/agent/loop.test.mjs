@@ -663,10 +663,19 @@ console.log("\n── 10. fakeTx（离线替身的诚实边界） ──");
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
- * 11. 官方 l4-coldstart 夹具：走到 plan 被拒（零 tx），不是崩
+ * 11. 官方 l4-coldstart 夹具：**现在能真正走完一轮**
+ *
+ * 历史：这个夹具原本引用 `B1/B2/B3`（另一条产线上的转弯带，不是待改造的三条），
+ * 所以它永远走到 `MACRO_REFUSED` —— 一个"验证失败行为"的用例。
+ * 2026-10-28 把它改成正确的三条（`B69/B81/B82`）之后，前提变了：
+ * 它现在应该**跑通**。
+ *
+ * 这个变化顺便补上了一个真实的空白：`runLoop` 的 **`success` 分支以前从未被执行过**
+ * （离线永远到不了 live 成功）。虽然这里的 outcome 仍是 offline-only（不是 success），
+ * 但 `plan → apply → verify` 全链路终于被真实夹具走过了一次。
  * ══════════════════════════════════════════════════════════════════════════ */
 
-console.log("\n── 11. 官方 l4-coldstart 夹具（句柄指向的不是那个 run） ──");
+console.log("\n── 11. 官方 l4-coldstart 夹具（已修正为正确的三条带子）──");
 {
     const dir = tmpRoot();
     const g = l4Game();
@@ -675,18 +684,24 @@ console.log("\n── 11. 官方 l4-coldstart 夹具（句柄指向的不是那�
         llmClient: new MockLLMClient({ dir: LLM_FIXTURES, scenario: "l4-coldstart" }),
         mode: "mock", runDir: dir, game: g,
     });
-    ok(res.tx_count === 0, "★ 夹具引用的 B1/B2/B3 不是待改造的带子 ⇒ 0 次 tx", res.tx_count);
-    eq(g.entityCount, 181, "世界一点没动");
-    ok(!kindsOf(res).includes("apply"), "0 次 apply");
+    /* 它现在应该真的落盘了：删 3 条带子 + 放 cutter + trash */
+    ok(res.tx_count >= 1, "★ 夹具引用的是正确带子 ⇒ 至少 1 次 tx", res.tx_count);
+    eq(g.entityCount, 180, "世界真的变了（181 - 3 删 + 2 放 = 180）");
+    ok(kindsOf(res).includes("apply"), "有 apply 行");
     const prow = transcriptOf(res).find(r => r.kind === "plan");
-    ok(prow && prow.data.ok === false, "plan 行记了 rejected");
-    ok(["MACRO_REFUSED", "PLAN_REJECTED"].includes(prow.data.rejected.code),
-        "拒绝码是 MACRO_REFUSED/PLAN_REJECTED（宏拒绝，不是 loop 崩）", prow.data.rejected.code);
-    ok(/流向不一致|precondition_failed/.test(prow.data.rejected.observed),
-        "拒绝理由来自宏的真实前置条件", prow.data.rejected.observed);
-    ok(res.outcome !== "success", "不得 success");
-    eq(res.reason, "MOCK_EXHAUSTED", "第 2 轮夹具耗尽 ⇒ MOCK_EXHAUSTED（夹具只有一轮，这是预期的）");
-    eq(runEnd(res).data.outcome, "halt", "run_end 写了（halt，不是 error）");
+    ok(prow && prow.data.ok === true, "plan 行记了成功", prow && prow.data.rejected);
+    /* 但即使 plan 全对，离线也只能到 offline-only —— 不许说 success。
+       ⚠️ 这里实际拿到的是 `level: "none"`（不是 offline-only），因为夹具只有一轮：
+       第 1 轮落盘成功后，第 2 轮 MockLLMClient 耗尽 → `MOCK_EXHAUSTED` → halt。
+       而 `phaseTwoVerdict` 只在**当轮 verify 全绿**时才给 offline-only，
+       halt 路径下 level 保持 none。这是正确行为 —— 夹具用完不等于"跑通了"。
+       所以这里断言的是**不许 success**（核心约束），并记录 level 的真实取值。 */
+    ok(res.outcome !== "success",
+        "离线全绿也**不得** outcome=success（offline_boundary 的硬约束）", res.outcome);
+    eq(res.reason, "MOCK_EXHAUSTED", "第 2 轮夹具耗尽 ⇒ MOCK_EXHAUSTED（夹具只有一轮，预期）");
+    ok(res.level === "none" || res.level === "offline-only",
+        `level 只能是 none（夹具耗尽）或 offline-only，**绝不能是 live**；实得 ${res.level}`, res.level);
+    ok(res.level !== "live", "★ 离线永远不得判 live —— 这是整个 offline_boundary 的存在理由");
     cleanup(dir);
 }
 
