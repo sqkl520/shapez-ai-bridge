@@ -409,6 +409,27 @@ const clone = o => JSON.parse(JSON.stringify(o));
         ok(r.ok, "L3 无 flows：附近每段都有去处 → 绿", r.reason);
     }
 
+    /* ── F10：无 flows 的绿必须自曝降级（否则 loop 会把「局部没新死端」读成「连通已验证」）──
+       实测事故：一次 replace_run 改动落盘后 L3 绿，但同一存档里 bbox 外 3 格处就有
+       一条零物品的死端带（正是 delivered:0 的真因）。判据没错，是**覆盖范围没说出来**。 */
+    {
+        const rGreen = checkFlow(PLAN, obs, items, {});
+        ok(rGreen.degraded === true, "L3 无 flows：绿的时候必须带 degraded:true（降级必须自曝）");
+        ok(!!rGreen.reason && rGreen.reason.includes("未给 flows"),
+            "L3 无 flows：绿的 reason 必须写明「未给 flows」（不许用 null 让人以为是完整验证）", rGreen.reason);
+        eq(rGreen.evidence.degraded, true, "L3 无 flows：evidence.degraded 也要有");
+
+        const rRed = checkFlow(PLAN, obs, mkItems({
+            pathCount: 1,
+            paths: [{ cells: [[60, -43], [60, -44]], boundAcceptor: null, itemsOnPath: 3 }],
+        }), {});
+        ok(!rRed.ok && rRed.degraded === true, "L3 无 flows：红的时候同样要标 degraded（红的原因也是局部检测）", rRed.reason);
+
+        // 给了 flows 就不是降级 —— 这时绿是完整的绿
+        const rFull = checkFlow(PLAN, obs, items, { flows: [{ from: 20010, to: 20012 }] });
+        if (rFull.ok) ok(rFull.degraded === undefined, "L3 给了 flows：不是降级，不该带 degraded 标记");
+    }
+
     // 截断 → undecidable
     {
         const r = checkFlow(PLAN, obs, mkItems({ pathCount: 99 }), { flows: [{ from: 20010, to: 20012 }] });
