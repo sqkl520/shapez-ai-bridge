@@ -24,9 +24,22 @@
  *                    （`opts.flows`）；未给 flows 时退化为「计划区域内的断头路」检测。
  *   L4 behavior   —— （可选）推进 N tick 后 `production` 里目标形状真的出现。
  *
- * 每项返回 `{name, ok, skipped?, undecidable?, evidence, reason}`；`ok` = 非 skipped 全绿。
+ * 每项返回 `{name, ok, skipped?, undecidable?, degraded?, evidence, reason}`；`ok` = 非 skipped 全绿。
  * **截断即不可判定**：obs 截断 / paths 截断时返回 `undecidable:true, ok:false` ——
  * 不能把"没看见"读成"没问题"（gates G4/G6b 同一条纪律）。
+ *
+ * **降级即自曝**（`degraded:true`）：某项检查在缺少必要输入时会退化成更弱的版本
+ * （目前只有 L3：无 flows 时只看计划 bbox 外扩 flowPad 格内的断头路）。这种绿是
+ * **有边界的绿**，必须带 `degraded:true` 且 reason 里写明范围 —— 实测事故：一次
+ * replace_run 落盘后 L3 绿，但 bbox 外 3 格处就有一条零物品死端带，正是 delivered:0
+ * 的真因。调用方（loop）不得把 `degraded` 当作"已验证"。
+ *
+ * ## 绿不等于通关（给调用方的硬提醒）
+ *
+ * 本文件只回答「**我声称干的事干成了吗**」，不回答「**关卡推进了吗**」。
+ * 局部全绿 + 全局无用是一类真实且常见的失败：计划贴对了、槽位也接了，
+ * 但货流不通到 hub，`goal.delivered` 一动不动。**loop 的成功判据必须是
+ * `goal.delivered` 的增量或 L4-behavior 绿，不能是 `verifyRuntime().ok`。**
  *
  * ## 用法
  *
@@ -694,15 +707,28 @@ export function checkFlow(plan, obs, items, opts = {}) {
             evidence.dead_ends.push({ head: cells[0], tail: cells[cells.length - 1], len: cells.length, items: p.itemsOnPath });        }
     }
     evidence.scope = [bx0, by0, bx1, by1];
+    /* ★ 降级模式必须自曝（F10 实测的假绿入口）★
+       没有显式 flows 时，本检查**只**看计划 bbox 外扩 `flowPad` 格内的断头路。
+       实测过：一次 replace_run 的 bbox 外 3 格处就有一条零物品的死端带，L3 没看见，
+       于是「局部全绿」被读成「连通没问题」。这不是判据写错，是**覆盖范围没被说出来**。
+       所以 ok:true 的同时必须带上 `degraded:true`，让调用方知道这个绿是**有边界的绿**。
+       编排放面（loop）不得把 degraded 的 L3 当作「连通已验证」——它只回答
+       「我改的那一小块附近没有新死端」。要真验连通，必须给 flows。
+     */
+    const degradedEvidence = { ...evidence, degraded: true, degraded_reason: "未给 opts.flows：仅检查计划 bbox 外扩 " + pad + " 格内的断头路" };
     if (evidence.dead_ends.length) {
         const d = evidence.dead_ends[0];
         return {
-            name: "L3-flow", ok: false,
+            name: "L3-flow", ok: false, degraded: true,
             reason: `计划附近有 ${evidence.dead_ends.length} 段带子没有去处（${JSON.stringify(d.head)}..${JSON.stringify(d.tail)}，${d.len} 格）—— 货会堆在那里`,
-            evidence,
+            evidence: degradedEvidence,
         };
     }
-    return { name: "L3-flow", ok: true, reason: null, evidence };
+    return {
+        name: "L3-flow", ok: true, degraded: true,
+        reason: `未给 flows，只检查了 ${JSON.stringify(evidence.scope)} 范围内的断头路（通过）；连通性本身未验证`,
+        evidence: degradedEvidence,
+    };
 }
 
 /**
