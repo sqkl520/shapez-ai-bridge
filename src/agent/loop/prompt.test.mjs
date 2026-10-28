@@ -517,6 +517,90 @@ console.log("\n── 8. prompt 与 mock 夹具一致 ──");
     ok(!hasCoords(sample), "合法的宏调用 JSON 本身不含坐标形态（否则 prompt 的自证是假的）");
 }
 
+/* ═══════════════════ 9. L4 冷启动：BELTS 段必须含正解要改的三条 ═══════════════════ */
+
+/**
+ * 这一节锁的是 PHASE2-ACCEPTANCE §E / P0-① 的核心缺口：
+ *
+ *   L4 冷启动有 163 条带子，正解要改的三条（`B69`/`B81`/`B82`，uid 10143/10209/10149）
+ *   按句柄表顺序排第 69/81/82 位。以前"取前 12 条"⇒ **一条都看不到** ⇒ 真 LLM 结构上
+ *   不可能产出 L4 的正解，而我们会误读成"模型能力不够"。
+ *
+ * 本节用 **prompt.test.mjs 自己的** `buildHandleTable`（不 import handles.mjs），
+ * 所以它同时证明了一件重要的事：`pickBeltsForGoal` 的几何判据不依赖 handles.mjs 的
+ * 任何字段（它只要求句柄表给出 `uid` —— 那是身份不是坐标）。
+ */
+console.log("\n── 9. L4 冷启动：BELTS 段含正解三条 ──");
+{
+    const L4_COLD = {
+        goal: { shape: "RuRu----", level: 4, required: 70, delivered: 0 },
+        obs: L4,
+        handles: L4_TABLE,
+        diagnoses: [],                       // 冷启动第一轮：没有诊断（真实情况只有一条 NO_PRODUCTION 点名 H1）
+        candidates: ["replace_run"],
+        lastRound: null,
+        budget: {},
+    };
+    const render = (over = {}) => {
+        const p = buildPrompt({ ...L4_COLD, ...over });
+        return { p, text: p.system + "\n" + p.user };
+    };
+
+    const TARGETS = ["B69", "B81", "B82"];
+    {
+        const { p, text } = render();
+        /* 三条必须都出现在 **BELTS 段**里（不是别处偶然出现的字符串）。 */
+        const belts = p.blocks.s3_belts;
+        for (const h of TARGETS) {
+            ok(new RegExp(`^${h} `, "m").test(belts), `${h} 出现在 BELTS 段（L4 冷启动、无诊断）`);
+        }
+        /* 同一份渲染结果的整体坐标禁令 */
+        const hits = text.match(coordRegex()) || [];
+        eq(hits.length, 0, "同一份渲染里坐标正则 0 命中", { hits: hits.slice(0, 5) });
+        ok(!/\b10143\b|\b10209\b|\b10149\b/.test(text), "目标带子的 uid 没有泄进 prompt");
+
+        /* 并排的两条链必须**成对**给出：`replace_run` 的 region 是 `$bbox_of`，
+           只给一列会让 bbox 覆盖到它没见过的格子。这里断言 x=4 / x=5 两列的
+           同高度带子都在（`B81`↔`B82`、`B69`↔`B70`）。 */
+        for (const [a, b] of [["B81", "B82"], ["B69", "B70"]]) {
+            ok(new RegExp(`^${a} `, "m").test(belts) && new RegExp(`^${b} `, "m").test(belts),
+                `并排两条 ${a}/${b} 同时出现（bbox 才覆盖得到整段）`);
+        }
+        ok(p.blocks.belts_shown === PROMPT_RULES.STATE_BELTS_MAX,
+            `带子名额用满 ${PROMPT_RULES.STATE_BELTS_MAX} 条（实际 ${p.blocks.belts_shown}）`);
+    }
+
+    /* ── 对照：把 `pickBeltsForGoal` 的结果丢掉，退回"按句柄表顺序"——
+       上面那条**必须失败**，否则这条测试是恒真的（比如 `B69` 恰好排在前 12 位）。 */
+    {
+        const total = [...L4_TABLE.byHandle.values()].filter(e => e.type === "belt" || e.type === "underground_belt");
+        const byOrder = total.slice(0, PROMPT_RULES.STATE_BELTS_MAX).map(e => e.handle);
+        const missing = TARGETS.filter(h => !byOrder.includes(h));
+        eq(missing.length, 3,
+            "对照：按句柄表顺序取前 12 条时，三条目标**一条都不在**（证明上一条不是恒真）", { byOrder });
+    }
+
+    /* ── 对照 2：让 `obs.entities` 缺席 → 几何判据整体失效 → 退回表顺序 → 目标消失。
+       这条防的是"判据其实没起作用、只是恰好排上了"这类假绿。 */
+    {
+        const { p } = render({ obs: { ...L4, entities: [] } });
+        const belts = p.blocks.s3_belts;
+        const present = TARGETS.filter(h => new RegExp(`^${h} `, "m").test(belts));
+        eq(present.length, 0,
+            "对照：没有 obs.entities 时几何判据失效，三条目标一条都不出现（判据真的在起作用）", { present });
+    }
+
+    /* ── 反面：L5（另一张存档，目标 `Cu----Cu`）不能被 L4 的拓扑带歪。
+       只要求"能正常渲染、坐标 0 命中、带子名额用满"，不要求任何具体句柄 ——
+       L5 的正解是另一回事，把它写进来就是把测试变成第二份答案。 */
+    {
+        const p = buildPrompt(baseOpts());
+        const hits = (p.system + "\n" + p.user).match(coordRegex()) || [];
+        eq(hits.length, 0, "L5 渲染仍然坐标 0 命中");
+        eq(p.blocks.belts_shown, PROMPT_RULES.STATE_BELTS_MAX, "L5 带子名额同样用满");
+    }
+}
+
 /* ═══════════════════ 汇总 ═══════════════════ */
 
 console.log(`\n${pass} 通过 / ${fail} 失败`);
