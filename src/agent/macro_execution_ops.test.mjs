@@ -188,77 +188,82 @@ ok(typeof mod.validateAction === "function", "mod 加载成功，validateAction 
 
 /* 3d. connect 的 cells[] → tx op 的映射：**用真实存档穷举，并断言实测结果**
  *
- *     实测事实（2026-10-28，L5 存档 181 实体，5 台机器）：
- *       穷举所有「机器→机器」组合（含 cutter 的 left/right、trash/hub 的 4 个 primary）
- *       共 160 次，**connect 一次都没成功**：
- *         endpoint_not_a_port 96 / port_already_bound 26 / occupied 22 / bad_type 12 / target_already_fed 4
+ *     ⚠️ 这条测试曾经写错过一次，值得记下来（红队抓到的）：
+ *     我最初只枚举 `cutter/trash/hub` 三类机器、且 port 只试了 `left/right`，
+ *     于是得出「真实存档上 connect 一次都连不成」——**那是枚举范围太窄造成的错误结论**。
+ *     正确做法：枚举**所有非带子实体** × **所有角色名**（`primary/secondary/…`），
+ *     因为 balancer 的角色名就是 primary/secondary，不是 left/right。
  *
- *     这是一个**必须知道的事实**，不是可以绕过的失败：真实存档里已经有现成的带子网络，
- *     connect 的「不许抢口 / 不许挤占」规则把绝大多数组合挡在门外。
- *     ⇒ 阶段 2 的 loop 若只会调 connect，在真实存档上寸步难行。（PHASE2-CONTRACT 应据此调整）
- *
- *     所以这条测试断言的是**实测分布**（而不是"至少成功一条"）：
- *       ① 每个被拒的码都必须是宏的合法错误码（不是崩溃/TypeError）
- *       ② 若将来 connect 能连成，映射出的 op 必须全部合法
- *       ③ 记录分布，让"能不能连"这件事永远可查，而不是藏在一次性的日志里
+ *     实测（正确枚举）：23 种组合成功，其中 **10 条直达 hub**，来源全是 balancer。
+ *     ⇒ 「connect 在真实存档上没用」是错的；但「connect 是主力」也未被证实
+ *       （L4 的正解是一条 replace_run，不需要 connect）。
  */
 {
     const real = JSON.parse(fs.readFileSync(path.join(REPO, "test/fixtures/saves/L5-obs.json"), "utf8"));
     const ents = (real.result || real).entities;
-    const machines = ents.filter(e => ["cutter", "trash", "hub"].includes(e.type));
-    /* 拒绝码必须落在 contract.mjs 的 ERROR_CODES 闭集里 —— 用 import 而不是读文件正则，
-       后者会把注释也当成码表（实测踩过：JSON.parse 撞上文件头注释）。 */
+    /* ★ 枚举所有非带子实体，不是只挑三种；port 枚举要包含实际角色名 ★ */
+    const machines = ents.filter(e => !["belt", "underground_belt"].includes(e.type));
     const { ERROR_CODES: ERROR_CODE_TABLE } = await import("./macros/contract.mjs");
     const codes = new Set(Object.keys(ERROR_CODE_TABLE));
+    /* 角色名闭集取自 op-templates 的真实表，而不是我猜的几个 */
+    const { templateByBuildingVariant } = await import("../ai/op-templates.mjs");
+    const rolesOf = (e) => {
+        const tpl = templateByBuildingVariant(e.type, e.variant || "default");
+        if (!tpl) return [];
+        const rs = new Set();
+        for (const p of [...(tpl.inputs || []), ...(tpl.outputs || [])]) if (p.role) rs.add(p.role);
+        return [...rs];
+    };
 
     const hist = {};
     const badCodes = new Set();
-    let okCount = 0, mapped = 0;
+    const successes = [];
+    let mapped = 0;
     for (const a of machines) {
         for (const bb of machines) {
             if (a.uid === bb.uid) continue;
-            for (const port of ["left", "right"]) {
-                for (let idx = 0; idx < 4; idx++) {
-                    const r = connect(
-                        {
-                            from: { uid: a.uid, port: a.type === "cutter" ? port : undefined },
-                            to: { uid: bb.uid, port: { role: "primary", index: idx } },
-                        },
-                        { entities: ents },
-                    );
-                    if (!r.ok) {
-                        const code = (r.error && r.error.code) || "NO_CODE";
-                        hist[code] = (hist[code] || 0) + 1;
-                        if (!codes.has(code)) badCodes.add(code);
-                        continue;
+            const portsA = [undefined, ...rolesOf(a)];
+            const portsB = rolesOf(bb).length ? rolesOf(bb) : ["primary"];
+            for (const pa of portsA) {
+                for (const roleB of portsB) {
+                    for (let idx = 0; idx < 3; idx++) {
+                        const r = connect(
+                            { from: { uid: a.uid, ...(pa ? { port: pa } : {}) }, to: { uid: bb.uid, port: { role: roleB, index: idx } } },
+                            { entities: ents },
+                        );
+                        if (!r.ok) {
+                            const code = (r.error && r.error.code) || "NO_CODE";
+                            hist[code] = (hist[code] || 0) + 1;
+                            if (!codes.has(code)) badCodes.add(code);
+                            continue;
+                        }
+                        successes.push({ from: `${a.type}#${a.uid}`, to: `${bb.type}#${bb.uid}`, toHub: bb.type === "hub", n: r.cells.length });
+                        const ops = (r.cells || []).map(c => ({
+                            op: "place", building: "belt", x: c.x, y: c.y,
+                            r: c.rotation, rotationVariant: c.rotationVariant,
+                        }));
+                        const v = ops.map((op, i) => ({ i, op, why: opViolation(mod, op) })).filter(x => x.why);
+                        ok(v.length === 0,
+                            `真实存档：connect(${a.type}#${a.uid}→${bb.type}#${bb.uid}) 的 ${ops.length} 个 op 全部合法`, v);
+                        ok((r.cells || []).every(c => c.code === c.rotationVariant + 1),
+                            "真实存档：connect.cells[].code === rotationVariant + 1（code 只能读回核对，不能下发）",
+                            (r.cells || []).filter(c => c.code !== c.rotationVariant + 1).slice(0, 3));
+                        mapped += ops.length;
                     }
-                    okCount++;
-                    const ops = (r.cells || []).map(c => ({
-                        op: "place", building: "belt", x: c.x, y: c.y,
-                        r: c.rotation, rotationVariant: c.rotationVariant,
-                    }));
-                    const v = ops.map((op, i) => ({ i, op, why: opViolation(mod, op) })).filter(x => x.why);
-                    ok(v.length === 0,
-                        `真实存档：connect(${a.type}#${a.uid}→${bb.type}#${bb.uid}) 的 ${ops.length} 个 op 全部合法`, v);
-                    mapped += ops.length;
                 }
             }
         }
     }
 
-    /* ① 每个拒绝码都必须是 contract 的合法错误码（不是崩溃 / TypeError） */
-    ok(badCodes.size === 0,
-        "connect 的所有拒绝码都在 ERROR_CODES 闭集里（没有崩溃）", [...badCodes]);
-
-    /* ② 如果连成了就验映射；一次都没连成时要**显式记录**，不许静默 */
-    if (okCount === 0) {
-        console.log(`  ⚠ 实测：真实 L5 存档上穷举 ${Object.values(hist).reduce((a, b) => a + b, 0)} 次机器→机器，`
-            + `connect 全部被拒。分布：${JSON.stringify(hist)}`);
-        console.log("  ⚠ 这直接说明「loop 只靠 connect 就能改真实存档」不成立 —— 见 PHASE2-CONTRACT §0 F7");
-    } else {
-        ok(mapped > 0, "真实存档上至少映射出 1 个 place op", mapped);
-    }
-    ok(Object.values(hist).every(c => c > 0), "分布记录非空（证明这轮确实穷举过，不是空转）", hist);
+    ok(badCodes.size === 0, "connect 的所有拒绝码都在 ERROR_CODES 闭集里（没有崩溃）", [...badCodes]);
+    ok(successes.length > 0,
+        `真实存档上 connect 能连成（正确枚举角色名之后）：${successes.length} 种组合`,
+        { hist, sample: successes.slice(0, 5) });
+    ok(successes.some(s => s.toHub),
+        `至少有一条直达 hub —— 这是阶段 2 真正需要的能力；来源类型：${[...new Set(successes.map(s => s.from.split("#")[0]))].join(",")}`,
+        successes.filter(s => s.toHub).slice(0, 5));
+    ok(mapped > 0, "至少映射出 1 个 place op", mapped);
+    console.log(`  ℹ 实测分布：成功 ${successes.length}，拒绝 ${JSON.stringify(hist)}`);
 }
 
 /* 3e. replace_run 的 placed[] → tx op 也必须合法（同样用真实存档） */

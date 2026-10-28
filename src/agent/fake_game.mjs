@@ -147,17 +147,23 @@ export class FakeGame {
 
     debugItems(p = {}) {
         this.calls.push({ method: "debug_items", params: p });
-        // region 过滤：保留与 region 有交集的 path（与 mod 的行为对齐：整条 path 要么全给要么不给）
-        let paths = this.items.paths || [];
-        if (Array.isArray(p.region) && p.region.length === 4) {
-            const [x0, y0, x1, y1] = p.region;
-            paths = paths.filter(pa => (pa.cells || []).some(([x, y]) => x >= x0 && x <= x1 && y >= y0 && y <= y1));
-        }
+        /* ★ 与真 mod 逐字对齐（shapez-ai-bridge.js:997-1004）★
+           `pathCount` 是**全局**路径总数，**不受 region 影响**；
+           `paths` 是**前 40 条**，也**不按 region 过滤**（mod 的 region 只用于
+           belts/ejectors 这类逐格列表，不用于 paths）。
+           这个曾经写错过：本实现按 region 过滤了 paths，于是 mock 里「缩 region 重读」
+           能解决 PATHS_TRUNCATED，而真机上根本没这回事 ——
+           mock 全绿、实机永久 undecidable。红队抓到的第 8 条。
+           现在与 mod 一致：region 传了也不影响 paths/pathCount。 */
+        void p.region;
+        const all = this.items.paths || [];
+        const MAX_PATHS = 40;
+        const paths = all.slice(0, MAX_PATHS);
         return {
             ...this.items,
             paths,
-            pathCount: paths.length,
-            truncatedPaths: !!this.items.truncatedPaths,
+            pathCount: all.length,                     // 全局，不随 region 变
+            truncatedPaths: all.length > MAX_PATHS,    // 与 mod 的判据一致
         };
     }
 
