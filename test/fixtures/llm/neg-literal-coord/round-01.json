@@ -1,0 +1,14 @@
+{
+  "say": "Insert a cutter on that belt.",
+  "calls": [
+    {
+      "macro": "insert_machine",
+      "args": {
+        "at": [4, -13],
+        "facing": "top",
+        "machine": "cutter"
+      },
+      "why": "put the cutter where the belt is"
+    }
+  ]
+}

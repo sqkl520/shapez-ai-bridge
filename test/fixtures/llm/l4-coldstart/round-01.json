@@ -1,0 +1,16 @@
+{
+  "say": "The run under H1 is still belts; swap that stretch for a cutter and send its waste side to a trash.",
+  "calls": [
+    {
+      "macro": "replace_run",
+      "args": {
+        "region": { "$bbox_of": ["B1", "B2", "B3"] },
+        "building": [
+          { "kind": "cutter" },
+          { "kind": "trash", "port": "left" }
+        ]
+      },
+      "why": "the three belts form a rectangle that is only belts; replace_run can turn it into a cutter in place"
+    }
+  ]
+}

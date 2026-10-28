@@ -1,0 +1,16 @@
+{
+  "scenario": "neg-empty-calls",
+  "goal": "RuRu----",
+  "obs": "test/fixtures/saves/L4-obs.json",
+  "items": null,
+  "notes": [
+    "An empty calls[] means 'nothing to do'. The loop must treat it as LLM_EMPTY_PLAN and HALT; it must never report success.",
+    "This is Q8-01 ('calls:[] read as success') as a fixture."
+  ],
+  "expect": {
+    "outcome": "halt",
+    "parse_error": "LLM_EMPTY_PLAN",
+    "tx_count": 0,
+    "must_not_be_success": true
+  }
+}

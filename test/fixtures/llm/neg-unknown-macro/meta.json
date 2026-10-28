@@ -1,0 +1,16 @@
+{
+  "scenario": "neg-unknown-macro",
+  "goal": "RuRu----",
+  "obs": "test/fixtures/saves/L4-obs.json",
+  "items": null,
+  "notes": [
+    "build_line is a real module in this repo but it is NOT one of the 6 ABI macros and NOT in the loop whitelist (contract.mjs asserts MACRO_NAMES.length === 6).",
+    "The mock hands the text over untouched on purpose: rejection must come from parseLlmPlan, not from the fixture layer."
+  ],
+  "expect": {
+    "parse_error": "LLM_UNKNOWN_MACRO",
+    "tx_count": 0,
+    "outcome": "halt",
+    "must_not_be_success": true
+  }
+}
