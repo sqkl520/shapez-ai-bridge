@@ -92,7 +92,22 @@ export function phaseTwoVerdict(evidence) {
     const goalAdvanced = typeof e.goalDelta === "number" && e.goalDelta > 0;
     const cls = classifyChecks({ checks: e.checks || [] }, { mode: e.mode });
 
-    if (strictOk && cls.ok) {
+    /* ★ 红检查项必须参与判定（验收审计抓到的漏洞）★
+     *
+     * 以前这里只看 `strict.ok` 和 `classifyChecks`（后者判的是"这条检查在当前离线
+     * 环境下可不可信"，**不判它是红是绿**）。于是出现过：
+     *   strict.ok === true，但 checks 里有一条 ok:false
+     *   → 仍判 level="offline-only"（读起来像"离线跑通了"）
+     * 实测复现：`V-obs-flow:false` + `strict.ok:true` → offline-only。
+     * 更糟的是 `hardFails` 早就算好了、写进 transcript，却**没参与判决**。
+     *
+     * 修法：在离线环境下**可信**的检查项里，只要有一条红，就不能说"跑通"。
+     * 不可信的（L3/L4/tx）本来就不构成结论，保持原规则。
+     */
+    const trustedFails = cls.trustworthy.filter(c => c.ok === false).map(c => c.name);
+    const anyTrustedFail = trustedFails.length > 0;
+
+    if (strictOk && cls.ok && !anyTrustedFail) {
         if (live && goalAdvanced) {
             level = "live";
         } else if (!live) {
@@ -105,6 +120,9 @@ export function phaseTwoVerdict(evidence) {
         }
     } else {
         if (!strictOk) why.push("strictVerdict 未通过：" + ((e.strict && e.strict.why) || []).join("; "));
+        if (anyTrustedFail) {
+            why.push(`有可信检查项为红，不能算跑通：${trustedFails.join(", ")}`);
+        }
         why.push(...cls.why);
     }
 
@@ -187,6 +205,47 @@ if (isMain) {
         t("strict 没过 ⇒ 不达成", v.achieved === false);
         t("strict 没过时 why 带上 strict 的原因", v.why.some(s => /strictVerdict 未通过/.test(s)));
         t("离线时 L4 的绿也被列为不可信", v.why.some(s => /L4-behavior/.test(s)));
+    }
+
+    /* ⑦b ★ 红检查项必须参与判定（验收审计抓到的漏洞）★
+     *
+     * 实测复现过的漏洞：`strict.ok===true` 但 `checks` 里有一条红时，
+     * 旧实现仍判 `level="offline-only"`（读起来像"离线跑通了"）。
+     * 因为 `phaseTwoVerdict` 只把 checks 交给 `classifyChecks`，
+     * 而后者判的是「这条检查在当前离线环境下可不可信」，**不看它是红是绿**。
+     * `hardFails` 早已算好并写进 transcript，却没参与判决 —— 典型的"算了不用"。
+     */
+    {
+        const okCheck = { name: "L1-landing", ok: true };
+        const badCheck = { name: "V-obs-flow", ok: false };   // 离线**可信**的项
+
+        const v1 = phaseTwoVerdict({ mode: "mock", strict: { ok: true }, checks: [okCheck, badCheck], goalDelta: 0 });
+        t("strict ok 但有一条可信检查为红 ⇒ level 不能是 offline-only", v1.level === "none", v1.level);
+        t("strict ok 但有一条可信检查为红 ⇒ 不达成", v1.achieved === false);
+        t("strict ok 但有一条可信检查为红 ⇒ why 点名那条红", v1.why.some(s => /V-obs-flow/.test(s)), v1.why);
+
+        /* 对照：同样的输入，把那条检查改绿 ⇒ 回到 offline-only（证明确实是"红"在起作用） */
+        const v2 = phaseTwoVerdict({
+            mode: "mock", strict: { ok: true },
+            checks: [okCheck, { name: "V-obs-flow", ok: true }], goalDelta: 0,
+        });
+        t("（对照）同样输入但全绿 ⇒ offline-only", v2.level === "offline-only", v2.level);
+
+        /* live 时也必须管 */
+        const v3 = phaseTwoVerdict({
+            mode: "live", strict: { ok: true },
+            checks: [{ name: "L1-landing", ok: false }, { name: "L3-flow", ok: true }], goalDelta: 12,
+        });
+        t("live + goal 涨 + 但有可信检查为红 ⇒ 不达成（不许被 goal 增量掩盖）",
+            v3.achieved === false && v3.level === "none", { achieved: v3.achieved, level: v3.level });
+
+        /* 不可信的项（L3/L4 在离线）为红 ⇒ 不触发这条规则（它们本来就不构成结论） */
+        const v4 = phaseTwoVerdict({
+            mode: "mock", strict: { ok: true },
+            checks: [{ name: "L1-landing", ok: true }, { name: "L3-flow", ok: false }], goalDelta: 0,
+        });
+        t("离线时 L3 为红不算「可信检查为红」（它本来就不可信）",
+            !v4.why.some(s => /有可信检查项为红/.test(s)), v4.why);
     }
 
     /* ⑧ 冻结表完整 */
