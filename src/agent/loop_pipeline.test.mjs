@@ -227,6 +227,85 @@ function provenanceOfOp(op, calls, txp, idx) {
     ok(MACRO_NAMES.length === 6, "白名单恰好 6 个（contract.mjs 的断言）", MACRO_NAMES.length);
 }
 
+/* ═════════ ⑤ provenance 不能是伪证：改了坐标，标签必须跟着红 ═════════
+ *
+ * 这是本轮最重要的一条防线，值得单独一节。
+ *
+ * 实测漏洞（2026-10-28，loop.mjs 的实现者发现，主线程复核并修复）：
+ *   `assertProvenance` 对 `macro:<token>` 标签**只校验 token 存在**，不校验 token 里
+ *   嵌的 `@x,y` 与 op 的实际坐标是否一致。于是把 `place.x` 从 4 改成 5、
+ *   标签仍写 `macro:replace_run:cutter@4,-13`，它**照样判绿**。
+ *
+ *   而 `macro:` 恰恰是主力宏（replace_run / insert_machine）**全部**用的标签形态。
+ *   也就是说「每条落盘坐标可追溯」这条唯一的可证伪防线，对最重要的路径是空的 ——
+ *   一个被篡改的计划可以带着一份「看起来完全合规」的 provenance 落盘。
+ *
+ * 修法：token 里的 `@x,y` 必须与 op 的实际 (x,y) 逐位相等。
+ * 下面三条断言盯死它：原样绿、改 x 红、改 y 红。
+ */
+{
+    const handles = [H.byUid.get(10209), H.byUid.get(10149), H.byUid.get(10143)];
+    const text = JSON.stringify({
+        calls: [{
+            macro: "replace_run",
+            args: { region: { $bbox_of: handles }, building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }] },
+        }],
+    });
+    const r = pipeline(text);
+    ok(r.stops.length === 0 && r.txp, "provenance 防线：正确链路先跑通（否则下面的变异没有对照组）", r.stops);
+    if (r.txp) {
+        const clone = o => JSON.parse(JSON.stringify(o));
+        const prov = t => assertProvenance(r.resolved.calls, t, OBS);
+
+        ok(prov(r.txp).ok, "provenance 防线：原样 → 绿（对照组）");
+
+        /* 改 x */
+        {
+            const m = clone(r.txp);
+            const cut = m.ops.find(o => o.op === "place" && o.building === "cutter");
+            ok(!!cut, "provenance 防线：找得到 cutter 的 place op", m.ops.map(o => o.building));
+            if (cut) {
+                cut.x = cut.x + 1;
+                const v = prov(m);
+                ok(!v.ok, "provenance 防线：把 cutter 的 x 加 1 → 必须红（否则标签是伪证）",
+                    v.ok ? "仍然绿 —— 防线是空的" : v.violations.map(x => x.rule));
+                ok(!v.ok && v.violations.some(x => x.rule === "COORD_PROVENANCE"),
+                    "provenance 防线：红的规则是 COORD_PROVENANCE", v.ok ? null : v.violations.map(x => x.rule));
+            }
+        }
+
+        /* 改 y */
+        {
+            const m = clone(r.txp);
+            const cut = m.ops.find(o => o.op === "place" && o.building === "cutter");
+            if (cut) {
+                cut.y = cut.y - 1;
+                ok(!prov(m).ok, "provenance 防线：把 cutter 的 y 减 1 → 必须红",
+                    prov(m).ok ? "仍然绿" : null);
+            }
+        }
+
+        /* 改另一台机器（trash）—— 防止「只保护第一个 place」 */
+        {
+            const m = clone(r.txp);
+            const tra = m.ops.find(o => o.op === "place" && o.building === "trash");
+            if (tra) {
+                tra.x = tra.x + 5;
+                ok(!prov(m).ok, "provenance 防线：改 trash 的坐标 → 必须红（防线不只管第一台机器）",
+                    prov(m).ok ? "仍然绿" : null);
+            }
+        }
+
+        /* 对照：完全不挂 provenance 也必须红（证明确实是这一层在起作用） */
+        {
+            const m = clone(r.txp);
+            for (const op of m.ops) delete op.provenance;
+            ok(!prov(m).ok, "provenance 防线：所有 op 都不挂 provenance → 必须红（MISSING_PROVENANCE）",
+                prov(m).ok ? "仍然绿" : null);
+        }
+    }
+}
+
 /* ═════════ 汇总 ═════════ */
 console.log(`\nloop_pipeline 自测：${pass} 通过 / ${fail} 失败`);
 if (fail) { console.log("失败项："); for (const f of failures) console.log("  ✗ " + f); }
