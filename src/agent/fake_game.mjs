@@ -133,8 +133,29 @@ export class FakeGame {
         const statsByType = {};
         for (const e of this.obs.entities) statsByType[e.type] = (statsByType[e.type] || 0) + 1;
         for (const e of out) stats[e.type] = (stats[e.type] || 0) + 1;
+
+        /* ★ `resources` 必须按 mod 的门槛给，不能无条件带 ★
+         *
+         * 真 mod（`shapez-ai-bridge.js:1359`）只在 `req.include_resources === true` 时
+         * 才往 obs 里塞 `resources`；默认 false。
+         *
+         * 本实现以前用 `...this.obs` 展开，**无条件**带上 resources —— 于是离线环境
+         * 比真机多给了一份信息。后果实测：`pickBeltsForGoal` 的第二层判据（目标原料
+         * 矿机线）在离线永远能算出来，而在真机上永远失效，导致 prompt 里一条正解带子
+         * 都不出现。离线"看到 3/3"是真的，真机"看到 0/3"也是真的 —— 两者不一致，
+         * 而这个脚手架差异正是第二轮验收审计的 B-1。
+         *
+         * 与 `code` 不写、`paths` 不按 region 过滤是同一类问题：**离线和真机必须同语义**。
+         */
+        const base = { ...this.obs };
+        if (p.include_resources !== true) delete base.resources;
+        else if (Array.isArray(p.region) && p.region.length === 4 && Array.isArray(base.resources)) {
+            const [x0, y0, x1, y1] = p.region;
+            base.resources = base.resources.filter(r => Array.isArray(r) && r[0] >= x0 && r[0] <= x1 && r[1] >= y0 && r[1] <= y1);
+        }
+
         return {
-            ...this.obs,
+            ...base,
             tick: this.tick,
             entities: out,
             region: filtered ? p.region.slice() : this.obs.region || null,

@@ -472,7 +472,17 @@ export async function verifyRound({
        两份 obs 取数口径不同会让差集出现假消失（v2 §2.4 的边界）。 ── */
     let afterObs = null;
     try {
-        afterObs = await reader.obs({ layer: "all", max_entities: 50000, include_stats: true });
+        /* ★ 参数必须与 loop 的首轮 observe 完全一致 ★
+         *
+         * 第二轮验收审计（B-1）发现 loop 的主 obs 没要 resources，导致
+         * `pickBeltsForGoal` 的原料线判据失效、冷启动 prompt 里一条正解带子都不出现。
+         * 修的时候把这里也一起对齐 —— 两处 obs 口径不同会让「首轮看到的」与
+         * 「verify 时看到的」不是同一个世界视图，排查时会白白绕路。
+         * verify 本身不读 resources，但口径一致的成本是零。 */
+        afterObs = await reader.obs({
+            layer: "all", max_entities: 50000, include_stats: true,
+            include_resources: true, max_resources: 20000,
+        });
     } catch (e) {
         afterObs = null;
         evidence.after_obs_error = String(e && e.message ? e.message : e);

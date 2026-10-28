@@ -736,3 +736,49 @@ if (fail) {
     for (const f of failures) console.log("  ✗ " + f);
     process.exitCode = 1;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 13. loop 的 obs() 必须请求 resources（第二轮验收审计 B-1）
+ *
+ * 真 mod 只在 `include_resources === true` 时返回矿图（shapez-ai-bridge.js:1359）。
+ * 而 `pickBeltsForGoal` 的第二层判据（目标原料矿机线）**只读 resources** ——
+ * 它是决定"哪条链该出现在 prompt 里"的决定性一票。
+ *
+ * 实测：同一份 L4 存档，不传 include_resources 时 prompt 里正解带子 0/3，
+ * 传了之后 3/3。一行参数决定冷启动能不能看见目标。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+console.log("\n── 13. loop 必须向 mod 要 resources ──");
+{
+    const dir = tmpRoot();
+    const g = l4Game();
+    /* 拦截 reader.obs，记录它收到的参数 */
+    const seen = [];
+    const reader = g.reader();
+    const wrapped = {
+        ...reader,
+        obs: async (p) => { seen.push(p); return reader.obs(p); },
+    };
+    await runLoop({
+        reader: wrapped, goal: "RuRu----",
+        llmClient: new MockLLMClient({ dir: LLM_FIXTURES, scenario: "l4-coldstart" }),
+        mode: "mock", runDir: dir, game: g,
+    });
+    cleanup(dir);
+
+    ok(seen.length > 0, "loop 至少调用了一次 obs", seen.length);
+    /* ★ loop 自己的 obs 调用必须带 include_resources ★
+     *
+     * 不能要求**每一次** obs 都带：`verifyRuntime` 内部自己也会调 reader.obs
+     * （`{layer:"all", max_entities:50000}`），那是它的既有契约，不该被 loop 的
+     * 需求绑架。这里只断言**至少有一次**带了 —— 而 loop 的首轮 observe 就是那一次，
+     * 也正是 `pickBeltsForGoal` 唯一依赖的输入。
+     */
+    const withRes = seen.filter(p => p && p.include_resources === true);
+    ok(withRes.length > 0,
+        "★ 至少一次 obs 带 include_resources:true —— loop 的首轮 observe 必须带，"
+        + "否则 pickBeltsForGoal 的原料线判据失效，冷启动时 prompt 里一条正解带子都不会出现",
+        seen.map(p => p && p.include_resources));
+    ok(seen.filter(p => p && p.max_entities >= 50000).length > 0,
+        "至少一次 obs 的 max_entities ≥ 50000", seen.map(p => p.max_entities));
+}
