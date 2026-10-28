@@ -90,7 +90,20 @@ async function attemptOnce({ runIndex, client, verbose }) {
         path.join(REPO, "test/fixtures/saves/L4-obs.json"), null,
         { goal: GROUND_TRUTH.shape },
     );
-    const obs = structuredClone(game.observe({ max_entities: 50000 }));
+    /* ★ 参数必须与 loop.mjs 的 observe 完全一致 ★
+     *
+     * 曾经这里只传 `max_entities`，而 FakeGame 那时**无条件**返回 resources ——
+     * 于是实验比真机多看到一份矿图，`pickBeltsForGoal` 的原料线判据在离线永远成立、
+     * 真机永远失效。第二轮验收审计（B-1）实测：同一份存档，删掉 resources 后
+     * prompt 里正解带子从 3/3 掉到 0/3。
+     *
+     * 现在 FakeGame 按 mod 语义门槛给 resources，这里也必须显式要 —— 两边同口径，
+     * 离线测出来的才是真机会发生的事。
+     */
+    const obs = structuredClone(game.observe({
+        max_entities: 50000, layer: "all", include_stats: true,
+        include_resources: true, max_resources: 20000,
+    }));
     const items = game.debugItems();
     const handles = buildHandles(obs, items);
 
@@ -156,16 +169,26 @@ async function attemptOnce({ runIndex, client, verbose }) {
     result.parsed = parsed.ok ? { calls: parsed.plan.calls.length } : { error: parsed.error.code };
     if (!parsed.ok) { result.plan_why = `parse:${parsed.error.code}`; return result; }
 
-    const mentioned = new Set();
-    const walk = v => {
-        if (typeof v === "string") { if (handleToUid.has(v)) mentioned.add(v); }
-        else if (Array.isArray(v)) v.forEach(walk);
-        else if (v && typeof v === "object") Object.values(v).forEach(walk);
-    };
-    walk(parsed.plan.calls);
+    /* ★ 口径修正（第二轮验收审计 B-3）：分开记「提到」与「真的用了」★
+     *
+     * 旧实现把 `selected_uids` 定义成"在整个 calls 树里递归 walk 到的所有句柄"，
+     * 而 `why` / `say` / `$bbox_of` 里列出的句柄都会算进去。
+     * 实测反例：一个计划里第一调用 `replace_run` 作用在错的三条、`why` 里写
+     * "not B69/B81/B82"，第二调用列出正确三条 —— `selected_truth` 报 3/3，
+     * 但 `plan_ok=false`。这条定义会**系统性抬高**"选中率"。
+     *
+     * 现在分开：
+     *   · `mentioned_uids`  —— 提到过（旧口径，保留供参考）
+     *   · `selected_uids`   —— **只在真正的定位参数里出现**（region/uids/at/outlet/from/to/...）
+     *   · `removed_truth`   —— 最终 `destroys` 里命中正解的（**最硬的口径**，已存在）
+     * 报告只认后者；前两者仅用于诊断"它想改哪里"。
+     */
+    const { mentioned, targeted } = splitRefs(parsed.plan.calls, handleToUid);
 
-    result.selected_uids = [...mentioned].map(h => handleToUid.get(h)).filter(u => typeof u === "number");
-    result.selected_truth = result.selected_uids.filter(u => GROUND_TRUTH.must_remove_uids.includes(u));
+    result.mentioned_uids = mentioned;
+    result.selected_uids = targeted;
+    result.selected_truth = targeted.filter(u => GROUND_TRUTH.must_remove_uids.includes(u));
+    result.mentioned_truth = mentioned.filter(u => GROUND_TRUTH.must_remove_uids.includes(u));
 
     /* 过 coords 层 */
     const coords = assertNoHumanCoords(parsed.plan);
@@ -215,6 +238,58 @@ async function attemptOnce({ runIndex, client, verbose }) {
             + `plan=${result.plan_ok ? "ok" : result.plan_why}`);
     }
     return result;
+}
+
+/* ─────────────────────── 句柄引用的两种口径 ─────────────────────── */
+
+/**
+ * 把一次计划里出现的句柄分成两类。
+ *
+ * **为什么要分**（第二轮验收审计 B-3）：旧实验把"在整个 calls 树里 walk 到的所有字符串"
+ * 都算成"选中"，于是 `why` 里的"不是 B69"、`$bbox_of` 里列出的 12 个句柄、
+ * 甚至 `say` 里的叙述，全都被计入 —— 一个**失败**的计划可以因此报"选中 3/3"。
+ *
+ * **分类规则**（按宏 ABI 的结构，不猜）：
+ *   · `targeted`：出现在**定位参数**里的句柄 —— `region` / `uids` / `cells` / `at` /
+ *     `outlet` / `from` / `to` / `building[].port` 之外的那些，以及它们内部的
+ *     `$ref` / `$uids` / `$bbox_of` 参数。这些才是"它想动哪里"。
+ *   · `mentioned`：其余全部（`why` / `say` / 任何自由文本）。
+ */
+function splitRefs(calls, handleToUid) {
+    const mentioned = new Set();
+    const targeted = new Set();
+
+    const walkAll = (v, sink) => {
+        if (typeof v === "string") { if (handleToUid.has(v)) sink.add(handleToUid.get(v)); return; }
+        if (Array.isArray(v)) { v.forEach(x => walkAll(x, sink)); return; }
+        if (v && typeof v === "object") { for (const k of Object.keys(v)) walkAll(v[k], sink); }
+    };
+
+    /* 定位类参数的键名（宏 ABI 的真值；`why`/`say` 不在其中） */
+    const LOCATOR_KEYS = new Set([
+        "region", "uids", "cells", "at", "outlet", "from", "to", "port",
+        "$ref", "$uids", "$bbox_of",
+    ]);
+
+    const walkTargeted = v => {
+        if (Array.isArray(v)) { v.forEach(walkTargeted); return; }
+        if (!v || typeof v !== "object") return;
+        for (const k of Object.keys(v)) {
+            const child = v[k];
+            if (LOCATOR_KEYS.has(k)) {
+                walkAll(child, targeted);
+                /* 定位参数内部的自由文本不存在，所以这里不额外走 mentioned */
+            } else if (k !== "why" && k !== "say") {
+                walkTargeted(child);
+            }
+        }
+    };
+
+    for (const c of calls || []) {
+        walkAll(c, mentioned);          // 全部（含 why）
+        walkTargeted(c.args || {});     // 只有定位参数
+    }
+    return { mentioned: [...mentioned], targeted: [...targeted] };
 }
 
 /* ─────────────────────── 主流程 ─────────────────────── */

@@ -296,7 +296,7 @@ async function observeOnce(reader) {
     const out = { obs: null, items: null, production: null, problems: [] };
     let obsErr = null;
     try {
-        out.obs = unwrapObs(await reader.obs({ max_entities: 50000, layer: "all", include_stats: true }));
+        out.obs = unwrapObs(await reader.obs({ max_entities: 50000, layer: "all", include_stats: true, include_resources: true, max_resources: 20000 }));
     } catch (e) {
         obsErr = e;
         out.problems.push(mkDiag("INTERNAL", {
@@ -1650,7 +1650,7 @@ export async function runLoop(opts = {}) {
 
             /* 验证后再读一次世界：给 run_end 的 final_world_hash、也给下一轮一个**当前**快照。
                （verifyRound 内部那次 afterObs 没有返回，这是唯一能看到「验证之后的世界」的读法。） */
-            const afterObs = unwrapObs(await reader.obs({ max_entities: 50000, layer: "all", include_stats: true }));
+            const afterObs = unwrapObs(await reader.obs({ max_entities: 50000, layer: "all", include_stats: true, include_resources: true, max_resources: 20000 }));
             st.obs = afterObs;
             st.lastObs = afterObs;          // ★ 必须更新：run_end.world_hash 要的是**最终**世界
             st.handles = buildHandles(afterObs, null);
@@ -1897,7 +1897,7 @@ export function makeBridgeReader(baseUrl) {
         return body.result;
     };
     return {
-        async obs(p) { return call("obs", { max_entities: 50000, layer: "all", include_stats: true, ...p }); },
+        async obs(p) { return call("obs", { max_entities: 50000, layer: "all", include_stats: true, include_resources: true, max_resources: 20000, ...p }); },
         async debugItems(p) { return call("debug_items", p || {}); },
         async production(p) { return call("production", p || { slices: 6 }); },
         async step(ticks) { return call("act", { op: "step", ticks }); },

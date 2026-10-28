@@ -250,9 +250,23 @@ export const RETRIEVAL_TABLE = Object.freeze({
     /* ── L4 ── */
     /* ⚠️ 这三个码的触发判据在 v2 §2.1 之后仍受 evidence 字段限制（见 DIAG_CODES 文件头），
        权重只是 v1 §4.3 的继承值，不代表它们已可判定。 */
+    /* ★ `replace_run` 必须在这里（2026-10-29 第二轮验收审计 B-2）★
+     *
+     * 冷启动第一轮**永远**得到 `NO_PRODUCTION`（还没有任何生产），所以这张表决定了
+     * 模型第一轮能看到哪些宏卡片。以前只给 connect/insert_machine/trash_unused ——
+     * 而 L4 的正解恰恰是 `replace_run`。于是真 loop 的第一轮**从来不把正解宏摆出来**，
+     * 模型只能看到一个名字（system 的 Rule 10 提到过）却没有参数卡片，
+     * 等于要求在不知道 args 形状的情况下凭空造调用。
+     *
+     * 这与「看得见带子」是同一类缺陷，只是从 S3（世界状态）搬到了 S2（候选宏）。
+     * 权重给最高：改造既有产线是真实存档里最常见的动作，而冷启动第一轮的
+     * 目标几乎总是"把某段不通的链改对"。
+     */
     NO_PRODUCTION: cand([
-        ["connect", 6],
-        ["insert_machine", 4],
+        ["replace_run", 8],
+        ["insert_machine", 5],
+        ["connect", 4],
+        ["remove_run", 3],
         ["trash_unused", 2],
     ]),
     WRONG_SHAPE_PRODUCED: cand([]),   // 先查 goal 键（形状串抄错是最高频原因）

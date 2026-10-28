@@ -308,7 +308,7 @@ await check("联调：obs 截断时 verifyRuntime 的 L0 必须判不可判定",
     assert.equal(r.checks[0].undecidable, true);
 });
 
-/* ─────────────────── 汇总 ─────────────────── */
+
 
 function assertNoUnconsumedChecks() {
     if (unconsumed.size) {
@@ -318,7 +318,47 @@ function assertNoUnconsumedChecks() {
     }
 }
 
+/* ─────────────────── ⑥ 夹具保真度：与真 mod 的语义差 ───────────────────
+ *
+ * 第二轮验收审计（B-1）抓到的：FakeGame 曾经**无条件**在 obs 里塞 `resources`，
+ * 而真 mod 只在 `include_resources === true` 时才给（shapez-ai-bridge.js:1359）。
+ * 后果是离线比真机多一份矿图，`pickBeltsForGoal` 的原料线判据在离线永远成立、
+ * 真机永远失效 —— 实测同一份存档，没有 resources 时 prompt 里正解带子从 3/3 掉到 0/3。
+ *
+ * 这与「不写 code」「paths 不按 region 过滤」是同一类：**离线和真机必须同语义**。
+ */
+await t("resources 默认不给（与 mod 一致：include_resources 缺省 false）", () => {
+    const g = FakeGame.fromFiles();
+    const o = g.observe({ max_entities: 50000 });
+    assert.equal(o.resources, undefined,
+        "没传 include_resources 却返回了 resources —— 离线比真机多给信息，会让 prompt 测试假绿");
+});
+
+await t("include_resources:true 才给 resources", () => {
+    /* 必须用 L4 夹具：默认的 L5 dump 里没有 resources 字段 */
+    const g = FakeGame.fromFiles(path.join(HERE, "../../test/fixtures/saves/L4-obs.json"), null);
+    const o = g.observe({ max_entities: 50000, include_resources: true, max_resources: 20000 });
+    assert.ok(Array.isArray(o.resources), "显式要了却不给");
+    assert.ok(o.resources.length > 0, "L4 存档有矿格");
+});
+
+await t("include_resources:false 明确不给", () => {
+    const g = FakeGame.fromFiles();
+    assert.equal(g.observe({ include_resources: false }).resources, undefined);
+});
+
+await t("resources 也按 region 过滤（与 mod 的 resourceSnapshot 同口径）", () => {
+    const g = FakeGame.fromFiles(path.join(HERE, "../../test/fixtures/saves/L4-obs.json"), null);
+    const all = g.observe({ include_resources: true, max_resources: 20000 });
+    const sub = g.observe({ include_resources: true, max_resources: 20000, region: [-10, -5, 0, 5] });
+    assert.ok(sub.resources.length < all.resources.length, "region 没过滤 resources");
+    for (const r of sub.resources) {
+        assert.ok(r[0] >= -10 && r[0] <= 0 && r[1] >= -5 && r[1] <= 5, "返回了框外的矿格 " + JSON.stringify(r));
+    }
+});
+
+/* 新测试追加在文件末尾 ⇒ 必须在这里再收一次尾（原汇总段在它们之前执行） */
 assertNoUnconsumedChecks();
-console.log(`\nfake_game 自测：${pass} 通过 / ${fail} 失败`);
+console.log(`\nfake_game 自测（含夹具保真度）：${pass} 通过 / ${fail} 失败`);
 if (fail) { console.log("失败项："); for (const f of failures) console.log("  ✗ " + f); }
 process.exit(fail ? 1 : 0);
