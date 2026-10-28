@@ -368,7 +368,7 @@ export function getPath(obj, path) {
  *
  * @returns {{ok:boolean, why:string|null}}
  */
-function checkTag(tag, value, { obs, knownTokens }) {
+function checkTag(tag, value, { obs, knownTokens, opLike = null }) {
     if (typeof tag !== "string" || !PROVENANCE_RE.test(tag)) {
         return { ok: false, why: `provenance 形态非法：${JSON.stringify(tag)}（只允许 obs:uid=N / macro:<token> / computed:bbox_of[…]）` };
     }
@@ -413,7 +413,39 @@ function checkTag(tag, value, { obs, knownTokens }) {
     if (knownTokens && knownTokens.size) {
         const token = tag.slice(PROVENANCE_PREFIX.MACRO.length);
         const hit = [...knownTokens].some(t => t === token || (typeof t === "string" && t.includes(token)));
-        return hit ? { ok: true, why: null } : { ok: false, why: `token "${token}" 不在当轮宏返回值里` };
+        if (!hit) return { ok: false, why: `token "${token}" 不在当轮宏返回值里` };
+        /* ★ token 里嵌的坐标必须与被验的那个值一致 ★
+         *
+         * 实测漏洞（2026-10-28，loop.mjs 的实现者发现、主线程复核）：
+         * 以前这里只判 token **存在**就放行。于是把 `place.x` 从 4 改成 5、
+         * token 仍写 `macro:replace_run:cutter@4,-13`，`assertProvenance` **照样判绿**。
+         * 而 `macro:` 恰恰是主力宏（replace_run / insert_machine）**全部**用的标签形态 ——
+         * 也就是说「每条落盘坐标可追溯」这条唯一的可证伪防线，对最重要的路径是空的。
+         *
+         * 修法：token 形如 `<macro>:<kind>@<x>,<y>`，把 `@` 后面的坐标解出来，
+         * 与**实际被验的坐标**（value 若是 [x,y] 就逐位比；若同时给了 op 就比 op 的 x/y）比。
+         * 解不出坐标的 token（如 `remove_run:abc`）只校验存在性 —— 但那种形态
+         * 必须在 PROVENANCE_PREFIX 的文档里写明「不带坐标断言」，不许默默放行。
+         */
+        const at = /@(-?\d+),(-?\d+)/.exec(token);
+        if (at) {
+            const tx = Number(at[1]), ty = Number(at[2]);
+            let vx = null, vy = null;
+            if (Array.isArray(value) && value.length >= 2 && typeof value[0] === "number") {
+                vx = value[0]; vy = value[1];
+            }
+            if (vx === null && opLike && typeof opLike.x === "number") {
+                vx = opLike.x; vy = opLike.y;
+            }
+            if (vx !== null && (vx !== tx || vy !== ty)) {
+                return {
+                    ok: false,
+                    why: `token 里的坐标 @${tx},${ty} 与被验的坐标 ${vx},${vy} 不一致 —— `
+                        + `落盘坐标被改过，但 provenance 标签没跟着改（这是最危险的一类：标签本身成了伪证）`,
+                };
+            }
+        }
+        return { ok: true, why: null };
     }
     return { ok: true, why: null };   // 没有 token 清单时只校验形态（见文件头的诚实边界）
 }
@@ -553,7 +585,10 @@ export function assertProvenance(resolved, txPlan, obs, opts = {}) {
                         `place 的 (${op.x},${op.y}) 不在 provenance bbox [${bb}] 内`, tag);
                     continue;
                 }
-                const r = checkTag(tag, op[f], { obs, knownTokens });
+                /* ★ 把整个 op 传下去：`macro:` 标签里的 @x,y 必须与 op 的实际坐标一致 ★
+                   只传 op[f]（单个数字）的话，checkTag 无法知道另一维，
+                   于是 x 被改、y 没改也能混过去。 */
+                const r = checkTag(tag, op[f], { obs, knownTokens, opLike: op });
                 if (!r.ok) add(`${at}.provenance.${f}`, "COORD_PROVENANCE", r.why, tag);
             }
             return;
