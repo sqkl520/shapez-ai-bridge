@@ -1,0 +1,16 @@
+{
+  "say": "The three belts in front of the hub form the pre-cutter run. Replace them in place with a cutter and send its waste side to a trash.",
+  "calls": [
+    {
+      "macro": "replace_run",
+      "args": {
+        "region": { "$bbox_of": ["B69", "B81", "B82"] },
+        "building": [
+          { "kind": "cutter" },
+          { "kind": "trash", "port": "left", "confirm_waste": true }
+        ]
+      },
+      "why": "those three belts are the run to convert; replace_run solves the machine origin and facing internally"
+    }
+  ]
+}
