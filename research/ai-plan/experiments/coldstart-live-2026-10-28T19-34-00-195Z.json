@@ -1,0 +1,312 @@
+{
+  "generated_at": "2026-10-28T19:34:00.195Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "must_remove_uids": [
+      10209,
+      10149,
+      10143
+    ],
+    "must_place": [
+      {
+        "kind": "cutter",
+        "origin": [
+          4,
+          -13
+        ]
+      },
+      {
+        "kind": "trash",
+        "origin": [
+          4,
+          -14
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "runs": 5,
+    "mode": "live",
+    "truth_all_visible": 5,
+    "truth_partial_visible": 0,
+    "truth_none_visible": 0,
+    "picked_any_truth": 4,
+    "picked_all_truth": 2,
+    "plan_ok": 0,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 6117,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Install cutters with trash on both miner runs feeding L3 so the hub receives the required left-half shapes.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B97\",\"B90\",\"B81\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"right\"}]},\"why\":\"Cut the first L3 input run and discard the right half, leaving RuRu---- to continue to L3.\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B98\",\"B91\",\"B82\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"right\"}]},\"why\":\"Cut the second L3 input run the same way so L3 only merges identical halves.\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10206,
+        10208,
+        10209,
+        10147,
+        10148,
+        10149
+      ],
+      "selected_truth": [
+        10209,
+        10149
+      ],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:occupied",
+      "ops": null,
+      "mentioned_uids": [
+        10206,
+        10208,
+        10209,
+        10147,
+        10148,
+        10149
+      ],
+      "mentioned_truth": [
+        10209,
+        10149
+      ]
+    },
+    {
+      "run": 2,
+      "prompt_chars": 6117,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Insert rotater+cutter+trash on both L3 input chains to convert full shapes into the required top-half shape.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B97\",\"B90\",\"B81\"]},\"building\":[{\"kind\":\"rotater\"},{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\"}]},\"why\":\"Cut and discard the unwanted half on the M3 feed so L3 receives the top half.\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B91\",\"B82\",\"B70\"]},\"building\":[{\"kind\":\"rotater\"},{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\"}]},\"why\":\"Apply the same half-shape conversion to the other L3 input chain.\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10206,
+        10208,
+        10209,
+        10148,
+        10149,
+        10150
+      ],
+      "selected_truth": [
+        10209,
+        10149
+      ],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:out_of_scope",
+      "ops": null,
+      "mentioned_uids": [
+        10206,
+        10208,
+        10209,
+        10148,
+        10149,
+        10150
+      ],
+      "mentioned_truth": [
+        10209,
+        10149
+      ]
+    },
+    {
+      "run": 3,
+      "prompt_chars": 6117,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Refreshing belt topology on the main miner runs, cutter connections, and hub input belts to restore flow of the cut half-shape.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B112\",\"B105\",\"B97\",\"B90\",\"B81\",\"B69\",\"B63\"]},\"building\":\"belt\"},\"why\":\"fix empty run from miner M3 to balancer L3\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B106\",\"B98\",\"B91\",\"B82\",\"B70\",\"B64\"]},\"building\":\"belt\"},\"why\":\"fix empty run from second miner to balancer L3\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B100\",\"B84\",\"B85\"]},\"building\":\"belt\"},\"why\":\"refresh cutter input/output belt topology\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B135\",\"B136\",\"B137\"]},\"building\":\"belt\"},\"why\":\"refresh hub input belts so they accept delivered shape\"}]}",
+      "parsed": {
+        "calls": 4
+      },
+      "selected_uids": [
+        10138,
+        10139,
+        10206,
+        10208,
+        10209,
+        10143,
+        10144,
+        10146,
+        10147,
+        10148,
+        10149,
+        10150,
+        10151,
+        10058,
+        10059,
+        10077,
+        10074,
+        10032,
+        10183
+      ],
+      "selected_truth": [
+        10209,
+        10143,
+        10149
+      ],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:not_a_run",
+      "ops": null,
+      "mentioned_uids": [
+        10138,
+        10139,
+        10206,
+        10208,
+        10209,
+        10143,
+        10144,
+        10146,
+        10147,
+        10148,
+        10149,
+        10150,
+        10151,
+        10058,
+        10059,
+        10077,
+        10074,
+        10032,
+        10183
+      ],
+      "mentioned_truth": [
+        10209,
+        10143,
+        10149
+      ]
+    },
+    {
+      "run": 4,
+      "prompt_chars": 6117,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Turn the cutter's left output into the required top half and trash the unused right half.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B84\"]},\"building\":{\"kind\":\"rotater\"}},\"why\":\"C1 left output is a half shape; rotating it in place yields the goal orientation.\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B85\"]},\"building\":{\"kind\":\"trash\"}},\"why\":\"C1's other output must not back up the cutter, so replace it with a trash.\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10059,
+        10077
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:precondition_failed",
+      "ops": null,
+      "mentioned_uids": [
+        10059,
+        10077
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 5,
+      "prompt_chars": 6117,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Nothing reaches the hub yet; the two ore runs merging into L3 still carry uncut shapes, so convert them in place to cutter+trash so only the wanted half-shape flows onward toward the hub.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B112\",\"B105\",\"B97\",\"B90\",\"B81\",\"B69\",\"B63\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\"}]},\"why\":\"cut the M3 ore run and discard the unwanted half before it reaches L3\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$bbox_of\":[\"B106\",\"B98\",\"B91\",\"B82\",\"B70\",\"B64\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\"}]},\"why\":\"cut the parallel ore run feeding the same L3 merger\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10138,
+        10139,
+        10206,
+        10208,
+        10209,
+        10143,
+        10144,
+        10146,
+        10147,
+        10148,
+        10149,
+        10150,
+        10151
+      ],
+      "selected_truth": [
+        10209,
+        10143,
+        10149
+      ],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:precondition_failed",
+      "ops": null,
+      "mentioned_uids": [
+        10138,
+        10139,
+        10206,
+        10208,
+        10209,
+        10143,
+        10144,
+        10146,
+        10147,
+        10148,
+        10149,
+        10150,
+        10151
+      ],
+      "mentioned_truth": [
+        10209,
+        10143,
+        10149
+      ]
+    }
+  ]
+}
