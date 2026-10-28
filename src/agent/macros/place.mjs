@@ -766,12 +766,25 @@ export function insertMachine(a, b, c, d, e) {
         footprint: [tpl.footprint[0], tpl.footprint[1]],
         cells: geom.cells.map(([x, y]) => ({ x, y })),
         /* 每条宏的结果都自带"怎么执行"的提示：本宏只读，落盘由调用方 tx/paste 做。
-           expected_code 是落地后**必须读回**的值（契约 invariant），不是建议。 */
+           expected_code 是落地后**必须读回**的值（契约 invariant），不是建议。
+
+           ⚠️ 这段 note 曾经写成 `place{code:9, ...}` —— 那是**照抄就 2001** 的陷阱：
+           `place` 的字段白名单（shapez-ai-bridge.js:2424）只有
+           `building,x,y,r,variant,rotationVariant,rv,originalRotation,orig`，**没有 code**。
+           机器类型由 `building` 决定，code 是落地后**读回来核对**的期望值，不是入参。
+           同理 `ops` 里也不能带 inDir/outDir/entry/exit —— 那些是 connect 的诊断字段。 */
         execution: {
             needs_tx: true,
             read_back: ["code", "x", "y", "r"],
-            note: `先 delete{uid} 掉 removed_uids（${replacedUniq.length} 条带子），再 place{code:${tpl.code}, x:${origin[0]}, y:${origin[1]}, r:${rotation}}；`
-                + `读回 code 必须等于 ${tpl.code}，否则回滚并报 verification_failed。`,
+            tx_ops: [
+                ...replacedUniq.map(r => ({ op: "delete", uid: r.uid })),
+                { op: "place", building: machine.kind, x: origin[0], y: origin[1], r: rotation },
+            ],
+            expected_code: tpl.code,
+            note: `先 delete{uid} 掉 removed_uids（${replacedUniq.length} 条带子），再 `
+                + `place{building:"${machine.kind}", x:${origin[0]}, y:${origin[1]}, r:${rotation}}。`
+                + `**place 不接受 code 字段**（白名单没有它，带了会 2001）—— 机器种类由 building 决定。`
+                + `落地后读回 code 必须等于 ${tpl.code}，否则回滚并报 verification_failed。`,
         },
         ports: {
             in: geom.inputs.map(p => ({ role: p.role, slot: p.slot, cell: p.cell, dir: p.dir })),
@@ -1156,15 +1169,25 @@ export function extendLine(a, b, c, d, e) {
         terminal: { cell: [tail.x, tail.y], exit: dir, next: termCell },
         terminal_orphaned: terminalOrphaned,
         firstConflict: null,
-        /* 每格必须带显式 rv 落盘（machine_place_sets_rv = assumed）：
-           用 paste_blueprint（immutable 粘贴不改 rv），或 place 后读回 code 并比对。
-           expected 逐格列出来，调用方不必自己再解一遍 solveTurn。 */
+        /* 每格必须带显式 rv 落盘（machine_place_sets_rv = assumed）。
+           ⚠️ 曾经写 `method:"paste_blueprint"` —— 那**不可用**：
+             · `paste_blueprint` 不在 `tx` 允许的 op 里（shapez-ai-bridge.js:2905-2913），
+               照抄等于放弃原子性；
+             · 它会调 `takeShapeByKey` **扣 hub 的货**，扣费不可逆。
+           正确做法：逐格 `place{building:"belt", x,y,r,rotationVariant}`，落地后读回
+           code 并逐格比对（code = 1 + rv 是 belt-rules 命题 A 的 1906/1906 结论）。 */
         execution: {
             needs_tx: true,
-            method: "paste_blueprint",
+            method: "place",
             read_back: ["code", "r", "rotation_variant"],
             cells: posed.map(c => ({ x: c.x, y: c.y, code: c.code, r: c.rotation, rv: c.rotationVariant })),
-            note: "place 的 rv 由游戏按邻居猜；本宏给出的是 solveTurn 反解值，落地后必须读回并逐格比对 code=1+rv。",
+            tx_ops: posed.map(c => ({
+                op: "place", building: "belt", x: c.x, y: c.y,
+                r: c.rotation, rotationVariant: c.rotationVariant,
+            })),
+            note: "逐格 place{building:'belt',x,y,r,rotationVariant}（不能用 paste_blueprint："
+                + "它不在 tx 白名单里且会扣 hub 的货）。place 的 rv 会被游戏按邻居重算，"
+                + "落地后必须读回并逐格比对 code=1+rv；不符即回滚。",
         },
     };
     const chk = validateMacroResult(result);
