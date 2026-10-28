@@ -118,6 +118,11 @@ export class AnthropicClient extends LLMClient {
     /**
      * @param {object} [o]
      * @param {string} [o.apiKey]  缺省读 `ANTHROPIC_API_KEY`；**缺失即构造期抛错**
+     * @param {string} [o.baseUrl] 兼容 Anthropic Messages 协议的**代理/网关**地址
+     *        （例如 `http://ddns2.keniis.top:3000`）。**缺省为 null = 走官方地址**。
+     *        注意：**不**自动读 `ANTHROPIC_BASE_URL` —— 那个变量在本机被 Claude Code
+     *        自己占用（指向 IDE 的本地网关），跟着它走会让本项目的 CLI 打到错误的地方。
+     *        要用代理必须显式传 `--base-url` 或 `{baseUrl}`。
      * @param {string} [o.model]
      * @param {number} [o.maxTokens]
      * @param {number} [o.timeoutMs]
@@ -126,6 +131,7 @@ export class AnthropicClient extends LLMClient {
      */
     constructor({
         apiKey = process.env.ANTHROPIC_API_KEY,
+        baseUrl = null,
         model = "claude-sonnet-5",
         maxTokens = 1200,
         timeoutMs = 60000,
@@ -151,6 +157,12 @@ export class AnthropicClient extends LLMClient {
         if (typeof this._fetch !== "function") {
             throw new LLMError("LLM_TRANSPORT", "AnthropicClient: global fetch is unavailable (Node >= 20 required)");
         }
+        /* 代理地址：去掉尾部斜杠，拼上 /v1/messages。
+           注意不要盲目拼 —— 有的网关已经带 /v1，所以只在末尾不是 /v1/messages 时才拼。 */
+        const base = typeof baseUrl === "string" && baseUrl.trim() ? baseUrl.trim().replace(/\/+$/, "") : null;
+        this.endpoint = base
+            ? (base.endsWith("/v1/messages") ? base : (base.endsWith("/v1") ? base + "/messages" : base + "/v1/messages"))
+            : LLM_ENDPOINT;
         this._calls = 0;
     }
 
@@ -172,7 +184,7 @@ export class AnthropicClient extends LLMClient {
 
         let res;
         try {
-            res = await this._fetch(LLM_ENDPOINT, {
+            res = await this._fetch(this.endpoint, {
                 method: "POST",
                 headers: {
                     "x-api-key": this.apiKey,

@@ -55,20 +55,21 @@ const GROUND_TRUTH = Object.freeze({
 /* ─────────────────────── 参数 ─────────────────────── */
 
 function parseArgs(argv) {
-    const a = { runs: 1, json: false, mode: "mock", mockDir: null, scenario: "l4-coldstart", verbose: false };
+    const a = {
+        runs: 1, json: false, mode: "mock", mockDir: null, scenario: "l4-coldstart",
+        verbose: false, baseUrl: null, model: null,
+    };
     for (let i = 0; i < argv.length; i++) {
         const k = argv[i];
         if (k === "--runs") a.runs = Math.max(1, parseInt(argv[++i], 10) || 1);
         else if (k === "--json") a.json = true;
         else if (k === "--verbose") a.verbose = true;
         else if (k === "--llm") a.mode = "live";
+        else if (k === "--base-url") a.baseUrl = argv[++i];
+        else if (k === "--model") a.model = argv[++i];
         else if (k === "--mock-dir") {
             a.mockDir = argv[++i];
             a.mode = "mock";
-            /* 目录名就是场景名（l4-coldstart-oracle → scenario 同名）。
-               不这样做的话 makeClient 会去 <dir>/l4-coldstart 下找文件，找不到就抛，
-               而 MockLLMClient 的 strict:false 会把它变成空 calls —— 看起来像"LLM 没想法"，
-               实际上是夹具路径错了。这类"静默退化"正是这个仓库反复踩的坑。 */
             a.scenario = path.basename(a.mockDir);
         } else if (k === "--scenario") a.scenario = argv[++i];
     }
@@ -211,7 +212,18 @@ async function main() {
 
     let client;
     if (args.mode === "live") {
-        client = makeClient({ mode: "live" });
+        client = makeClient({
+            mode: "live",
+            ...(args.baseUrl ? { baseUrl: args.baseUrl } : {}),
+            ...(args.model ? { model: args.model } : {}),
+            /* 代理上的模型会先输出很长的 thinking 块；默认 1200 会被它吃满（实测
+               stop_reason=max_tokens、text 为空）。20000 才够它想完再输出。 */
+            maxTokens: 20000,
+            timeoutMs: 280000,
+        });
+        if (!args.json) {
+            console.log(`（真 LLM 模式：endpoint=${client.endpoint || "?"} model=${client.model || "?"}）`);
+        }
     } else {
         /* MockLLMClient 的 `dir` 是**场景目录本身**（给了 scenario 才会再拼一层）。
            这里直接给场景目录，不给 scenario，避免拼成 dir/scenario/scenario。
