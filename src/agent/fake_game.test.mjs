@@ -40,20 +40,55 @@ const unconsumed = new Set();
 /* ─────────────────── ① 夹具一致性 ─────────────────── */
 
 await t("夹具存在且是真实 dump（不是造的）", () => {
-    const obs = JSON.parse(fs.readFileSync(path.join(HERE, "../../test/fixtures/saves/L4-obs.json"), "utf8"));
-    const items = JSON.parse(fs.readFileSync(path.join(HERE, "../../test/fixtures/saves/L4-items.json"), "utf8"));
-    const o = obs.result || obs, it = items.result || items;
-    assert.equal(o.entities.length, 181, "真实存档是 181 实体（人工审过的数）");
-    assert.equal(o.truncated, false);
-    assert.equal(o.goal.level, 5);
-    assert.equal(o.goal.requirement.shape, "Cu----Cu");
+    const l4 = JSON.parse(fs.readFileSync(path.join(HERE, "../../test/fixtures/saves/L4-obs.json"), "utf8"));
+    const l5 = JSON.parse(fs.readFileSync(path.join(HERE, "../../test/fixtures/saves/L5-obs.json"), "utf8"));
+    const items = JSON.parse(fs.readFileSync(path.join(HERE, "../../test/fixtures/saves/L5-items.json"), "utf8"));
+    const a = l4.result || l4, b = l5.result || l5, it = items.result || items;
+    /* ★ 两张存档必须能区分 ★
+       曾经把 L5 的 dump 复制成 L4-obs.json，于是「L4 冷启动测试」实际跑的是 L5，
+       goal 与布局全不同 —— 这是最隐蔽的一类假绿。 */
+    assert.equal(a.goal.requirement.shape, "RuRu----", "L4 的目标是 RuRu----");
+    assert.equal(a.goal.level, 4);
+    assert.equal(b.goal.requirement.shape, "Cu----Cu", "L5 的目标是 Cu----Cu");
+    assert.equal(b.goal.level, 5);
+    assert.notEqual(a.goal.requirement.shape, b.goal.requirement.shape, "两张夹具的目标相同 —— 大概率是同一个 dump 被复制了两份");
+    assert.equal(a.entities.length, 181);
+    assert.equal(b.entities.length, 181);
     assert.equal(it.paths.length, 20);
 });
 
-await t("FakeGame.fromFiles 读出的数与夹具一致", () => {
+await t("L4 冷启动态：(4,-13)(5,-13)(4,-14) 全是带子（未改造）", () => {
+    const g = FakeGame.fromFiles(path.join(HERE, "../../test/fixtures/saves/L4-obs.json"), null, { goal: "RuRu----" });
+    const at = (x, y) => g.obs.entities.find(e => e.x === x && e.y === y);
+    for (const [x, y] of [[4, -13], [5, -13], [4, -14]]) {
+        const e = at(x, y);
+        assert.ok(e, `(${x},${y}) 应有实体`);
+        assert.equal(e.type, "belt", `(${x},${y}) 在 L4 冷启动态必须是带子，实得 ${e.type}`);
+        assert.equal(e.uid, { "4,-13": 10209, "5,-13": 10149, "4,-14": 10143 }[`${x},${y}`]);
+    }
+});
+
+await t("L5 改造后：(4,-13) 是 cutter、(4,-14) 是 trash", () => {
+    const g = FakeGame.fromFiles(path.join(HERE, "../../test/fixtures/saves/L5-obs.json"),
+        path.join(HERE, "../../test/fixtures/saves/L5-items.json"), { goal: "Cu----Cu" });
+    const at = (x, y) => g.obs.entities.find(e => e.x === x && e.y === y);
+    assert.equal(at(4, -13).type, "cutter");
+    assert.equal(at(4, -14).type, "trash");
+});
+
+await t("assertGoal：拿错存档必须抛（静默换关防线）", () => {
+    const g5 = FakeGame.fromFiles(path.join(HERE, "../../test/fixtures/saves/L5-obs.json"), null);
+    assert.throws(() => g5.assertGoal("RuRu----"), /夹具目标不符/, "拿 L5 存档当 L4 用却没报错");
+    assert.throws(() => FakeGame.fromFiles(path.join(HERE, "../../test/fixtures/saves/L5-obs.json"), null, { goal: "RuRu----" }),
+        /夹具目标不符/, "fromFiles 的 goal 选项没有生效");
+    // 对的存档不抛
+    const g4 = FakeGame.fromFiles(path.join(HERE, "../../test/fixtures/saves/L4-obs.json"), null, { goal: "RuRu----" });
+    assert.equal(g4.goal.requirement.shape, "RuRu----");
+});
+
+await t("fromFiles 默认夹具可读，且不带 goal 断言时不抛", () => {
     const g = FakeGame.fromFiles();
     assert.equal(g.entityCount, 181);
-    assert.equal(g.goal.level, 5);
     assert.equal(g.debugItems().pathCount, 20);
 });
 
@@ -67,11 +102,15 @@ await t("region 过滤：只返回框内实体", () => {
         "框外实体漏进来了：" + JSON.stringify(o.entities.filter(e => e.x < -10 || e.x > 0 || e.y < -5 || e.y > 5).slice(0, 3)));
 });
 
-await t("entity_count 是**全量**，不是过滤后的数", () => {
+await t("entity_count 是 region 过滤**后**的数量（与 mod 一致）", () => {
     const g = FakeGame.fromFiles();
-    const o = g.observe({ region: [-10, -5, 0, 5] });
-    assert.equal(o.entity_count, 181, "entity_count 应报全量，否则 verify 会以为没截断");
-    assert.ok(o.entities.length < 181);
+    const all = g.observe({});
+    assert.equal(all.entity_count, 181, "不带 region 时 entity_count = 全量");
+    const sub = g.observe({ region: [-10, -5, 0, 5] });
+    assert.ok(sub.entities.length < 181);
+    assert.equal(sub.entity_count, sub.entities.length,
+        "带 region 时 entity_count 必须等于过滤后的数量（mod 的 list.length 语义）");
+    assert.equal(sub.stats.total, 181, "stats.total 才是全量（mod 用 all.length）");
 });
 
 await t("max_entities 触发 truncated 标志", () => {
@@ -79,7 +118,16 @@ await t("max_entities 触发 truncated 标志", () => {
     const o = g.observe({ max_entities: 10 });
     assert.equal(o.entities.length, 10);
     assert.equal(o.truncated, true, "截断了却没报 truncated —— verify 的 L0 会漏判");
-    assert.equal(o.entity_count, 181);
+    assert.equal(o.entity_count, 181, "不带 region 时 entity_count 全量");
+    assert.equal(o.stats.total, 181);
+});
+
+await t("region + max_entities 同时给：entity_count 是 region 后、truncated 看 max", () => {
+    const g = FakeGame.fromFiles();
+    const o = g.observe({ region: [-10, -5, 0, 5], max_entities: 2 });
+    assert.ok(o.entity_count > 2, "entity_count 应是 region 内的总数");
+    assert.equal(o.entities.length, 2);
+    assert.equal(o.truncated, true);
 });
 
 await t("不截断时不报 truncated", () => {
@@ -87,12 +135,13 @@ await t("不截断时不报 truncated", () => {
     assert.equal(g.observe({ max_entities: 50000 }).truncated, false);
 });
 
-await t("stats 按 type 聚合，与实体表一致", () => {
+await t("stats.by_type 按 type 聚合，与实体表一致", () => {
     const g = FakeGame.fromFiles();
     const o = g.observe({});
-    const sum = Object.values(o.stats).reduce((a, b) => a + b, 0);
+    const sum = Object.values(o.stats.by_type).reduce((a, b) => a + b, 0);
     assert.equal(sum, o.entities.length);
-    assert.equal(o.stats.belt, o.entities.filter(e => e.type === "belt").length);
+    assert.equal(o.stats.by_type.belt, o.entities.filter(e => e.type === "belt").length);
+    assert.equal(o.stats.total, o.entities.length);
 });
 
 await t("debug_items：pathCount 等于实际返回的 paths 数", () => {

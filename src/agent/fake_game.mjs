@@ -48,12 +48,49 @@ export class FakeGame {
         this._nextUid = 1 + Math.max(0, ...this.obs.entities.map(e => e.uid));
     }
 
-    /** 从仓库里的真实 dump 建假游戏（默认就是 L4 那个 181 实体存档）。 */
-    static fromFiles(obsFile = path.join(FIXTURES, "L4-obs.json"), itemsFile = path.join(FIXTURES, "L4-items.json")) {
+    /**
+     * 从仓库里的真实 dump 建假游戏。
+     *
+     * ⚠️ `L4-obs.json` 与 `L5-obs.json` 是**两张不同的存档**，目标形状与布局都不同：
+     *      L4：goal=RuRu----（level 4），(4,-13)(5,-13)(4,-14) 全是带子 —— 冷启动待改造态
+     *      L5：goal=Cu----Cu（level 5），(4,-13) 已是 cutter、(4,-14) 已是 trash —— 改造后
+     * 拿错夹具会**静默换关**：loop 报「L4 通过」而实际跑的是 L5。所以夹具名必须与
+     * goal 显式对齐，且调用方应传 `{goal}` 让 fromFiles 在启动时断言（见 assertGoal）。
+     *
+     * `L5-items.json` 是 L5 的 debug_items dump。**L4 没有配套的 items dump**
+     * （必须在实机上只读跑一次 `debug_items` 才有）—— 这是 PHASE2-CONTRACT §Q7 的
+     * 已知缺口，loop 在 L4 冷启动上跑 L2/L3 时 items 会是空，此时 L3 会判 undecidable
+     * 而不是假绿（这是故意的）。
+     *
+     * @param {string} [obsFile]
+     * @param {string|null} [itemsFile]
+     * @param {{goal?:string}} [opts] 给了 goal 就在构造时断言，防止静默换关
+     */
+    static fromFiles(obsFile = path.join(FIXTURES, "L5-obs.json"),
+                     itemsFile = path.join(FIXTURES, "L5-items.json"),
+                     opts = {}) {
         const obs = JSON.parse(fs.readFileSync(obsFile, "utf8"));
         let items = null;
-        try { items = JSON.parse(fs.readFileSync(itemsFile, "utf8")); } catch { /* items 可缺 */ }
-        return new FakeGame(obs, items);
+        if (itemsFile) {
+            try { items = JSON.parse(fs.readFileSync(itemsFile, "utf8")); } catch { /* items 可缺 */ }
+        }
+        const g = new FakeGame(obs, items);
+        if (opts.goal !== undefined) g.assertGoal(opts.goal);
+        return g;
+    }
+
+    /**
+     * 断言当前存档的目标形状。**静默换关是本项目最容易发生的一类假绿**
+     * （夹具换了、断言没换，于是「L4 通过」其实跑的是 L5）。
+     * @param {string} want 例如 "RuRu----"
+     */
+    assertGoal(want) {
+        const got = this.obs.goal && this.obs.goal.requirement && this.obs.goal.requirement.shape;
+        if (got !== want) {
+            throw new Error(`夹具目标不符：期望 goal="${want}"，实际 "${got}"。`
+                + `（L4 用 test/fixtures/saves/L4-obs.json，L5 用 L5-obs.json —— 别拿错存档）`);
+        }
+        return true;
     }
 
     /** 深拷贝一份（每个用例都从同一个起点出发，避免用例间串味）。 */
@@ -79,22 +116,32 @@ export class FakeGame {
     observe(p = {}) {
         this.calls.push({ method: "obs", params: p });
         let ents = this.obs.entities;
-        if (Array.isArray(p.region) && p.region.length === 4) {
+        const filtered = Array.isArray(p.region) && p.region.length === 4;
+        if (filtered) {
             const [x0, y0, x1, y1] = p.region;
             ents = ents.filter(e => e.x >= x0 && e.x <= x1 && e.y >= y0 && e.y <= y1);
         }
         const max = Number.isInteger(p.max_entities) ? p.max_entities : 50000;
         const truncated = ents.length > max;
         const out = ents.slice(0, max);
+        /* ★ 与 mod 的语义逐字对齐（shapez-ai-bridge.js:1330-1344）★
+           `entity_count` = **region 过滤之后**的数量（不是全量！），`truncated` = 它超过 max。
+           `stats.total` 才是**全量**（mod 里 stats 用 `all.length`）。
+           以前这里把 entity_count 写成全量，会让 verify 的 L0 在 region 用例里
+           误判「没截断」，是 Q8-22 那类假绿的直接来源。 */
         const stats = {};
+        const statsByType = {};
+        for (const e of this.obs.entities) statsByType[e.type] = (statsByType[e.type] || 0) + 1;
         for (const e of out) stats[e.type] = (stats[e.type] || 0) + 1;
         return {
             ...this.obs,
             tick: this.tick,
             entities: out,
-            entity_count: this.obs.entities.length,
+            region: filtered ? p.region.slice() : this.obs.region || null,
+            entity_count: ents.length,
             truncated,
-            stats,
+            stats: { total: this.obs.entities.length, by_type: statsByType },
+            hub: this.obs.hub || this.obs.entities.find(e => e.type === "hub") || null,
         };
     }
 
