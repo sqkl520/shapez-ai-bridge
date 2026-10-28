@@ -1,7 +1,25 @@
 {
   "scenario": "l4-coldstart-oracle",
-  "purpose": "对照实验：这是**知道正解**的 LLM 输出（三个正确句柄）。它证明当 LLM 选对带子时，整条链路能产出精确的 5-op 计划。它不代表真实 LLM 的能力。",
+  "purpose": "对照实验：这是**知道正解**的 LLM 输出（三个正确句柄 B69/B81/B82）。它证明当 LLM 选对带子时，整条链路能产出精确的 5-op 计划。它不代表真实 LLM 的能力 —— 它是上界，不是基线。",
   "goal": "RuRu----",
   "obs": "test/fixtures/saves/L4-obs.json",
-  "ground_truth": { "must_remove_uids": [10209, 10149, 10143], "must_place": [{ "kind": "cutter", "origin": [4, -13] }, { "kind": "trash", "origin": [4, -14] }] }
+  "items": null,
+  "notes": [
+    "与 l4-coldstart 的区别：那个引用 B1/B2/B3（另一条产线上的转弯带，不是待改造的三条），所以它永远跑不通；这个引用正确句柄。",
+    "items: null 是已知缺口 —— L4 没有配套的 debug_items dump（PHASE2-CONTRACT §Q7.1）。"
+  ],
+  "expect": {
+    "max_rounds": 3,
+    "must_apply": true,
+    "must_verify": true,
+    "parse": "ok",
+    "forbid_codes": ["LLM_COORD", "LLM_EMPTY_PLAN", "LLM_UNKNOWN_MACRO"]
+  },
+  "ground_truth": {
+    "must_remove_uids": [10209, 10149, 10143],
+    "must_place": [
+      { "kind": "cutter", "origin": [4, -13] },
+      { "kind": "trash", "origin": [4, -14] }
+    ]
+  }
 }

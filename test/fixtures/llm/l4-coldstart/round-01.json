@@ -1,16 +1,16 @@
 {
-  "say": "The run under H1 is still belts; swap that stretch for a cutter and send its waste side to a trash.",
+  "say": "The belts feeding the hub from the north are still raw belts; convert that run into a cutter with its waste side routed to a trash.",
   "calls": [
     {
       "macro": "replace_run",
       "args": {
-        "region": { "$bbox_of": ["B1", "B2", "B3"] },
+        "region": { "$bbox_of": ["B69", "B81", "B82"] },
         "building": [
           { "kind": "cutter" },
-          { "kind": "trash", "port": "left" }
+          { "kind": "trash", "port": "left", "confirm_waste": true }
         ]
       },
-      "why": "the three belts form a rectangle that is only belts; replace_run can turn it into a cutter in place"
+      "why": "those three belts are the run to convert; replace_run solves the machine origin and facing internally"
     }
   ]
 }

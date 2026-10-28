@@ -40,6 +40,13 @@
 
 import { MACRO_NAMES, MACRO_SPECS } from "../macros/contract.mjs";
 import { BUDGET } from "./constants.mjs";
+/* 只有 pickBeltsForGoal 用得到它们：判断带子的拓扑必须知道机器的真实占地
+   （cutter 是 2×1，hub 是 4×4）与机器的**出口格**（判断"这条线最终流向哪里"）。
+   按 1×1 算会把「挨着 cutter 第二格」的带子误判成孤立。 */
+import { templateByBuildingVariant, worldSlots } from "../../ai/op-templates.mjs";
+/* 出口方向：与 handles.mjs / verify_runtime.mjs 同一套约定（rv0=top / rv1=left / rv2=right，
+   再按 r 旋转）。自己写一份 EXIT_BASE 就是第三份真值 —— 这个仓库已因两份真值出过事故。 */
+import { DIRV, beltExit } from "../../ai/belt-rules.mjs";
 
 /* ══════════════════════════ 0. 常量 ══════════════════════════ */
 
@@ -248,8 +255,12 @@ function renderCards(candidates) {
  *   {byHandle: Map|Object, hubHandle, goalHandle, version}   契约 §Q3.2 的形态
  *   [{handle, type, ...}, ...]                                数组形态
  *
- * **只搬运 handle / type / variant / desc 四个字段** —— x/y/r/uid/code 在这一步就被丢掉，
+ * **只搬运 handle / type / variant / uid / desc 五个字段** —— x/y/r/code 在这一步就被丢掉，
  * 后面的渲染代码根本拿不到它们。这是「prompt 不含坐标」的第一层保证（不是靠自觉）。
+ *
+ * `uid` 是**身份**不是**坐标**：它不进任何渲染（渲染只读 handle/type/desc），只用于
+ * `pickBeltsForGoal` 把 obs 的几何（只有 uid 没有句柄）与句柄表对齐。少了它，
+ * 几何判据会静默退化成"全部带子都无坐标" —— 那正是 2026-10-29 那个 bug 的成因。
  */
 function normalizeHandles(handles, obs) {
     const obsByUid = new Map();
@@ -273,7 +284,7 @@ function normalizeHandles(handles, obs) {
         const type = (obj && (obj.type || obj.kind)) || (fromObs && fromObs.type) || "unknown";
         const variant = (obj && (obj.variant || obj.variantKey)) || (fromObs && fromObs.variant) || null;
         const desc = pickDesc(obj) || pickDesc(fromObs) || null;
-        byHandle.set(h, { handle: h, type: String(type), variant, desc });
+        byHandle.set(h, { handle: h, type: String(type), variant, uid, desc });
     };
 
     if (Array.isArray(handles)) {
@@ -425,21 +436,417 @@ function renderMachines(tbl, diagnoses) {
  *   ② 不够 12 条时用句柄表顺序补足（**确定性**；表顺序由 handles.mjs 的 (y,x) 规则钉住）。
  * 补足这一步是必要的：冷启动第一轮常常没有诊断（或诊断只点名机器），而改造对象正是带子。
  * 代价是「没被诊断点名的带子」会按表顺序进入 prompt —— 这一点记在 blocks 里（`belts_padded`）。
+ *
+ * ⚠️ 验收审计实测的致命问题（2026-10-28）：
+ *   L4 冷启动存档有 **163 条带子**，而正解要改的三条排在第 **69 / 81 / 82** 位。
+ *   按表顺序取前 12 条 ⇒ **一条正解带子都不在 prompt 里**。
+ *   LLM 就算推理完美，也看不到该改什么 —— 这不是模型的问题，是我们没给它看。
+ *   ⇒ 补足不能只靠表顺序，必须先做**按目标反查**（见 `pickBeltsForGoal`）。
  */
-function pickBelts(tbl, diagnoses) {
+function pickBelts(tbl, diagnoses, goalShape, obs) {
     const wanted = referencedHandles(diagnoses);
     const referenced = wanted.filter(h => {
         const e = tbl.byHandle.get(h);
         return !!e && isBeltType(e.type);
     });
     const all = [...tbl.byHandle.values()].filter(e => isBeltType(e.type));
-    const padded = [];
-    for (const e of all) {
-        if (referenced.length + padded.length >= PROMPT_RULES.STATE_BELTS_MAX) break;
-        if (!referenced.includes(e.handle)) padded.push(e.handle);
+    const cap = PROMPT_RULES.STATE_BELTS_MAX;
+
+    /* ③ 目标反查：从「能到 hub 的带子之外」的那一片里，挑出**离目标原料源头最近、
+          并且可以并排改造**的那一段（见 `pickBeltsForGoal` 的三层判据）。 */
+    const byGoal = pickBeltsForGoal(tbl, all, goalShape, obs);
+
+    const chosen = [];
+    const push = h => { if (h && !chosen.includes(h) && chosen.length < cap) chosen.push(h); };
+
+    for (const h of referenced) push(h);
+    for (const h of byGoal) push(h);                      // ④ 目标反查的结果优先于表顺序
+    for (const e of all) push(e.handle);                  // ⑤ 最后才用表顺序兜底
+    return { ordered: chosen, referenced, byGoal, padded: chosen.filter(h => !referenced.includes(h) && !byGoal.includes(h)), total: all.length };
+}
+
+/**
+ * 按目标形状反查「值得让 LLM 看的带子」。
+ *
+ * ⚠️ 这是本文件被修过三次的地方，每次的判据与**为什么不够**都记在下面 ——
+ *    这些不是考古，是防止下一个人（或下一轮的我）再走一遍同样的死路：
+ *
+ *   **第一次**：按句柄表顺序取前 12 条。L4 冷启动有 163 条带子，正解那三条在第
+ *     69/81/82 位 ⇒ 一条都看不到。LLM 无解，不是模型的问题，是我们没给它看。
+ *
+ *   **第二次**：「链末端（出口格上没有东西）」。实测 L4 目标区是密排带子
+ *     （x 2..5 × y -16..-9 几乎全填满），每条都有下游 ⇒ 末端法找不到。
+ *
+ *   **第三次**：「hub 不可达」+「离 hub 越远越靠前」。**三个错误叠在一起**：
+ *     a) `allBelts` 来自 `normalizeHandles()` 的输出，而后者**按设计剥掉了坐标**
+ *        （`{handle,type,variant,desc}`，没有 cells/x/y/uid）⇒ `posOf()` 对每条带子都返回
+ *        null ⇒ `at` / `exitOf` / `reachHub` 全是空的 ⇒ `stranded` 恒等于**全部**带子，
+ *        `connectedComponents` 恒等于**空**（`posOf` 为 null 时直接 `continue`）。
+ *        症状是"函数不报错、结果默默退化成表顺序"，这正是这个 bug 最难查的地方。
+ *     b) 就算喂的是带坐标的实体，"到不了 hub" 在 L4 上有 105 条，而"离 hub 最远"
+ *        选出的是 y=-34 那条 36 格的长链（离目标区 20 多格远）—— 距离与「要不要改造」无关。
+ *     c) 再加上"不挨机器优先"：L4 目标区**确实**挨着 `L3` balancer（`B63`/`B64` 都喂它），
+ *        判据把它当成"有源头的活线"，正好把正解排除掉。
+ *
+ *   **第四次（当前）**：几何**只从 `obs.entities` 取**（`obsWorld`），`allBelts` 只用来定
+ *     "哪些句柄算带子"。`normalizeHandles` 重新搬运 `uid`（身份，不是坐标，不进渲染），
+ *     它是 obs（只有 uid）与句柄表（只有 handle）之间唯一的键。
+ *
+ *     判据分三层，全部是"从 obs 读出来的事实"，没有阈值：
+ *
+ *       ① **hub 反向不可达**（`toHub`）：从出口直接落进 hub 占地的带子出发反向扩散。
+ *          L4 实测 58 条可达 / 105 条不可达。
+ *
+ *       ② **目标原料的矿机线**（`rawLine`）：`obs.resources` 里矿种 = 目标原料
+ *          （`RuRu----` → `RuRuRuRu`）的矿机，其输出格起沿下游的整条链。
+ *          改造点不在这条链上的话，改完也没有目标原料流进来。
+ *          `obs.resources` **默认不在 obs 里**（loop 的 observe 没带 `include_resources`），
+ *          此时这条判据整体失效（返回空集），退到 ③ —— 不猜"矿机都算"。
+ *
+ *       ③ **共享下游**（`mySinks` + 并查集分组）：L4 目标区是 `x=4` 与 `x=5` 两条并排向上段，
+ *          在 `y=-16` 一起汇进 balancer `L3` 的两个输入（`B63`/`B64` → `L3.primary`）。
+ *          "两条以上并排、同向、汇进同一台机器"正是 `replace_run` 能解的形状
+ *          （cutter 2×1 正好吃掉两列）。这与「两条毫不相干的平行线」区分得开：后者不共享下游。
+ *
+ *     输出：**按组整块**给，组内按 (y,x) —— 并排链必须成对出现在 prompt 里，
+ *     否则 LLM 拿 `$bbox_of` 算出的 region 会覆盖到它没见过的格子。
+ *
+ * @param {Map<string,object>} tbl       normalizeHandles 的表（handle → {type, uid, desc}）
+ * @param {object[]} allBelts            带子 entry（**可能不含坐标**，只用来定"哪些句柄算带子"）
+ * @param {string} goalShape             目标形状串（`RuRu----`）
+ * @param {object} obs                   ObsSnapshot（几何**唯一**真值来源）
+ * @returns {string[]} 带子句柄（按"该看程度"降序，长度 ≤ STATE_BELTS_MAX）
+ */
+function pickBeltsForGoal(tbl, allBelts, goalShape, obs) {
+    const out = [];
+    if (!allBelts.length) return out;
+
+    /* ── 几何唯一来源：obs.entities（不是参数里的 allBelts）──
+       这里有一步**必须**做的映射：obs 实体只有 uid，句柄表只有 handle。
+       两边都缺对方的键，所以建 uid ↔ handle 的双向索引；任何一边缺了就跳过，
+       绝不"猜"一个句柄出来（猜错的句柄会让 LLM 指到另一条产线上）。 */
+    const world = obsWorld(obs, tbl);
+    if (!world) return out;
+    const { belts, exitCell } = world;
+
+    /* ── ① 目标形状 → 相关原料（`RuRu----` → `RuRuRuRu`）──
+       只用它给"同分"排序，不决定"谁入选"。 */
+    const goalKind = rawKindOf(goalShape);
+
+    /* ── ② hub 反向不可达（= stranded）──
+       L4 实测 58 条能到 hub、105 条不能。**这 105 条不能全列** —— 12 个名额里必须挑出
+       "最该看的那一小段"。判据只用拓扑 + 几何，不读形状代数（形状代数留给宏）：
+
+         a) **目标原料的矿机线**：矿机挖的矿石如果就是目标原料（L4：`RuRuRuRu`），
+            它下游那一段就是"目标原料的源头链"。改造点几乎总在这条链上 —— 否则改完也
+            没有目标原料流进来。判定用 `obs.resources`（每一格的矿种）；
+            **拿不到 resources 时这条判据整体失效**（不是猜一个默认值），退到 b/c。
+
+         b) **多路汇入同一个下游机器**：L4 的目标区是 `x=4` 与 `x=5` 两条并排向上段，
+            它们在 `y=-16` 一起汇进 balancer `L3` 的左右两个输入（`B63`/`B64` 都 →
+            `L3.primary`）。**"两条以上并排、同向、汇进同一台机器"** 正是 `replace_run`
+            能解的形状：把这段并排带子整体换掉（cutter 2×1 吃掉两列）。
+            这与「两条毫不相干的平行线」区分得开：后者不共享下游。
+
+         c) 组内带子总数**小**优先（一次 `replace_run` 的 region 小，宏验得过），
+            破平用句柄表顺序（确定性）。
+
+       三个信号都是「从 obs 读出来的事实」，不是启发式阈值。 */
+    const unreachable = belts.filter(b => !b.toHub);
+    if (!unreachable.length) return out;
+
+    const comps = connectedComponents(unreachable, b => [b.x, b.y], exitCell);
+    const byHandle = tbl.byHandle;
+
+    /* (a) 目标原料矿机线：矿种 → 机器 → 输出格上的带子 → 沿下游走完整条链。 */
+    const rawLine = new Set();
+    for (const m of targetRawMiners(world, goalKind)) {
+        for (const c of world.outCellsOf(m)) {
+            let cur = world.beltAt(c[0], c[1]);
+            for (let step = 0; step < 4096 && cur; step++) {
+                if (rawLine.has(cur.uid)) break;
+                rawLine.add(cur.uid);
+                const ex = exitCell(cur);
+                cur = world.beltAt(ex[0], ex[1]);
+            }
+        }
     }
-    const ordered = [...referenced, ...padded].slice(0, PROMPT_RULES.STATE_BELTS_MAX);
-    return { ordered, referenced, padded, total: all.length };
+
+    /* (b) 共享下游：把每条"链尾"（出口格上没有带子的那条）的出口格当作汇聚点，
+           统计有多少**不同分量**的链尾落在同一格/同一台机器的不同槽上。 */
+    const sinkKeyOf = (b) => {
+        const ex = exitCell(b);
+        const o = world.owner.get(`${ex[0]},${ex[1]}`);
+        return o && o.type !== "belt" && o.type !== "underground_belt" ? `m:${o.uid}` : `c:${ex[0]},${ex[1]}`;
+    };
+
+    const scored = comps.map((list, idx) => {
+        const onRawLine = list.some(b => rawLine.has(b.uid));
+        /* 链尾 = 分量内没有下游的那条 */
+        const tails = list.filter(b => {
+            const ex = exitCell(b);
+            return !list.some(o => o.x === ex[0] && o.y === ex[1]);
+        });
+        /* 本分量汇入的那些 sink */
+        const mySinks = new Set(tails.map(sinkKeyOf));
+        const minOrder = Math.min(...list.map(b => byHandleOrder(byHandle, b.handle)));
+        return { list, onRawLine, mySinks, minOrder, size: list.length, idx };
+    });
+
+    /* 共享下游分组：把"汇入同一台机器"的分量归成一个**组**，组内一起入选。
+       这是 `replace_run` 的真实形状 —— `$bbox_of` 会跨越并排的两条线（L4：`B69`/`B70`
+       都是 (4,-14)/(5,-14)，`B81`/`B82` 都是 (4,-13)/(5,-13)），只给一条等于只给了
+       半张图，LLM 拿 bbox 会覆盖到它没见过的格子。所以"两条并排线"必须成对出现。
+
+       ⚠️ 必须用并查集（传递闭包），不能"每个新代表扫一遍还没分组的"：
+       若 A 与 B 共享下游、B 与 C 共享下游、A 与 C 不共享，那种写法会把 A 和 C 分到两组。 */
+    const parent = scored.map(s => s.idx);
+    const find = i => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    const union = (i, j) => { const ri = find(i), rj = find(j); if (ri !== rj) parent[Math.max(ri, rj)] = Math.min(ri, rj); };
+    for (let i = 0; i < scored.length; i++) {
+        for (let j = i + 1; j < scored.length; j++) {
+            const a = scored[i], b = scored[j];
+            for (const k of a.mySinks) if (b.mySinks.has(k)) { union(a.idx, b.idx); break; }
+        }
+    }
+    for (const s of scored) s.group = find(s.idx);
+    /* 组级属性：组里任一分量在原料线上 / 组汇聚了 ≥2 条链 */
+    for (const s of scored) {
+        const mem = scored.filter(t => t.group === s.group);
+        s.groupOnRaw = mem.some(t => t.onRawLine);
+        s.groupSize = mem.length;
+        s.groupBelts = mem.reduce((n, t) => n + t.size, 0);
+        s.groupMinOrder = Math.min(...mem.map(t => t.minOrder));
+    }
+
+    /* 排序（越小越靠前）：原料线 → 汇聚多条链的组 → 组小 → 句柄表顺序。 */
+    scored.sort((a, b) =>
+        (Number(b.groupOnRaw) - Number(a.groupOnRaw))
+        || (b.groupSize - a.groupSize)
+        || (a.groupBelts - b.groupBelts)
+        || (a.groupMinOrder - b.groupMinOrder)
+        || (a.idx - b.idx));
+
+    /* ── 输出名额：按**组**整块取 ──
+       排在最前的组往往有 2~4 条并排链（L4 是 x=4 与 x=5 两条各 7 节的链，同汇进 L3）。
+       组内**按 (y,x) 排序**输出，因此同一高度的两列相邻出现（`B63/B64`、`B69/B70`、
+       `B81/B82` 依次成对）—— LLM 看到成对的相邻行，才推得出"这两列是一条并排段"，
+       `$bbox_of` 的 region 才覆盖得到整段。
+
+       ⚠️ 别用"每轮每组各取一条"的轮转：那会把组分量的头部先各取一条，成员被拆散到
+       12 条里的各处，反而更难看出"这是一段连续带子"。 */
+    for (const s of scored) {
+        for (const b of s.list.slice().sort((p, q) => (p.y - q.y) || (p.x - q.x))) {
+            if (out.length >= PROMPT_RULES.STATE_BELTS_MAX) return out;
+            if (b.handle) out.push(b.handle);
+        }
+    }
+    return out;
+}
+
+/**
+ * 挖**目标原料**的矿机。`goalKind` 是 `RuRuRuRu` 这种原料串。
+ *
+ * `obs.resources` 是**唯一**的矿种来源（mod 的 `include_resources`）。它**默认不在 obs 里**
+ * —— loop 的 observe 调用没带这个参数。所以：
+ *   · 拿得到 → 用它精确筛"目标原料矿机"；
+ *   · 拿不到 → 返回空数组，**判据整体失效**（不猜"矿机都算"，那会让一条铜线上任取矿机
+ *     也排到最前面，比没有判据更糟）。这是有意的 fail-open，且不影响 b/c 两条判据。
+ */
+function targetRawMiners(world, goalKind) {
+    if (!goalKind) return [];
+    const res = world.resources;
+    if (!res || !res.size) return [];
+    return world.machines.filter(m => m.type === "miner" && res.get(`${m.x},${m.y}`) === goalKind);
+}
+
+/**
+ * 把 `obs` 里的带子重新索引成「带几何」的形态，并算出每条带子**能不能到 hub**。
+ *
+ * 为什么必须从 obs 重建：`normalizeHandles()` 按设计剥掉了 `x/y/r/cells/uid`（那是
+ * "prompt 不含坐标"的第一层保证）。几何判据只能用 obs —— 但句柄只能用句柄表。
+ * 本函数是这两者唯一的桥，且**两个方向都只读不写**。
+ *
+ * @returns {null|{belts:object[], hub:object, owner:Map<string,object>,
+ *                 exitCell:function, entryCell:function, handleOfUid:function}}
+ */
+function obsWorld(obs, tbl) {
+    const ents = (obs && obs.entities) || [];
+    if (!ents.length) return null;
+
+    /* uid → handle：句柄表里每个 entry 都带 uid（handles.mjs 的契约）。
+       缺 uid 的 entry 不进索引 —— 宁可少给一条，也不猜。 */
+    const handleOfUid = new Map();
+    for (const e of tbl.byHandle.values()) {
+        if (e && typeof e.uid === "number") handleOfUid.set(e.uid, e.handle);
+    }
+
+    const isBelt = e => e && (e.type === "belt" || e.type === "underground_belt");
+
+    /* footprint 展开的占位表：`x,y` → 实体。cutter 2×1 / hub 4×4 必须都覆盖，
+       否则「挨着 cutter 第二格」会被判成 air（这正是上一版注释里提到的坑）。 */
+    const owner = new Map();
+    for (const e of ents) {
+        const [w, h] = footprintOf(e);
+        for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) owner.set(`${e.x + dx},${e.y + dy}`, e);
+    }
+
+    /* 出口/入口格。字段名两种都认：obs 是 `rotation_variant`，旧夹具可能是 `rv`。
+       ⚠️ 只认 `rv` 会让所有带子按 rv=0 算方向 ⇒ 拓扑整体错乱且**不报错**。 */
+    const rvOf = e => (Number.isInteger(e.rotation_variant) ? e.rotation_variant
+        : (Number.isInteger(e.rv) ? e.rv : 0));
+    const cellAt = (e, dir) => [e.x + DIRV[dir][0], e.y + DIRV[dir][1]];
+    const exitCell = e => cellAt(e, beltExit(rvOf(e), Number(e.r) || 0));
+
+    const hub = ents.find(e => e && e.type === "hub") || null;
+    const belts = ents.filter(isBelt);
+    /* 每条带子只留拓扑需要的字段 + handle；**不把实体本身带出去**（避免下游误读坐标）。 */
+    const view = belts
+        .filter(e => handleOfUid.has(e.uid))
+        .map(e => ({ uid: e.uid, handle: handleOfUid.get(e.uid), x: e.x, y: e.y, r: Number(e.r) || 0, rv: rvOf(e) }));
+    const beltByCell = new Map();
+    for (const b of view) beltByCell.set(`${b.x},${b.y}`, b);
+    const beltAt = (x, y) => beltByCell.get(`${x},${y}`) || null;
+
+    /* 机器（含矿机）：只留建立"机器 → 出口格"所需的最少字段。 */
+    const machines = ents.filter(e => e && !isBelt(e) && e.type !== "hub");
+
+    /* 矿种：obs.resources 是三元组 [x, y, kind] 的数组（mod 的 include_resources）。
+       没带就是空表 —— 上层据此让"原料矿机"判据整体失效，而不是猜一个默认值。 */
+    const resources = new Map();
+    for (const r of (obs && Array.isArray(obs.resources)) ? obs.resources : []) {
+        if (Array.isArray(r) && r.length >= 3) resources.set(`${r[0]},${r[1]}`, r[2]);
+    }
+    const resourceKinds = new Set(resources.values());
+
+    /** 一台机器的**输出格**（世界坐标）：输出槽在本体上的格 + 出口方向前进一步。 */
+    const outCellsOf = (m) => {
+        const cells = [];
+        try {
+            const tpl = templateByBuildingVariant(m.type, m.variant || "default");
+            if (!tpl) return cells;
+            const ws = worldSlots(tpl, Number(m.r) || 0);
+            for (const s of ws.outputs) {
+                const x = m.x + s.cell[0] + DIRV[s.dir][0];
+                const y = m.y + s.cell[1] + DIRV[s.dir][1];
+                cells.push([x, y]);
+            }
+        } catch { /* 模板/旋转不支持：这台机器不贡献原料线，不猜 */ }
+        return cells;
+    };
+
+    /* hub 反向可达：种子 = 出口直接落进 hub 占地的带子；再沿"谁指向我"扩散。
+       hub 的占地用 footprint 算（4×4），不写死 `hub.x..hub.x+3`。 */
+    const hubCells = new Set();
+    if (hub) {
+        const [w, h] = footprintOf(hub);
+        for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) hubCells.add(`${hub.x + dx},${hub.y + dy}`);
+    }
+    const toHub = new Set();
+    const frontier = [];
+    for (const b of view) {
+        const [x, y] = exitCell(b);
+        if (hubCells.has(`${x},${y}`)) { toHub.add(b.uid); frontier.push(b); }
+    }
+    /* 反向 BFS 用「出口格 → 带子」的索引，O(n) 建表 + O(n) 扩散；
+       上一版是 O(n²) 的双层循环（163² 可接受，但真存档 5000 条带子会明显变慢）。 */
+    const into = new Map();          // "x,y" → 出口落在这里的带子
+    for (const b of view) {
+        const [x, y] = exitCell(b);
+        const k = `${x},${y}`;
+        if (!into.has(k)) into.set(k, []);
+        into.get(k).push(b);
+    }
+    while (frontier.length) {
+        const cur = frontier.pop();
+        for (const b of into.get(`${cur.x},${cur.y}`) || []) {
+            if (toHub.has(b.uid)) continue;
+            toHub.add(b.uid);
+            frontier.push(b);
+        }
+    }
+    for (const b of view) b.toHub = toHub.has(b.uid);
+
+    return {
+        belts: view,
+        hub,
+        owner,
+        machines,
+        resources,       // Map<"x,y", kind>；obs 没带 resources 时是空 Map（不是 null）
+        outCellsOf,
+        beltAt,
+        exitCell,
+    };
+}
+
+/** 机器/带子的真实占地（拿不到模板就按 1×1）。 */
+function footprintOf(e) {
+    try {
+        const tpl = templateByBuildingVariant(e.type, e.variant || "default");
+        if (tpl && Array.isArray(tpl.footprint) && tpl.footprint.length === 2) return tpl.footprint;
+    } catch { /* 拿不到就按 1×1 */ }
+    return [1, 1];
+}
+
+/** 带子 entry 在句柄表里的序号（用于确定性破平）。 */
+function byHandleOrder(byHandle, handle) {
+    let i = 0;
+    for (const k of byHandle.keys()) { if (k === handle) return i; i++; }
+    return 1e9;
+}
+
+/** 目标形状串 → 「原料 kind」：`RuRu----` → `RuRuRuRu`；推不出来就返回 null。 */
+function rawKindOf(goalShape) {
+    if (typeof goalShape !== "string") return null;
+    const m = /^([A-Z][a-z])([A-Z][a-z])/.exec(goalShape.trim());
+    if (!m || m[1] !== m[2]) return null;
+    return `${m[1]}${m[2]}${m[1]}${m[2]}`;
+}
+
+/** ("x,y") → 该格主人的 uid（owner 表是 footprint 展开的）。找不到返回 null。 */
+function exitOwnerUidAt(owner, x, y) {
+    const o = owner.get(`${x},${y}`);
+    return o && typeof o.uid === "number" ? o.uid : null;
+}
+
+/** 把一组带子按「出口/入口相邻」分成连通分量，返回每分量的带子数组。 */
+function connectedComponents(belts, posOf, exitOf) {
+    const byCell = new Map();
+    for (const e of belts) {
+        const c = posOf(e);
+        if (c) byCell.set(`${c[0]},${c[1]}`, e);
+    }
+    const seen = new Set();
+    const comps = [];
+    for (const start of belts) {
+        const sc = posOf(start);
+        if (!sc || seen.has(start.uid ?? start.handle)) continue;
+        const q = [start];
+        seen.add(start.uid ?? start.handle);
+        const list = [];
+        while (q.length) {
+            const cur = q.shift();
+            const c = posOf(cur);
+            if (!c) continue;
+            list.push(cur);
+            /* 邻居：出口格上是带子，或某条带子的出口指向我 */
+            const ex = exitOf(cur);
+            const cand = [];
+            if (ex) { const n = byCell.get(`${ex[0]},${ex[1]}`); if (n) cand.push(n); }
+            for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+                const n = byCell.get(`${c[0] + dx},${c[1] + dy}`);
+                if (n) { const e2 = exitOf(n); if (e2 && e2[0] === c[0] && e2[1] === c[1]) cand.push(n); }
+            }
+            for (const n of cand) {
+                const key = n.uid ?? n.handle;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                q.push(n);
+            }
+        }
+        comps.push(list);
+    }
+    return comps;
 }
 
 function renderBelts(tbl, selection, shownCount, omittedByBudget) {
@@ -623,7 +1030,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     const s5 = renderLastRound(lastRound);
     const s6 = INSTRUCTION;
 
-    const selection = pickBelts(tbl, diagList);
+    const selection = pickBelts(tbl, diagList, goalShape, obs);
     const fixed = [s2, s3Goal, s3Hub, s3Machines, s3Production, s3Budget, s4, s5, s6].join("\n\n");
 
     /* ── 截断：只动带子列表。目标 = min(token 预算, 字符硬上限) ── */
