@@ -40,6 +40,9 @@
 
 import { MACRO_NAMES, MACRO_SPECS } from "../macros/contract.mjs";
 import { BUDGET } from "./constants.mjs";
+/* 目标形状的配方（solver 算出来的）—— 模型不该自己猜该用哪些机器。
+   第四轮实验：5 次里 4 次误以为要 rotater，而 RuRu---- 只需要 cutter 切一半。 */
+import { recipeBlock } from "./recipe.mjs";
 /* 合法 machine 值来自 place.mjs 的 SUPPORTED_BUILDINGS —— 不在 prompt 里手抄第二份。
    实测教训：模型写过 "rotator"（应为 "rotater"），整轮白费；卡片里摆出枚举就不该再犯。 */
 import { SUPPORTED_BUILDINGS } from "../macros/place.mjs";
@@ -1116,6 +1119,17 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     const s1 = SYSTEM_PROMPT;
     const s2 = renderCards(candidates);
     const s3Goal = renderGoal(goalShape, goal, obs);
+    /* ★ 配方（S3 的一部分）：告诉模型这个形状该怎么造 ★
+     *
+     * 第四轮真 LLM 实验：5 次里 4 次坚持要 rotater，而 `RuRu----` 只需要 cutter 切一半。
+     * 模型在**形状代数**上瞎猜，而正确配方仓库里早就算得出来（proto/solver.mjs）。
+     * 这一段把 solver 的结论原样端上去 —— 不重算、不翻译错了。
+     *
+     * solver 不可用时**跳过**（返回 null），并在 blocks 里留 `recipe_unavailable` 原因，
+     * 绝不因为一段附加信息让整个 prompt 崩掉。
+     */
+    const recipe = recipeBlock(goalShape, { maxSteps: 8 });
+    const s3Recipe = recipe.text;
     const s3Hub = renderHub(tbl);
     const s3Machines = renderMachines(tbl, diagList);
     const s3Production = renderProduction(obs);
@@ -1125,13 +1139,15 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     const s6 = INSTRUCTION;
 
     const selection = pickBelts(tbl, diagList, goalShape, obs);
-    const fixed = [s2, s3Goal, s3Hub, s3Machines, s3Production, s3Budget, s4, s5, s6].join("\n\n");
+    /* 配方紧跟在 GOAL 之后：它是「这个目标怎么造」的一部分，不是独立信息 */
+    const goalAndRecipe = s3Recipe ? [s3Goal, s3Recipe].join("\n\n") : s3Goal;
+    const fixed = [s2, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, s5, s6].join("\n\n");
 
     /* ── 截断：只动带子列表。目标 = min(token 预算, 字符硬上限) ── */
     const targetChars = Math.min(Math.floor(limits.tokensMax * PROMPT_RULES.CHARS_PER_TOKEN), limits.inCharsMax);
     let shown = selection.ordered.length;
     let s3Belts = renderBelts(tbl, selection, shown, false);
-    let user = [s2, s3Goal, s3Hub, s3Machines, s3Belts, s3Production, s3Budget, s4, s5, s6].join("\n\n");
+    let user = [s2, goalAndRecipe, s3Hub, s3Machines, s3Belts, s3Production, s3Budget, s4, s5, s6].join("\n\n");
     let trimmed = 0;
     while (s1.length + user.length > targetChars && shown > 0) {
         shown -= 1;
@@ -1157,11 +1173,14 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         );
     }
 
-    const s3 = [s3Goal, s3Hub, s3Machines, s3Belts, s3Production, s3Budget].join("\n\n");
+    const s3 = [goalAndRecipe, s3Hub, s3Machines, s3Belts, s3Production, s3Budget].join("\n\n");
     const blocks = {
         S1: s1, S2: s2, S3: s3, S4: s4, S5: s5, S6: s6,
         s3_goal: s3Goal, s3_hub: s3Hub, s3_machines: s3Machines, s3_belts: s3Belts,
         s3_production: s3Production, s3_budget: s3Budget,
+        /* 配方段（可能为 null —— solver 不可用）。单独暴露，便于测试与排查 */
+        s3_recipe: s3Recipe,
+        recipe_unavailable: recipe.reason,
         chars,
         tokens_estimate: Math.round(chars / PROMPT_RULES.CHARS_PER_TOKEN),
         trimmed_belts: trimmed,
