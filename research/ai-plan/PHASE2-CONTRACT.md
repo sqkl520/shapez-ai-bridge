@@ -26,6 +26,37 @@
 - `L2-slots` 在「计划里没有机器」时返回 `skipped:true`（`verify_runtime.mjs:568`）；`L4-behavior` 只在给 `opts.behavior` 时运行，否则恒 `skipped`（`:714`）。
 - `contract.mjs` 自带断言 `MACRO_NAMES.length === 6`。**loop 不得新增宏**，`build_line` 不进入 v1 白名单。
 
+### F7（新增，最影响设计）：真实存档上 `connect` 一次都连不成
+
+**实测**（`src/agent/macro_execution_ops.test.mjs` 已固化为永久测试）：
+在 L5 真实存档（181 实体、5 台机器：hub#10000、cutter#10036、trash#10037、cutter#10902、trash#10901）上，
+穷举**所有**「机器→机器」组合（cutter 的 left/right × trash/hub 的 4 个 primary），共 160 次：
+
+```
+endpoint_not_a_port  96
+port_already_bound   26
+occupied             22
+bad_type             12
+target_already_fed    4
+成功                  0
+```
+
+**这意味着什么**：真实存档里已经有现成的带子网络。`connect` 的三条硬规则
+（不许抢已接货的出口、不许连接已有供料的入口、不许挤占机器格）把绝大多数组合挡在门外。
+**阶段 2 若把 loop 设计成"LLM 挑 connect"，在真实存档上寸步难行。**
+
+**对设计的修正（必须落到 Q3/Q4/Q5）**：
+1. `SLOT_STARVED` / `OUTPUT_UNROUTED` 的候选宏里，**`connect` 的权重必须下调**，
+   `replace_run` / `remove_run`（先拆后建）必须提到与 `connect` 同级甚至更高。
+   理由：真实存档的故障形态是"已有结构错了"，不是"缺一条线"。
+2. Q5 的 `planToTxOps` 必须支持 **「同一轮里先 remove_run 再 connect」** 的组合
+   （`connect` 吃的是**拆完之后**的世界 —— 但宏是纯规划器，看不到 tx 尚未执行的结果）。
+   ⇒ 这意味着**拆与建必须分两轮**：第一轮只拆，第二轮才连。写进 Q1 的状态机。
+3. Q6 的 `ROUNDS_MAX=6` 由此获得依据：L4 需要「拆 → 建 → 验 → 修」至少 3–4 轮周转。
+
+**这条事实同时构成对核心赌注的反向证据**：如果宏层在真实存档上连一条线都连不成，
+那么"宏动作层能把真实存档从 0 抬起来"这个假设就还没被证实 —— 阶段 2 的验收必须直面它。
+
 ---
 
 ## 1. 裁决表：`llm-layer-DESIGN.md` 逐项
