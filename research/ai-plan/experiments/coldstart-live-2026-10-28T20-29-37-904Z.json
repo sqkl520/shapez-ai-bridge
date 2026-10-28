@@ -1,0 +1,234 @@
+{
+  "generated_at": "2026-10-28T20:29:37.904Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "must_remove_uids": [
+      10209,
+      10149,
+      10143
+    ],
+    "must_place": [
+      {
+        "kind": "cutter",
+        "origin": [
+          4,
+          -13
+        ]
+      },
+      {
+        "kind": "trash",
+        "origin": [
+          4,
+          -14
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "runs": 5,
+    "mode": "live",
+    "truth_all_visible": 5,
+    "truth_partial_visible": 0,
+    "truth_none_visible": 0,
+    "picked_any_truth": 1,
+    "picked_all_truth": 0,
+    "plan_ok": 2,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 7109,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"No diagnosis; cut both visible miner feeds into L3 so the merged line delivers the required half-shape instead of full shapes.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B105\",\"B97\",\"B90\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"right\"}]},\"why\":\"Insert cutter+trash on the M3-to-L3 run, keeping the left half.\"},{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B98\",\"B91\",\"B82\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"right\"}]},\"why\":\"Insert cutter+trash on the other L3 input run so L3 sees only half-shapes.\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10139,
+        10206,
+        10208,
+        10147,
+        10148,
+        10149
+      ],
+      "selected_truth": [
+        10149
+      ],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:occupied",
+      "ops": null,
+      "mentioned_uids": [
+        10139,
+        10206,
+        10208,
+        10147,
+        10148,
+        10149
+      ],
+      "mentioned_truth": [
+        10149
+      ]
+    },
+    {
+      "run": 2,
+      "prompt_chars": 7109,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "",
+      "parsed": null,
+      "selected_uids": [],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": null,
+      "ops": null
+    },
+    {
+      "run": 3,
+      "prompt_chars": 7109,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Convert the cutter's left output belt into a rotater so its half-shape becomes the goal's top-row shape.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B84\"]},\"building\":[{\"kind\":\"rotater\"}]},\"why\":\"The cutter's left half needs a 90-degree rotation before reaching the hub.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10059
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 2,
+      "mentioned_uids": [
+        10059
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10059
+      ],
+      "removed_truth": [],
+      "removed_extra": [
+        10059
+      ],
+      "exact_match": false,
+      "placed": [
+        "rotater@-8,-12"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 4,
+      "prompt_chars": 7109,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Nothing reaches the hub and the factory has no rotater, so the cutter's two-quadrant half can never become the top-half RuRu---- shape; add a rotater on the cutter's kept output and send the mirror half to waste.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B84\",\"asCell\":true},\"machine\":\"rotater\",\"opts\":{\"replace_belts\":true}},\"why\":\"the cutter's left output is a two-quadrant half; rotating it produces the top-half RuRu---- the hub wants\"},{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B85\",\"asCell\":true},\"machine\":\"trash\",\"opts\":{\"replace_belts\":true}},\"why\":\"the cutter's other output carries the mirror half and would poison the delivery line\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10059,
+        10077
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:insert_machine:ambiguous_site",
+      "ops": null,
+      "mentioned_uids": [
+        10059,
+        10077
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 5,
+      "prompt_chars": 7109,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Goal RuRu---- is a rotated half-shape: the factory has a cutter but no rotater at all, so add one on the cutter's left output belt so the half gets turned into the top-row shape before it flows on.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B84\",\"asCell\":true},\"facing\":\"top\",\"machine\":\"rotater\",\"opts\":{\"replace_belts\":true}},\"why\":\"C1's left output half must be rotated to become RuRu----; the build has no rotater, and this converts the existing output run in place so the rotated half continues down the line.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10059
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 2,
+      "mentioned_uids": [
+        10059
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10059
+      ],
+      "removed_truth": [],
+      "removed_extra": [
+        10059
+      ],
+      "exact_match": false,
+      "placed": [
+        "rotater@-8,-12"
+      ],
+      "placed_match": false
+    }
+  ]
+}
