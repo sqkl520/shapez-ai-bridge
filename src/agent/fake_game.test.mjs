@@ -151,13 +151,18 @@ await t("debug_items：pathCount 等于实际返回的 paths 数", () => {
     assert.equal(it.paths.length, 20);
 });
 
-await t("debug_items：region 过滤按「整条 path 有交集」", () => {
+await t("debug_items：pathCount 是全局的，**不随 region 变**（与 mod 一致）", () => {
     const g = FakeGame.fromFiles();
-    const it = g.debugItems({ region: [4, -16, 6, -13] });
-    assert.ok(it.paths.length > 0 && it.paths.length < 20, "region 过滤没生效：" + it.paths.length);
-    for (const p of it.paths) {
-        assert.ok(p.cells.some(([x, y]) => x >= 4 && x <= 6 && y >= -16 && y <= -13), "返回了与 region 无交集的 path");
-    }
+    const all = g.debugItems();
+    const sub = g.debugItems({ region: [4, -16, 6, -13] });
+    assert.equal(all.pathCount, 20);
+    assert.equal(sub.pathCount, 20,
+        "mod 的 pathCount 是全局路径数（shapez-ai-bridge.js:997），传 region 也不该变 —— "
+        + "若 FakeGame 按 region 过滤，mock 里「缩 region 重读」能解决 PATHS_TRUNCATED，"
+        + "而真机根本没这回事");
+    assert.equal(sub.paths.length, all.paths.length,
+        "mod 的 paths 不按 region 过滤（region 只用于 belts/ejectors 这类逐格列表）");
+    assert.equal(sub.truncatedPaths, false);
 });
 
 await t("production 形状与 verify 的消费口径一致", () => {
