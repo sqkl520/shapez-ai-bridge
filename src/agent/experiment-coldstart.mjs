@@ -44,15 +44,90 @@ import { connect } from "./macros/connect.mjs";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "../..");
 
-/** L4 冷启动的正解：删这三条带子，放 cutter + trash。 */
+/**
+ * 判据：什么叫"做对了"。
+ *
+ * ⚠️ 这里曾经写死了 `must_place: cutter@(4,-13) + trash@(4,-14)` 与
+ * `must_remove_uids: [10209,10149,10143]` —— 那是**历史正解的坐标**，不是唯一可行解。
+ *
+ * 2026-10-29 实测发现：在 x=4/x=5 这条向上链上，**五个位置全部有效**：
+ *
+ *   y=-10..-11 → removes [10206,10139,10146] placed cutter@4,-10 trash@4,-11  ✓
+ *   y=-11..-12 → removes [10208,10206,10147] placed cutter@4,-11 trash@4,-12  ✓
+ *   y=-12..-13 → removes [10209,10208,10148] placed cutter@4,-12 trash@4,-13  ✓
+ *   y=-13..-14 → removes [10143,10209,10149] placed cutter@4,-13 trash@4,-14  ✓  ← 历史正解
+ *   y=-14..-15 → removes [10144,10143,10150] placed cutter@4,-14 trash@4,-15  ✓
+ *
+ * 而 `L4-PLAN-A0.md` 自己写的理由是「向上段**任意位置**插得进去」——
+ * 也就是说 y=-13 只是**当时选的那个**，不是唯一正确的那个。
+ *
+ * 拿它当唯一正解，会把"在正确链上、插在别的有效位置"也算成失败 ——
+ * 这是**判据偏差**，会系统性低估模型。所以改成"结构判据"：
+ *
+ *   ① 必须**删掉**这条链上的带子（不是删别处的）
+ *   ② 必须在这条链上放下 cutter + trash
+ *   ③ cutter 的落点必须在 x=4/x=5 这条向上链上（y ∈ [-16,-8]），且 trash 在它下游一格
+ *
+ * 这样"五个位置中的任何一个"都算对 —— 因为物理上它们都对。
+ */
 const GROUND_TRUTH = Object.freeze({
     shape: "RuRu----",
     level: 4,
-    /** 必须被删掉的带子（uid） */
-    must_remove_uids: [10209, 10149, 10143],
-    /** 必须放下的建筑（kind → origin） */
-    must_place: [{ kind: "cutter", origin: [4, -13] }, { kind: "trash", origin: [4, -14] }],
+    /** 历史正解（人算坐标那次用的）。仅供对照展示，**不再**作为唯一判据。 */
+    historical: {
+        must_remove_uids: [10209, 10149, 10143],
+        must_place: [{ kind: "cutter", origin: [4, -13] }, { kind: "trash", origin: [4, -14] }],
+    },
+    /**
+     * 结构判据：这条向上链的可插入区间。
+     * x ∈ {4,5}（并排两条），y ∈ [-16,-8]（整段向上链）。
+     * cutter 占 (x,y)+(x+1,y)，trash 落在 (x, y+1)（left 槽喷口）。
+     */
+    chain: { xs: [4, 5], yMin: -16, yMax: -8 },
+    /** 这条链上的带子 uid（删的必须是这条链的） */
+    chain_uids: [
+        10144, 10143, 10150, 10149, 10144, 10209, 10208, 10148, 10147,
+        10206, 10146, 10139, 10141, 10140, 10090, 10091,
+    ],
 });
+
+/** 判断一个 plan 是否"结构上正确"：在目标链上插入了 cutter，没碰别的地方。 */
+function judgePlan(txp, obsEntities) {
+    const ops = (txp.ops || []);
+    const places = ops.filter(o => o.op === "place");
+    const cut = places.find(o => o.building === "cutter");
+    const tra = places.find(o => o.building === "trash");
+    const { xs, yMin, yMax } = GROUND_TRUTH.chain;
+
+    const onChain = cut && xs.includes(cut.x) && cut.y >= yMin && cut.y <= yMax;
+    /* trash 必须在 cutter 的 left 槽喷口。
+     *
+     * 几何：cutter 的 left 槽 `cell[0,0] dir="bottom"` 的**输出**朝 top ⇒ 喷口在
+     * `(x, y-1)`（y 轴向下，所以"北"是 y 减）。实测：cutter@(4,-13) 的 left 喷口是
+     * (4,-14) = y-1，不是 y+1。
+     *
+     * ⚠️ 这里曾经写成 `y + 1`，于是**历史正解自己被判成失败** ——
+     * 一个把正确答案判错的判据，比没有判据更糟（它会让人以为模型错了）。 */
+    const trashOk = tra && cut && tra.x === cut.x && tra.y === cut.y - 1;
+
+    /* 删掉的必须都是这条链上的带子（不能删别处的） */
+    const removed = (txp.destroys || []);
+    const chainSet = new Set((obsEntities || [])
+        .filter(e => e.type === "belt" && xs.includes(e.x) && e.y >= yMin && e.y <= yMax)
+        .map(e => e.uid));
+    const removedFromChain = removed.filter(u => chainSet.has(u));
+    const removedElsewhere = removed.filter(u => !chainSet.has(u));
+
+    return {
+        ok: !!onChain && !!trashOk && removedElsewhere.length === 0 && removedFromChain.length >= 2,
+        onChain, trashOk,
+        cutter_at: cut ? [cut.x, cut.y] : null,
+        trash_at: tra ? [tra.x, tra.y] : null,
+        removed_from_chain: removedFromChain.length,
+        removed_elsewhere: removedElsewhere.length,
+        same_as_historical: !!(cut && cut.x === 4 && cut.y === -13),
+    };
+}
 
 /* ─────────────────────── 参数 ─────────────────────── */
 
@@ -129,7 +204,7 @@ async function attemptOnce({ runIndex, client, verbose }) {
     for (const h of handleToUid.keys()) {
         if (new RegExp(`\\b${h}\\b`).test(text)) visibleHandles.add(h);
     }
-    const truthHandles = GROUND_TRUTH.must_remove_uids.map(u => uidToHandle.get(u));
+    const truthHandles = GROUND_TRUTH.historical.must_remove_uids.map(u => uidToHandle.get(u));
     const truthVisible = truthHandles.filter(h => h && visibleHandles.has(h));
 
     /* 调用 LLM */
@@ -188,8 +263,8 @@ async function attemptOnce({ runIndex, client, verbose }) {
 
     result.mentioned_uids = mentioned;
     result.selected_uids = targeted;
-    result.selected_truth = targeted.filter(u => GROUND_TRUTH.must_remove_uids.includes(u));
-    result.mentioned_truth = mentioned.filter(u => GROUND_TRUTH.must_remove_uids.includes(u));
+    result.selected_truth = targeted.filter(u => GROUND_TRUTH.historical.must_remove_uids.includes(u));
+    result.mentioned_truth = mentioned.filter(u => GROUND_TRUTH.historical.must_remove_uids.includes(u));
 
     /* 过 coords 层 */
     const coords = assertNoHumanCoords(parsed.plan);
@@ -227,19 +302,31 @@ async function attemptOnce({ runIndex, client, verbose }) {
     result.ops = txp.ops.length;
     result.destroys = txp.destroys;
 
-    /* 关键判据：它删的是不是正好那三条？ */
-    const removed = new Set(txp.destroys || []);
-    result.removed_truth = GROUND_TRUTH.must_remove_uids.filter(u => removed.has(u));
-    result.removed_extra = [...removed].filter(u => !GROUND_TRUTH.must_remove_uids.includes(u));
-    result.exact_match =
-        result.removed_truth.length === GROUND_TRUTH.must_remove_uids.length
-        && result.removed_extra.length === 0;
+    /* ★ 判据：**结构正确**，不是"坐标与历史正解逐位相同" ★
+     *
+     * 见 GROUND_TRUTH 的注释：这条向上链上五个位置都有效，
+     * 拿历史那一个当唯一正解会系统性低估模型。
+     *
+     * 仍然保留两个"与历史正解的关系"字段（`same_as_historical` / `removed_truth`），
+     * 用于**展示**，不用于判成败。
+     */
+    const verdict = judgePlan(txp, obs.entities);
+    result.verdict = verdict;
+    result.exact_match = verdict.ok;                 // ← 统计口径改成结构判据
+    result.same_as_historical = verdict.same_as_historical;
+    result.cutter_at = verdict.cutter_at;
+    result.trash_at = verdict.trash_at;
+    result.removed_elsewhere = verdict.removed_elsewhere;
 
-    /* 放的建筑对不对 */
+    /* 与历史正解的重合度（仅展示，供人判断"它选的是不是那个人选的位置"） */
+    const removed = new Set(txp.destroys || []);
+    const HIST = GROUND_TRUTH.historical.must_remove_uids;
+    result.removed_truth = HIST.filter(u => removed.has(u));
+
+    /* 放的建筑（字符串形式，便于读日志） */
     const places = (txp.ops || []).filter(o => o.op === "place");
     result.placed = places.map(o => `${o.building}@${o.x},${o.y}`);
-    result.placed_match = GROUND_TRUTH.must_place.every(g =>
-        places.some(o => o.building === g.kind && o.x === g.origin[0] && o.y === g.origin[1]));
+    result.placed_match = verdict.ok;                // ← 与 exact_match 同口径
 
     if (verbose) {
         console.log(`  [run ${runIndex}] visible=${visibleHandles.size} truthVisible=${truthVisible.length}/3 `
@@ -370,8 +457,8 @@ async function main() {
         console.log("═".repeat(66));
         console.log(`冷启动实验 · ${n} 次 · mode=${args.mode}`);
         console.log("═".repeat(66));
-        console.log(`正解：删 uid ${GROUND_TRUTH.must_remove_uids.join(",")}，`
-            + `放 cutter@(4,-13) + trash@(4,-14)`);
+        console.log(`判据：在 x∈{4,5}、y∈[-16,-8] 的向上链上插入 cutter + trash（该链上有 5 个有效位置），`
+            + `历史正解是 cutter@(4,-13) + trash@(4,-14)，但其它四个位置同样有效`);
         console.log("");
         console.log(`① prompt 里能看到几条正解带子？`);
         console.log(`    全看到 (3/3) : ${sum.truth_all_visible}/${n}`);
