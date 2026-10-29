@@ -81,7 +81,19 @@ export const DIAG_CODES = Object.freeze({
     OUTPUT_UNROUTED: "L2: an output slot has no downstream",
     FLOW_UNREACHABLE: "L3: a declared flow does not reach its target",
     FLOW_UNVERIFIED: "L3 was degraded (no flows supplied) — not a pass",
-    DEAD_END: "L3: a belt run terminates with no acceptor",
+
+    /* ── 结构层（P-a0，`loop/structural.mjs`） ──
+     * 这一组是纯拓扑判据，**不依赖「能不能走到 hub」**；可达性只用于排序（`evidence.tier`）。
+     * 旧 `DEAD_END` 把「可达」写进了触发条件，导致它与可达性互斥、恒不触发
+     * （`research/ai-plan/tmp/DIAGNOSE-BASELINE.md` §3b 已给出完整证明）。
+     *
+     * 判据写在说明里，因为「码有名字、判据没字段」这个项目已经出过整轮假绿。 */
+    DEAD_END: "L2: a belt/tunnel run's exit cell has no entity at all (pure topology; 'entity present but rejects' is BELT_HANDOFF_REJECTED)",
+    BELT_HANDOFF_REJECTED: "L2: a belt/tunnel pushes into an entity that does not accept from that direction",
+    CHAIN_UNFED: "L2: a belt run has no effective supply upstream (empty cell, a source that never ejects, or a barren miner)",
+    WASTE_NO_SINK: "L3: a declared waste slot's run ends at {trash, empty, rejected} while the world has zero trash buildings",
+    RAW_MATERIAL_MISSING: "L4: the recipe needs mine but the world has zero miners",
+
     NO_PRODUCTION: "L4: nothing produced",
     WRONG_SHAPE_PRODUCED: "L4: production exists but under a different shape key",
     PRODUCED_NOT_DELIVERED: "L4: produced > 0 but delivered == 0",
@@ -246,9 +258,35 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["insert_machine", 3],
     ]),
     FLOW_UNVERIFIED: cand([]),        // loop 自己的缺陷：先补 flows，不许猜
+
+    /* ── 结构层（P-a0） ──
+     * 这些码的判据是纯拓扑的，所以候选宏也可以按「几何上怎么修」来给：
+     *   · 断头 / 无处可倒 ⇒ 要么接上、要么丢进 trash；
+     *   · 拒收 ⇒ 来向接错了，`replace_run`（重铺那一段）比 `connect` 更常是对的；
+     *   · 无源头 ⇒ 缺的是上游，`connect` / `insert_machine`（补矿机或工序机）；
+     *   · 0 台矿机 ⇒ 只能先放矿机。 */
     DEAD_END: cand([
         ["trash_unused", 7],
         ["extend_line", 4],
+        ["connect", 3],
+    ]),
+    BELT_HANDOFF_REJECTED: cand([
+        ["replace_run", 6],
+        ["connect", 5],
+        ["trash_unused", 3],
+    ]),
+    CHAIN_UNFED: cand([
+        ["connect", 8],
+        ["insert_machine", 6],
+        ["extend_line", 4],
+    ]),
+    WASTE_NO_SINK: cand([
+        ["insert_machine", 7],        // insert_machine 的 allowed 表里有 trash（place.mjs:378）
+        ["connect", 4],
+        ["trash_unused", 4],
+    ]),
+    RAW_MATERIAL_MISSING: cand([
+        ["insert_machine", 9],        // 只有「放一台矿机」能修
         ["connect", 3],
     ]),
 
