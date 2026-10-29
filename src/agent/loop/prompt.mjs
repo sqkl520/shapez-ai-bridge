@@ -264,8 +264,16 @@ const MACRO_EXAMPLES = Object.freeze({
            第三轮实验 5/5 次都栽在这一处，见 SYSTEM_PROMPT rule 11）。
            trash 的 `port` 是 `"right"` 不是 `"left"`：cutter 只有右列是废料
            （`op-templates.mjs` 的 `wasteRoles:["right"]`）。第三轮实验 #5 就是因为这里写了
-           left 而 `precondition_failed` —— 示例本身写错，模型照着抄，这一轮就白费了。 */
-        args: { region: { $path_of: ["B7", "B8", "B9"] }, building: [{ kind: "cutter" }, { kind: "trash", port: "right" }] },
+           left 而 `precondition_failed` —— 示例本身写错，模型照着抄，这一轮就白费了。
+
+           `confirm_waste: true` 也写进示例：第六轮实验 #3 的配方、链、机器全对，
+           只因为没写这个字段而 `precondition_failed`。
+           它的语义是"我知道 trash 会永久销毁这条还在供货的链" —— 在"把一段活链改造成
+           cutter+trash"这个最常见的场景里，**它总是需要的**。示例里缺它，模型就漏。 */
+        args: {
+            region: { $path_of: ["B7", "B8", "B9"] },
+            building: [{ kind: "cutter" }, { kind: "trash", port: "right", confirm_waste: true }],
+        },
     },
     trash_unused: { macro: "trash_unused", args: { outlet: { $ref: "C1", port: "left" }, opts: { confirm_waste: true } } },
 });

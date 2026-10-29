@@ -1452,7 +1452,9 @@ export function replaceRun(a, b) {
             code: "precondition_failed", field: `${trashSpecs[0].at}.confirm_waste`,
             message: `trash 会剪断一条**仍在供货**的链：喷口格 ${JSON.stringify(cut.cell)} 上的带子 uid=${cut.uid} `
                 + `还有下游 ${cut.downstream}${cut.downstreamCell ? `@(${cut.downstreamCell[0]},${cut.downstreamCell[1]})` : ""}`,
-            hint: "confirm_waste 是**一次签字覆盖两层后果**：① 这一侧是废料；② 即使该 role ∈ 模板 wasteRoles、"
+            hint: "**怎么改：在 building 里那台 trash 上写 `confirm_waste: true`。** 例如 "
+                + '`building: [{kind:"cutter"}, {kind:"trash", port:"right", confirm_waste:true}]`。'
+                + "confirm_waste 是**一次签字覆盖两层后果**：① 这一侧是废料；② 即使该 role ∈ 模板 wasteRoles、"
                 + "即使喷口格上的带子还有下游，也确认要永久销毁。"
                 + "接 trash 是永久销毁一条活链，比「接一个死路」危险一个量级，所以不可省。"
                 + `本次会剪：${planCuts.map(c => `${c.uid}→${c.downstream}`).join(", ")}。`,
