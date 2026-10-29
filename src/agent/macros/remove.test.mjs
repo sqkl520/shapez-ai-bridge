@@ -1008,6 +1008,47 @@ t("全局：跑完 40+ 次调用后 entities 数组逐字节未变（宏零写�
  * 报告
  * ══════════════════════════════════════════════════════════════════════════ */
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * 第六轮：2 格宽机器放不进 1 格宽 region 时，报错必须**指出怎么改**
+ *
+ * 2026-10-28 第五轮实测：模型对两条并排链各调一次 replace_run，
+ * 每次 region 只有 1 列宽 ⇒ 2×1 的 cutter 放不下 ⇒ occupied。
+ * 原来的 hint 写「扩大到覆盖断口两侧」—— 对"分两次调用"这个真实病因毫无帮助。
+ * ══════════════════════════════════════════════════════════════════════════ */
+{
+    const { replaceRun } = await import("./remove.mjs");
+    /* 用 L4-obs 夹具（含 goal/hub）；SAVE 是另一份只有 entities 的 dump */
+    const obsPath = path.resolve(HERE, "../../../test/fixtures/saves/L4-obs.json");
+    const obs = JSON.parse(fs.readFileSync(obsPath, "utf8")).result;
+    const ctx2 = { entities: obs.entities };
+
+    /* (4,-14)..(4,-11) 是 x=4 那一列 —— 1 格宽，放不下 2×1 的 cutter */
+    const r = replaceRun(
+        { region: [4, -14, 4, -11], building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+        ctx2,
+    );
+    t("2×1 机器放进 1 格宽 region ⇒ 必须拒绝", () => {
+        ok(!r.ok, "竟然成功了 —— 1 格宽不该放得下 2×1 的 cutter");
+        eq(r.error.code, "occupied", `期望 occupied，实得 ${r.error.code}`);
+    });
+
+    t("★ 拒绝提示说清「并排的另一条链也要框进来」", () => {
+        const hint = String((r.error && r.error.hint) || "");
+        ok(/并排/.test(hint), `hint 没提到并排：${hint.slice(0, 160)}`);
+        ok(/\$path_of/.test(hint), `hint 没给出 \$path_of 的写法：${hint.slice(0, 160)}`);
+        ok(/不要分两次|而不是分两次/.test(hint), `hint 没点明不要分两次调用：${hint.slice(0, 160)}`);
+    });
+
+    /* 对照：把两列一起框进去就能成 —— 证明提示说的是对的 */
+    t("（对照）两列一起框 ⇒ 成功（证明提示给的方向是对的）", () => {
+        const good = replaceRun(
+            { region: [4, -15, 5, -10], building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+            ctx2,
+        );
+        ok(good.ok, good.ok ? "" : `${good.error.code}: ${good.error.message}`);
+    });
+}
+
 for (const [st, name, msg] of results) {
     if (st === "ok") console.log(`\x1b[32m✓\x1b[0m ${name}`);
     else console.log(`\x1b[31m✗\x1b[0m ${name}\n      ${msg}`);
