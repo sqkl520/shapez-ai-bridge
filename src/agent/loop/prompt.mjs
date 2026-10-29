@@ -193,9 +193,30 @@ const SYSTEM_PROMPT = [
     "    macro will then refuse the call (occupied / not_a_run) even though your handles were right.",
     "    $path_of returns exactly the cells of the named entities. If those cells do not fill their",
     "    own rectangle (the run bends, or you picked across two separate runs), the call is REJECTED",
-    "    and the error tells you which cells are missing - split it into smaller calls instead of",
-    "    guessing a bigger region. On a straight one-wide run the two operators give the same region;",
-    "    that is the only case where $bbox_of is equally safe.",
+    "    and the error tells you which cells are missing.",
+    "    On a straight one-wide run the two operators give the same region; that is the only case",
+    "    where $bbox_of is equally safe.",
+    "",
+    /* ★ 12：并排链必须**合并**成一次调用（2026-10-28 第五轮实验的直接产物）★
+     *
+     * 实测：模型分别对每条链调一次 replace_run，每次 `$path_of` 只给一列
+     * ⇒ region 宽 1 格 ⇒ **2×1 的 cutter 根本放不下** ⇒ `occupied`。
+     * 而正确做法是把两条链的句柄**放进同一次调用**：`$path_of([...链A..., ...链B...])`
+     * ⇒ region `[4,-15,5,-10]`（宽 2）⇒ 成功。
+     *
+     * 第五轮 #3 三条都对（配方对、链对、机器对），只差这一步。
+     * 规则 11 原来写的是 "split it into smaller calls" —— 那句话在这里是**反向误导**，
+     * 已改成"并排的链要合并，拐弯的链才拆分"。 */
+    "12. A 2-cell-wide machine (cutter, stacker, mixer, balancer) needs a region at least 2 cells wide.",
+    "    If your targets form TWO parallel runs that feed the same place, put the handles of BOTH",
+    "    runs into ONE call - do not fire one call per run:",
+    '      replace_run { region: {"$path_of": [...run A handles..., ...run B handles...]}, ... }',
+    "    Splitting a parallel pair into two calls gives each call a 1-wide region, and a 2-wide",
+    "    machine cannot fit in it. Only split when the chain BENDS (the cells no longer fill their",
+    "    own rectangle) - that is a different situation from two parallel runs.",
+    "    If you are unsure how many runs feed the same place, make ONE call with every handle you",
+    "    consider relevant; the macro rejects a region that cannot hold the machine instead of",
+    "    silently placing it somewhere else.",
     "6. Argument names must be copied verbatim from the macro card. Unknown or misspelled arguments",
     "   (e.g. source instead of from) are rejected and waste a round.",
     "7. A multi-CELL machine is addressed by ONE cell (use asCell) or by the handle of an existing",

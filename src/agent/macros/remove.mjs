@@ -1386,10 +1386,24 @@ export function replaceRun(a, b) {
         }
     }
     if (!cands.length) {
+        /* ★ 报错要指出**怎么改**，不只是"不行" ★
+         *
+         * 2026-10-28 第五轮实测：模型对两条并排链**各调一次** replace_run，
+         * 每次 region 只有 1 列宽 ⇒ 2×1 的 cutter 放不下 ⇒ 这里报 occupied。
+         * 而原来的 hint 写的是「扩大到覆盖断口两侧」—— 那句话对"分两次调用"这个
+         * 真实病因完全没帮助，模型只会把同一个 1 列 region 再扩大一点点。
+         *
+         * 现在把最可能的病因直接说出来：region 太窄，把并排的另一列也框进来。 */
         return failure(A, {
             code: "occupied", field: "region",
             message: `${primary.kind}(${w}×${h}) 在 region 里没有任何合法落点（会压到机器或越界）`,
-            hint: `region 至少要有 ${w}×${h} 的连续带子/空格，且不含机器；扩大到覆盖断口两侧。`,
+            hint: w >= 2
+                ? `region 至少要 ${w} 格宽、${h} 格高，且那一片不含机器。`
+                    + `**最常见的原因：你想改的两条链是并排的，但只框了一条。**`
+                    + `把并排的另一条链的句柄也放进同一次调用的 region（例如 $path_of([...链A, ...链B])），`
+                    + `而不是分两次调用 —— 分开调每次只有 1 列宽，${w}×${h} 的机器放不进去。`
+                : `region 至少要有 ${w}×${h} 的连续带子/空格，且不含机器；扩大到覆盖断口两侧。`,
+            detail: { region, footprint: [w, h], occupied_by_machine: true },
         });
     }
     /* 先要「推演无冲突」的，再按 score；都冲突时取冲突最少的那个来讲诊断 */
