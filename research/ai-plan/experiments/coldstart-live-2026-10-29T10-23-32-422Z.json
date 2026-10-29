@@ -1,0 +1,547 @@
+{
+  "generated_at": "2026-10-29T10:23:32.422Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "must_remove_uids": [
+      10209,
+      10149,
+      10143
+    ],
+    "must_place": [
+      {
+        "kind": "cutter",
+        "origin": [
+          4,
+          -13
+        ]
+      },
+      {
+        "kind": "trash",
+        "origin": [
+          4,
+          -14
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "runs": 10,
+    "mode": "live",
+    "truth_all_visible": 10,
+    "truth_partial_visible": 0,
+    "truth_none_visible": 0,
+    "picked_any_truth": 4,
+    "picked_all_truth": 3,
+    "plan_ok": 4,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 8735,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Recipe is mine RuRuRuRu then cut to RuRu----; the existing cutter C1 already produces both halves but neither output reaches the hub, so route its outputs to a free hub inlet.\",\"calls\":[{\"macro\":\"connect\",\"args\":{\"from\":{\"$ref\":\"B85\"},\"to\":{\"$ref\":\"H1\"}},\"why\":\"C1's right/kept half (RuRu----) must reach the hub\"},{\"macro\":\"connect\",\"args\":{\"from\":{\"$ref\":\"B84\"},\"to\":{\"$ref\":\"H1\"}},\"why\":\"C1's left/waste half must not dead-end and jam the cutter, so also give it an outlet\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10077,
+        10000,
+        10059
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:connect:endpoint_not_a_port",
+      "ops": null,
+      "mentioned_uids": [
+        10077,
+        10000,
+        10059
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 2,
+      "prompt_chars": 8735,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Nothing reaches the hub as the goal shape: the mined lines run straight to the hub with no cutter, so I convert a pair of parallel live belt runs into the cutter the recipe needs.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B110\",\"B111\"]},\"building\":{\"kind\":\"cutter\"}},\"why\":\"the two parallel miner feeders that run toward the hub get a cutter in place so mined shapes arrive cut as the goal half\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10086,
+        10116
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 3,
+      "mentioned_uids": [
+        10086,
+        10116
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10086,
+        10116
+      ],
+      "removed_truth": [],
+      "removed_extra": [
+        10086,
+        10116
+      ],
+      "exact_match": false,
+      "placed": [
+        "cutter@2,-9"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 3,
+      "prompt_chars": 8735,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The hub's three connected inlets are fed by uncut mined shapes, so nothing matches the goal; I'll cut them to RuRu---- by replacing the inlet belt run with a cutter (kept right half) plus a trash on the waste side.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B135\",\"B136\",\"B137\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"The recipe needs cut(half=right) from the mined RuRuRuRu; the connected hub inlets carry the uncut shape, so converting them in place yields the goal half on the delivery side and trashes the waste half.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "resolveRefs:PATH_NOT_RECT",
+      "ops": null,
+      "mentioned_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 4,
+      "prompt_chars": 8735,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The recipe only needs mine+cut, and this mined belt pair to L3 has no cutter in it, so I convert the parallel pair into a cutter stage with the waste side trashed.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B63\",\"B64\",\"B69\",\"B70\",\"B81\",\"B82\",\"B90\",\"B91\",\"B97\",\"B98\",\"B105\",\"B106\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"Both parallel runs carry the mined shape into L3 but the run has no cutter; replacing the pair in place adds the cutter (waste half trashed) required by the recipe.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10144,
+        10151,
+        10143,
+        10150,
+        10209,
+        10149,
+        10208,
+        10148,
+        10206,
+        10147,
+        10139,
+        10146
+      ],
+      "selected_truth": [
+        10143,
+        10209,
+        10149
+      ],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10144,
+        10151,
+        10143,
+        10150,
+        10209,
+        10149,
+        10208,
+        10148,
+        10206,
+        10147,
+        10139,
+        10146
+      ],
+      "mentioned_truth": [
+        10143,
+        10209,
+        10149
+      ],
+      "destroys": [
+        10139,
+        10146,
+        10206
+      ],
+      "removed_truth": [],
+      "removed_extra": [
+        10139,
+        10146,
+        10206
+      ],
+      "exact_match": false,
+      "placed": [
+        "cutter@4,-10",
+        "trash@4,-11"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 5,
+      "prompt_chars": 8735,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Cutter C1 already cuts the mined full shape, but its discarded half is still on a belt with nowhere to go, so the cutter jams and the hub receives nothing; put a trash on that waste output.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B84\"]},\"building\":[{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"The cutter's left output is the waste half; trashing it keeps the cutter running so the kept half can travel on to the hub and finally satisfy the RuRu---- delivery.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10059
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:precondition_failed",
+      "ops": null,
+      "mentioned_uids": [
+        10059
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 6,
+      "prompt_chars": 8735,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The two parallel runs feeding the balancer are the spot to place the recipe's cut step: convert them in place to a cutter that keeps the right half and trashes the waste.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B63\",\"B69\",\"B81\",\"B90\",\"B97\",\"B105\",\"B64\",\"B70\",\"B82\",\"B91\",\"B98\",\"B106\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"Recipe needs exactly one cutter (half=right); the two parallel runs feed the same balancer and together give a wide-enough region for the cutter, with the waste half going to trash.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10144,
+        10143,
+        10209,
+        10208,
+        10206,
+        10139,
+        10151,
+        10150,
+        10149,
+        10148,
+        10147,
+        10146
+      ],
+      "selected_truth": [
+        10143,
+        10209,
+        10149
+      ],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10144,
+        10143,
+        10209,
+        10208,
+        10206,
+        10139,
+        10151,
+        10150,
+        10149,
+        10148,
+        10147,
+        10146
+      ],
+      "mentioned_truth": [
+        10143,
+        10209,
+        10149
+      ],
+      "destroys": [
+        10139,
+        10146,
+        10206
+      ],
+      "removed_truth": [],
+      "removed_extra": [
+        10139,
+        10146,
+        10206
+      ],
+      "exact_match": false,
+      "placed": [
+        "cutter@4,-10",
+        "trash@4,-11"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 7,
+      "prompt_chars": 8735,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The known delivery cells into the hub are the three inlet belts, so cut them in place with a cutter rather than adding a new parallel line.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B135\",\"B136\",\"B137\"]},\"building\":\"cutter\"},\"why\":\"Recipe needs the mined shape cut in half before delivery; these are the only delivery-side belts we have handles for, and putting all of them in one call lets the cutter span the parallel inlet lanes.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "resolveRefs:PATH_NOT_RECT",
+      "ops": null,
+      "mentioned_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 8,
+      "prompt_chars": 8735,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"C1 already performs the cut, but its outputs lead nowhere: send the kept half to the hub and sink the waste half into the existing trash so the cutter keeps running.\",\"calls\":[{\"macro\":\"connect\",\"args\":{\"from\":{\"$ref\":\"B84\"},\"to\":{\"$ref\":\"H1\"}},\"why\":\"kept half of the cut shape must reach the hub inlet\"},{\"macro\":\"connect\",\"args\":{\"from\":{\"$ref\":\"B85\"},\"to\":{\"$ref\":\"T1\"}},\"why\":\"discarded half must be trashed so the cutter does not back up\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10059,
+        10000,
+        10077,
+        10037
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:connect:port_already_bound",
+      "ops": null,
+      "mentioned_uids": [
+        10059,
+        10000,
+        10077,
+        10037
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 9,
+      "prompt_chars": 8735,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The two parallel miner lines (B112…B63 and B106…B64) merge into balancer L3 uncut; convert that merge into the recipe's cut step — cutter with the left half trashed — so the kept half continues on toward delivery.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B112\",\"B105\",\"B97\",\"B90\",\"B81\",\"B69\",\"B63\",\"B106\",\"B98\",\"B91\",\"B82\",\"B70\",\"B64\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"Both parallel runs feed the same place, so they go in one call; this turns the mined RuRuRuRu into RuRu---- per the recipe instead of delivering it uncut.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10138,
+        10139,
+        10206,
+        10208,
+        10209,
+        10143,
+        10144,
+        10146,
+        10147,
+        10148,
+        10149,
+        10150,
+        10151
+      ],
+      "selected_truth": [
+        10209,
+        10143,
+        10149
+      ],
+      "plan_ok": false,
+      "plan_why": "resolveRefs:PATH_NOT_RECT",
+      "ops": null,
+      "mentioned_uids": [
+        10138,
+        10139,
+        10206,
+        10208,
+        10209,
+        10143,
+        10144,
+        10146,
+        10147,
+        10148,
+        10149,
+        10150,
+        10151
+      ],
+      "mentioned_truth": [
+        10209,
+        10143,
+        10149
+      ]
+    },
+    {
+      "run": 10,
+      "prompt_chars": 8735,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The only visible belts carry the mined full shape on two parallel runs into L3 but the recipe needs a cut before delivery, so I convert that segment into a cutter in place.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B69\",\"B63\",\"B70\",\"B64\"]},\"building\":[{\"kind\":\"cutter\"}]},\"why\":\"two parallel runs feeding the same balancer: one 2-wide region so the cutter fits, cutting the mined RuRuRuRu into RuRu----\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10143,
+        10144,
+        10150,
+        10151
+      ],
+      "selected_truth": [
+        10143
+      ],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 3,
+      "mentioned_uids": [
+        10143,
+        10144,
+        10150,
+        10151
+      ],
+      "mentioned_truth": [
+        10143
+      ],
+      "destroys": [
+        10143,
+        10150
+      ],
+      "removed_truth": [
+        10143
+      ],
+      "removed_extra": [
+        10150
+      ],
+      "exact_match": false,
+      "placed": [
+        "cutter@4,-14"
+      ],
+      "placed_match": false
+    }
+  ]
+}
