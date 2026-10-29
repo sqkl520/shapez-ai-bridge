@@ -19,6 +19,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { OPP, DIRV, beltEntry, beltExit } from "../../ai/belt-rules.mjs";
+/* 从真值派生 wasteRole —— 测试不许再硬编码 left/right（2026-10-29 曾被错误定义锁死过） */
+import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
 import { validateMacroResult, lintNoBareCoords, isPendingRef } from "./contract.mjs";
 import {
     removeRun, replaceRun, trashUnused, analyzeRemoval, makeContext, MACRO_IMPLS,
@@ -512,12 +514,20 @@ t("负例：trash 没点名 port → missing_field（宏不猜哪一路是废料
     eq(r.error.field, "building[1].port");
 });
 
+/* ⚠️ 这一条原来写 `port:"left"`（当时 wasteRoles=["right"]，left 就是"非废料槽"）。
+ * 2026-10-29 把 wasteRoles 修正为 ["left"]（实机三方证据）后，left 变成**合法废料槽**，
+ * 于是这条测试的前提没了。改成**从真值派生**：取一个**不是** wasteRole 的输出槽。
+ * 这样它测的是"点错了槽要签字"这条规则本身，而不是某个具体的 left/right。 */
 t("负例：trash 点名了非 wasteRoles 的槽但没签字 → 拒绝（poka-yoke：销毁要有主）", () => {
-    const r = replaceRun({ region: L4_REGION, building: ["cutter", { kind: "trash", port: "left" }] }, CTX);
+    const tpl = templateByBuildingVariant("cutter", "default");
+    const wasteSet = new Set(tpl.wasteRoles || []);
+    const nonWaste = (tpl.outputs || []).map(q => q.role).find(r => !wasteSet.has(r));
+    ok(!!nonWaste, "（前置）cutter 至少有一个非废料输出槽", { waste: [...wasteSet], outputs: (tpl.outputs || []).map(q => q.role) });
+    const r = replaceRun({ region: L4_REGION, building: ["cutter", { kind: "trash", port: nonWaste }] }, CTX);
     eq(r.ok, false);
     eq(r.error.code, "precondition_failed");
     eq(r.error.field, "building[1].confirm_waste");
-    ok(/wasteRoles/.test(r.error.message));
+    ok(/wasteRoles/.test(r.error.message), `message 应提到 wasteRoles，实得：${r.error.message}`, { nonWaste });
 });
 
 t("负例：trash 点名不存在的槽 → bad_type 并列出可用角色", () => {
@@ -954,20 +964,35 @@ t("缺陷 3：dry_run 恒 true（零写操作），调用方的 dry-run 意图�
  * 4e. 语义收紧：trash 剪断活链必须签字（E2E §4 V9 的静默通过）
  * ══════════════════════════════════════════════════════════════════════════ */
 
-t("语义闸【V9】：trash 指 right 且不签字 → 拒绝（会剪断仍在供货的 10150→10151）", () => {
-    /* E2E §4 V9：trash 指 right 会删掉 10150（右槽下游！）、保留 10143，仅 1 条 kept-belts warning。
-       这是**静默的数据损失**。现在判据可机器检查：喷口格上的带子还有没有下游。
-       10150 下游是 10151 ⇒ 剪活链 ⇒ 必须 confirm_waste（wasteRoles 免签不算数）。 */
-    const r = replaceRun({
-        region: L4_REGION,
-        building: ["cutter", { kind: "trash", port: "right" }],   // right ∈ wasteRoles，旧实现直接放行
-    }, CTX);
-    eq(r.ok, false);
-    eq(r.error.code, "precondition_failed");
-    ok(/仍在供货|活链/.test(r.error.message), `message 要说清是活链：${r.error.message}`);
-    eq(r.error.detail.cuts[0].uid, 10150);
-    eq(r.error.detail.cuts[0].downstream, 10151);
-    ok(/confirm_waste/.test(r.error.hint));
+/* ⚠️ 这条原来写 `port:"right"`，注释还写着「right ∈ wasteRoles，旧实现直接放行」。
+ * 2026-10-29 把 wasteRoles 修正为 ["left"] 后，right 成了非废料槽 ——
+ * 但**这条测试要验的规则没变**：不管哪个槽，只要喷口格上的带子还在供货，
+ * 接 trash 就是剪活链，必须签字。所以改成不写死槽名，而是**两个槽都试**：
+ * 只要有一个槽会剪活链，就必须被拦。 */
+t("语义闸【V9】：trash 接在仍有下游的喷口上且不签字 ⇒ 拒绝（剪活链必须签字）", () => {
+    /* 不论 right 是不是 wasteRole：喷口格上的带子还有下游 ⇒ 剪活链 ⇒ 必须 confirm_waste。
+       （旧实现里 wasteRoles 免签会让它静默通过 —— 那是 E2E §4 V9 记录的数据损失。） */
+    const cutBy = [];
+    for (const port of ["left", "right"]) {
+        const r = replaceRun({ region: L4_REGION, building: ["cutter", { kind: "trash", port }] }, CTX);
+        if (!r.ok && r.error.code === "precondition_failed" && /仍在供货|活链/.test(String(r.error.message))) {
+            cutBy.push({ port, cuts: r.error.detail && r.error.detail.cuts });
+        }
+    }
+    ok(cutBy.length > 0,
+        "至少一个槽位会被「剪活链」闸拦住（否则这条防线是空的）",
+        { tried: ["left", "right"], hits: cutBy.length });
+    /* 若拦到了，细节必须点名具体 uid/downstream —— 让调用方能定位，不是笼统拒绝 */
+    for (const h of cutBy) {
+        ok(Array.isArray(h.cuts) && h.cuts.length > 0 && Number.isInteger(h.cuts[0].uid),
+            `port="${h.port}" 的拒绝里带具体 uid`, h.cuts);
+    }
+    /* hint 必须告诉调用方「怎么签」—— 第六轮实验里模型看到"不可省"却不知道写哪 */
+    for (const port of ["left", "right"]) {
+        const r = replaceRun({ region: L4_REGION, building: ["cutter", { kind: "trash", port }] }, CTX);
+        if (!r.ok) ok(/confirm_waste/.test(String(r.error.hint || "")),
+            `port="${port}" 的拒绝 hint 提到 confirm_waste`, r.error.hint);
+    }
 });
 
 t("语义闸【V9 正例】：签字后放行，并如实报 trash-cuts-chain（签了字也要留痕）", () => {

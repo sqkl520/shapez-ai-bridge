@@ -22,6 +22,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+/* 从真值派生 wasteRoles —— 测试不许硬编码 left/right。
+   2026-10-29 之前 op-templates 把 cutter 的 wasteRoles 写成了 ["right"]，
+   而本文件也断言 ["right"] —— 两个模块互相印证同一个错误，谁也没发现。
+   实机三方证据指出废料其实是 left 之后，这个"互相印证"才暴露出来。 */
+import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
 
 import {
     MACRO_SPECS, MACRO_NAMES, MACRO_VALIDATORS, WARNING_CODES, WARNING_SEVERITIES, ERROR_CODES,
@@ -165,17 +170,29 @@ t("replace_run：confirm_waste 是**一次签字覆盖两层后果** —— 契�
     ok(pre, "preconditions 必须写明 confirm_waste 同时覆盖「这一侧是废料」与「会剪断下游」");
     ok(/不可省/.test(pre), "必须写清它不是可省的");
 
-    /* 缺 confirm_waste 的两种拒绝理由（实现先判 wasteRoles，再判活链）：
-       ① port 不在 wasteRoles 里 → 拒，指出这一路不是模板默认的废料侧（L4 的 left 就是这种）；
-       ② port ∈ wasteRoles、但喷口格上是还在供货的带子 → 拒，detail.cuts 列出会剪的 uid→下游。 */
-    const notWaste = replaceRun({ region: L4_REGION, building: ["cutter", { kind: "trash", port: "left" }] }, CTX);
+    /* 缺 confirm_waste 的两种拒绝理由（实现先判 wasteRoles，再判活链）。
+     *
+     * ⚠️ 这里**不写死 left/right**：2026-10-29 之前 `wasteRoles` 被写成 `["right"]`，
+     * 这组测试跟着断言 `["right"]` —— 错误的真值被测试锁死，两个模块互相印证同一个错误。
+     * 实机三方证据（L4-COMPILER-DIAGNOSIS.md:460 / L4-E2E-RESULT 的 ejector 读数 /
+     * L4-PLAN-A0 的落点）一致指出废料是 **left**，修正后旧断言就红了。
+     * 现在从 `templateByBuildingVariant` 派生，单点真值。 */
+    const cutterTpl = templateByBuildingVariant("cutter", "default");
+    const wasteRoles = cutterTpl.wasteRoles || [];
+    const outRoles = (cutterTpl.outputs || []).map(q => q.role);
+    const nonWasteRole = outRoles.find(r => !wasteRoles.includes(r));
+    ok(!!nonWasteRole, "（前置）cutter 有一个非废料输出槽", { wasteRoles, outRoles });
+
+    const notWaste = replaceRun({ region: L4_REGION, building: ["cutter", { kind: "trash", port: nonWasteRole }] }, CTX);
     eq(notWaste.ok, false);
     eq(notWaste.error.code, "precondition_failed");
     eq(notWaste.error.field, "building[1].confirm_waste");
-    eq(notWaste.error.detail.role, "left");
-    eq(notWaste.error.detail.wasteRoles, ["right"], "必须告诉调用方模板默认的废料侧是哪一边");
+    eq(notWaste.error.detail.role, nonWasteRole);
+    eq(notWaste.error.detail.wasteRoles, wasteRoles,
+        "必须告诉调用方模板默认的废料侧是哪一边（值从 op-templates 派生，不手抄）");
 
-    const cutsLive = replaceRun({ region: L4_REGION, building: ["cutter", { kind: "trash", port: "right" }] }, CTX);
+    const wasteRole = wasteRoles[0];
+    const cutsLive = replaceRun({ region: L4_REGION, building: ["cutter", { kind: "trash", port: wasteRole }] }, CTX);
     eq(cutsLive.ok, false);
     eq(cutsLive.error.code, "precondition_failed");
     ok(Array.isArray(cutsLive.error.detail?.cuts) && cutsLive.error.detail.cuts.length > 0,

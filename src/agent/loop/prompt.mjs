@@ -272,7 +272,9 @@ const MACRO_EXAMPLES = Object.freeze({
            cutter+trash"这个最常见的场景里，**它总是需要的**。示例里缺它，模型就漏。 */
         args: {
             region: { $path_of: ["B7", "B8", "B9"] },
-            building: [{ kind: "cutter" }, { kind: "trash", port: "right", confirm_waste: true }],
+            /* port 从 wasteRoles 派生（见 LEGAL_VALUES）；此处写死 left 是为了示例可读，
+               有测试断言它与 op-templates 同向，写反了会红。 */
+            building: [{ kind: "cutter" }, { kind: "trash", port: "left", confirm_waste: true }],
         },
     },
     trash_unused: { macro: "trash_unused", args: { outlet: { $ref: "C1", port: "left" }, opts: { confirm_waste: true } } },

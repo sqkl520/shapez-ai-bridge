@@ -268,7 +268,28 @@ const EMBEDDED = [
         outputs: [slot([0, 0], "top", "left"), slot([1, 0], "top", "right")],
         ratePerSec: RATES.cutter,
         mustDiscardUnused: true,
-        wasteRoles: ["right"],            // 半切场景右列是废料（GEOMETRY 表3-4；fixtures/report-validator V9 的例）
+        /* ★ 废料是 **left**，不是 right（2026-10-29 修正）★
+         *
+         * 这里原来写 `["right"]`，注释引「GEOMETRY 表3-4 / report-validator V9」。
+         * 但**实机证据与它相反**，而且不止一条：
+         *
+         *   1. `L4-COMPILER-DIAGNOSIS.md:460`：
+         *      「目标 RuRu---- = h[1] = slot1 = right 槽 = (x+1, y-1)。**废料是 left 槽 (x, y-1)**。」
+         *   2. `L4-E2E-RESULT.md` 的实机 ejector 读数（r=0，origin=(4,-13)）：
+         *        {"cell":[4,-13],"slot":0,"item":"----RuRu"}   ← slot0 = left  = 废料
+         *        {"cell":[4,-13],"slot":1,"item":"RuRu----"}   ← slot1 = right = 目标
+         *   3. `L4-PLAN-A0.md:47`：「放 trash (4,-14) —— 收槽 left 的废料」，
+         *      而 (4,-14) 正是 origin=(4,-13) 时 left 槽的喷口 (x, y-1)。
+         *   4. 人算坐标打通 L4 的那次端到端用的正是 cutter@(4,-13) + trash@(4,-14)。
+         *
+         * 也就是说：**right 槽出的才是目标形状，left 槽是废料。** 原来写反了。
+         * 后果：照着 `wasteRoles` 填 `port:"right"` 的调用会把**产品**丢进 trash、
+         * 把废料送去 hub —— 这正是第六/七轮实验里模型照抄我们错误示例的场景。
+         *
+         * ⚠️ 这个字段是**方向性的、会影响落盘**的：改错会让整条产线倒过来。
+         * 若将来有新的实机数据推翻本条，必须同时更新上面 4 处引用，
+         * 并重跑 `src/agent/macros/remove.test.mjs` 里对 (4,-14) 的断言。 */
+        wasteRoles: ["left"],
         verifiedOnLive: true,             // ✅ M1b（产物逐字符一致）
         kind: "cutter",
     },
