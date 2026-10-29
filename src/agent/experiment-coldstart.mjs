@@ -37,8 +37,9 @@ import { buildPrompt } from "./loop/prompt.mjs";
 import { parseLlmPlan, makeClient } from "./loop/llm.mjs";
 import { assertNoHumanCoords, resolveRefs } from "./loop/coords.mjs";
 import { planToTxOps } from "./loop/planToTxOps.mjs";
-import { replaceRun, removeRun } from "./macros/remove.mjs";
-import { insertMachine } from "./macros/place.mjs";
+import { replaceRun, removeRun, trashUnused } from "./macros/remove.mjs";
+import { insertMachine, extendLine } from "./macros/place.mjs";
+import { connect } from "./macros/connect.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "../..");
@@ -202,7 +203,15 @@ async function attemptOnce({ runIndex, client, verbose }) {
      * 六个宏全接上 —— 只支持 replace_run 会让实验**系统性低估**模型：
      * 实测 #1 里模型用了 insert_machine（合理选择），却被记成 unsupported_macro，
      * 看起来像"它不会"，其实是"我们没让它跑"。这类测量偏差必须消掉。 */
-    const IMPLS = { replace_run: replaceRun, insert_machine: insertMachine, remove_run: removeRun };
+    /* ★ 六个宏全接上 ★
+     *
+     * 第八轮 #1 用 connect 被记成 unsupported_macro —— 那是**我的实验脚本**没接，
+     * 不是模型不会。这类测量偏差会系统性低估模型，必须消掉：
+     * 只有「模型选了但宏拒绝了」才是模型的失败，「我们没让它跑」不算。 */
+    const IMPLS = {
+        replace_run: replaceRun, insert_machine: insertMachine, remove_run: removeRun,
+        connect, extend_line: extendLine, trash_unused: trashUnused,
+    };
     const calls = [];
     for (const c of res.calls) {
         const impl = IMPLS[c.macro];
