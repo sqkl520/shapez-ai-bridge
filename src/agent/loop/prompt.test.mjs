@@ -630,16 +630,29 @@ console.log("\n── 10. $path_of 进 prompt ──");
     ok(s2.includes('"$path_of"') && !/region":\{"\$bbox_of"/.test(s2),
         "★ S2 的 region 示例**不再**示范 $bbox_of（避免模型抄错的那一半）");
 
-    /* cutter 的废料槽是 right（op-templates.wasteRoles），示例必须与真值一致。
-       值不手抄：从 op-templates 取，测试与实现消费同一份。 */
+    /* S2 的 trash port 示例必须与 `op-templates` 的 `wasteRoles` 一致。
+     *
+     * ⚠️ 这里**不硬编码 left / right**：2026-10-29 之前 `wasteRoles` 被写成了 `["right"]`，
+     * 而这组测试跟着它一起断言 `right` —— 于是**错误的真值被测试锁住了**，
+     * 两个模块（实现 + 测试）互相印证同一个错误，谁也没发现。
+     * 后来实机证据（L4-COMPILER-DIAGNOSIS.md:460 / L4-E2E-RESULT 的 ejector 读数 /
+     * L4-PLAN-A0 的落点）三方一致地指出废料是 **left**，这才暴露出来。
+     *
+     * 所以现在只断言「示例与真值同向」，方向由 op-templates 决定 —— 单点真值。
+     */
     const { templateByBuildingVariant } = await import("../../ai/op-templates.mjs");
     const tpl = templateByBuildingVariant("cutter", "default");
-    ok(tpl && tpl.wasteRoles.includes("right"), "（前置）cutter 的 wasteRoles = right");
-    ok(/trash",\s*"port":\s*"right"/.test(s1 === null ? "" : s2),
-        "★ S2 示例里 trash 的 port 是 right（不是 left —— 第三轮 #5 的 precondition_failed 真因）",
+    const waste = (tpl && Array.isArray(tpl.wasteRoles) && tpl.wasteRoles[0]) || null;
+    ok(waste === "left" || waste === "right",
+        "（前置）cutter 有唯一的 wasteRole", { waste });
+    ok(new RegExp(`"trash",\\s*"port":\\s*"${waste}"`).test(s1 === null ? "" : s2),
+        `★ S2 示例里 trash 的 port 与 op-templates.wasteRoles 同向（应为 "${waste}"）`,
+        { waste, sample: s2.match(/trash[^}]*\}/)?.[0] });
+    ok(s2.includes(`must use port "${waste}"`),
+        `★ S2 的 legal values 与真值同向（应说 "${waste}"）`, s2.match(/legal values:.*$/m)?.[0]);
+    ok(s2.includes(`"confirm_waste":true`) || s2.includes(`"confirm_waste": true`),
+        "★ S2 示例带 confirm_waste:true（第六轮 #3 只差这一个字段）",
         s2.match(/trash[^}]*\}/)?.[0]);
-    ok(/must use port "right"/.test(s2),
-        "★ S2 的 legal values 说清了 cutter 的 trash 只能接 right", s2.match(/legal values:.*$/m)?.[0]);
 
     /* 最后：整份 prompt 仍然坐标 0 命中（新文字里不许夹带数字对） */
     const hits = (p.system + "\n" + p.user).match(coordRegex()) || [];
