@@ -981,9 +981,29 @@ function renderBelts(tbl, selection, shownCount, omittedByBudget) {
     const shown = selection.ordered.slice(0, shownCount);
     const lines = [`## BELTS (${shown.length} of ${selection.total}; ${selection.referenced.length} referenced by diagnosis)`];
     if (!shown.length) lines.push("(none shown)");
+
+    /* ★ 标出「这条链到不了 hub」（2026-10-29 第十轮的直接产物）★
+     *
+     * 10 次统计里 **6/10** 的失败是同一个模式：模型盯着 hub 入口那三条
+     * （`B135/B136/B137`），因为"hub 没交货 ⇒ 改入口"这个推理很自然。
+     * 但那三条其实是**已接通**的；真正要改的是接不上的上游链。
+     *
+     * 模型分不清这两类，因为 BELTS 段没写这件事。
+     * 现在把「候选改造对象」（`byGoal`：到不了 hub、且判定为值得改造的那批）标出来，
+     * 并在段落开头给一句判据说明 —— 让它有依据地排除 hub 环。
+     *
+     * ⚠️ 只标「我们**建议**看的」，不断言「hub 环一定不能改」：
+     * 有的关卡正解就是改入口。标的是**信号**，不是禁令。
+     */
+    const suspect = new Set(selection.byGoal || []);
+    if (suspect.size) {
+        lines.push("(lines marked `[not reaching hub]` are belt runs that do NOT currently connect to the hub —");
+        lines.push(" this is computed from the hub's inlet ring backwards. Lines WITHOUT the mark already reach the hub.)");
+    }
     for (const h of shown) {
         const e = tbl.byHandle.get(h);
-        lines.push(`${e.handle} ${e.type}${renderDesc(e.handle, e.type, e.desc)}`);
+        const mark = suspect.has(h) ? "  [not reaching hub]" : "";
+        lines.push(`${e.handle} ${e.type}${renderDesc(e.handle, e.type, e.desc)}${mark}`);
     }
     const omitted = Math.max(0, selection.ordered.length - shown.length) + Math.max(0, selection.total - selection.ordered.length);
     if (omittedByBudget || omitted) lines.push(`(+${omitted} belts not shown)`);

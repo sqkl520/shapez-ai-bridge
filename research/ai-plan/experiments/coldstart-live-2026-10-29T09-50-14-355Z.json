@@ -1,0 +1,206 @@
+{
+  "generated_at": "2026-10-29T09:50:14.355Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "must_remove_uids": [
+      10209,
+      10149,
+      10143
+    ],
+    "must_place": [
+      {
+        "kind": "cutter",
+        "origin": [
+          4,
+          -13
+        ]
+      },
+      {
+        "kind": "trash",
+        "origin": [
+          4,
+          -14
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "runs": 5,
+    "mode": "live",
+    "truth_all_visible": 5,
+    "truth_partial_visible": 0,
+    "truth_none_visible": 0,
+    "picked_any_truth": 0,
+    "picked_all_truth": 0,
+    "plan_ok": 0,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 8301,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "",
+      "parsed": null,
+      "selected_uids": [],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": null,
+      "ops": null
+    },
+    {
+      "run": 2,
+      "prompt_chars": 8301,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Cutter C1's left (waste) output belt leads nowhere and backs the cutter up, so I convert that belt into a trash to let the kept half flow.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B84\"]},\"building\":{\"kind\":\"trash\",\"confirm_waste\":true}},\"why\":\"The recipe needs the cutter's right half kept and the left/waste half discarded; B84 is the waste output and must not dead-end.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10059
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:precondition_failed",
+      "ops": null,
+      "mentioned_uids": [
+        10059
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 3,
+      "prompt_chars": 8301,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Add the recipe's cut step to the belts feeding the hub: cut the incoming full shape into the goal half and trash the waste, so the hub starts receiving RuRu----.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B135\",\"B136\",\"B137\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"recipe needs mine→cut; these are the only hub-connected belts, so cutting them here yields the goal shape and trashes the useless half\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "resolveRefs:PATH_NOT_RECT",
+      "ops": null,
+      "mentioned_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 4,
+      "prompt_chars": 8301,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The hub's feeders deliver the mined shape uncut; place a cutter across those parallel feeds so the kept half reaches the hub.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B135\",\"B136\",\"B137\"]},\"building\":\"cutter\"},\"why\":\"recipe requires cut(half=right) of the mined shape before delivery, and these are the parallel runs feeding the hub\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "resolveRefs:PATH_NOT_RECT",
+      "ops": null,
+      "mentioned_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 5,
+      "prompt_chars": 8301,
+      "visible_handles": 57,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible_count": 3,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Goal shape is RuRu---- cut from full RuRuRuRu; the hub's three connected feeds still carry uncut shapes, so place a cutter on each hub feed to deliver the right half.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B135\",\"asCell\":true},\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"cut the shape on this hub-feed belt before it enters the hub\"},{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B136\",\"asCell\":true},\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"cut the shape on this hub-feed belt before it enters the hub\"},{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B137\",\"asCell\":true},\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"cut the shape on this hub-feed belt before it enters the hub\"}]}",
+      "parsed": {
+        "calls": 3
+      },
+      "selected_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:insert_machine:ambiguous_site",
+      "ops": null,
+      "mentioned_uids": [
+        10074,
+        10032,
+        10183
+      ],
+      "mentioned_truth": []
+    }
+  ]
+}
