@@ -95,8 +95,9 @@ const unwrapItems = items =>
     (items && typeof items === "object" && !Array.isArray(items.paths)
         && items.result && typeof items.result === "object" ? items.result : (items && typeof items === "object" ? items : null));
 
-/** 句柄查找：`handles.byUid` 是 Map（`buildHandles` 的产物）。没有句柄表时给 token。 */
-function subjectOf(handles, uid, type) {
+/** 句柄查找：`handles.byUid` 是 Map（`buildHandles` 的产物）。没有句柄表时给 token。
+ *  `export` 只是为了让 `semantic.mjs` 复用同一份实现（句柄解析两处写会立刻漂移）。 */
+export function subjectOf(handles, uid, type) {
     if (handles && Number.isInteger(uid)) {
         const h = handles.byUid && handles.byUid.get ? handles.byUid.get(uid) : null;
         if (h) {
@@ -112,8 +113,9 @@ function subjectOf(handles, uid, type) {
     };
 }
 
-/** 实体在句柄表里的名字（用于 handles 数组）；没有就 null（不编句柄）。 */
-const handleOf = (handles, uid) => {
+/** 实体在句柄表里的名字（用于 handles 数组）；没有就 null（不编句柄）。
+ *  同 `subjectOf`：导出只为让 `semantic.mjs` 共享同一份解析。 */
+export const handleOf = (handles, uid) => {
     if (!handles || !Number.isInteger(uid)) return null;
     const h = handles.byUid && handles.byUid.get ? handles.byUid.get(uid) : null;
     return typeof h === "string" && h ? h : null;
