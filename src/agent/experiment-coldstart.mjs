@@ -102,21 +102,36 @@ const GROUND_TRUTH = Object.freeze({
  * 用真宏枚举所有物理可行的 cutter 落点。
  *
  * 判据是自指的：不写死 x/y 范围（那会过拟合当前存档），
- * 而是「replace_run 在这个位置能不能成功」。模型落在任意一个可行位置上都算对。
+ * 而是「replace_run 在**这个 region** 能不能成功」。模型落在任意一个可行位置都算对。
+ *
+ * ★ region 的形状必须与诊断给的一致：`[x, y-1, x+1, y]`（**2 行**）★
+ *
+ * 2026-10-30 踩的坑：原来用 3 行 `[x, y-1, x+1, y+1]` 枚举，
+ * 而宏在 3 行 region 里会**换一个落点**（例如 region `[2,-31,3,-29]`
+ * 宏放了 `cutter@(2,-29)`，不是 `(2,-30)`）。
+ * 于是枚举出的坐标与诊断给的坐标对不上，模型明明照诊断做了却被判失败。
+ *
+ * 诊断的 4 格是 `(sx,sy) (sx+1,sy) (sx,sy-1) (sx+1,sy-1)` ⇒ region `[sx, sy-1, sx+1, sy]`。
+ * 枚举必须用同一个形状。
  *
  * @param {Array} entities obs.entities
  * @returns {Array<{x:number, y:number, removes:number[], placed:Array}>}
  */
 function feasibleSites(entities) {
     const out = [];
+    const seen = new Set();
     const beltCells = entities.filter(e => e.type === "belt");
     const xs = [...new Set(beltCells.map(e => e.x))].sort((a, b) => a - b);
     const ys = [...new Set(beltCells.map(e => e.y))].sort((a, b) => a - b);
     for (const x of xs) {
         for (const y of ys) {
+            const region = [x, y - 1, x + 1, y];
+            const key = region.join(",");
+            if (seen.has(key)) continue;
+            seen.add(key);
             const r = replaceRun(
                 {
-                    region: [x, y - 1, x + 1, y + 1],
+                    region,
                     building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }],
                 },
                 { entities },
@@ -127,6 +142,7 @@ function feasibleSites(entities) {
             out.push({
                 x: cut.origin[0],
                 y: cut.origin[1],
+                region,
                 removes: (r.removes || []).map(z => z.uid),
                 placed: (r.placed || []).map(p => ({ kind: p.kind, origin: p.origin })),
             });
