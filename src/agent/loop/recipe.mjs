@@ -32,6 +32,76 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "../../..");
 export const SOLVER_PATH = path.join(REPO, "research", "ai-player", "proto", "solver.mjs");
 
+/**
+ * 机器解锁关卡 —— **等级门控的唯一本地真值**（P-a）。
+ *
+ * ⚠️ 为什么在这里写一份，而不是 `import` `src/ai/compiler/compile.mjs`：
+ *   实测 import 那个模块要 **~165ms**（它拉进 place/route/validate/emit/shape-ops 一整串），
+ *   而且它内部有 `spawnSync` —— 本模块要在 prompt 热路径上每轮跑。为了 5 个整数付这个代价不值得。
+ *   **代价是两份真值**，所以 `recipe.test.mjs` 有一条防漂移测试，逐项与 `compile.mjs`
+ *   的导出常量对拍（`MIN_LEVEL_FOR_OP` + `CUTQUAD_MIN_LEVEL`）。改这里而不同步那边，测试立刻红。
+ *
+ * 数值来源：`compile.mjs:67-74` / `facts/human-strategies.md`（quad cutter = L16）。
+ * 与 solver 的 `--no-*` flag 一一对应（`proto/solver.mjs:444-449`）。
+ */
+export const MIN_LEVEL_FOR_MACHINE = Object.freeze({
+    rotater: 4,
+    painter: 6,
+    mixer: 8,
+    stacker: 10,
+    cutQuad: 16,
+});
+
+/** 逐个导出，方便调用方只取一个；也方便测试直接断言。 */
+export const ROTATER_MIN_LEVEL = MIN_LEVEL_FOR_MACHINE.rotater;
+export const PAINTER_MIN_LEVEL = MIN_LEVEL_FOR_MACHINE.painter;
+export const MIXER_MIN_LEVEL = MIN_LEVEL_FOR_MACHINE.mixer;
+export const STACKER_MIN_LEVEL = MIN_LEVEL_FOR_MACHINE.stacker;
+export const CUTQUAD_MIN_LEVEL = MIN_LEVEL_FOR_MACHINE.cutQuad;
+
+/** `recipeFor` 的缺省关卡：L4（第一个需要 cutter 的官方关；既有 prompt 的场景）。 */
+export const DEFAULT_LEVEL = 4;
+
+/**
+ * 关卡 → solver 的 `--no-*` flag 列表（**顺序固定**：按解锁关卡升序）。
+ *
+ * 这是一处**已验证的真 bug 的修复**（`DIAGNOSE-V2-REDTEAM-VERDICT.md` §11）：
+ *   不带门控时 `solveRecipe("Cu----Cu")` 返回 `cutQuad×2 + stack`，而 cutQuad 要 **L16**、
+ *   stacker 要 **L10**；`Cu----Cu` 是 **L5** 关卡，存档里只有 2 台 cutter。这段配方在 prompt 里骗模型。
+ *   实测（2026-10-30）：
+ *     `solver Cu----Cu --json`                 → mine + cutQuad×2 + stack
+ *     `solver Cu----Cu --json --no-cutquad`    → mine + cut + rotate   （L5 真解）
+ *
+ * 只做**减法**（只关机器、不换目标），所以「门控不误伤」是可测的：
+ * `RuRu----`（L4）加满 L4 的门控与不加，产出的 steps 完全相同。
+ *
+ * @param {number} level
+ * @returns {string[]} 例如 L5 → ["--no-painter","--no-mixer","--no-stacker","--no-cutquad"]
+ */
+export function flagsForLevel(level) {
+    const lv = Number.isFinite(level) ? level : DEFAULT_LEVEL;
+    const flags = [];
+    if (lv < ROTATER_MIN_LEVEL) flags.push("--no-rotater");
+    if (lv < PAINTER_MIN_LEVEL) flags.push("--no-painter");
+    if (lv < MIXER_MIN_LEVEL) flags.push("--no-mixer");
+    if (lv < STACKER_MIN_LEVEL) flags.push("--no-stacker");
+    if (lv < CUTQUAD_MIN_LEVEL) flags.push("--no-cutquad");
+    return flags;
+}
+
+/** solver 的 op 名 → 机器种类。**只翻译**，不做代数（代数真值在 shape-ops / solver）。 */
+export const OP_TO_MACHINE = Object.freeze({
+    mine: "miner",
+    mineColor: "miner",       // 颜料矿：solver 用 mineColor 表示「地上本来就有的纯色矿」
+    cut: "cutter",
+    cutQuad: "cutter",
+    rotate: "rotater",
+    stack: "stacker",
+    paint: "painter",
+    paintQuad: "painter",
+    mix: "mixer",
+});
+
 /** solver 的 op 名 → 说给模型听的中文/英文短语（**只翻译，不做代数**）。 */
 const OP_PHRASE = Object.freeze({
     mine: "mine it",
@@ -51,19 +121,24 @@ const OP_PHRASE = Object.freeze({
  * 但降级必须**留痕**（返回 reason），不许静默。
  *
  * @param {string} goalShape 例如 "RuRu----"
- * @param {{timeoutMs?:number, solverPath?:string}} [opts]
+ * @param {{timeoutMs?:number, solverPath?:string, spawn?:Function, extraArgs?:string[],
+ *          tolerateUnsolvable?:boolean}} [opts]
  * @returns {{ok:boolean, steps?:Array, ops?:object, reason?:string, raw?:string}}
  */
-export function solveRecipe(goalShape, opts = {}) {
+function runSolver(goalShape, opts = {}) {
     if (typeof goalShape !== "string" || !goalShape.trim()) {
         return { ok: false, reason: "empty goal shape" };
     }
     const solver = opts.solverPath || SOLVER_PATH;
     const timeout = Number.isInteger(opts.timeoutMs) ? opts.timeoutMs : 20000;
+    /* `opts.spawn` 可注入（签名同 spawnSync）—— 测试用它，**永不真 spawn**。 */
+    const doSpawn = typeof opts.spawn === "function" ? opts.spawn : spawnSync;
+    const extra = Array.isArray(opts.extraArgs) ? opts.extraArgs : [];
+    const argv = [solver, goalShape, ...extra, "--json"];
 
     let res;
     try {
-        res = spawnSync(process.execPath, [solver, goalShape, "--json"], {
+        res = doSpawn(process.execPath, argv, {
             encoding: "utf8",
             timeout,
             maxBuffer: 4 * 1024 * 1024,
@@ -71,11 +146,20 @@ export function solveRecipe(goalShape, opts = {}) {
     } catch (e) {
         return { ok: false, reason: `spawn failed: ${e && e.message ? e.message : e}` };
     }
-    if (res.error) return { ok: false, reason: `spawn error: ${res.error.message}` };
-    if (res.status !== 0) {
+    if (!res || typeof res !== "object") {
+        return { ok: false, reason: "spawn returned no result object" };
+    }
+    if (res.error) return { ok: false, reason: `spawn error: ${res.error.message || res.error}` };
+
+    const text = String(res.stdout || "").trim();
+    /* ★ status !== 0 不等于「跑挂了」★
+     * solver 在**未解出**时也打印合法 JSON（`{"solved":false,…}`）然后 `exit(2)`
+     * （`proto/solver.mjs:283`）。`recipeFor` 走 `tolerateUnsolvable`，先解析再判 status，
+     * 于是「不可解」能被归成 `solved:false` 而不是一个假的「进程崩了」。
+     * `solveRecipe` 保持旧顺序（先判 status），**行为一字不改**。 */
+    if (!opts.tolerateUnsolvable && res.status !== 0) {
         return { ok: false, reason: `solver exited ${res.status}`, raw: (res.stderr || "").slice(0, 400) };
     }
-    const text = String(res.stdout || "").trim();
     if (!text) return { ok: false, reason: "solver produced no output" };
 
     let data;
@@ -89,6 +173,14 @@ export function solveRecipe(goalShape, opts = {}) {
             raw: text.slice(0, 400),
         };
     }
+    if (res.status !== 0 && opts.tolerateUnsolvable) {
+        /* solved:true 却非零退出：solver 自相矛盾，不许静默吞掉 */
+        return {
+            ok: false,
+            reason: `solver output is self-contradictory: solved:true but exited ${res.status}`,
+            raw: text.slice(0, 400),
+        };
+    }
     return {
         ok: true,
         steps: data.plan.steps,
@@ -96,6 +188,133 @@ export function solveRecipe(goalShape, opts = {}) {
         pigments: data.plan.pigments || [],
         target: data.target,
     };
+}
+
+/**
+ * 跑 solver 解一个目标形状（**旧接口，行为不变**）。
+ *
+ * @param {string} goalShape 例如 "RuRu----"
+ * @param {{timeoutMs?:number, solverPath?:string}} [opts]
+ * @returns {{ok:boolean, steps?:Array, ops?:object, reason?:string, raw?:string}}
+ */
+export function solveRecipe(goalShape, opts = {}) {
+    return runSolver(goalShape, opts);
+}
+
+/* ════════════════════════ 结构化配方（P-a）════════════════════════ */
+
+/**
+ * 解一个目标形状，返回**结构化**的配方（不只是能渲染的 steps）。
+ *
+ * 与 `solveRecipe` 的差别：**关卡门控** + **派生字段**（needs/closure/raw）+
+ * 对 `solved:false` 的正确归因（solver 不可解时 `exit(2)`，必须先解析 JSON 再判 status）。
+ * 失败一律 `ok:false` + `reason`，绝不抛 —— prompt 与 diagnose 都不该被 solver 拖死。
+ *
+ * @param {string} goalShape
+ * @param {{level?:number, timeoutMs?:number, solverPath?:string, spawn?:Function}} [opts]
+ * @returns {{ok:boolean, reason?:string, steps?:Array, ops?:object,
+ *            needs?:Map<string,number>, closure?:Set<string>, raw?:Set<string>,
+ *            level:number, gated:string[]}}
+ */
+export function recipeFor(goalShape, opts = {}) {
+    const level = Number.isFinite(opts.level) ? opts.level : DEFAULT_LEVEL;
+    const gated = flagsForLevel(level);
+
+    /* 注意 `tolerateUnsolvable`：solver 不可解时 exit(2) 但仍吐合法 JSON，必须先解析。 */
+    const r = runSolver(goalShape, { ...opts, extraArgs: gated, tolerateUnsolvable: true });
+    if (!r.ok) return { ok: false, reason: r.reason || "unknown", level, gated };
+
+    const steps = r.steps;
+
+    /* 机器需求：从 steps[].op 反推（op → 机器）。**只翻译**，不重算代数。 */
+    const needs = new Map();
+    for (const s of steps) {
+        const m = OP_TO_MACHINE[s && s.op];
+        if (m) needs.set(m, (needs.get(m) || 0) + 1);
+    }
+
+    /* 闭包：steps 的全体 hash（含 raw 与 goal —— 末节点就是 goal）。
+       `raw` 只认 op === "mine"（颜料矿 `mineColor` 不是形状原料，不进 raw）。 */
+    const closure = new Set();
+    const raw = new Set();
+    for (const s of steps) {
+        if (!s || typeof s.hash !== "string") continue;
+        closure.add(s.hash);
+        if (s.op === "mine") raw.add(s.hash);
+    }
+
+    return {
+        ok: true,
+        steps,
+        ops: r.ops,
+        needs,
+        closure,
+        raw,
+        level,
+        gated,
+    };
+}
+
+/* ═══════════════════════════ 缓存（P-a）═══════════════════════════ */
+
+/** 模块内 memo 的容量上限。一次 run 里见到的目标形状是个位数（一个 goal + 诊断里引用的少数变体），8 够用。 */
+export const RECIPE_CACHE_CAPACITY = 8;
+
+/** Map 本身有插入序：命中时 delete+set 把键挪到末尾 ⇒ **LRU**（不是 FIFO）。 */
+const RECIPE_CACHE = new Map();
+
+/** 假配方对象的**浅拷贝**：needs/closure/raw 各给一份新的，调用方改了也污染不到缓存。 */
+function copyRecipe(r) {
+    if (!r || r.ok !== true) return { ...r };
+    return {
+        ...r,
+        steps: r.steps,                       // steps 是 solver 原样输出，只读消费；不深拷
+        needs: new Map(r.needs),
+        closure: new Set(r.closure),
+        raw: new Set(r.raw),
+    };
+}
+
+/**
+ * `recipeFor` 的带缓存版本。key = `${goal}|L${level}`。
+ *
+ * - **失败也缓存**：不可解目标每次重试都要跑一遍组合爆炸（实测 CgScScCg 单次 1.6s），
+ *   缓存失败是这里唯一合理的策略。
+ * - **LRU**：容量 8，命中即刷新位置。
+ * - **不许持久化到磁盘** —— 磁盘上的配方会成为第二份真值，改了 solver 就悄悄过期。
+ *
+ * @param {string} goalShape
+ * @param {object} [opts] 同 `recipeFor`
+ * @returns {ReturnType<typeof recipeFor>}
+ */
+export function recipeForCached(goalShape, opts = {}) {
+    const level = Number.isFinite(opts.level) ? opts.level : DEFAULT_LEVEL;
+    const key = `${goalShape}|L${level}`;
+
+    if (RECIPE_CACHE.has(key)) {
+        const hit = RECIPE_CACHE.get(key);
+        RECIPE_CACHE.delete(key);             // LRU：命中后挪到末尾
+        RECIPE_CACHE.set(key, hit);
+        return copyRecipe(hit);
+    }
+
+    const r = recipeFor(goalShape, opts);
+    RECIPE_CACHE.set(key, r);
+    while (RECIPE_CACHE.size > RECIPE_CACHE_CAPACITY) {
+        const oldest = RECIPE_CACHE.keys().next().value;
+        RECIPE_CACHE.delete(oldest);
+    }
+    return copyRecipe(r);
+}
+
+/** 清空缓存（测试用；也是「换 solver 版本后要重算」的唯一入口）。 */
+export function clearRecipeCache() {
+    RECIPE_CACHE.clear();
+}
+
+/** 当前缓存条数（测试/诊断用，只读）。 */
+export function recipeCacheSize() {
+    return RECIPE_CACHE.size;
 }
 
 /**
@@ -138,13 +357,17 @@ export function renderRecipe(recipe, opts = {}) {
     }
     if (recipe.steps.length > maxSteps) lines.push(`  (+${recipe.steps.length - maxSteps} more steps)`);
 
-    /* 需要哪些机器：从 op 名反推（op → 机器）。**只翻译**，不重算代数。 */
-    const OP_TO_MACHINE = {
-        mine: "miner", cut: "cutter", cutQuad: "cutter",
-        rotate: "rotater", stack: "stacker", paint: "painter", paintQuad: "painter",
-    };
+    /* 需要哪些机器：从 op 名反推（op → 机器）。**只翻译**，不重算代数。
+     *
+     * ⚠️ 这里**刻意**只认旧的那 7 个 op：`mineColor`/`mix` 是颜料节点（`kind:"pigment"`），
+     *    把它们算进「形状产的机器」会改掉既有渲染文本（`CgScScCg` 的 miner 数会从 2 变 4）。
+     *    渲染器是已上线的模型的输入，行为冻结在这里；结构化字段 `recipeFor().needs`
+     *    用的是完整映射（含颜料），两者口径不同是**有意的**，不是漂移。
+     *    机器种类本身仍只有一份：`OP_TO_MACHINE`（模块级）。 */
+    const VISIBLE_OPS = new Set(["mine", "cut", "cutQuad", "rotate", "stack", "paint", "paintQuad"]);
     const need = new Map();
     for (const s of recipe.steps) {
+        if (!VISIBLE_OPS.has(s.op)) continue;
         const m = OP_TO_MACHINE[s.op];
         if (m) need.set(m, (need.get(m) || 0) + 1);
     }
@@ -257,4 +480,7 @@ if (isMain) {
     process.exit(fail ? 1 : 0);
 }
 
-export default { solveRecipe, renderRecipe, recipeBlock, SOLVER_PATH };
+export default {
+    solveRecipe, renderRecipe, recipeBlock, SOLVER_PATH,
+    recipeFor, recipeForCached, clearRecipeCache, flagsForLevel, OP_TO_MACHINE,
+};
