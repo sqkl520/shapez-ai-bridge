@@ -42,7 +42,7 @@ import { MACRO_NAMES, MACRO_SPECS } from "../macros/contract.mjs";
 import { BUDGET } from "./constants.mjs";
 /* 目标形状的配方（solver 算出来的）—— 模型不该自己猜该用哪些机器。
    第四轮实验：5 次里 4 次误以为要 rotater，而 RuRu---- 只需要 cutter 切一半。 */
-import { recipeBlock } from "./recipe.mjs";
+import { recipeForCached, renderRecipe } from "./recipe.mjs";
 /* 合法 machine 值来自 place.mjs 的 SUPPORTED_BUILDINGS —— 不在 prompt 里手抄第二份。
    实测教训：模型写过 "rotator"（应为 "rotater"），整轮白费；卡片里摆出枚举就不该再犯。 */
 import { SUPPORTED_BUILDINGS } from "../macros/place.mjs";
@@ -1053,6 +1053,20 @@ function renderBudget(budget) {
  * S4：每条诊断一行，形状是契约里的
  *   `code [layer/severity]: subject; expected ... vs observed ...; handles ...; candidates ...`
  * 硬规矩：**不打印 uid**（§Q3.2），不打印 cell 数字（只打 handle）；诊断条数不截断。
+ *
+ * ## P-b 的三处渲染修正（都是「模型读不懂」的实测反馈，不是排版洁癖）
+ *
+ * 1. **`PROCESSOR_REQUIRED` 的 scope 必须说出来**。
+ *    这一个码有两种 severity：`scope:"stream"` 是 warn（机器在、只是不在那条流上 = **该做的事**），
+ *    `scope:"factory"` 是 blocker（机器根本没有 = **真的坏**）。只打 `[L4/warn]` 时模型分不出
+ *    「该加机器」和「该挪机器」；把 `scope=stream op=cut machine=cutter need 1 have 1`
+ *    跟在码后面，它才知道要做的是 `replace_run` 而不是 `insert_machine`。
+ * 2. **`SHAPE_UNKNOWN` 是 info，不占显眼位置**。它按原因各占一行（隧道 / 无矿图 / 未知 op），
+ *    在 L5 这种没有矿图的存档上会把真正可行动的诊断顶下去。折叠成**一行汇总**（含条数与原因），
+ *    并且 `candidates` 为空（契约 §3：不许当行动依据）。
+ * 3. **超上限要明说**。合并后总量被压到 ≤8（v2 §6）。每码被压掉的条数记在
+ *    `evidence.suppressed`，总量被压掉的记在 `evidence.suppressed_total`（两者分开，
+ *    混记会让 prompt 说错话）。不打印它们 = 模型以为「诊断就这些」，而它其实看不见一半。
  */
 function renderDiagnoses(diagnoses) {
     const list = Array.isArray(diagnoses) ? diagnoses : [];
@@ -1061,7 +1075,16 @@ function renderDiagnoses(diagnoses) {
         lines.push("(no diagnosis: this is the first round, fix the goal directly)");
         return lines.join("\n");
     }
-    list.forEach((d, i) => {
+
+    /* ── 1. info 级 SHAPE_UNKNOWN 折叠成一行（放在最后，不参与编号） ── */
+    const visible = [];
+    const unknowns = [];
+    for (const d of list) {
+        if (d && d.code === "SHAPE_UNKNOWN") unknowns.push(d);
+        else visible.push(d);
+    }
+
+    visible.forEach((d, i) => {
         const code = (d && d.code) || "UNKNOWN";
         const layer = d && d.layer ? `[${d.layer}${d.severity ? "/" + d.severity : ""}]` : "";
         const subj = d && d.subject
@@ -1075,10 +1098,56 @@ function renderDiagnoses(diagnoses) {
         const hs = ((d && d.evidence && d.evidence.handles) || []).slice(0, 6);
         const cands = (d && Array.isArray(d.candidates)) ? d.candidates.slice(0, 3) : [];
         let line = `${i + 1}. ${code}${layer ? " " + layer : ""}: ${subj}${slot}; expected ${exp}; observed ${obs}`;
+        /* ★ PROCESSOR_REQUIRED 必须把 scope/op/machine/need/have 说出来（否则两档 severity 读不出来） */
+        const ev = (d && d.evidence) || {};
+        if (code === "PROCESSOR_REQUIRED") {
+            const bits = [];
+            if (ev.scope) bits.push(`scope=${ev.scope}`);
+            if (ev.op) bits.push(`op=${ev.op}`);
+            if (ev.machine) bits.push(`machine=${ev.machine}`);
+            if (num(ev.need) !== null) bits.push(`need=${ev.need}`);
+            if (num(ev.have) !== null) bits.push(`have=${ev.have}`);
+            if (bits.length) line += `; ${bits.join(" ")}`;
+            /* scope 决定「该做什么」：stream=把机器挪到这条流上；factory=先有机器 */
+            if (ev.scope === "stream") line += " (the machine exists; put it ON the stream named above)";
+            else if (ev.scope === "factory") line += " (the factory does not own this machine yet)";
+            if (num(ev.sites) !== null && ev.sites > 0) {
+                line += `; ${ev.sites} feasible site(s) on the goal raw corridor`;
+            }
+        }
+        /* WRONG_SHAPE_AT_HUB：病在上游，不在入口（v2 §4 的那句必须出现） */
+        if (code === "WRONG_SHAPE_AT_HUB") {
+            line += "; the fix is upstream: a missing process step on the line that FEEDS the hub, not at the inlet";
+        }
         if (hs.length) line += `; handles ${hs.join(",")}`;
         if (cands.length) line += `; candidates ${cands.join(",")}`;
+        /* 超上限被压掉的条数：必须说出来，否则模型以为「诊断就这些」 */
+        if (num(ev.suppressed) !== null && ev.suppressed > 0) {
+            line += `; (+${ev.suppressed} more of this code not shown)`;
+        }
         lines.push(sanitize(line).text);
     });
+
+    /* ── 2. SHAPE_UNKNOWN 的汇总行（一行，不占编号） ── */
+    if (unknowns.length) {
+        let total = 0;
+        const reasons = [];
+        for (const d of unknowns) {
+            const ev = d.evidence || {};
+            total += num(ev.count) !== null ? ev.count : 1;
+            const r = typeof ev.reason === "string" ? ev.reason : "unknown";
+            if (!reasons.includes(r)) reasons.push(r);
+        }
+        lines.push(`- (info) SHAPE_UNKNOWN ×${unknowns.length} group(s) / ${total} entity(s): `
+            + `shape propagation could not be computed (${reasons.join(", ")}). `
+            + "This is NOT an action item — do not try to fix it; work from the diagnoses above.");
+    }
+
+    /* ── 3. 总量截断的兜底提示（`evidence.suppressed_total` 由 `diagnose` 的合并上限写入） ── */
+    const sumTotal = list.reduce((s, d) => s + (num(d && d.evidence && d.evidence.suppressed_total) || 0), 0);
+    if (sumTotal > 0) {
+        lines.push(`- (${sumTotal} more diagnoses not shown: the list is capped at 8 total, 3 per code)`);
+    }
     return lines.join("\n");
 }
 
@@ -1149,11 +1218,13 @@ export class PromptOverBudget extends Error {
  * @param {object} [p.lastRound]    上一轮摘要（见 renderLastRound）
  * @param {object} [p.budget]       {rounds_left, llm_calls_left, tx_left, ticks_left, wall_ms_left,
  *                                   in_chars_max, prompt_tokens_max}
+ * @param {object} [p.recipe]       已算好的结构化配方（`recipeForCached` 的返回）。
+ *   给了就**直接复用**，不 spawn；没给才现算（走模块内 LRU）。
  * @returns {{system:string, user:string, tokens_estimate:number, blocks:object}}
  * @throws {PromptOverBudget} code=PROMPT_OVER_BUDGET（总字符 > in_chars_max）
  * @throws {TypeError} 缺 goal / obs / 未知候选宏
  */
-export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, budget } = {}) {
+export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, budget, recipe: injectedRecipe = null } = {}) {
     if (!obs || typeof obs !== "object") throw new TypeError("buildPrompt: obs is required");
     const goalShape = typeof goal === "string"
         ? goal
@@ -1178,9 +1249,29 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
      *
      * solver 不可用时**跳过**（返回 null），并在 blocks 里留 `recipe_unavailable` 原因，
      * 绝不因为一段附加信息让整个 prompt 崩掉。
-     */
-    const recipe = recipeBlock(goalShape, { maxSteps: 8 });
-    const s3Recipe = recipe.text;
+     *
+     * ★ P-b：配方由 loop 每 run 预计算一次后注入（`p.recipe`）★
+     *   给了就直接用 —— 每轮 spawn 一次 solver 是 200–260ms 的白花，而且 loop 与 prompt
+     *   各 spawn 一次时，solver 不可解的场景可能得到两份不同的「不可用」理由。
+     *   没给才现算，且**走 `recipeForCached`**（模块内 LRU，同一目标只 spawn 一次）。
+     *   失败也照样只影响这一段（`recipe_unavailable` 留痕），不抛。 */
+    let r;
+    if (injectedRecipe && typeof injectedRecipe === "object") {
+        r = injectedRecipe;
+    } else {
+        const lvl = (goal && typeof goal === "object" && Number.isFinite(goal.level))
+            ? goal.level
+            : ((obs && obs.goal && Number.isFinite(obs.goal.level)) ? obs.goal.level : undefined);
+        try {
+            r = recipeForCached(goalShape, lvl === undefined ? {} : { level: lvl });
+        } catch (e) {
+            r = { ok: false, reason: `recipe error: ${e && e.message ? e.message : e}` };
+        }
+    }
+    const s3Recipe = renderRecipe(r, { maxSteps: 8 });
+    const recipeUnavailable = s3Recipe === null
+        ? (r && typeof r.reason === "string" && r.reason ? r.reason : (r && r.ok === true ? "empty recipe" : "unavailable"))
+        : null;
     const s3Hub = renderHub(tbl);
     const s3Machines = renderMachines(tbl, diagList);
     const s3Production = renderProduction(obs);
@@ -1238,7 +1329,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         s3_production: s3Production, s3_budget: s3Budget,
         /* 配方段（可能为 null —— solver 不可用）。单独暴露，便于测试与排查 */
         s3_recipe: s3Recipe,
-        recipe_unavailable: recipe.reason,
+        recipe_unavailable: recipeUnavailable,
         chars,
         tokens_estimate: Math.round(chars / PROMPT_RULES.CHARS_PER_TOKEN),
         trimmed_belts: trimmed,

@@ -686,12 +686,29 @@ console.log("\n── §R. 配方段 —— 形状代数接进 prompt ──");
     ok(!!p.blocks.s3_recipe && p.blocks.s3_recipe.includes(baseOpts().goal),
         "配方里含**本轮的**目标形状串（不是别的形状）", (p.blocks.s3_recipe || "").slice(0, 160));
 
-    /* L5 的目标是 Cu----Cu —— 它需要 cutter，但**不需要** rotater。 */
-    ok(/does NOT need.*rotater/.test(all),
-        "★ 配方明确说「不需要 rotater」（第四轮 4/5 次误判就栽在这）",
+    /* L5 的目标是 `Cu----Cu`，**等级门控后**的真配方是 mine → cut → rotate：
+     * 它需要 cutter **和** rotater。
+     *
+     * ⚠️ 这里原来断言的是「不需要 rotater」—— 那句在**未门控**的旧配方下是真的
+     * （旧配方是 cutQuad×2 + stack，不含 rotate 步），但那份配方本身是 bug：
+     * cutQuad 要 L16、stacker 要 L10，而这是 L5 关卡。P-a 修了门控之后
+     * （`recipeFor(…,{level:5})` 加 `--no-cutquad --no-stacker`），真解里**有** rotate 步。
+     * 所以这里改成断言门控后的真值，而不是把错误配方锁进测试。
+     *
+     * 第四轮「模型坚持要 rotater」的教训仍然成立，只是它的正确修法不是「prompt 说不需要
+     * rotater」，而是「prompt 说清**要不要**，由配方决定」—— 门控后的配方自己会说。 */
+    ok(/does NOT need.*(stacker|painter)/.test(all),
+        "★ 配方明确说「不需要」门控掉的那些机器（stacker/painter 在 L5 没解锁）",
         (p.blocks.s3_recipe || "").slice(0, 300));
+    ok(/rotate/.test(p.blocks.s3_recipe || ""),
+        "★ L5 门控后的真配方含 rotate 步（旧断言「不需要 rotater」锁的是未门控的错配方）",
+        p.blocks.s3_recipe);
     ok(/cut/.test(p.blocks.s3_recipe || "") && /cutter/.test(p.blocks.s3_recipe || ""),
         "配方说清了要用 cutter 切", p.blocks.s3_recipe);
+    ok(/rotater/.test(p.blocks.s3_recipe || ""),
+        "★ 配方把 rotater 列进「需要的机器」（L5 真解需要它）", p.blocks.s3_recipe);
+    ok(!/cutQuad/.test(p.blocks.s3_recipe || "") && !/stacker×/.test(p.blocks.s3_recipe || ""),
+        "★ 配方里没有 L16 的 cutQuad / 没解锁的 stacker（等级门控生效）", p.blocks.s3_recipe);
 
     /* 另跑一次 L4（RuRu----）：同一套断言，证明配方随目标变而不是硬编码 */
     {
