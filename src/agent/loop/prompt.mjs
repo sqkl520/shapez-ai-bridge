@@ -587,9 +587,23 @@ function pickBelts(tbl, diagnoses, goalShape, obs) {
     const chosen = [];
     const push = h => { if (h && !chosen.includes(h) && chosen.length < cap) chosen.push(h); };
 
+    /* ★ 顺序：目标走廊 > 诊断点名 > 表顺序 ★
+     *
+     * 2026-10-30 实测的冲突：P-a/P-b 把 8 条诊断接进 prompt 之后，
+     * 正解三条的可见性从 **3/3 掉到 1/3** ——
+     * 因为 `referenced`（诊断点名）排在 `byGoal`（目标原料走廊）之前，
+     * 而诊断的 evidence.handles 里有大量**不在目标走廊上**的带子
+     * （例如 BELT_HANDOFF_REJECTED 指向的铜线支路）。
+     *
+     * 两者都是好信号，但强度不同：
+     *   · byGoal = 「这条链运的是目标原料」—— 结构性事实，直接决定改造点
+     *   · referenced = 「某条诊断提到了它」—— 可能只是"这里有个无关的死端"
+     *
+     * 所以走廊优先。诊断点名的带子只要不带出走廊，仍然会被 push 进来（第二顺位）。
+     */
+    for (const h of byGoal) push(h);
     for (const h of referenced) push(h);
-    for (const h of byGoal) push(h);                      // ④ 目标反查的结果优先于表顺序
-    for (const e of all) push(e.handle);                  // ⑤ 最后才用表顺序兜底
+    for (const e of all) push(e.handle);                  // 最后才用表顺序兜底
     return { ordered: chosen, referenced, byGoal, padded: chosen.filter(h => !referenced.includes(h) && !byGoal.includes(h)), total: all.length };
 }
 

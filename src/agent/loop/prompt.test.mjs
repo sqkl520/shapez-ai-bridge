@@ -315,7 +315,21 @@ console.log("\n── 4. S3 goal + state ──");
     ok(p.blocks.belts_total === 160, `L5 实际带子总数 160（实际 ${p.blocks.belts_total}）`);
     ok(/not shown/.test(p.blocks.s3_belts), "被省略的带子有明示，不静默丢弃");
 
-    /* 诊断点名的带子**优先**进入列表（这是"与诊断相关"的可测口径） */
+    /* 诊断点名的带子**优先**进入列表（这是"与诊断相关"的可测口径）。
+     *
+     * ⚠️ 2026-10-30 修正：这条原来断言「诊断点名的就一定进」，
+     * 但那是**旧优先级**（referenced 排在 byGoal 之前）下的行为。
+     *
+     * 实测发现那个顺序有害：P-a/P-b 接上真诊断后，诊断的 evidence.handles 里
+     * 含大量**不在目标原料走廊上**的带子（这条测试自己用的 B150/B151/B152
+     * 就是 L5 的铜线 x=-10..-7，而 L5 的目标链在 x=4），
+     * 它们把正解三条从 3/3 挤到了 1/3。
+     *
+     * 现在的优先级是 **目标走廊 > 诊断点名 > 表顺序**。
+     * 所以这条测试改成断言**真正该成立**的东西：
+     *   ① 诊断点名的带子只要**不与走廊冲突**，仍然优先进入；
+     *   ② 走廊优先时，正解可见性不受影响（由另一条测试守）。
+     */
     const named = ["B150", "B151", "B152"].filter(h => L5_TABLE.byHandle.has(h));
     ok(named.length === 3, "夹具里的带子句柄存在", { named });
     const pd = buildPrompt(baseOpts({
@@ -325,7 +339,15 @@ console.log("\n── 4. S3 goal + state ──");
             evidence: { handles: ["C1", ...named] }, candidates: ["connect"],
         }],
     }));
-    for (const h of named) ok(pd.blocks.s3_belts.includes(`${h} `), `诊断点名的 ${h} 进入了带子列表`);
+    /* ① 诊断点名的带子被识别为 referenced（口径没变：诊断确实点名了它们）。
+     *    `blocks.belts_referenced` 是**数量**不是数组（见 prompt.mjs:1352）。 */
+    ok(pd.blocks.belts_referenced >= named.length,
+        `诊断点名的 ${named.length} 条带子被识别为 referenced`, { referenced: pd.blocks.belts_referenced });
+    /* ② 至少有一条点名的带子进了最终列表 —— 证明 referenced 仍然有优先级
+     *    （不是被走廊完全压死；它们只是排在走廊之后） */
+    const inList = named.filter(h => pd.blocks.s3_belts.includes(`${h} `));
+    ok(inList.length >= 1,
+        `诊断点名的带子里至少 1 条进入列表（证明 referenced 仍有优先级）`, { inList, named });
     eq(pd.blocks.belts_referenced, 3, "belts_referenced === 3");
     /* 而未被点名的带子也不是全进来 */
     ok((pd.blocks.s3_belts.match(/^B\d+ /gm) || []).length <= 12, "点名 + 补足合计仍 ≤ 12");
