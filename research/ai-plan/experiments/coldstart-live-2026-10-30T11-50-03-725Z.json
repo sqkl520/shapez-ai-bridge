@@ -1,0 +1,805 @@
+{
+  "generated_at": "2026-10-30T11:50:03.725Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "historical": {
+      "must_remove_uids": [
+        10209,
+        10149,
+        10143
+      ],
+      "must_place": [
+        {
+          "kind": "cutter",
+          "origin": [
+            4,
+            -13
+          ]
+        },
+        {
+          "kind": "trash",
+          "origin": [
+            4,
+            -14
+          ]
+        }
+      ]
+    },
+    "chain": null,
+    "chain_uids": null
+  },
+  "summary": {
+    "runs": 10,
+    "mode": "live",
+    "truth_all_visible": 0,
+    "truth_partial_visible": 10,
+    "truth_none_visible": 0,
+    "picked_any_truth": 1,
+    "picked_all_truth": 0,
+    "plan_ok": 9,
+    "exact": 8,
+    "placements_ok": 8
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 10010,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the missing cutter (with a left-side trash for the waste half) directly onto the RuRuRuRu stream so it cuts down to RuRu----.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B8\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"Diagnosis 1: the raw stream carries RuRuRuRu and needs a cutter on it; the recipe keeps the right half, so the left output is waste to a trash.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10107,
+        10108,
+        10114
+      ],
+      "verdict": {
+        "ok": true,
+        "on_site": true,
+        "trashOk": true,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": [
+          2,
+          -31
+        ],
+        "matched_site": {
+          "x": 2,
+          "y": -30
+        },
+        "removed_elsewhere": 0,
+        "same_as_historical": false,
+        "feasible_sites": 55
+      },
+      "exact_match": true,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": [
+        2,
+        -31
+      ],
+      "removed_elsewhere": 0,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-30",
+        "trash@2,-31"
+      ],
+      "placed_match": true
+    },
+    {
+      "run": 2,
+      "prompt_chars": 10010,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put a cutter plus waste-side trash directly on the raw RuRuRuRu stream handed to me, so the recipe's cut step finally happens on the line.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B8\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\"}]},\"why\":\"top diagnosis PROCESSOR_REQUIRED: the raw corridor carries RuRuRuRu but no cutter sits on it; converting this stretch in place adds the cutter and puts the trash on the waste (left) port\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:replace_run:precondition_failed",
+      "ops": null,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 3,
+      "prompt_chars": 10010,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the cutter plus waste trash directly on the two parallel RuRuRuRu feed runs into L1, which the recipe needs to turn the raw shape into the goal half-shape.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B8\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"Diagnosis 1 wants a cutter on the raw RuRuRuRu stream with a trash on its waste port; these are the two parallel runs feeding the same balancer, so one call covers both feeds.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10107,
+        10108,
+        10114
+      ],
+      "verdict": {
+        "ok": true,
+        "on_site": true,
+        "trashOk": true,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": [
+          2,
+          -31
+        ],
+        "matched_site": {
+          "x": 2,
+          "y": -30
+        },
+        "removed_elsewhere": 0,
+        "same_as_historical": false,
+        "feasible_sites": 55
+      },
+      "exact_match": true,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": [
+        2,
+        -31
+      ],
+      "removed_elsewhere": 0,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-30",
+        "trash@2,-31"
+      ],
+      "placed_match": true
+    },
+    {
+      "run": 4,
+      "prompt_chars": 10010,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put a cutter with a waste trash directly on the RuRuRuRu stream so it yields the RuRu---- goal half; the remaining blockers are on side lines only.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B8\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"Top diagnosis says the RuRuRuRu stream needs a cutter and these cells are the suggested site; waste half goes to trash on the left port\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10107,
+        10108,
+        10114
+      ],
+      "verdict": {
+        "ok": true,
+        "on_site": true,
+        "trashOk": true,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": [
+          2,
+          -31
+        ],
+        "matched_site": {
+          "x": 2,
+          "y": -30
+        },
+        "removed_elsewhere": 0,
+        "same_as_historical": false,
+        "feasible_sites": 55
+      },
+      "exact_match": true,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": [
+        2,
+        -31
+      ],
+      "removed_elsewhere": 0,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-30",
+        "trash@2,-31"
+      ],
+      "placed_match": true
+    },
+    {
+      "run": 5,
+      "prompt_chars": 10010,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the recipe's cutter plus a waste trash directly on the raw RuRuRuRu stream, using the feasible site cells the diagnosis named.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B8\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"PROCESSOR_REQUIRED: the stream carrying RuRuRuRu has no cutter on it; convert these cells into cutter+trash so the cut to RuRu---- happens in place.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10107,
+        10108,
+        10114
+      ],
+      "verdict": {
+        "ok": true,
+        "on_site": true,
+        "trashOk": true,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": [
+          2,
+          -31
+        ],
+        "matched_site": {
+          "x": 2,
+          "y": -30
+        },
+        "removed_elsewhere": 0,
+        "same_as_historical": false,
+        "feasible_sites": 55
+      },
+      "exact_match": true,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": [
+        2,
+        -31
+      ],
+      "removed_elsewhere": 0,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-30",
+        "trash@2,-31"
+      ],
+      "placed_match": true
+    },
+    {
+      "run": 6,
+      "prompt_chars": 10010,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the cutter plus a waste trash onto the RuRuRuRu stream at the feasible cells the diagnosis named, converting that belt run in place.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B8\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"recipe step 2 is cut(half=right) on RuRuRuRu; these cells are the diagnosed feasible sites on that stream and the trash takes the waste side\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10107,
+        10108,
+        10114
+      ],
+      "verdict": {
+        "ok": true,
+        "on_site": true,
+        "trashOk": true,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": [
+          2,
+          -31
+        ],
+        "matched_site": {
+          "x": 2,
+          "y": -30
+        },
+        "removed_elsewhere": 0,
+        "same_as_historical": false,
+        "feasible_sites": 55
+      },
+      "exact_match": true,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": [
+        2,
+        -31
+      ],
+      "removed_elsewhere": 0,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-30",
+        "trash@2,-31"
+      ],
+      "placed_match": true
+    },
+    {
+      "run": 7,
+      "prompt_chars": 10010,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the required cutter plus a waste trash directly on the RuRuRuRu raw corridor using the feasible cells the diagnosis named, so the kept half flows toward the hub.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B8\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"Top diagnosis PROCESSOR_REQUIRED: the RuRuRuRu stream lacks a cutter (and waste trash); these handles are the listed feasible sites on the goal raw corridor.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10107,
+        10108,
+        10114
+      ],
+      "verdict": {
+        "ok": true,
+        "on_site": true,
+        "trashOk": true,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": [
+          2,
+          -31
+        ],
+        "matched_site": {
+          "x": 2,
+          "y": -30
+        },
+        "removed_elsewhere": 0,
+        "same_as_historical": false,
+        "feasible_sites": 55
+      },
+      "exact_match": true,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": [
+        2,
+        -31
+      ],
+      "removed_elsewhere": 0,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-30",
+        "trash@2,-31"
+      ],
+      "placed_match": true
+    },
+    {
+      "run": 8,
+      "prompt_chars": 10010,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Place the cutter (with a trash on its waste side) directly on the raw RuRuRuRu corridor so the recipe's cut step exists on the live stream.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B8\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"Diagnosis 1 names these cells as feasible sites on the goal raw corridor; converting the run in place puts the cutter on the RuRuRuRu stream and trashes the cut-off half.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10107,
+        10108,
+        10114
+      ],
+      "verdict": {
+        "ok": true,
+        "on_site": true,
+        "trashOk": true,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": [
+          2,
+          -31
+        ],
+        "matched_site": {
+          "x": 2,
+          "y": -30
+        },
+        "removed_elsewhere": 0,
+        "same_as_historical": false,
+        "feasible_sites": 55
+      },
+      "exact_match": true,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": [
+        2,
+        -31
+      ],
+      "removed_elsewhere": 0,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-30",
+        "trash@2,-31"
+      ],
+      "placed_match": true
+    },
+    {
+      "run": 9,
+      "prompt_chars": 10010,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put a cutter plus waste trash onto the RuRuRuRu corridor using the feasible region the diagnosis named, and clear the dead M4 chain that feeds nothing.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B8\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"the RuRuRuRu stream needs a cutter with a waste trash placed directly on it, not elsewhere\"},{\"macro\":\"remove_run\",\"args\":{\"uids\":{\"$uids\":[\"B113\",\"B106\",\"B98\",\"B91\",\"B82\"]},\"opts\":{\"allow_scattered\":true}},\"why\":\"M4 sits on no ore, so its belt chain is permanently dead clutter\"}]}",
+      "parsed": {
+        "calls": 2
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10115,
+        10145,
+        10146,
+        10147,
+        10148,
+        10149
+      ],
+      "selected_truth": [
+        10149
+      ],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 10,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10115,
+        10145,
+        10146,
+        10147,
+        10148,
+        10149
+      ],
+      "mentioned_truth": [
+        10149
+      ],
+      "destroys": [
+        10107,
+        10108,
+        10114,
+        10145,
+        10146,
+        10147,
+        10148,
+        10149
+      ],
+      "verdict": {
+        "ok": false,
+        "on_site": true,
+        "trashOk": true,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": [
+          2,
+          -31
+        ],
+        "matched_site": {
+          "x": 2,
+          "y": -30
+        },
+        "removed_elsewhere": 5,
+        "same_as_historical": false,
+        "feasible_sites": 55
+      },
+      "exact_match": false,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": [
+        2,
+        -31
+      ],
+      "removed_elsewhere": 5,
+      "removed_truth": [
+        10149
+      ],
+      "placed": [
+        "cutter@2,-30",
+        "trash@2,-31"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 10,
+      "prompt_chars": 10010,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the missing cutter plus its waste trash directly on the RuRuRuRu corridor at the suggested feasible cells, keeping the run feeding the balancer above.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B8\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"Diagnosis 1: the RuRuRuRu stream needs a cutter with a trash on its waste port; these four cells are the suggested feasible site on that corridor.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 5,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10115
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10107,
+        10108,
+        10114
+      ],
+      "verdict": {
+        "ok": true,
+        "on_site": true,
+        "trashOk": true,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": [
+          2,
+          -31
+        ],
+        "matched_site": {
+          "x": 2,
+          "y": -30
+        },
+        "removed_elsewhere": 0,
+        "same_as_historical": false,
+        "feasible_sites": 55
+      },
+      "exact_match": true,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": [
+        2,
+        -31
+      ],
+      "removed_elsewhere": 0,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-30",
+        "trash@2,-31"
+      ],
+      "placed_match": true
+    }
+  ]
+}

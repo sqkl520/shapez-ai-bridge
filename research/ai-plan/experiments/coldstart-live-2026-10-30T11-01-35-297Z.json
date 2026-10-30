@@ -1,0 +1,539 @@
+{
+  "generated_at": "2026-10-30T11:01:35.297Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "historical": {
+      "must_remove_uids": [
+        10209,
+        10149,
+        10143
+      ],
+      "must_place": [
+        {
+          "kind": "cutter",
+          "origin": [
+            4,
+            -13
+          ]
+        },
+        {
+          "kind": "trash",
+          "origin": [
+            4,
+            -14
+          ]
+        }
+      ]
+    },
+    "chain": {
+      "xs": [
+        4,
+        5
+      ],
+      "yMin": -16,
+      "yMax": -8
+    },
+    "chain_uids": [
+      10144,
+      10143,
+      10150,
+      10149,
+      10144,
+      10209,
+      10208,
+      10148,
+      10147,
+      10206,
+      10146,
+      10139,
+      10141,
+      10140,
+      10090,
+      10091
+    ]
+  },
+  "summary": {
+    "runs": 10,
+    "mode": "live",
+    "truth_all_visible": 0,
+    "truth_partial_visible": 10,
+    "truth_none_visible": 0,
+    "picked_any_truth": 0,
+    "picked_all_truth": 0,
+    "plan_ok": 5,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the missing cutter directly on the raw corridor that carries RuRuRuRu (the consecutive belts B10/B11) instead of adding parallel logic.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\"]},\"building\":{\"kind\":\"cutter\"}},\"why\":\"Diagnosis PROCESSOR_REQUIRED: this stream already carries RuRuRuRu but has no cutter on it; converting the run in place inserts the cutter on that stream and keeps uncovered belts.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 3,
+      "mentioned_uids": [
+        10107,
+        10114
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10107,
+        10114
+      ],
+      "verdict": {
+        "ok": false,
+        "onChain": false,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": null,
+        "removed_from_chain": 0,
+        "removed_elsewhere": 2,
+        "same_as_historical": false
+      },
+      "exact_match": false,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": null,
+      "removed_elsewhere": 2,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-30"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 2,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The raw corridor still lacks a cutter, so I convert the two-lane raw run (B10/B11) in place into a cutter; the other hub-chain blockers need follow-up rounds.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\"]},\"building\":{\"kind\":\"cutter\"}},\"why\":\"Puts the required cut step directly on the stream that carries RuRuRuRu, using both lanes so the 2-wide cutter fits.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 3,
+      "mentioned_uids": [
+        10107,
+        10114
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10107,
+        10114
+      ],
+      "verdict": {
+        "ok": false,
+        "onChain": false,
+        "cutter_at": [
+          2,
+          -30
+        ],
+        "trash_at": null,
+        "removed_from_chain": 0,
+        "removed_elsewhere": 2,
+        "same_as_historical": false
+      },
+      "exact_match": false,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -30
+      ],
+      "trash_at": null,
+      "removed_elsewhere": 2,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-30"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 3,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The cutter exists but sits off the goal raw corridor, so I put a cutter directly onto the RuRuRuRu stream that feeds the hub.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B110\",\"asCell\":true},\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"recipe turns RuRuRuRu into RuRu---- with a cut(half=right); the existing cutter is not on the goal raw corridor, so place one in-line on that corridor and let the macro derive footprint/rotation\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10086
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:insert_machine:ambiguous_site",
+      "ops": null,
+      "mentioned_uids": [
+        10086
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 4,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the existing-style cutter directly on the RuRuRuRu corridor at B110 so the cut step happens in-stream.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B110\",\"asCell\":true},\"facing\":\"top\",\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"PROCESSOR_REQUIRED: the RuRuRuRu stream needs a cutter on it; inserting on the named belt cell replaces the covered belts and keeps the run connected\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10086
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 3,
+      "mentioned_uids": [
+        10086
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10086,
+        10116
+      ],
+      "verdict": {
+        "ok": false,
+        "onChain": false,
+        "cutter_at": [
+          2,
+          -9
+        ],
+        "trash_at": null,
+        "removed_from_chain": 0,
+        "removed_elsewhere": 2,
+        "same_as_historical": false
+      },
+      "exact_match": false,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -9
+      ],
+      "trash_at": null,
+      "removed_elsewhere": 2,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-9"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 5,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the existing cutter role onto the RuRuRuRu corridor by inserting a cutter on belt B110, replacing the belt cells it covers.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B110\",\"asCell\":true},\"facing\":\"top\",\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"Top diagnosis PROCESSOR_REQUIRED: the goal raw corridor carries RuRuRuRu and needs a cutter on it; B110 is the named stream outlet from the miner.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10086
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 3,
+      "mentioned_uids": [
+        10086
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10086,
+        10116
+      ],
+      "verdict": {
+        "ok": false,
+        "onChain": false,
+        "cutter_at": [
+          2,
+          -9
+        ],
+        "trash_at": null,
+        "removed_from_chain": 0,
+        "removed_elsewhere": 2,
+        "same_as_historical": false
+      },
+      "exact_match": false,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -9
+      ],
+      "trash_at": null,
+      "removed_elsewhere": 2,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-9"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 6,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The raw RuRuRuRu stream from the miner needs a cutter directly on it; I'll drop one onto the belt cell the diagnosis named rather than reroute anything.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B110\",\"asCell\":true},\"facing\":\"top\",\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"Diagnosis points at B110 as the RuRuRuRu stream carrying no cut step; a cutter inserted in place cuts it into the goal shape.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10086
+      ],
+      "selected_truth": [],
+      "plan_ok": true,
+      "plan_why": null,
+      "ops": 3,
+      "mentioned_uids": [
+        10086
+      ],
+      "mentioned_truth": [],
+      "destroys": [
+        10086,
+        10116
+      ],
+      "verdict": {
+        "ok": false,
+        "onChain": false,
+        "cutter_at": [
+          2,
+          -9
+        ],
+        "trash_at": null,
+        "removed_from_chain": 0,
+        "removed_elsewhere": 2,
+        "same_as_historical": false
+      },
+      "exact_match": false,
+      "same_as_historical": false,
+      "cutter_at": [
+        2,
+        -9
+      ],
+      "trash_at": null,
+      "removed_elsewhere": 2,
+      "removed_truth": [],
+      "placed": [
+        "cutter@2,-9"
+      ],
+      "placed_match": false
+    },
+    {
+      "run": 7,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The existing cutter is not on the raw RuRuRuRu stream; place one directly on M1's output belt (B110), replacing the belt cells under it so the cut happens in-stream before delivery.\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B110\",\"asCell\":true},\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"PROCESSOR_REQUIRED: put a cutter on the raw RuRuRuRu corridor stream named in the diagnosis (B110), footprint/belts handled by the macro\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10086
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:insert_machine:ambiguous_site",
+      "ops": null,
+      "mentioned_uids": [
+        10086
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 8,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"把切割机装到承载 RuRuRuRu 的原始矿石带上，让它就地切出 RuRu----，再把这条流送向枢纽。\",\"calls\":[{\"macro\":\"insert_machine\",\"args\":{\"at\":{\"$ref\":\"B110\",\"asCell\":true},\"machine\":\"cutter\",\"opts\":{\"replace_belts\":true}},\"why\":\"诊断1 指出 B110 这条流运的是 RuRuRuRu，配方下一步就是 cut(half=right)，所以在这条流上原位放切割机\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10086
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "macro:insert_machine:ambiguous_site",
+      "ops": null,
+      "mentioned_uids": [
+        10086
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 9,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the cutter onto the RuRuRuRu stream so it delivers the goal halves instead of raw shapes.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B110\",\"B103\",\"B95\",\"B10\",\"B11\",\"B7\"]},\"building\":{\"kind\":\"cutter\"}},\"why\":\"PROCESSOR_REQUIRED: the existing cutter is not on the RuRuRuRu stream; convert that run in place into a cutter (both feed runs included so a 2-wide cutter can fit).\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10086,
+        10211,
+        10213,
+        10107,
+        10114,
+        10108
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "resolveRefs:PATH_NOT_RECT",
+      "ops": null,
+      "mentioned_uids": [
+        10086,
+        10211,
+        10213,
+        10107,
+        10114,
+        10108
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 10,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The RuRuRuRu corridor has no cutter on it; converting a stretch of that run into a cutter with the waste half trashed gives the goal shape RuRu----.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B110\",\"B103\",\"B95\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"Recipe needs cut(half=right) on the RuRuRuRu stream; cutter + left-side trash does both in place on the goal raw corridor.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10086,
+        10211,
+        10213
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "resolveRefs:PATH_NOT_RECT",
+      "ops": null,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10086,
+        10211,
+        10213
+      ],
+      "mentioned_truth": []
+    }
+  ]
+}
