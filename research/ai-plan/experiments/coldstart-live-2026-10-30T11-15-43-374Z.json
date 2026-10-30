@@ -1,0 +1,114 @@
+{
+  "generated_at": "2026-10-30T11:15:43.374Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "historical": {
+      "must_remove_uids": [
+        10209,
+        10149,
+        10143
+      ],
+      "must_place": [
+        {
+          "kind": "cutter",
+          "origin": [
+            4,
+            -13
+          ]
+        },
+        {
+          "kind": "trash",
+          "origin": [
+            4,
+            -14
+          ]
+        }
+      ]
+    },
+    "chain": null,
+    "chain_uids": null
+  },
+  "summary": {
+    "runs": 2,
+    "mode": "live",
+    "truth_all_visible": 0,
+    "truth_partial_visible": 2,
+    "truth_none_visible": 0,
+    "picked_any_truth": 0,
+    "picked_all_truth": 0,
+    "plan_ok": 0,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 9951,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Put the required cutter directly on the RuRuRuRu stream using the feasible cells the diagnosis named.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\"]},\"building\":{\"kind\":\"cutter\"}},\"why\":\"PROCESSOR_REQUIRED: the RuRuRuRu stream needs a cutter on it; these cells were listed as feasible sites.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "resolveRefs:PATH_NOT_RECT",
+      "ops": null,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108
+      ],
+      "mentioned_truth": []
+    },
+    {
+      "run": 2,
+      "prompt_chars": 9951,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"The raw RuRuRuRu stream lacks the cutter the recipe needs, so I convert the suggested cells on that corridor into a cutter in place.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\"]},\"building\":{\"kind\":\"cutter\"}},\"why\":\"Diagnosis 1 wants a cutter on the stream carrying RuRuRuRu; B10,B11,B7 are the feasible cells it named for the machine footprint.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "resolveRefs:PATH_NOT_RECT",
+      "ops": null,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108
+      ],
+      "mentioned_truth": []
+    }
+  ]
+}

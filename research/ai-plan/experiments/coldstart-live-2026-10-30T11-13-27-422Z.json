@@ -1,0 +1,86 @@
+{
+  "generated_at": "2026-10-30T11:13:27.422Z",
+  "ground_truth": {
+    "shape": "RuRu----",
+    "level": 4,
+    "historical": {
+      "must_remove_uids": [
+        10209,
+        10149,
+        10143
+      ],
+      "must_place": [
+        {
+          "kind": "cutter",
+          "origin": [
+            4,
+            -13
+          ]
+        },
+        {
+          "kind": "trash",
+          "origin": [
+            4,
+            -14
+          ]
+        }
+      ]
+    },
+    "chain": null,
+    "chain_uids": null
+  },
+  "summary": {
+    "runs": 1,
+    "mode": "live",
+    "truth_all_visible": 0,
+    "truth_partial_visible": 1,
+    "truth_none_visible": 0,
+    "picked_any_truth": 0,
+    "picked_all_truth": 0,
+    "plan_ok": 0,
+    "exact": 0,
+    "placements_ok": 0
+  },
+  "results": [
+    {
+      "run": 1,
+      "prompt_chars": 9806,
+      "visible_handles": 60,
+      "truth_handles": [
+        "B81",
+        "B82",
+        "B69"
+      ],
+      "truth_visible": [
+        "B82"
+      ],
+      "truth_visible_count": 1,
+      "llm_error": null,
+      "llm_raw": "{\"say\":\"Convert the existing raw RuRuRuRu corridor in place into a cutter (with a trash on the waste side) so the recipe step actually runs on the stream, per the top diagnosis.\",\"calls\":[{\"macro\":\"replace_run\",\"args\":{\"region\":{\"$path_of\":[\"B10\",\"B11\",\"B7\",\"B110\",\"B103\",\"B95\"]},\"building\":[{\"kind\":\"cutter\"},{\"kind\":\"trash\",\"port\":\"left\",\"confirm_waste\":true}]},\"why\":\"PROCESSOR_REQUIRED: the stream already carries RuRuRuRu and the recipe's cut step must sit on that stream; converting the run in place also picks up the parallel feeds into the same place in one call.\"}]}",
+      "parsed": {
+        "calls": 1
+      },
+      "selected_uids": [
+        10107,
+        10114,
+        10108,
+        10086,
+        10211,
+        10213
+      ],
+      "selected_truth": [],
+      "plan_ok": false,
+      "plan_why": "resolveRefs:PATH_NOT_RECT",
+      "ops": null,
+      "mentioned_uids": [
+        10107,
+        10114,
+        10108,
+        10086,
+        10211,
+        10213
+      ],
+      "mentioned_truth": []
+    }
+  ]
+}
