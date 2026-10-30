@@ -532,7 +532,7 @@ const freeOrBelt = (idx, cell) => {
  * @param {(cell:[number,number])=>boolean} inCorridor 该格的上游源头是配方 raw 矿机
  * @returns {Array<{anchor:[number,number], handleUid:number}>}
  */
-function cutSites(idx, reach, inCorridor) {
+function cutSites(idx, reach, inCorridor, tblRef = null) {
     /* 候选锚点：供料方把货推进 `(x,y)` 的所有格。带子出口向上 / 机器 ejector 向上。 */
     const anchors = [];
     const push = (x, y) => anchors.push([x, y]);
@@ -569,7 +569,24 @@ function cutSites(idx, reach, inCorridor) {
            把它列进 `site_handles` 会把模型引到错误的产线 —— 这正是 F-2 的形态。 */
         if (!inCorridor([sx, sy])) continue;
         const anchor = inside.slice().sort((a, b) => (a.y - b.y) || (a.x - b.x))[0];
-        out.push({ anchor: [sx, sy], handleUid: anchor.uid });
+        /* ★ `pair` 必须给**三格**：cutter 的两格 + trash 落点 ★
+         *
+         * 2026-10-30 实测（第十三轮 + 主线程复核）：
+         * 一开始只给 cutter 的两格，模型照做 `$path_of([左,右])` 得到 2 格宽的 region，
+         * 而 `replace_run` 报 `precondition_failed`：
+         *   「cutter 的 "left" 槽喷口在 (sx, sy-1)，落在 region 之外」
+         *
+         * `replace_run` 的 region 必须同时覆盖：机器 footprint + 各废料槽喷口格。
+         * cutter 2×1 + 废料喷口 = **3 格**。
+         *
+         * 所以 pair 给 3 格：`(sx,sy)`、`(sx+1,sy)`、`(sx,sy-1)`。
+         * 模型 `$path_of` 这三格 ⇒ region `[sx, sy-1, sx+1, sy]` ⇒ 恰好能施工。
+         * （`(sx+1,sy-1)` 是产品出口，不必须，但如果它是带子也可以纳入 —— 这里不纳，
+         *   因为纳入会让 region 变成 2×2，多出一格 region 外的判断负担。） */
+        const pairUids = [at(idx, [sx, sy]), at(idx, [sx + 1, sy]), waste]
+            .filter(Boolean).map(b => b.uid);
+        const pair = pairUids.map(u => handleOf(tblRef, u)).filter(Boolean);
+        out.push({ anchor: [sx, sy], handleUid: anchor.uid, pair, pairUids });
     }
     return out.sort((a, b) => (a.anchor[1] - b.anchor[1]) || (a.anchor[0] - b.anchor[0]));
 }
@@ -738,7 +755,7 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
     const sitesFor = op => {
         if (siteCache.has(op)) return siteCache.get(op);
         let sites = [];
-        if (op === "cut") sites = cutSites(idx, reach, cellInCorridor);
+        if (op === "cut") sites = cutSites(idx, reach, cellInCorridor, handles);
         else if (op === "rotate" || op === "rotateCCW" || op === "rotate180") sites = oneCellSites(idx, reach, cellInCorridor);
         siteCache.set(op, sites);
         return sites;
@@ -783,7 +800,27 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 + `${op}; the factory has ${factoryCount(kind)} ${kind}(s) but none of them is on this stream`
                 + ` (a ${kind} fits at ${sites.length} place(s) on the goal corridor)`,
             evidence: {
-                handles: [subj.handle, ...near].filter(Boolean).slice(0, 6),
+                /* ★ `handles` 必须给出**可施工的落点对**，不能只给一列带子 ★
+                 *
+                 * 2026-10-30 实测（第十三轮真 LLM，10/10 次）：
+                 * 原来这里是 `[subj.handle, ...near]` —— 一条**同列的 4 格链**
+                 * （B110/B103/B95/B88 全在 x=2）。
+                 * 模型**完美地跟随了诊断**，拿这 4 个句柄调 `$path_of`，
+                 * 得到宽度 1 的 region ⇒ 2×1 的 cutter 放不下 ⇒ `occupied`。
+                 *
+                 * 模型没做错任何事 —— 是我们把「流上的带子」当成了「能放机器的位置」。
+                 * 现在：`handles` 前置一个**真实可行的落点对**（覆盖 2 格宽），
+                 * 后面才跟流上的带子（供它理解上下文）。
+                 * `site_handles` 仍然给全部可行落点，`site_cells` 给锚点。 */
+                handles: [
+                    /* sites[0].pair 只有 cutSites 才有（2×1 机器需要 3 格）；
+                       oneCellSites（rotater 族）没有 pair —— 那时退回它的单格句柄。 */
+                    ...((sites[0] && Array.isArray(sites[0].pair)) ? sites[0].pair
+                        : (sites[0] && sites[0].handleUid !== undefined
+                            ? [handleOf(handles, sites[0].handleUid)].filter(Boolean) : [])),
+                    subj.handle,
+                    ...near,
+                ].filter(Boolean).slice(0, 8),
                 uids: [top.stream.head.uid],
                 tier: top.corridor ? 0 : tierOf(top.stream.head.uid),
                 scope: "stream",
