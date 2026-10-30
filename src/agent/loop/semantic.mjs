@@ -796,7 +796,17 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             layer: "L4",
             severity: "warn",                       // v2 §2：机器存在、只是不在那条流上 ⇒ 该做的事，不是坏的东西
             subject: subj,
-            expected: `a ${kind} on the stream that carries ${top.shapes.join("/")}`,
+            /* ★ expected 必须说清「机器 + 它的废料出口」 ★
+             *
+             * 2026-10-30 第十六轮实测（9/10 次）：
+             * 模型的落点**全对**（on_site 9/10），但它只给了 `building: {kind:"cutter"}` ——
+             * 没给 trash。而 replace_run 的 region 里有 4 格（含废料喷口），
+             * 宏需要 `[cutter, {trash, port:"left", confirm_waste}]` 才成立。
+             *
+             * 诊断只说「a cutter on the stream」，模型就只放了 cutter。
+             * 这不是模型笨 —— 是我们没告诉它「cutter 有废料出口，得配 trash」。 */
+            expected: `a ${kind} on the stream that carries ${top.shapes.join("/")}`
+                + (kind === "cutter" ? `, plus a trash on its waste port (build: [cutter, {kind:"trash", port:"left", confirm_waste:true}])` : ""),
             observed: `this stream carries ${top.shapes.join("/")}, which the recipe turns into the next shape with `
                 + `${op}; the factory has ${factoryCount(kind)} ${kind}(s) but none of them is on this stream`
                 + ` (a ${kind} fits at ${sites.length} place(s) on the goal corridor)`,
