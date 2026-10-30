@@ -451,6 +451,15 @@ console.log("\n── 6. 预算与截断 ──");
     eq(tight.blocks.s3_production, full.blocks.s3_production, "截断后 production 段逐字节相同");
     eq(tight.blocks.S5, full.blocks.S5, "截断后上一轮摘要逐字节相同");
     eq(tight.blocks.S6, full.blocks.S6, "截断后指令段逐字节相同");
+    /* ★ 配方段也必须逐字节不变 ★
+     *
+     * 这里原本没有这条断言 —— 而 truncation 循环里把 `goalAndRecipe` 误写成 `s3Goal`，
+     * 于是**一旦触发截断，RECIPE 段就整个消失**。红队实测：字面的 13 条诊断下，
+     * 模型再也看不到"这个形状该怎么造"，而那正是第五轮实验唯一起作用的信号。
+     *
+     * 截断的契约是「只动带子列表」。任何别的段（尤其配方）都必须逐字节不变。 */
+    eq(tight.blocks.s3_recipe, full.blocks.s3_recipe, "★ 截断后配方段逐字节相同（曾经在这里丢过）");
+    ok(tight.user.includes("## RECIPE"), "★ 截断后 user 里仍有 RECIPE 段");
     ok(tight.blocks.chars < full.blocks.chars, "总字符数确实下降");
     ok(tight.blocks.chars <= Math.floor((Math.floor(full.blocks.chars / PROMPT_RULES.CHARS_PER_TOKEN) - 60) * PROMPT_RULES.CHARS_PER_TOKEN),
         "压预算后总字符 ≤ 目标", { chars: tight.blocks.chars });
