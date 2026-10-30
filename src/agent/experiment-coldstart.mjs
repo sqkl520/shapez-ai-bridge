@@ -34,6 +34,8 @@ import { fileURLToPath } from "node:url";
 import FakeGame from "./fake_game.mjs";
 import { buildHandles } from "./loop/handles.mjs";
 import { buildPrompt } from "./loop/prompt.mjs";
+import { diagnose } from "./loop.mjs";
+import { recipeFor } from "./loop/recipe.mjs";
 import { parseLlmPlan, makeClient } from "./loop/llm.mjs";
 import { assertNoHumanCoords, resolveRefs } from "./loop/coords.mjs";
 import { planToTxOps } from "./loop/planToTxOps.mjs";
@@ -189,13 +191,36 @@ async function attemptOnce({ runIndex, client, verbose }) {
         if (typeof e.uid === "number") { uidToHandle.set(e.uid, h); handleToUid.set(h, e.uid); }
     }
 
+    /* ★ 用真诊断，不是空数组 ★
+     *
+     * 2026-10-30：这里原来是 `diagnoses: []` —— 十二轮实验里模型**从来没有**
+     * 收到过任何诊断。P-a/P-b 做出来的结构层+语义层诊断全部没进 prompt，
+     * 所以那些轮次测的是「只有 BELTS 段 + 配方」时的表现。
+     *
+     * 现在接真 diagnose：冷启动第一轮虽然没有 verify report，但
+     * `diagnose(obs, items, production=null, report=null, goal, handles, {recipe})`
+     * 会产出结构层 + 语义层诊断（L4 实测 8 条）。
+     *
+     * 这直接对应 DIRECTION-FINAL 阶段 2 的核心：让模型知道「哪里不对」而不只是「哪里有什么」。
+     */
+    const recipe = recipeFor(GROUND_TRUTH.shape, { level: GROUND_TRUTH.level });
+    let diagnoses = [];
+    try {
+        diagnoses = diagnose(obs, items, null, null, GROUND_TRUTH.shape, handles, { recipe });
+    } catch (e) {
+        /* 诊断失败不许让实验崩 —— 但要留痕（用空数组继续会让结果不可解释） */
+        diagnoses = [];
+        console.error(`  ⚠ diagnose 抛错，本轮无诊断：${e && e.message ? e.message : e}`);
+    }
+
     const prompt = buildPrompt({
         goal: { shape: GROUND_TRUTH.shape, level: GROUND_TRUTH.level },
         obs, handles,
-        diagnoses: [],                        // 冷启动：没有任何诊断
+        diagnoses,
         candidates: ["replace_run", "remove_run", "insert_machine"],
         lastRound: null,
         budget: {},
+        recipe,
     });
 
     /* 记录 prompt 里到底出现了哪些句柄 —— 这是"LLM 能不能看见目标"的直接证据 */
