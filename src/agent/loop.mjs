@@ -61,8 +61,22 @@ import { MACRO_IMPLS, replaceRun, removeRun, trashUnused } from "./macros/remove
 import { insertMachine, extendLine } from "./macros/place.mjs";
 import { connect } from "./macros/connect.mjs";
 import { validateMacroCall, MACRO_NAMES } from "./macros/contract.mjs";
+/* `indexOf`（原 buildIndex）/ `hubReachable` / `upstreamAt` / `inputFed` / `outputRouted`
+ * 在 P-a0 里搬到了 `loop/topology.mjs`（几何真值的唯一实现）。
+ * 这里仍然用 `hubReachable` 等旧名字 `export { … } from` 一次，**保持兼容** ——
+ * 既有的 import 方（verify / 测试 / 第三方脚本）一个字都不用改。
+ * 本文件内部现在只 import `indexOf`（改名 `buildIndex`）：结构判据全部走
+ * `structuralDiagnoses`，下游可达性由它在内部按 tier 使用，不再在这里重复算。 */
+import { indexOf as buildIndex } from "./loop/topology.mjs";
+import { structuralDiagnoses } from "./loop/structural.mjs";
+/* 语义层（P-a）：形状传播 + 配方闭包 + 作业分配。**不自己 spawn** ——
+   配方由 loop 首轮 observe 后预计算一次、放进 `ctx.recipe` 注入；
+   这样 `diagnose` 仍然是纯函数（同 obs 调两次逐字节相同），指纹与 NO_PROGRESS_3X 才成立。 */
+import { semanticDiagnoses } from "./loop/semantic.mjs";
+import { recipeForCached } from "./loop/recipe.mjs";
+/* hub 入口判据需要世界几何：`slotsOf` 是槽位几何的**唯一**实现（handles/semantic/verify 同源），
+   在这里抄一份就是第三份真值。 */
 import { slotsOf } from "./verify_runtime.mjs";
-import { DIRV, OPP, beltEntry, beltExit } from "../ai/belt-rules.mjs";
 import FakeGame from "./fake_game.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -114,7 +128,7 @@ export const DIAGNOSE_CODES = Object.freeze([
     "OBS_TRUNCATED", "PATHS_TRUNCATED", "PRODUCTION_UNAVAILABLE", "ITEMS_UNAVAILABLE",
     "LLM_TRANSPORT", "LLM_PARSE", "LLM_EMPTY_PLAN", "LLM_COORD", "LLM_UNKNOWN_MACRO",
     "LLM_ARGS", "LLM_LINT", "MACRO_REFUSED", "MACRO_HALF_DONE", "PLAN_REJECTED",
-    "COORD_PROVENANCE", "OBS_STALE",
+    "COORD_PROVENANCE", "PATH_NOT_RECT", "OBS_STALE",
     "TX_ROLLED_BACK", "NO_WORLD_CHANGE",
     "LANDING_MISSING", "LANDING_MISMATCH", "DELETE_NOT_REPLAYED",
     "SLOT_STARVED", "OUTPUT_UNROUTED", "FLOW_UNREACHABLE", "FLOW_UNVERIFIED", "DEAD_END",
@@ -155,6 +169,50 @@ function unwrapObs(obs) {
     if (obs && typeof obs === "object" && !Array.isArray(obs.entities)
         && obs.result && Array.isArray(obs.result.entities)) return obs.result;
     return obs && typeof obs === "object" ? obs : {};
+}
+
+/**
+ * 收集「LLM 真正指名的实体 uid」（R13 的输入）。
+ *
+ * 来源只认三种**指名**算子：`$ref` / `$uids` / `$path_of`（都是"这些句柄所指的实体"）。
+ * **`$bbox_of` 不算** —— 它表达的是「覆盖这一块的矩形」，本身不指名具体对象；
+ * 而它顺带框进没点名的格子，正是 R13 要拦的那类问题。
+ *
+ * 解析后的 `args` 里这些算子已经被换成 uid / cell / region 了，所以这里
+ * **从原计划**（res.calls 之前的 llmPlan）读更可靠；但 resolveRefs 也把
+ * provenance 记了下来。用 provenance 里 `obs:uid=N` 的那部分最直接。
+ *
+ * @returns {Set<number>} 被指名的 uid 集合（空集合 = 没有任何指名，R13 不判）
+ */
+function collectNamedUids(resolvedCalls, obs, handles) {
+    const out = new Set();
+    const byUid = new Map(((obs && obs.entities) || []).map(e => [e.uid, e]));
+    for (const c of resolvedCalls || []) {
+        /* ① 从 provenance 拿：`obs:uid=N` 就是「指名了一个已存在实体」 */
+        const prov = c && c.provenance;
+        if (prov && typeof prov === "object") {
+            for (const v of Object.values(prov)) {
+                if (typeof v !== "string") continue;
+                const m = /^obs:uid=(\d+)$/.exec(v.trim());
+                if (m) out.add(Number(m[1]));
+            }
+        }
+        /* ② 从解析后的 args 拿：`{uid}` / `[uid,...]` 形态（resolveRefs 的产物） */
+        const walk = v => {
+            if (typeof v === "number" && byUid.has(v)) { out.add(v); return; }
+            if (Array.isArray(v)) { v.forEach(walk); return; }
+            if (v && typeof v === "object") {
+                if (typeof v.uid === "number" && byUid.has(v.uid)) out.add(v.uid);
+                for (const k of Object.keys(v)) {
+                    if (k === "region") continue;   // region 是"一块地"，不指名对象
+                    walk(v[k]);
+                }
+            }
+        };
+        if (c && c.args) walk(c.args);
+    }
+    void handles;
+    return out;
 }
 function unwrapItems(items) {
     if (items && typeof items === "object" && !Array.isArray(items.paths)
@@ -364,112 +422,14 @@ async function observeOnce(reader) {
  * 4. diagnose
  * ══════════════════════════════════════════════════════════════════════════ */
 
-/** obs 的几何索引（footprint 级；机器第二格也能查到）。 */
-function buildIndex(obs) {
-    const ent = ((obs && obs.entities) || []).filter(e => e && isInt(e.uid));
-    const byUid = new Map(ent.map(e => [e.uid, e]));
-    const byCell = new Map();
-    for (const e of ent) {
-        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
-        const fp = s && s.footprint ? s.footprint : [1, 1];
-        for (let dy = 0; dy < fp[1]; dy++) {
-            for (let dx = 0; dx < fp[0]; dx++) {
-                const k = K([e.x + dx, e.y + dy]);
-                if (!byCell.has(k)) byCell.set(k, e);
-            }
-        }
-    }
-    return { ent, byUid, byCell };
-}
-
-/**
- * 从 hub 的输入槽**反向**走一遍，得到「能影响 goal 的实体集合」。
- *
- * 为什么要这个过滤器：L4 存档里有 163 条带子，其中大量属于旧产线/装饰性支线。
- * 不过滤时 `OUTPUT_UNROUTED` / `DEAD_END` 会产出十几条与目标形状无关的诊断，
- * 把 prompt 的 S4 段（诊断永不截断）挤满，LLM 只看得到噪音。
- * **这是精度换召回的一次有意识取舍**：漏报一条无关死端，比让 LLM 在噪音里挑错更便宜。
- *
- * 走法与 `verify.mjs#obsReach` 同向（那条是下游→上游的反向），但这里只用于诊断，
- * 不参与任何裁决 —— 裁决仍然只看 verifyRuntime/verifyRound 的结果。
- */
-function hubReachable(obs, idx) {
-    const seen = new Set();
-    const hub = idx.ent.find(e => e.type === "hub");
-    if (!hub) return seen;
-    seen.add(hub.uid);
-    const q = [hub];
-    while (q.length) {
-        const e = q.shift();
-        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
-        if (!s) continue;
-        for (const sl of s.inputs) {
-            let cur = sl.cell, guard = 0, hit = null;
-            const passed = [];
-            while (guard++ < 512) {
-                const c = idx.byCell.get(K(cur));
-                if (!c) break;
-                if (c.uid === e.uid) break;
-                if (c.type === "belt") {
-                    passed.push(c.uid);
-                    const rv = typeof c.rotation_variant === "number" ? c.rotation_variant : (c.code - 1);
-                    const d = beltEntry(rv, c.r || 0);
-                    cur = [c.x + DIRV[d][0], c.y + DIRV[d][1]];
-                    continue;
-                }
-                hit = c;
-                break;
-            }
-            for (const u of passed) {
-                if (!seen.has(u)) { seen.add(u); const b = idx.byUid.get(u); if (b) q.push(b); }
-            }
-            if (hit && !seen.has(hit.uid)) { seen.add(hit.uid); q.push(hit); }
-        }
-    }
-    return seen;
-}
-
-/** 某格的「供货方」：带子则沿入口回溯一格，其余就地返回。用于判断输入槽有没有上游。 */
-function upstreamAt(cell, idx) {
-    const e = idx.byCell.get(K(cell));
-    if (!e) return null;
-    if (e.type === "belt") {
-        const rv = typeof e.rotation_variant === "number" ? e.rotation_variant : (e.code - 1);
-        const d = beltEntry(rv, e.r || 0);
-        const up = idx.byCell.get(K([e.x + DIRV[d][0], e.y + DIRV[d][1]]));
-        return up === e ? null : up;
-    }
-    return e;
-}
-
-/** 输入槽是否真被喂（与 verify_runtime#checkSlots 的 obsFeeds 同判据，方向相反）。 */
-function inputFed(sl, idx) {
-    const f = upstreamAt(sl.cell, idx);
-    if (!f) return false;
-    if (f.type === "belt") {
-        const rv = typeof f.rotation_variant === "number" ? f.rotation_variant : (f.code - 1);
-        return beltExit(rv, f.r || 0) === OPP[sl.dir];
-    }
-    if (f.type === "underground_belt") return true;
-    const os = slotsOf(f.type, f.variant, f.x, f.y, f.r || 0);
-    if (!os) return false;
-    const my = [sl.cell[0] - DIRV[sl.dir][0], sl.cell[1] - DIRV[sl.dir][1]];
-    return os.outputs.some(o => o.cell[0] === my[0] && o.cell[1] === my[1] && o.dir === OPP[sl.dir]);
-}
-
-/** 输出槽是否有去处（与 checkSlots 同判据）。 */
-function outputRouted(sl, idx) {
-    const e = idx.byCell.get(K(sl.cell));
-    if (!e) return false;
-    if (e.type === "belt") {
-        const rv = typeof e.rotation_variant === "number" ? e.rotation_variant : (e.code - 1);
-        return beltEntry(rv, e.r || 0) === OPP[sl.dir];
-    }
-    if (e.type === "underground_belt") return true;
-    const os = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
-    if (!os) return false;
-    return os.inputs.some(i => i.cell[0] === sl.slot[0] && i.cell[1] === sl.slot[1] && i.dir === OPP[sl.dir]);
-}
+/* 几何索引 / hub 可达 / 上下游判据都搬到 `loop/topology.mjs`（P-a0）。
+ * 这里保留同名 re-export，是为了让既有 import 方（verify/测试/第三方脚本）不改也能跑。
+ * **语义不变**：`indexOf` 的 footprint 展开、`hubReachable` 的反向爬行与旧实现逐字一致
+ * （`topology.test.mjs` 里有与旧实现的逐 uid 对拍）。 */
+export {
+    indexOf as buildIndex, hubReachable, upstreamAt, inputFed, outputRouted,
+    indexOf,
+} from "./loop/topology.mjs";
 
 /** prompt 里 top-N 的候选宏：按诊断码查静态表，取每条码的 top-3，去重后最多 6 张卡。 */
 function candidatesFor(diagnoses) {
@@ -490,6 +450,38 @@ function checkOf(report, name) {
     return report.checks.find(c => c && c.name === name) || null;
 }
 
+/** severity 的排序权重（blocker 先出）。与 `semantic.mjs` 的 SEVERITY_RANK 同口径。 */
+const SEVERITY_OF = Object.freeze({ blocker: 0, warn: 1, info: 2 });
+
+/**
+ * hub 的**入口带子** uid 集合（含隧道：隧道的 receiver 也可能正对入口）。
+ *
+ * 为什么要这一份：`CHAIN_UNFED` 等世界层诊断在拓扑上完全正确地指出「这条入口没有上游」，
+ * 但 hub 的 16 个入口里 13 个空着是**正常状态**。把它交给模型 = 让它去给入口接料，
+ * 与「病在上游产线」正好相反（v2 §4 的实测教训：入口带子被顶到 BELTS 段第 1–3 位）。
+ *
+ * 判据只看几何：入口槽的 approach 格上是什么实体。**不判来向**（来向不对属于
+ * `BELT_HANDOFF_REJECTED`，那也可能是真坏 —— 但它的 subject 是**送方**，不是入口本身）。
+ *
+ * @returns {Set<number>} uid 集合（没有 hub 时为空集）
+ */
+function hubInletUids(obs, idx) {
+    const out = new Set();
+    if (!idx || !Array.isArray(idx.ent)) return out;
+    const hub = idx.ent.find(e => e && e.type === "hub");
+    if (!hub) return out;
+    let slots = null;
+    try { slots = slotsOf(hub.type, hub.variant, hub.x, hub.y, hub.r || 0); }
+    catch { return out; }
+    if (!slots || !Array.isArray(slots.inputs)) return out;
+    for (const sl of slots.inputs) {
+        const e = (idx.byCell && idx.byCell.get(K(sl.cell))) || null;
+        if (!e) continue;
+        if (e.type === "belt" || e.type === "underground_belt") out.add(e.uid);
+    }
+    return out;
+}
+
 const GOAL_TARGET = 0;
 
 /**
@@ -501,71 +493,106 @@ const GOAL_TARGET = 0;
  * @param {object|null} report  `verifyRound` 的返回；首轮为 null
  * @param {string|object|null} goal 形状串或 `{shape, required, delivered, progress}`
  * @param {object|null} handles `buildHandles(obs, items)` 的表
+ * @param {object} [ctx]        可选上下文（P-b 接线）
+ * @param {object} [ctx.recipe] 由 loop **预计算并注入**的配方（`recipeForCached` 的返回）。
+ *   缺席 ⇒ 语义层整体降级为空，`diagnose` 绝不 spawn（纯函数性：同 obs 两次调用必须逐字节相同）。
  * @returns {Array<object>} Diagnosis[]（每条 code ∈ DIAG_CODES，**只带句柄不带坐标**）
  */
-export function diagnose(obs, items, production, report, goal, handles) {
+export function diagnose(obs, items, production, report, goal, handles, ctx = {}) {
+    const cx = (ctx && typeof ctx === "object") ? ctx : {};
     const o = unwrapObs(obs);
     const it = unwrapItems(items);
     const out = [];
     const idx = buildIndex(o);
-    const reach = hubReachable(o, idx);
     const tbl = handles || buildHandles(o, it);
     const goalShape = typeof goal === "string" ? goal : (goal && (goal.shape || goal.goal)) || null;
     const req = (o.goal && o.goal.requirement) || {};
     const required = isInt(req.required) ? req.required : null;
     const delivered = isInt(req.delivered) ? req.delivered : null;
 
-    /* ── ① 结构层：只报「整台机器进不了料 / 出不了货」这种确定性的坏 ──
-       注意与 checkSlots 的口径一致：**只要有任何一个**输入被喂/任何一个输出有去处，
-       就不算坏（cutter 只有一个主输入；balancer 的 secondary 空着是正常设计）。 */
-    for (const e of idx.ent) {
-        if (e.type === "belt" || e.type === "underground_belt" || e.type === "hub") continue;
-        if (!reach.has(e.uid)) continue;                 // 与 goal 无关的旧线：不报（见 hubReachable 注释）
-        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
-        if (!s) continue;
-        const subject = subjectOf(tbl, e.uid, e.type);
-        if (s.inputs.length && !s.inputs.some(sl => inputFed(sl, idx))) {
-            out.push(mkDiag("SLOT_STARVED", {
-                layer: "L2", severity: "blocker", subject,
-                slot: { role: s.inputs[0].role, index: 0 },
-                expected: `${e.type} 至少一个输入槽有上游`,
-                observed: `输入槽 ${s.inputs.map(sl => sl.role).join("/")} 全部无上游`,
-                handles: [subject.handle],
-                uids: [e.uid],
-                candidates: ["connect", "insert_machine", "trash_unused"],
-            }));
-        }
-        if (s.outputs.length && !s.outputs.some(sl => outputRouted(sl, idx))) {
-            out.push(mkDiag("OUTPUT_UNROUTED", {
-                layer: "L2", severity: "blocker", subject,
-                slot: { role: s.outputs[0].role, index: 0 },
-                expected: `${e.type} 至少一个输出槽有下游`,
-                observed: `输出槽 ${s.outputs.map(sl => sl.role).join("/")} 全部无去处`,
-                handles: [subject.handle],
-                uids: [e.uid],
-                candidates: ["trash_unused", "connect", "extend_line"],
-            }));
-        }
-    }
+    /* ── ①② 结构层：**整段交给 `loop/structural.mjs`**（P-a0） ──
+     *
+     * 这一段原来是「可达 且 输入槽全空 / 输出槽全空」与「可达 且 出口为空」。
+     * 实测（`research/ai-plan/tmp/DIAGNOSE-BASELINE.md` §3b）：
+     *   · 旧 `DEAD_END` 的两个条件**互斥** —— 可达正是从 hub 反向走出来的，
+     *     出口为空的带子不可能进入可达集 ⇒ 它**永远不可能触发**（删 40 条带子，触发 0 次）；
+     *   · 删掉全部矿机 / 全部 trash 时，旧实现只报 `NO_PRODUCTION`。
+     *
+     * P-a0 的纪律是「**结构判据不依赖可达性**，可达性只用于排序（tier）」。
+     * 结构层只判拓扑；形状/配方留给 P-a。
+     * ⚠️ 旧代码在这里调 `hubReachable(o, idx)` 做过滤器；**现在不调了** ——
+     *    tier 由 `structuralDiagnoses` 内部算，重复算一遍只会让两处口径有机会漂移。 */
 
-    /* ── ② 结构层：断头带（只报能从 hub 反向走到的那些，见上） ── */
-    for (const e of idx.ent) {
-        if (e.type !== "belt") continue;
-        if (!reach.has(e.uid)) continue;
-        const rv = typeof e.rotation_variant === "number" ? e.rotation_variant : (e.code - 1);
-        const d = beltExit(rv, e.r || 0);
-        const next = [e.x + DIRV[d][0], e.y + DIRV[d][1]];
-        if (idx.byCell.has(K(next))) continue;
-        const subject = subjectOf(tbl, e.uid, e.type);
-        out.push(mkDiag("DEAD_END", {
-            layer: "L3", severity: "blocker", subject,
-            expected: "带子出口有接收方",
-            observed: "出口格上没有实体（货会堆在这里）",
-            handles: [subject.handle],
-            uids: [e.uid],
-            candidates: ["trash_unused", "extend_line", "connect"],
+    /* ── ④b hub 入口带子过滤器（v2 §4 的落地） ──
+     *
+     * 实测（`DIAGNOSE-V2-REDTEAM-VERDICT.md` §4）：`CHAIN_UNFED` 会以 `B136`（hub 的 primary 入口）
+     * 为 subject 报出来。它**拓扑上是对的**（那条入口确实没有上游），但把模型引去给 hub 入口接料，
+     * 与「病在上游的产线」正好相反 —— 那 16 个入口里 13 个空着是正常状态。
+     *
+     * ⚠️ 只过滤**世界层**（结构层 / 语义层）的产出。报告层（`③`）的 `LANDING_*` / `DELETE_NOT_REPLAYED`
+     *    走 `mkDiag` 产出，描述的是「上一轮你把它删了/没放上」—— 它们**必须**保留，否则
+     *    「删了入口却没报错」会让 loop 静默吞掉一次真实的落地失败。
+     *    按 `layer` 判分不出来（结构层的 layer 也是 "L2"），所以过滤点必须在**合并前**。
+     *
+     * 不静默丢弃：条数记进首条诊断的 `evidence.suppressed_hub_inlets`。
+     *
+     * 另外把 hub 入口句柄从**所有**世界层诊断的 `evidence.handles` 里摘掉。
+     * 只过滤 subject 不够：`semantic.mjs` 的某条诊断会把入口带子放进 `handles`
+     * （它是这条流的近邻，语义上没错），而 `prompt.pickBelts` 正是按 `evidence.handles`
+     * 决定哪些带子进 BELTS 段 —— 留在里面就等于把入口顶上去，与 v2 §4 的目标相反。
+     * 摘掉的句柄记进 `evidence.hub_inlets`（独立字段，不参与 pickBelts），不丢信息。 */
+    const inletUids = hubInletUids(o, idx);
+    const dropInlets = (list) => {
+        const kept = [];
+        let n = 0;
+        for (const d of list) {
+            const uid = d && d.subject && d.subject.uid;
+            if (isInt(uid) && inletUids.has(uid)) { n++; continue; }
+            /* 顺手把 evidence.handles 里的入口句柄挪到 hub_inlets。
+               `byHandle` 的值是 HandleEntry（有 `.uid`），不是 uid 本身 —— 两种形态都认。 */
+            if (d && d.evidence && Array.isArray(d.evidence.handles)) {
+                const tblIn = tbl && tbl.byHandle ? tbl.byHandle : null;
+                const moved = [];
+                const rest = d.evidence.handles.filter(h => {
+                    const e = tblIn ? tblIn.get(h) : null;
+                    const uidH = typeof e === "number" ? e : (e && isInt(e.uid) ? e.uid : null);
+                    if (uidH !== null && inletUids.has(uidH)) { moved.push(h); return false; }
+                    return true;
+                });
+                if (moved.length) {
+                    d.evidence.handles = rest;
+                    d.evidence.hub_inlets = [...(d.evidence.hub_inlets || []), ...moved];
+                }
+            }
+            kept.push(d);
+        }
+        return { kept, n };
+    };
+    const structRes = dropInlets(structuralDiagnoses(o, it, goalShape, tbl, { recipe: cx.recipe || null }));
+    out.push(...structRes.kept);
+
+    /* ── ①②b 语义层（P-a）：形状传播 + 配方闭包 + 作业分配 ──
+     *
+     * **只在 `ctx.recipe` 存在且 ok 时产出**（`semanticDiagnoses` 自己判，缺配方返回 `[]`）。
+     * 配方由 loop **预计算一次**后注入 —— 这里绝不 spawn。理由不是洁癖：
+     * `diagnose` 每轮跑、输出进 `fingerprintOf`，一旦引入 spawn，「同 obs 两次结果不同」
+     * 就会让指纹抖动，`NO_PROGRESS_3X` 静默失效（契约 §6 决定三）。
+     *
+     * 语义层的两条 `PROCESSOR_REQUIRED` 共用同一个码、severity 不同（scope:stream=warn /
+     * scope:factory=blocker）—— 那是 v2 §2 的裁决，不是这里的分歧。
+     *
+     * `level` 口径与 `ctx.recipe` 一致：都取 **obs.goal.level**（solver 的解是同一个关卡的解）。
+     * 两侧取自同一字段，所以「配方按 L 门控 / 语义按 L 判可修」不会分裂。 */
+    let semanticDropped = 0;
+    if (cx.recipe) {
+        const semRes = dropInlets(semanticDiagnoses(o, it, goalShape, tbl, {
+            recipe: cx.recipe,
+            level: (o.goal && Number.isFinite(o.goal.level)) ? o.goal.level : undefined,
         }));
+        out.push(...semRes.kept);
+        semanticDropped = semRes.n;
     }
+    const inletDropped = structRes.n + semanticDropped;
 
     /* ── ③ report 层：把 verifyRound 的 checks 映射成诊断（每条 check 只映射一次） ── */
     if (report && Array.isArray(report.checks)) {
@@ -735,20 +762,44 @@ export function diagnose(obs, items, production, report, goal, handles) {
         }
     }
 
-    /* ── ⑤ 排序：goal 级 → 结构层（L2 饥饿 → L2 无去处 → L3 断头）；同层按码名 + 句柄 ──
-       确定性排序是必须的：指纹与 prompt 都依赖诊断顺序稳定。 */
+    /* ── ⑤ 排序：语义层（最可行动）→ goal 级 → 结构层（按具体度）→ 报告层 ──
+       确定性排序是必须的：指纹与 prompt 都依赖诊断顺序稳定。
+       结构层内部已经按 `evidence.tier` 排过一次（见 `structural.mjs`）；这里的 RANK 只决定
+       **跨层**的顺序，所以同码下用稳定 tie-break 保住那一次排序的结果（见下方对 tier 的比较）。 */
     const RANK = {
         OBS_TRUNCATED: 0, PATHS_TRUNCATED: 0,
-        NO_PRODUCTION: 1, PRODUCED_NOT_DELIVERED: 2, FLOW_UNREACHABLE: 3, FLOW_UNVERIFIED: 4,
-        SLOT_STARVED: 5, OUTPUT_UNROUTED: 6, DEAD_END: 7,
-        LANDING_MISSING: 8, LANDING_MISMATCH: 8, DELETE_NOT_REPLAYED: 8,
-        TX_ROLLED_BACK: 9, NO_WORLD_CHANGE: 9,
+        /* 语义层排在最前：它们直接说「缺哪一步工序 / 哪条流送错形状」，
+           比「窗口内零产出」更接近可执行动作。v2 §4：WRONG_SHAPE_AT_HUB 必须可见。 */
+        WRONG_SHAPE_AT_HUB: 1, DISCARDED_INTERMEDIATE: 2, PROCESSOR_REQUIRED: 3,
+        NO_PRODUCTION: 4, PRODUCED_NOT_DELIVERED: 5, FLOW_UNREACHABLE: 6, FLOW_UNVERIFIED: 7,
+        SLOT_STARVED: 8, OUTPUT_UNROUTED: 8,
+        DEAD_END: 9, BELT_HANDOFF_REJECTED: 9,
+        CHAIN_UNFED: 10, WASTE_NO_SINK: 10, RAW_MATERIAL_MISSING: 10,
+        LANDING_MISSING: 11, LANDING_MISMATCH: 11, DELETE_NOT_REPLAYED: 11,
+        TX_ROLLED_BACK: 12, NO_WORLD_CHANGE: 12,
+        /* info 级：排在所有可行动诊断之后，让总量上限先压掉它（v2 §6：info 不占显眼位置） */
+        SHAPE_UNKNOWN: 40,
     };
+    /* ── ④b 之后：hub 入口过滤已发生在世界层合并之前（见上方 `dropInlets`）。
+       这里只把被压掉的条数挂到首条世界层诊断上 —— 不静默丢弃。 */
+    if (inletDropped) {
+        const first = out.find(d => d.layer !== "meta") || out[0];
+        if (first) first.evidence.suppressed_hub_inlets = inletDropped;
+    }
+
     out.sort((a, b) => {
         const ra = RANK[a.code] === undefined ? 50 : RANK[a.code];
         const rb = RANK[b.code] === undefined ? 50 : RANK[b.code];
         if (ra !== rb) return ra - rb;
         if (a.code !== b.code) return a.code < b.code ? -1 : 1;
+        /* 严重度优先于 tier：同一码下 blocker 先于 warn/info（PROCESSOR_REQUIRED 的两种 scope） */
+        const sa = SEVERITY_OF[a.severity] === undefined ? 9 : SEVERITY_OF[a.severity];
+        const sb = SEVERITY_OF[b.severity] === undefined ? 9 : SEVERITY_OF[b.severity];
+        if (sa !== sb) return sa - sb;
+        /* 结构层自己的 tier（0 走廊内 / 1 hub 可达 / 2 其它）—— 只对结构码存在 */
+        const ta = a.evidence && Number.isInteger(a.evidence.tier) ? a.evidence.tier : 9;
+        const tb = b.evidence && Number.isInteger(b.evidence.tier) ? b.evidence.tier : 9;
+        if (ta !== tb) return ta - tb;
         const ha = (a.subject && a.subject.handle) || "";
         const hb = (b.subject && b.subject.handle) || "";
         return ha < hb ? -1 : ha > hb ? 1 : 0;
@@ -761,6 +812,49 @@ export function diagnose(obs, items, production, report, goal, handles) {
             if (c.length) d.candidates = c;
         }
     }
+
+    /* ── ⑥ 合并后的统一上限（v2 §6：每码 ≤3、总量 ≤8） ──
+     *
+     * 结构层与语义层各自在上限内，但**合并后**会超（L5：结构层自己就占满 8 条，
+     * 再并入语义层必然破 8）。上限必须在合并之后统一施加，否则「每码 ≤3」变成
+     * 「每层每码 ≤3」—— 同一个码可以出现 6 条。
+     *
+     * 超限**不静默丢弃**，而且两种超限分开记（混记会让 prompt 说错话）：
+     *   · 每码被压掉的 → 该码第一条的 `evidence.suppressed`（「这个码还有 N 条没显示」）；
+     *   · 总量被压掉的 → 首条诊断的 `evidence.suppressed_total`（「还有 N 条别的诊断没显示」）。
+     *     两者混成一句会让模型以为「还有 2 条 PROCESSOR_REQUIRED」，而实际上它一条都不少。 */
+    const LIMITS = { PER_CODE: 3, TOTAL: 8 };
+    const kept = [];
+    const perCode = new Map();
+    const droppedByCode = new Map();
+    let droppedTotal = 0;
+    for (const d of out) {
+        const n = perCode.get(d.code) || 0;
+        if (n >= LIMITS.PER_CODE) {
+            droppedByCode.set(d.code, (droppedByCode.get(d.code) || 0) + 1);
+            continue;
+        }
+        if (kept.length >= LIMITS.TOTAL) {
+            droppedTotal++;
+            continue;
+        }
+        perCode.set(d.code, n + 1);
+        kept.push(d);
+    }
+    for (const d of kept) {
+        const n = droppedByCode.get(d.code);
+        if (n) {
+            d.evidence.suppressed = (d.evidence.suppressed || 0) + n;
+            droppedByCode.delete(d.code);
+        }
+    }
+    /* 某码被总量上限压到一条不剩：它的数量并入「总量被压掉」的计数 */
+    for (const n of droppedByCode.values()) droppedTotal += n;
+    if (droppedTotal && kept.length) {
+        kept[0].evidence.suppressed_total = (kept[0].evidence.suppressed_total || 0) + droppedTotal;
+    }
+    out.length = 0;
+    out.push(...kept);
     return out;
 }
 
@@ -790,12 +884,31 @@ function planRejectFromViolations(violations, stage) {
             evidence: { stage, rules: [...rules] },
         });
     }
+    /* ★ `PATH_NOT_RECT` 必须单独成码（第三轮实验的直接产物）★
+     * 它既不是「LLM 夹带坐标」（那是模型做错事），也不是「宏拒绝」（宏根本没跑到）——
+     * 是**出题人给的算子表达不了它的合法意图**：`$path_of` 指的格集拐弯了，region 无法表达。
+     * 归进 LLM_COORD 会让下一轮提示「坐标只能来自算子」，而它**已经在用**算子；
+     * 归进 MACRO_REFUSED 又会给出「换个宏」的候选，而它选的宏是对的。
+     * 单独成码才能把 hint 写成「拆成更小的连续段」。 */
+    if (rules.has("PATH_NOT_RECT")) {
+        const v = violations.find(x => x && x.rule === "PATH_NOT_RECT") || {};
+        return reject("PATH_NOT_RECT", {
+            layer: "plan", stage,
+            expected: "交给 region 的 $path_of 格集恰好填满自己的外接矩形（连续选区）",
+            observed: v.reason || "选区不连续",
+            evidence: { stage, rules: [...rules], path: v.path || null },
+            /* 候选是**该宏自身**（与 LLM_ARGS 同口径：给它重试一次的机会） */
+            candidates: ["replace_run"],
+            hint: "把这段链拆成各自连续（不含空洞）的几段，分别调用；或只选真正要改的那几格。"
+                + "不要为了『让它变成矩形』而把没指名的格子加进来。",
+        });
+    }
     return reject("LLM_COORD", {
         layer: "plan", stage,
         expected: "LLM 输出里没有字面坐标（V1–V6）",
         observed: (violations[0] && `${violations[0].rule}: ${violations[0].reason}`) || "坐标禁令命中",
         evidence: { stage, rules: [...rules], count: (violations || []).length },
-        hint: "坐标只能来自 $ref / $uids / $bbox_of；say/why 里也不许出现数字对。",
+        hint: "坐标只能来自 $ref / $uids / $bbox_of / $path_of；say/why 里也不许出现数字对。",
     });
 }
 
@@ -1034,8 +1147,22 @@ export function buildTxPlan(llmPlan, obs, items, handles) {
         executed.push({ macro: c.macro, args: c.args, provenance: c.provenance, result: r });
     }
 
-    /* ④ 翻译成一次 tx 的 ops（含 deriveFlows） */
-    const txPlan = planToTxOps(executed, { obs: o, items });
+    /* ④ 翻译成一次 tx 的 ops（含 deriveFlows）
+     *
+     * ★ 必须传 `namedUids`（R13）★
+     *
+     * 实测漏洞（2026-10-29）：LLM 只给句柄（如 B69/B81/B82），`$bbox_of` 算出矩形，
+     * `replace_run` 在矩形里挑落点，**删掉了没点名的 10150、漏掉了点名的 10143**，
+     * 而宏返回 ok:true —— 一个"成功"的 tx 会在世界里删掉 LLM 从未指名的东西。
+     *
+     * `namedUids` = 所有 `res.calls[].args` 里由 `$ref`/`$uids`/`$path_of` 解析出来的
+     * 实体 uid 集合。planToTxOps 用它断言「删的就是点名的」，多一个就拒。
+     *
+     * 注意：`$bbox_of` **不贡献** namedUids —— 它表达的是「覆盖这一块的矩形」，
+     * 本身不指名具体对象。这也正是它会顺带框进别的东西的原因。
+     */
+    const namedUids = collectNamedUids(res.calls, o, handles);
+    const txPlan = planToTxOps(executed, { obs: o, items, namedUids });
     if (!txPlan || txPlan.ok !== true) {
         const e = (txPlan && txPlan.error) || {};
         const kind = e.kind || "";
@@ -1171,6 +1298,9 @@ async function doApply(ctx, ops) {
  * @property {boolean} [dryRun]    只跑到 plan，世界零写入
  * @property {Function} [apply]    (ops) => tx；给了就用它（优先于 reader.tx）
  * @property {object} [game]       FakeGame 实例（离线写面；给了才能 apply）
+ * @property {Function} [recipeSpawn] 配方 solver 的 spawn 注入（签名同 `spawnSync`）。
+ *   **只给测试/回放用**：生产不传，走真实 solver。它与 `recipe.mjs` 自己的 `opts.spawn` 同一语义，
+ *   目的就是让「recipe 每 run 只跑一次」这条能被机器验证，而不是靠读代码。
  */
 
 /**
@@ -1220,6 +1350,14 @@ export async function runLoop(opts = {}) {
         candidatesOverride: null,
         /** 本轮的诊断指纹第 2 次出现 ⇒ 必须换动作（见 countFingerprint） */
         mustChange: false,
+        /**
+         * **每 run 一次**的配方（`recipeForCached` 的返回）。首轮 observe 之后算，
+         * 之后每轮直接复用 —— 这正是 `diagnose` 保持纯函数的前提（它不 spawn）。
+         *
+         * `null` = 还没算；`{ok:false, reason}` = **算过但失败了**（失败也要存，
+         * 否则不可解的目标每轮重跑一次组合爆炸，实测 `CgScCgCg` 单次 1.6s）。
+         */
+        recipe: null,
     };
 
     let outcome = "error";
@@ -1359,6 +1497,29 @@ export async function runLoop(opts = {}) {
             st.obs = ob.obs; st.items = ob.items; st.production = ob.production;
             st.lastObs = ob.obs; st.lastItems = ob.items; st.lastProduction = ob.production;
             st.handles = buildHandles(ob.obs, ob.items);
+
+            /* ── ①b 配方：**每 run 一次**（首轮 observe 之后，因为需要 `obs.goal.level`） ──
+             *
+             * 为什么在这里：`diagnose` 必须保持纯函数（每轮调用 + 进 fingerprint）。
+             * 配方是唯一需要 spawn 的外部信息，所以在 loop 里算一次、注入进去。
+             * 之后每轮直接复用 `st.recipe` —— **包括第 2/3 轮**，因为目标形状与关卡在
+             * 一次 run 里不会变（变了就是另一次 run）。
+             *
+             * 失败也要存：`recipeForCached` 内部已经把失败结果缓存住了，但 `st.recipe`
+             * 是**每 run 一层**的保险 —— 不可解目标每次重跑组合爆炸（实测单次 1.6s）。
+             * 抛错也 catch 成 `{ok:false}`：solver 是外部进程，它出什么事都不许让 loop 崩。
+             * 记在 observe 行里（不新增 transcript kind —— 那是契约 §1.4 的闭集）。 */
+            if (st.recipe === null) {
+                const lvl = (ob.obs.goal && Number.isFinite(ob.obs.goal.level)) ? ob.obs.goal.level : undefined;
+                const recipeOpts = lvl === undefined ? { level: 4 } : { level: lvl };
+                /* 注入点只给测试用（见 LoopOpts.recipeSpawn）。生产不传 ⇒ 走真 solver。 */
+                if (typeof opts.recipeSpawn === "function") recipeOpts.spawn = opts.recipeSpawn;
+                try {
+                    st.recipe = recipeForCached(goal, recipeOpts);
+                } catch (e) {
+                    st.recipe = { ok: false, reason: "internal", message: String(e && e.message ? e.message : e) };
+                }
+            }
             tr.write("observe", roundNo, {
                 tick: typeof ob.obs.tick === "number" ? ob.obs.tick : null,
                 truncated: ob.obs.truncated === true,
@@ -1367,20 +1528,26 @@ export async function runLoop(opts = {}) {
                 paths_truncated: !!(ob.items && isInt(ob.items.pathCount) && Array.isArray(ob.items.paths) && ob.items.pathCount > ob.items.paths.length),
                 world_hash: worldUidSetHash(ob.obs),
                 problems: ob.problems.map(d => d.code),
+                recipe: {
+                    ok: !!(st.recipe && st.recipe.ok === true),
+                    steps: (st.recipe && st.recipe.ok === true && Array.isArray(st.recipe.steps)) ? st.recipe.steps.length : 0,
+                    level: Number.isFinite(st.recipe && st.recipe.level) ? st.recipe.level : null,
+                    ...(st.recipe && st.recipe.ok !== true && st.recipe.reason ? { reason: st.recipe.reason } : {}),
+                },
             });
 
             /* ── ② diagnose ── */
             const bad = ob.problems.filter(d => d.code === "OBS_TRUNCATED");
             if (bad.length) {
                 /* 截断时**不拿这份数据做判据**，也不继续（任何后续判断都不成立）。 */
-                const diag = [...bad, ...diagnose(ob.obs, ob.items, ob.production, null, goal, st.handles)];
+                const diag = [...bad, ...diagnose(ob.obs, ob.items, ob.production, null, goal, st.handles, { recipe: st.recipe })];
                 tr.write("diagnose", roundNo, { codes: diag.map(d => d.code), fingerprint: fingerprintOf(diag), diagnoses: diag });
                 st.diagnoses = diag;
                 outcome = "halt"; reason = "OBS_TRUNCATED";
                 break;
             }
 
-            let diagnoses = diagnose(ob.obs, ob.items, ob.production, st.lastReport, goal, st.handles);
+            let diagnoses = diagnose(ob.obs, ob.items, ob.production, st.lastReport, goal, st.handles, { recipe: st.recipe });
             /* 观测面的问题（items/production 不可用）与业务诊断并列；它们不导致 halt。 */
             for (const p of ob.problems) if (!diagnoses.some(d => d.code === p.code && d.layer === p.layer)) diagnoses.push(p);
 
@@ -1440,6 +1607,9 @@ export async function runLoop(opts = {}) {
                         diagnoses,
                         candidates: cands,
                         lastRound: st.lastPlanSummary || null,
+                        /* 复用 loop 已算好的配方：`buildPrompt` 自己 spawn 一次 solver 要 200–400ms，
+                           每轮一次是白花的钱，而且两次结果可能不一致（solver 不可解时）。 */
+                        recipe: st.recipe,
                         budget: {
                             rounds_left: budgetLeft().rounds, llm_calls_left: budgetLeft().llm_calls,
                             tx_left: budgetLeft().tx, ticks_left: budgetLeft().ticks, wall_ms_left: budgetLeft().wall_ms,
