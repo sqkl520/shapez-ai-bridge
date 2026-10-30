@@ -569,22 +569,23 @@ function cutSites(idx, reach, inCorridor, tblRef = null) {
            把它列进 `site_handles` 会把模型引到错误的产线 —— 这正是 F-2 的形态。 */
         if (!inCorridor([sx, sy])) continue;
         const anchor = inside.slice().sort((a, b) => (a.y - b.y) || (a.x - b.x))[0];
-        /* ★ `pair` 必须给**三格**：cutter 的两格 + trash 落点 ★
+        /* ★ `pair` 给 **4 格**（完整 2×2），不是 3 格 ★
          *
-         * 2026-10-30 实测（第十三轮 + 主线程复核）：
-         * 一开始只给 cutter 的两格，模型照做 `$path_of([左,右])` 得到 2 格宽的 region，
-         * 而 `replace_run` 报 `precondition_failed`：
-         *   「cutter 的 "left" 槽喷口在 (sx, sy-1)，落在 region 之外」
+         * 2026-10-30 实测（第十五次修正）：
+         * 给 3 格 `(sx,sy)` `(sx+1,sy)` `(sx,sy-1)` 时，`$path_of` 算出
+         * region `[sx, sy-1, sx+1, sy]` 是 **2×2**，而三格只填了 L 形三个角
+         * ⇒ `holes:[[sx+1, sy-1]]` ⇒ `contiguous: false` ⇒ `PATH_NOT_RECT`。
          *
-         * `replace_run` 的 region 必须同时覆盖：机器 footprint + 各废料槽喷口格。
-         * cutter 2×1 + 废料喷口 = **3 格**。
-         *
-         * 所以 pair 给 3 格：`(sx,sy)`、`(sx+1,sy)`、`(sx,sy-1)`。
-         * 模型 `$path_of` 这三格 ⇒ region `[sx, sy-1, sx+1, sy]` ⇒ 恰好能施工。
-         * （`(sx+1,sy-1)` 是产品出口，不必须，但如果它是带子也可以纳入 —— 这里不纳，
-         *   因为纳入会让 region 变成 2×2，多出一格 region 外的判断负担。） */
-        const pairUids = [at(idx, [sx, sy]), at(idx, [sx + 1, sy]), waste]
-            .filter(Boolean).map(b => b.uid);
+         * 而第四格 `(sx+1, sy-1)` **本来就是产品出口的带子**（开始就校验过
+         * `prod` 存在且 entry 朝下），所以把它算进来：
+         *   · 让 4 格填满 2×2 ⇒ contiguous:true
+         *   · region 与 `replace_run` 需要的完全一致
+         *   · 不会多框进无关格子
+         */
+        const pairUids = [
+            at(idx, [sx, sy]), at(idx, [sx + 1, sy]),
+            waste, prod,
+        ].filter(Boolean).map(b => b.uid);
         const pair = pairUids.map(u => handleOf(tblRef, u)).filter(Boolean);
         out.push({ anchor: [sx, sy], handleUid: anchor.uid, pair, pairUids });
     }
@@ -812,15 +813,25 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                  * 现在：`handles` 前置一个**真实可行的落点对**（覆盖 2 格宽），
                  * 后面才跟流上的带子（供它理解上下文）。
                  * `site_handles` 仍然给全部可行落点，`site_cells` 给锚点。 */
+                /* ★ `handles` 只放**可行落点**，流上的带子另放 `stream_handles` ★
+                 *
+                 * 2026-10-30 实测（第十四轮）：把两者混在一个数组里，模型会把
+                 * **全部 6 个**句柄塞进 `$path_of(["B10","B11","B7","B110","B103","B95"])`，
+                 * 得到 `PATH_NOT_RECT` —— 前三个是可行落点（连续），后三个是流上带子（在别处）。
+                 *
+                 * 模型分不清"这些是能放机器的地方"和"这些是当前跑货的带子"，
+                 * 因为都在同一个 `handles` 里、语义上也都是"相关句柄"。
+                 *
+                 * 所以分开：
+                 *   handles        = 可行落点的格子（模型应拿去当 region）
+                 *   stream_handles = 目标流上的带子（仅供参考，表示"改的是这条流"）
+                 */
                 handles: [
-                    /* sites[0].pair 只有 cutSites 才有（2×1 机器需要 3 格）；
-                       oneCellSites（rotater 族）没有 pair —— 那时退回它的单格句柄。 */
                     ...((sites[0] && Array.isArray(sites[0].pair)) ? sites[0].pair
                         : (sites[0] && sites[0].handleUid !== undefined
                             ? [handleOf(handles, sites[0].handleUid)].filter(Boolean) : [])),
-                    subj.handle,
-                    ...near,
-                ].filter(Boolean).slice(0, 8),
+                ].filter(Boolean).slice(0, 4),
+                stream_handles: [subj.handle, ...near].filter(Boolean).slice(0, 4),
                 uids: [top.stream.head.uid],
                 tier: top.corridor ? 0 : tierOf(top.stream.head.uid),
                 scope: "stream",

@@ -81,53 +81,97 @@ const GROUND_TRUTH = Object.freeze({
         must_place: [{ kind: "cutter", origin: [4, -13] }, { kind: "trash", origin: [4, -14] }],
     },
     /**
-     * 结构判据：这条向上链的可插入区间。
-     * x ∈ {4,5}（并排两条），y ∈ [-16,-8]（整段向上链）。
-     * cutter 占 (x,y)+(x+1,y)，trash 落在 (x, y+1)（left 槽喷口）。
+     * ★ 判据不再写死 x 范围 —— 改成**运行期枚举**（v2 §1）★
+     *
+     * 2026-10-30：这里原来是 `chain: { xs: [4,5], yMin: -16, yMax: -8 }`，
+     * 来自历史正解（人算坐标那次）。但实测**物理可行**的落点是：
+     *   x=2 → 18 个、x=3 → 10 个、x=4 → 5 个、x=5 → **0 个**
+     *   （x=5 放不了：cutter 2×1 会伸到 x=6，那里没带子）
+     *
+     * 第十四轮实验里模型 5/10 次落在 x=2 —— 那是**物理可行的正解**，
+     * 却被写死的判据判成失败。这是我第十四次「判据把正确答案判错」。
+     *
+     * 现在判据 = 用**真宏**枚举全部可行落点，模型的落点在里面就算对。
+     * 判据是自指的（用真宏），所以不会像手写范围那样过拟合当前存档。
      */
-    chain: { xs: [4, 5], yMin: -16, yMax: -8 },
-    /** 这条链上的带子 uid（删的必须是这条链的） */
-    chain_uids: [
-        10144, 10143, 10150, 10149, 10144, 10209, 10208, 10148, 10147,
-        10206, 10146, 10139, 10141, 10140, 10090, 10091,
-    ],
+    chain: null,
+    chain_uids: null,
 });
 
-/** 判断一个 plan 是否"结构上正确"：在目标链上插入了 cutter，没碰别的地方。 */
-function judgePlan(txp, obsEntities) {
+/**
+ * 用真宏枚举所有物理可行的 cutter 落点。
+ *
+ * 判据是自指的：不写死 x/y 范围（那会过拟合当前存档），
+ * 而是「replace_run 在这个位置能不能成功」。模型落在任意一个可行位置上都算对。
+ *
+ * @param {Array} entities obs.entities
+ * @returns {Array<{x:number, y:number, removes:number[], placed:Array}>}
+ */
+function feasibleSites(entities) {
+    const out = [];
+    const beltCells = entities.filter(e => e.type === "belt");
+    const xs = [...new Set(beltCells.map(e => e.x))].sort((a, b) => a - b);
+    const ys = [...new Set(beltCells.map(e => e.y))].sort((a, b) => a - b);
+    for (const x of xs) {
+        for (const y of ys) {
+            const r = replaceRun(
+                {
+                    region: [x, y - 1, x + 1, y + 1],
+                    building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }],
+                },
+                { entities },
+            );
+            if (!r.ok) continue;
+            const cut = (r.placed || []).find(p => p.kind === "cutter");
+            if (!cut) continue;
+            out.push({
+                x: cut.origin[0],
+                y: cut.origin[1],
+                removes: (r.removes || []).map(z => z.uid),
+                placed: (r.placed || []).map(p => ({ kind: p.kind, origin: p.origin })),
+            });
+        }
+    }
+    return out;
+}
+
+function judgePlan(txp, obsEntities, sites) {
     const ops = (txp.ops || []);
     const places = ops.filter(o => o.op === "place");
     const cut = places.find(o => o.building === "cutter");
     const tra = places.find(o => o.building === "trash");
-    const { xs, yMin, yMax } = GROUND_TRUTH.chain;
 
-    const onChain = cut && xs.includes(cut.x) && cut.y >= yMin && cut.y <= yMax;
-    /* trash 必须在 cutter 的 left 槽喷口。
+    /* ★ 判据：模型的落点必须在**运行期枚举**的可行集里 ★
      *
-     * 几何：cutter 的 left 槽 `cell[0,0] dir="bottom"` 的**输出**朝 top ⇒ 喷口在
-     * `(x, y-1)`（y 轴向下，所以"北"是 y 减）。实测：cutter@(4,-13) 的 left 喷口是
-     * (4,-14) = y-1，不是 y+1。
+     * 不再写死 x 范围。`sites` 由 feasibleSites() 用真宏算出（L4 实测 33 个：
+     * x=2 有 18、x=3 有 10、x=4 有 5、x=5 有 0）。
      *
-     * ⚠️ 这里曾经写成 `y + 1`，于是**历史正解自己被判成失败** ——
-     * 一个把正确答案判错的判据，比没有判据更糟（它会让人以为模型错了）。 */
-    const trashOk = tra && cut && tra.x === cut.x && tra.y === cut.y - 1;
+     * 历史教训：写死 `xs:[4,5]` 会把 x=2/x=3 的物理可行解判成失败 ——
+     * 第十四轮实验里模型 5/10 次落在 x=2，全被判错。
+     */
+    const hit = cut ? (sites || []).find(s => s.x === cut.x && s.y === cut.y) : null;
 
-    /* 删掉的必须都是这条链上的带子（不能删别处的） */
-    const removed = (txp.destroys || []);
-    const chainSet = new Set((obsEntities || [])
-        .filter(e => e.type === "belt" && xs.includes(e.x) && e.y >= yMin && e.y <= yMax)
-        .map(e => e.uid));
-    const removedFromChain = removed.filter(u => chainSet.has(u));
-    const removedElsewhere = removed.filter(u => !chainSet.has(u));
+    /* trash 的落点：如果可行集里有这个 site，直接用**宏自己算的** placed 对拍；
+       否则退回几何判据（left 槽喷口 = y-1）。 */
+    const trashOk = hit
+        ? (tra ? hit.placed.some(p => p.kind === "trash" && p.origin[0] === tra.x && p.origin[1] === tra.y) : false)
+        : (tra && cut && tra.x === cut.x && tra.y === cut.y - 1);
+
+    /* 删掉的必须都是这个 site 该删的（不能删别处的） */
+    const removed = new Set(txp.destroys || []);
+    const expected = new Set(hit ? hit.removes : []);
+    const removedElsewhere = hit ? [...removed].filter(u => !expected.has(u)) : [];
 
     return {
-        ok: !!onChain && !!trashOk && removedElsewhere.length === 0 && removedFromChain.length >= 2,
-        onChain, trashOk,
+        ok: !!hit && !!trashOk && removedElsewhere.length === 0,
+        on_site: !!hit,
+        trashOk,
         cutter_at: cut ? [cut.x, cut.y] : null,
         trash_at: tra ? [tra.x, tra.y] : null,
-        removed_from_chain: removedFromChain.length,
+        matched_site: hit ? { x: hit.x, y: hit.y } : null,
         removed_elsewhere: removedElsewhere.length,
         same_as_historical: !!(cut && cut.x === 4 && cut.y === -13),
+        feasible_sites: (sites || []).length,
     };
 }
 
@@ -335,7 +379,9 @@ async function attemptOnce({ runIndex, client, verbose }) {
      * 仍然保留两个"与历史正解的关系"字段（`same_as_historical` / `removed_truth`），
      * 用于**展示**，不用于判成败。
      */
-    const verdict = judgePlan(txp, obs.entities);
+    /* 用真宏枚举可行落点（每次尝试都重算 —— 世界可能被改过） */
+    const sites = feasibleSites(obs.entities);
+    const verdict = judgePlan(txp, obs.entities, sites);
     result.verdict = verdict;
     result.exact_match = verdict.ok;                 // ← 统计口径改成结构判据
     result.same_as_historical = verdict.same_as_historical;

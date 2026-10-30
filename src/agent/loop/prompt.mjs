@@ -1133,7 +1133,21 @@ function renderDiagnoses(diagnoses) {
         if (code === "WRONG_SHAPE_AT_HUB") {
             line += "; the fix is upstream: a missing process step on the line that FEEDS the hub, not at the inlet";
         }
-        if (hs.length) line += `; handles ${hs.join(",")}`;
+        if (hs.length) {
+            /* ★ 说清 handles 是什么 ★
+             *
+             * 2026-10-30（第十四轮实测）：`PROCESSOR_REQUIRED` 的 handles 是**可行落点**，
+             * 而模型没有理由知道这点 —— 它把 handles 和"流上的带子"混用，
+             * 一次塞 6 个进 `$path_of` 得到 PATH_NOT_RECT。
+             * 现在显式说明：「这些格子就是能放机器的地方，直接当 region」。 */
+            const hint = code === "PROCESSOR_REQUIRED"
+                ? ` (these are cells that can hold the machine — pass them to $path_of as the region)`
+                : "";
+            line += `; handles ${hs.join(",")}${hint}`;
+        }
+        if (Array.isArray(ev.stream_handles) && ev.stream_handles.length) {
+            line += `; the stream itself runs through ${ev.stream_handles.slice(0, 3).join(",")} (context only, not the region)`;
+        }
         if (cands.length) line += `; candidates ${cands.join(",")}`;
         /* 超上限被压掉的条数：必须说出来，否则模型以为「诊断就这些」 */
         if (num(ev.suppressed) !== null && ev.suppressed > 0) {
