@@ -94,6 +94,16 @@ export const DIAG_CODES = Object.freeze({
     WASTE_NO_SINK: "L3: a declared waste slot's run ends at {trash, empty, rejected} while the world has zero trash buildings",
     RAW_MATERIAL_MISSING: "L4: the recipe needs mine but the world has zero miners",
 
+    /* ── 语义层（P-a，`loop/semantic.mjs`） ──
+     * 判据写在说明里（同上：码有名字、判据没字段 = 假绿）。
+     * ⚠️ severity 是**两档**不是三档（v2 §2）：`PROCESSOR_REQUIRED` 有两种 scope，
+     *    `scope:"stream"` 是 warn（该做的事）、`scope:"factory"` 是 blocker（工厂真的缺机器）。
+     *    只看 code 分不出严重性，必须看 `evidence.scope` —— 这是本闭集里唯一一个有这种二义性的码。 */
+    PROCESSOR_REQUIRED: "L4: the recipe needs a process step (cut/rotate/stack/paint) that is either absent from the factory (scope:factory, blocker) or present but not on the stream that carries its input shape (scope:stream, warn)",
+    WRONG_SHAPE_AT_HUB: "L4: a stream reaching the hub carries a shape that is one rotation away from the goal (in orbit(goal) but not goal); the fix is upstream, not at the inlet",
+    DISCARDED_INTERMEDIATE: "L4: a multi-output machine sends a useful half (in orbit(goal) or the recipe closure) into trash/nowhere while the other half is delivered and is not the goal",
+    SHAPE_UNKNOWN: "L4: shape propagation stopped (no-resources/tunnel/unknown-op/unverified-rotation/cycle/unknown-color); info only, never a blocker and never fed to the LLM as an action",
+
     NO_PRODUCTION: "L4: nothing produced",
     WRONG_SHAPE_PRODUCED: "L4: production exists but under a different shape key",
     PRODUCED_NOT_DELIVERED: "L4: produced > 0 but delivered == 0",
@@ -289,6 +299,30 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["insert_machine", 9],        // 只有「放一台矿机」能修
         ["connect", 3],
     ]),
+
+    /* ── 语义层（P-a） ──
+     * `PROCESSOR_REQUIRED` 的两种 scope 共用一条呢？**不** —— 检索表只有一维（码），
+     * 表达不了 evidence.scope；这里给的是并集，权重按最常见的那支护线：
+     *   · stream：在那条流上插一台机器（replace_run 最贴合，见 remove.mjs 的扩展路径）；
+     *   · factory：先要有一台机器（insert_machine），再接线。
+     * `WRONG_SHAPE_AT_HUB` 刻意**不给** connect 高权重：病在上游，接入口只会更糟。
+     * `SHAPE_UNKNOWN` 为空 = 不许喂给 LLM（契约 §3 的硬要求）。 */
+    PROCESSOR_REQUIRED: cand([
+        ["replace_run", 8],
+        ["insert_machine", 6],
+        ["connect", 3],
+    ]),
+    WRONG_SHAPE_AT_HUB: cand([
+        ["replace_run", 8],
+        ["insert_machine", 4],
+        ["connect", 1],
+    ]),
+    DISCARDED_INTERMEDIATE: cand([
+        ["replace_run", 7],
+        ["connect", 5],
+        ["insert_machine", 3],
+    ]),
+    SHAPE_UNKNOWN: cand([]),
 
     /* ── L4 ── */
     /* ⚠️ 这三个码的触发判据在 v2 §2.1 之后仍受 evidence 字段限制（见 DIAG_CODES 文件头），

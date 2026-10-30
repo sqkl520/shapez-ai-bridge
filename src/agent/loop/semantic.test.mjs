@@ -1,0 +1,505 @@
+/**
+ * semantic.test.mjs — `loop/semantic.mjs` 的验收（P-a 第二块）。
+ *
+ * 任务书点名的 10 条里，4 条是**负例**（判据必须真的会说"不"）：
+ *
+ *   1  正  L4：有 `PROCESSOR_REQUIRED{scope:"stream", op:"cut"}`；`site_handles` 含 x=2/3/4 的落点；
+ *           **无**任何 subject 为 B135/B136/B137 的码
+ *   2  负  L4：**无** `DISCARDED_INTERMEDIATE`（cutter 切的是 Cu，不在 orbit(RuRu----) 里）
+ *   3  正  L5：有 `DISCARDED_INTERMEDIATE`，subject=cutter#10902，`one_rotation_from_goal=true`
+ *   4  正  L5：有 `WRONG_SHAPE_AT_HUB` 或 `PROCESSOR_REQUIRED{scope:"factory", op:"rotate"}`
+ *   5  负  修好后的 L4（删 3 带 + 加 cutter/trash）⇒ **0 条 blocker**（warn 允许）
+ *   6  负  `opts.recipe=null` ⇒ 返回 `[]`，不抛
+ *   7  负  隧道跨界（L4 B85）⇒ 只出 `SHAPE_UNKNOWN`，不出 `GOAL_SHAPE_STRANDED`
+ *   8  正  坐标禁令：所有诊断不含坐标形态
+ *   9  正  确定性：同 obs 调两次逐字节相同
+ *  10  正  上限：总量 ≤8、每码 ≤3
+ *
+ * 另有 4 条**比任务书更严格**的：
+ *   · `site_cells` 与真宏 `replace_run` 逐格对拍（L4 走廊内 38 个，一个不多一个不少）；
+ *   · 配方 level 门控（L5 level 5 下 cutQuad 步骤被剔除，`needs` 里没有它）；
+ *   · `WRONG_SHAPE_AT_HUB` 的 `evidence.handles` **只含 hub**（v2 §4 的反回归）；
+ *   · 重排句柄编号后语义结论不变（句柄不稳定、判据必须稳定）。
+ *
+ * 运行：`node --test src/agent/loop/semantic.test.mjs`
+ */
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { semanticDiagnoses } from "./semantic.mjs";
+import { buildHandles } from "./handles.mjs";
+import { indexOf } from "./topology.mjs";
+import { replaceRun } from "../macros/remove.mjs";
+import { DIAG_CODES } from "./constants.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SAVES = path.resolve(HERE, "../../../test/fixtures/saves");
+const load = f => JSON.parse(fs.readFileSync(path.join(SAVES, f), "utf8")).result;
+
+const L4 = load("L4-obs.json");
+const L5 = load("L5-obs.json");
+
+const clone = x => JSON.parse(JSON.stringify(x));
+const goalOf = obs => obs.goal.requirement.shape;
+const handlesOf = obs => buildHandles(obs, null);
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 配方夹具（**手工构造，不 spawn solver**）
+ *
+ * 两份都是 solver 在对应 level 下的真实输出（`solver.mjs --no-cutquad` / 默认），
+ * 逐字段抄过来并冻结 —— 语义层的测试不该为了一个固定数组去跑外部程序：
+ * 那会让「同 obs 两次结果不同」重新成为可能（solver 有 200–400ms 的 spawn）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** L4 `RuRu----`：mine(RuRuRuRu) → cut(half=right)。 */
+const RECIPE_L4 = Object.freeze({
+    ok: true,
+    steps: [
+        { hash: "RuRuRuRu", op: "mine", args: {}, inputs: [] },
+        { hash: "RuRu----", op: "cut", args: { half: "right" }, inputs: ["RuRuRuRu"] },
+    ],
+});
+
+/** L5 `Cu----Cu`（level 5，**no-cutquad**）：mine → cut(left) → rotate(cw)。 */
+const RECIPE_L5 = Object.freeze({
+    ok: true,
+    steps: [
+        { hash: "CuCuCuCu", op: "mine", args: {}, inputs: [] },
+        { hash: "----CuCu", op: "cut", args: { half: "left" }, inputs: ["CuCuCuCu"] },
+        { hash: "Cu----Cu", op: "rotate", args: { dir: "cw" }, inputs: ["----CuCu"] },
+    ],
+});
+
+/**
+ * L5 夹具**没有** `resources`（dump 时 mod 没开 `include_resources`）。
+ *
+ * 语义层需要矿图才能知道矿机挖的是什么，所以 L5 的形状类测试必须**显式注入**矿图 ——
+ * 否则 8 条矿机流全都 `SHAPE_UNKNOWN`，`DISCARDED_INTERMEDIATE` 根本不可能成立。
+ * 注入的值来自实测布局（`DIAGNOSE-SEMANTICS-CONTRACT.md` §13.1）：
+ * x=2..5 / y=-8 是四台钌矿机、x=-10..-7 / y=4..5 是四台铜矿机；
+ * L5 的 goal 是 `Cu----Cu`，所以这里把 x=2..5 那四台改成铜（同一份几何、换矿种）。
+ */
+const L5_WITH_ORE = (() => {
+    const o = clone(L5);
+    const ore = [];
+    for (let x = 2; x <= 5; x++) ore.push([x, -8, "CuCuCuCu"]);
+    for (const [x, y] of [[-10, 4], [-9, 4], [-8, 5], [-7, 5]]) ore.push([x, y, "CuCuCuCu"]);
+    o.resources = ore;
+    return o;
+})();
+
+const run = (obs, recipe, opts = {}) =>
+    semanticDiagnoses(obs, null, goalOf(obs), handlesOf(obs), { recipe, ...opts });
+
+const byCode = (ds, code) => ds.filter(d => d.code === code);
+const streamDiags = ds => byCode(ds, "PROCESSOR_REQUIRED").filter(d => d.evidence.scope === "stream");
+const factoryDiags = ds => byCode(ds, "PROCESSOR_REQUIRED").filter(d => d.evidence.scope === "factory");
+
+/**
+ * 用**真宏**修一次 L4：删 3 条带 + 加 cutetr@(4,-13) + trash@(4,-14)。
+ * 落点来自宏自己的规划（不是手抄坐标），删哪些也来自宏的 `removed`。
+ */
+function repairedL4() {
+    const w = clone(L4);
+    const r = replaceRun(
+        { region: [4, -14, 5, -13], building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }] },
+        { entities: w.entities },
+    );
+    assert.equal(r.ok, true, `前提：真宏必须接受这个落点（${r.ok ? "" : r.error && r.error.code}）`);
+    const gone = new Set(r.removed.map(x => x.uid));
+    w.entities = w.entities.filter(e => !gone.has(e.uid));
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    for (const p of r.placed) {
+        w.entities.push({
+            uid: next++, type: p.kind, x: p.origin[0], y: p.origin[1], r: 0,
+            variant: "default", rotation_variant: 0, code: p.kind === "cutter" ? 9 : 20, layer: "regular",
+        });
+    }
+    return w;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 1. L4：PROCESSOR_REQUIRED{scope:"stream"} —— 且不碰 hub 入口
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T1 ★ L4：PROCESSOR_REQUIRED{scope:stream, op:cut} 存在，severity=warn，need=1 have=1", () => {
+    const ds = run(L4, RECIPE_L4, { level: 4 });
+    const st = streamDiags(ds);
+    assert.equal(st.length, 1, `恰好一条（实际 ${st.length}）`);
+    const d = st[0];
+    assert.equal(d.evidence.op, "cut");
+    assert.equal(d.evidence.machine, "cutter");
+    assert.equal(d.evidence.need, 1);
+    assert.equal(d.evidence.have, 1, "世界里真的有一台 cutter（它只是不在 Ru 链上）");
+    assert.equal(d.severity, "warn", "v2 §2：机器存在、只是不在那条流上 ⇒ 该做的事，不是坏的东西");
+    assert.equal(d.severity === "blocker", false, "它**不是** blocker（F-1 的修正）");
+});
+
+test("T1 ★ L4：site_handles 是**全部**可行位置，含 x=2 / x=3 / x=4", () => {
+    const ds = run(L4, RECIPE_L4, { level: 4 });
+    const d = streamDiags(ds)[0];
+    const idx = indexOf(L4);
+    const xs = new Set(d.evidence.site_cells.map(c => c[0]));
+    assert.ok(xs.has(2) && xs.has(3) && xs.has(4),
+        `必须含 x=2/3/4（v2 §1：x=2 有 18 个、x=3 有 10 个、x=4 有 5 个；实际 x=${[...xs].sort().join(",")}）`);
+    assert.ok(!xs.has(5), "x=5 不可行（cutter 2×1 会伸到 x=6，那里没有带子）");
+    /* 每个 site_handle 都必须是**真实句柄**，且指向落点那一格的带子（不是编出来的）。
+       `handleUid` 是锚点带（落点 block 里 y 最小的那条）—— 句柄必须能反查回一个真实实体，
+       且它的 x 与 site_cell 的 x 差不超过 1（2×1 footprint，见 cutSites 的 `anchor` 选取）。 */
+    assert.equal(d.evidence.site_handles.length, d.evidence.site_cells.length,
+        "每个落点一个句柄（本来就该一一对应）");
+    const tbl = handlesOf(L4);
+    d.evidence.site_cells.forEach((c, i) => {
+        const h = d.evidence.site_handles[i];
+        const e = tbl.byHandle.get(h);
+        assert.ok(e, `site_handle ${h} 不是真句柄`);
+        assert.equal(e.type, "belt");
+        assert.ok(Math.abs(e.x - c[0]) <= 1 && Math.abs(e.y - c[1]) <= 1,
+            `${h}@(${e.x},${e.y}) 与落点 (${c.join(",")}) 不在同一个 2×1 块里`);
+    });
+    /* 至少有一个落点落在 x∈{2,3,4} 的 Ru 走廊上（这是这一条的全部意义） */
+    assert.ok(d.evidence.site_cells.some(c => c[0] >= 2 && c[0] <= 4));
+    void idx;
+});
+
+test("T1 ★ L4：没有任何诊断以 hub 入口带子 B135/B136/B137 为 subject（v2 §4 的核心反回归）", () => {
+    const ds = run(L4, RECIPE_L4, { level: 4 });
+    const bad = ds.filter(d => ["B135", "B136", "B137"].includes(d.subject && d.subject.handle));
+    assert.deepEqual(bad.map(d => d.code), [],
+        "这些是 hub 的入口带子：把它们顶到 BELTS 段最前会把模型引去改入口，与目标相反");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 2. 负例：L4 的 cutter 切的是 Cu ⇒ 不许报 DISCARDED_INTERMEDIATE
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T2 ★ 负例：L4 无 DISCARDED_INTERMEDIATE（cutter#10036 切的是 CuCuCuCu，不在 orbit(RuRu----)）", () => {
+    const ds = run(L4, RECIPE_L4, { level: 4 });
+    assert.deepEqual(byCode(ds, "DISCARDED_INTERMEDIATE").map(d => d.subject.handle), [],
+        "L4 那台 cutter 切的是铜：----CuCu / CuCu---- 既不在 orbit(RuRu----) 里，也不是 Ru 配方的祖先");
+    /* 同一份判据在**修好之后**也不许误报（L4 修好后 cutter 切 Ru 的一半会被丢） */
+    const fixed = run(repairedL4(), RECIPE_L4, { level: 4 });
+    assert.deepEqual(byCode(fixed, "DISCARDED_INTERMEDIATE").map(d => d.subject.handle), []);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 3. L5：DISCARDED_INTERMEDIATE
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T3 ★ L5：DISCARDED_INTERMEDIATE，subject=cutter#10902，discarded=----CuCu，one_rotation_from_goal=true", () => {
+    const ds = run(L5_WITH_ORE, RECIPE_L5, { level: 5 });
+    const dis = byCode(ds, "DISCARDED_INTERMEDIATE");
+    assert.ok(dis.length >= 1, "L5 的病灶就是「一口扔、一口送」");
+    assert.equal(dis[0].subject.uid, 10902, "首条 subject 必须是 cutter#10902");
+    assert.equal(dis[0].subject.handle, "C1");
+    assert.equal(dis[0].severity, "blocker");
+    assert.deepEqual(dis[0].evidence.discarded, ["----CuCu"], "被丢的那口形状");
+    assert.deepEqual(dis[0].evidence.sibling, ["CuCu----"], "另一口送去 hub 的形状");
+    assert.equal(dis[0].evidence.one_rotation_from_goal, true, "----CuCu 再转一次就是 Cu----Cu");
+    assert.equal(dis[0].evidence.discarded_port, "left");
+    assert.equal(dis[0].evidence.run_kind, "trash");
+    assert.ok(dis[0].evidence.handles.includes("C1"));
+    assert.ok(dis[0].evidence.handles.includes("T2"), "垃圾桶句柄要在 evidence 里（模型要知道哪台在销毁）");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 4. L5：WRONG_SHAPE_AT_HUB 或 factory-level rotate
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T4 ★ L5：同时给出 WRONG_SHAPE_AT_HUB（hub 收到 CuCu----）与 PROCESSOR_REQUIRED{scope:factory, op:rotate}", () => {
+    const ds = run(L5_WITH_ORE, RECIPE_L5, { level: 5 });
+
+    const fac = factoryDiags(ds);
+    assert.ok(fac.length >= 1, "工厂里 0 台 rotater ⇒ 纯计数就能判");
+    assert.equal(fac[0].evidence.machine, "rotater");
+    assert.equal(fac[0].evidence.need, 1);
+    assert.equal(fac[0].evidence.have, 0);
+    assert.equal(fac[0].severity, "blocker", "v2 §2：机器根本不存在 ⇒ 真的坏");
+
+    const wh = byCode(ds, "WRONG_SHAPE_AT_HUB");
+    assert.equal(wh.length, 1);
+    assert.equal(wh[0].subject.handle, "H1");
+    /* L5 的 hub 同时收到两个「转一次就是目标」的形状：
+     *   ----CuCu（cutter#10036 的左口 → B132 直进 hub）
+     *   CuCu----（cutter#10902 的右口 → balancer → B134 进 hub）
+     * 两者都在 orbit(Cu----Cu) 里，所以两个都该报。 */
+    assert.deepEqual(wh[0].evidence.wrong, ["----CuCu", "CuCu----"]);
+    assert.ok(wh[0].evidence.wrong.every(s => s !== "Cu----Cu"), "目标形状本身不算 wrong");
+    assert.equal(wh[0].severity, "blocker");
+    /* v2 §4：hub_inlets 是独立字段，不参与 referencedHandles */
+    assert.ok(wh[0].evidence.hub_inlets.length >= 1);
+    assert.ok(wh[0].evidence.hub_inlets.every(x => /^B\d+$/.test(x.handle)));
+    assert.match(wh[0].observed, /upstream/i, "必须明确说往上游找，而不是改入口");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 5. 负例：修好后的 L4 ⇒ 0 条 blocker
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T5 ★ 负例：L4 修好后 0 条 blocker（warn/info 允许）", () => {
+    const fixed = repairedL4();
+    const ds = run(fixed, RECIPE_L4, { level: 4 });
+    const blockers = ds.filter(d => d.severity === "blocker");
+    assert.deepEqual(blockers.map(d => [d.code, d.subject.handle]), [],
+        `修好之后不许再有 blocker（会跟正解打架）；实际 ${JSON.stringify(blockers.map(d => d.code))}`);
+    /* 但 warn 必须还在：残流（x=5 上半段被 cutter 堵死）确实还运着没切过的原料 */
+    const st = streamDiags(ds);
+    assert.ok(st.length >= 1, "残流仍应报 warn（不是一刀切掉所有诊断）");
+    assert.ok(st.every(d => d.severity === "warn"));
+    assert.deepEqual(byCode(ds, "WRONG_SHAPE_AT_HUB").map(d => d.subject.handle), [],
+        "修好后 hub 只收 goal（与原料残流），没有「转一次就是目标」的形状");
+});
+
+test("T5 对照：修好前后的差异**只在**「cutter 在不在那条流上」这一条，不是状态漂移", () => {
+    const before = streamDiags(run(L4, RECIPE_L4, { level: 4 }));
+    const after = streamDiags(run(repairedL4(), RECIPE_L4, { level: 4 }));
+    assert.equal(before[0].evidence.op, after[0].evidence.op, "两次都是缺 cut");
+    assert.ok(after[0].evidence.site_cells.length < before[0].evidence.site_cells.length,
+        "修好之后可落点变少（cutter 本体占掉了 (4,-13)/(5,-13) 一带）");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 6. 负例：recipe 缺失 ⇒ []，且不抛
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T6 ★ 负例：opts.recipe 缺失 / null / ok:false / steps 为空 ⇒ 返回 []，不抛，不 spawn", () => {
+    const cases = [undefined, null, {}, { ok: false, reason: "solver timed out" }, { ok: true, steps: [] }];
+    for (const recipe of cases) {
+        let ds;
+        assert.doesNotThrow(() => {
+            ds = semanticDiagnoses(L4, null, goalOf(L4), handlesOf(L4), recipe === undefined ? {} : { recipe });
+        }, `recipe=${JSON.stringify(recipe)} 不许抛`);
+        assert.deepEqual(ds, [], `recipe=${JSON.stringify(recipe)} ⇒ 语义层整体降级为空`);
+    }
+});
+
+test("T6 负例：obs.truncated ⇒ 返回 []（世界不完整时语义结论不可信）", () => {
+    const o = clone(L4);
+    o.truncated = true;
+    assert.deepEqual(run(o, RECIPE_L4, { level: 4 }), []);
+});
+
+test("★ semantic.mjs 无副作用：源码里没有 readFileSync/writeFileSync/spawnSync/execSync 调用", () => {
+    const src = fs.readFileSync(path.join(HERE, "semantic.mjs"), "utf8");
+    for (const re of [/\breadFileSync\s*\(/, /\bwriteFileSync\s*\(/, /\bspawnSync\s*\(/, /\bexecSync\s*\(/]) {
+        assert.ok(!re.test(src), `semantic.mjs 不许调用 ${re}`);
+    }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 7. 负例：隧道跨界 ⇒ 只出 SHAPE_UNKNOWN
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T7 ★ 负例：L4 的隧道 B85 只出 SHAPE_UNKNOWN{tunnel}，不出 GOAL_SHAPE_STRANDED", () => {
+    const ds = run(L4, RECIPE_L4, { level: 4 });
+    const unk = byCode(ds, "SHAPE_UNKNOWN").filter(d => d.evidence.reason === "tunnel");
+    assert.equal(unk.length, 1, "按原因聚合成一条（逐条报会吃掉预算）");
+    assert.equal(unk[0].subject.handle, "B85", "subject 是隧道 sender");
+    assert.equal(unk[0].severity, "info");
+    assert.deepEqual(unk[0].candidates, [], "candidates 为空 = 不许喂给 LLM 当行动依据");
+    assert.ok(unk[0].evidence.count >= 1);
+
+    const codes = new Set(ds.map(d => d.code));
+    assert.ok(!codes.has("GOAL_SHAPE_STRANDED"), "隧道跨界不许升级成「目标形状搁浅」");
+    assert.ok(!codes.has("OFF_RECIPE_LINE"), "也不许升级成「不在配方上」");
+});
+
+test("T7 负例：**任何** SHAPE_UNKNOWN 都不是 blocker，也不带坐标", () => {
+    for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5", L5, RECIPE_L5]]) {
+        for (const d of byCode(run(obs, rec, { level: 5 }), "SHAPE_UNKNOWN")) {
+            assert.notEqual(d.severity, "blocker", `${name}: SHAPE_UNKNOWN 永远是 info`);
+            assert.equal(d.layer, "L4");
+            assert.ok(typeof d.evidence.reason === "string" && d.evidence.reason.length > 0);
+        }
+    }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 8. 坐标禁令
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T8 ★ 所有诊断的 subject/expected/observed/evidence.handles 不含坐标形态", () => {
+    const COORD = /\(?\s*-?\d{1,4}\s*,\s*-?\d{1,4}\s*\)?/;
+    for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5], ["L5", L5, RECIPE_L5]]) {
+        for (const d of run(obs, rec, { level: 5 })) {
+            const blob = JSON.stringify({
+                subject: d.subject, expected: d.expected, observed: d.observed,
+                handles: d.evidence.handles, hub_inlets: d.evidence.hub_inlets, site_handles: d.evidence.site_handles,
+            });
+            assert.ok(!COORD.test(blob), `${name}/${d.code}: 不许有坐标 —— ${blob.slice(0, 300)}`);
+        }
+    }
+});
+
+test("T8 坐标只允许出现在 evidence.site_cells（独立字段，prompt 不渲染）", () => {
+    const ds = run(L4, RECIPE_L4, { level: 4 });
+    const d = streamDiags(ds)[0];
+    assert.ok(Array.isArray(d.evidence.site_cells) && d.evidence.site_cells.length > 0);
+    for (const c of d.evidence.site_cells) {
+        assert.ok(Array.isArray(c) && c.length === 2 && c.every(Number.isInteger));
+    }
+    /* 全部 subject 都是句柄或 uid token，不允许是坐标串 */
+    for (const x of ds) {
+        if (x.subject.handle === null) assert.match(String(x.subject.token), /^uid:\d+$/);
+        else assert.match(x.subject.handle, /^[A-Z]{1,2}\d{1,3}$/);
+    }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 9. 确定性
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T9 ★ 同一份 obs 调两次 ⇒ 结果逐字节相同", () => {
+    for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {
+        const a = JSON.stringify(run(obs, rec, { level: 5 }));
+        const b = JSON.stringify(run(obs, rec, { level: 5 }));
+        assert.equal(a, b, `${name} 必须确定性`);
+    }
+});
+
+test("T9 ★ 句柄**重编号**后语义结论不变（句柄不稳定，判据必须稳定）", () => {
+    /* 把 uid 整体平移后再建句柄表：句柄名可能变，但「缺 cut」「丢的是 ----CuCu」这类结论不能变。 */
+    const shifted = clone(L5_WITH_ORE);
+    for (const e of shifted.entities) e.uid += 50000;
+    for (const s of (shifted.resources || [])) void s;
+    const a = run(L5_WITH_ORE, RECIPE_L5, { level: 5 });
+    const b = run(shifted, RECIPE_L5, { level: 5 });
+    const key = ds => ds.map(d => [
+        d.code, d.severity,
+        d.evidence.scope || d.evidence.reason || "",
+        d.evidence.op || "",
+        (d.evidence.discarded || []).join("|"),
+        String(d.evidence.one_rotation_from_goal === true),
+    ].join("/"));
+    assert.deepEqual(key(b), key(a), "结论与 uid/句柄编号无关");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 10. 上限（v2 §6：每码 ≤3、总量 ≤8）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T10 ★ 总量 ≤8、每码 ≤3，且超限不静默丢弃（首条带 suppressed）", () => {
+    for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {
+        const ds = run(obs, rec, { level: 5 });
+        assert.ok(ds.length <= 8, `${name}: 总量 ${ds.length} > 8`);
+        const per = new Map();
+        for (const d of ds) per.set(d.code, (per.get(d.code) || 0) + 1);
+        for (const [c, n] of per) assert.ok(n <= 3, `${name}: ${c} 有 ${n} 条 > 3`);
+    }
+    /* 人为压到 1/1，L5+ore 必然超限 ⇒ 必须记 suppressed，不许静默 */
+    const full = run(L5_WITH_ORE, RECIPE_L5, { level: 5 });
+    const tight = run(L5_WITH_ORE, RECIPE_L5, { level: 5, limits: { PER_CODE: 1, TOTAL: 1 } });
+    assert.equal(tight.length, 1);
+    const sup = tight[0].evidence.suppressed;
+    assert.ok(Number.isInteger(sup) && sup > 0, "被压掉的条数必须记在首条 evidence.suppressed 上");
+    assert.equal(1 + sup, full.length, "suppressed 必须补回完整条数");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 11. 比任务书更严的三条
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T11 ★ site_cells 与**真宏** replace_run 逐格对拍（L4 走廊内 38 个，一个不多一个不少）", () => {
+    /* 这条是 v2 §1 的落地验证：枚举必须是「物理可行」，不是「我以为对的 x 范围」。
+       用真宏在全图扫一遍，再把结果与 semantic 的 site_cells 对拍。
+       注意：宏的可行集是 **55** 个（含铜线 17 个）；语义层只列目标原料走廊内的 38 个 ——
+       那不是漏，是 v2 §3 的 `inGoalRawCorridor` 过滤（把模型引向铜线正是 F-2 的形态）。 */
+    const macroOk = new Set();
+    for (let x = -14; x <= 10; x++) {
+        for (let y = -44; y <= 8; y++) {
+            const r = replaceRun(
+                { region: [x, y - 1, x + 1, y], building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }] },
+                { entities: L4.entities },
+            );
+            if (r.ok) macroOk.add(`${x},${y}`);
+        }
+    }
+    const d = streamDiags(run(L4, RECIPE_L4, { level: 4 }))[0];
+    const mine = new Set(d.evidence.site_cells.map(c => `${c[0]},${c[1]}`));
+    const notFeasible = [...mine].filter(k => !macroOk.has(k));
+    assert.deepEqual(notFeasible, [], "语义层列出的每个落点，真宏必须接受");
+    /* 走廊内（x>=2）的宏可行点必须**全部**在 site_cells 里 —— 漏一个就是把正解判错 */
+    const corridor = [...macroOk].filter(k => Number(k.split(",")[0]) >= 2);
+    const missing = corridor.filter(k => !mine.has(k));
+    assert.deepEqual(missing, [], `走廊内的可行点必须一个不漏（宏共 ${corridor.length} 个，语义层 ${mine.size} 个）`);
+    assert.ok(![...mine].some(k => Number(k.split(",")[0]) < 0), "铜线（x<0）不该出现在 site_cells 里");
+});
+
+test("T11 ★ 配方 level 门控：L5 的 cutQuad 步骤被剔除，needs 里不出现（v2 §6 的 T7）", () => {
+    /* 未门控的 solver 对 Cu----Cu 会给 cutQuad×2 + stacker×1 —— cutQuad 要 L16。
+       语义层如果照单全收，就会在 level 5 上叫模型造 L16 的机器（prompt.mjs 的老 bug）。 */
+    const ungated = {
+        ok: true,
+        steps: [
+            { hash: "CuCuCuCu", op: "mine", inputs: [] },
+            { hash: "------Cu", op: "cutQuad", args: { quad: 3 }, inputs: ["CuCuCuCu"] },
+            { hash: "Cu------", op: "cutQuad", args: { quad: 0 }, inputs: ["CuCuCuCu"] },
+            { hash: "Cu----Cu", op: "stack", args: { merge: true }, inputs: ["------Cu", "Cu------"] },
+        ],
+    };
+    const ds = run(L4, ungated, { level: 5 });
+    const fac = factoryDiags(ds);
+    assert.ok(!fac.some(d => d.evidence.op === "cutQuad"), "level 5 不许要求 cutQuad（要 L16）");
+    assert.ok(!fac.some(d => d.evidence.machine === "stacker"), "stacker（L10）同样超等级，也必须被挡住");
+    /* 门控是「按等级报」而不是「一律不报」：level 20 上两者都必须出现 —— 否则这条测试
+       只是证明了「工厂诊断永远不报」，那是假绿。 */
+    const hi = factoryDiags(run(L4, ungated, { level: 20 }));
+    assert.ok(hi.some(d => d.evidence.machine === "stacker"), "level 20 应该要求 stacker");
+    assert.ok(hi.some(d => d.evidence.op === "cutQuad"), "level 20 应该要求 cutQuad（L16 已解锁）");
+});
+
+test("T11 ★ WRONG_SHAPE_AT_HUB 的 evidence.handles **只含 hub**（v2 §4）", () => {
+    const ds = run(L5_WITH_ORE, RECIPE_L5, { level: 5 });
+    const wh = byCode(ds, "WRONG_SHAPE_AT_HUB")[0];
+    assert.ok(wh, "前提：必须有这条诊断");
+    assert.deepEqual(wh.evidence.handles, ["H1"], "只放 hub 本身；入口带子放 hub_inlets");
+    assert.ok(wh.evidence.hub_inlets.length >= 1, "入口带子必须有地方放（独立字段）");
+    /* 反过来钉一次：handles 里不许出现任何 B* */
+    assert.ok(!wh.evidence.handles.some(h => /^B\d+$/.test(h)),
+        "入口带子进 handles 会被 pickBelts 顶到 BELTS 第 1-3 位，与目标相反");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 12. 工程约束
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("P-a 产出的每个码都在 DIAG_CODES 闭集里，且 severity ∈ {blocker,warn,info}", () => {
+    for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {
+        for (const d of run(obs, rec, { level: 5 })) {
+            assert.ok(Object.prototype.hasOwnProperty.call(DIAG_CODES, d.code), `${name}: ${d.code} 不在闭集`);
+            assert.ok(["blocker", "warn", "info"].includes(d.severity), `${name}/${d.code}: severity=${d.severity}`);
+        }
+    }
+});
+
+test("P-a 只产出这 4 个码（越界即红：别顺手加了没登记的东西）", () => {
+    const OWNED = new Set(["PROCESSOR_REQUIRED", "WRONG_SHAPE_AT_HUB", "DISCARDED_INTERMEDIATE", "SHAPE_UNKNOWN"]);
+    for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {
+        for (const d of run(obs, rec, { level: 5 })) {
+            assert.ok(OWNED.has(d.code), `${name}: 语义层不许产出 ${d.code}`);
+        }
+    }
+});
+
+test("★ 性能守卫：L4 上 20 次调用 < 2s（纯函数，无 spawn）", () => {
+    const t0 = Date.now();
+    for (let i = 0; i < 20; i++) run(L4, RECIPE_L4, { level: 4 });
+    const ms = Date.now() - t0;
+    assert.ok(ms < 2000, `20 次 ${ms}ms —— 超出说明有隐式 IO 或重复建索引`);
+});
+
+test("★ 峰值：L4 + L5 的 diagnosis 字段形状与 report 渲染器兼容（subject/expected/observed/evidence/candidates）", () => {
+    for (const [obs, rec] of [[L4, RECIPE_L4], [L5_WITH_ORE, RECIPE_L5]]) {
+        for (const d of run(obs, rec, { level: 5 })) {
+            assert.ok(d.subject && typeof d.subject === "object");
+            assert.equal(typeof d.expected, "string");
+            assert.equal(typeof d.observed, "string");
+            assert.ok(d.evidence && typeof d.evidence === "object");
+            assert.ok(Array.isArray(d.evidence.handles));
+            assert.ok(Array.isArray(d.candidates));
+        }
+    }
+});
