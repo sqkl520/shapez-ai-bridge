@@ -1204,7 +1204,13 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         shown -= 1;
         trimmed += 1;
         s3Belts = renderBelts(tbl, selection, shown, true);
-        user = [s2, s3Goal, s3Hub, s3Machines, s3Belts, s3Production, s3Budget, s4, s5, s6].join("\n\n");
+        /* ★ 这里曾经写成 `s3Goal` —— 一旦触发截断，**配方就永久丢失** ★
+         *
+         * 红队实测：字面的 13 条诊断下，截断会把 RECIPE 段整个换掉，
+         * 模型再也看不到"这个形状该怎么造"，而那正是第五轮实验唯一起作用的信号。
+         *
+         * 截断的契约是「只动带子列表」，配方不属于可截断的东西 —— 必须用 goalAndRecipe。 */
+        user = [s2, goalAndRecipe, s3Hub, s3Machines, s3Belts, s3Production, s3Budget, s4, s5, s6].join("\n\n");
     }
 
     /* ── 硬上限：不静默截断任何东西，直接抛 ── */
@@ -1217,6 +1223,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
                 chars, limit: limits.inCharsMax,
                 sections: { s1: s1.length, s2: s2.length, s3_goal: s3Goal.length, s3_hub: s3Hub.length,
                     s3_machines: s3Machines.length, s3_belts: s3Belts.length, s3_production: s3Production.length,
+                    s3_recipe: (s3Recipe || "").length,
                     s3_budget: s3Budget.length, s4: s4.length, s5: s5.length, s6: s6.length },
                 diagnoses: diagList.length,
                 belts: selection.total,
