@@ -1855,10 +1855,22 @@ export async function runLoop(opts = {}) {
             }
 
             /* 「同 fp 第 2 次必须换动作」的**执行面**：候选被剔过还要用同一套宏 ⇒ 停。
-               只靠 prompt 提示是不够的（LLM 完全可能照抄上一轮），所以这里做机器判定。 */
-            if (st.mustChange) {
+               只靠 prompt 提示是不够的（LLM 完全可能照抄上一轮），所以这里做机器判定。
+
+               ★ 比的必须是 `lastExecutedMacros`（真正执行过的），不是 `lastMacros` ★
+
+               实测（2026-11-01 最终验证）：第 1 轮 `connect` 因为**参数校验失败**
+               （`unknown_field: opts.reuse_existing`）根本没执行；第 2 轮模型去掉
+               那个坏参数、给了合法的 `connect`，`plan` 通过了 —— 结果这里拿
+               `lastMacros`（含未执行的那个）一比，判成「照抄上一轮」，
+               直接 `halt: NO_PROGRESS`，**把一次正确的修复合上了**。
+
+               与「候选剔除」用的是同一口径：没被执行的动作不算「试过」，
+               拿它去证明「没换动作」是在惩罚一个未被检验的假设。
+               上一轮什么都没执行 ⇒ `lastExecutedMacros` 为空 ⇒ 这条检查不该触发。 */
+            if (st.mustChange && st.lastExecutedMacros.length) {
                 const now = planned.calls.map(c => c.macro);
-                if (actionSetHash(now) === actionSetHash(st.lastMacros)) {
+                if (actionSetHash(now) === actionSetHash(st.lastExecutedMacros)) {
                     const d = mkDiag("NO_PROGRESS", {
                         layer: "meta",
                         expected: "同一失败指纹下换一套动作",

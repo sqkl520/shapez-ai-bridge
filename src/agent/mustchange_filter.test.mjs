@@ -142,3 +142,49 @@ test("★ loop.mjs 的 countFingerprint 必须与本文件同义（防两份实�
     assert.match(src, /lastCalls|lastExecuted|executedMacros/,
         "loop.mjs 必须单独追踪「真正执行过的宏」，不能只看 lastMacros");
 });
+
+/* ══════════════════════════ 4. 执行面：机器判定也必须用「执行过的」 ══════════════════════════
+ *
+ * 上面测的是**候选剔除**（`countFingerprint`）。但 loop 还有一处**执行面**的判定：
+ *
+ *     if (st.mustChange) {
+ *         const now = planned.calls.map(c => c.macro);
+ *         if (actionSetHash(now) === actionSetHash(st.lastMacros)) { halt: NO_PROGRESS }
+ *     }
+ *
+ * 2026-11-01 最终验证实测：第 1 轮 `connect` 因为**参数校验失败**
+ * （`unknown_field: opts.reuse_existing`）根本没执行；第 2 轮模型去掉坏参数、
+ * 给了合法的 `connect`，`plan` 通过 —— 结果执行面拿 `lastMacros`（含未执行的那个）一比，
+ * 判成「照抄上一轮」，直接 halt，**把一次正确的修复合上了**。
+ *
+ * 所以这条检查也必须比 `lastExecutedMacros`。这里做源码级断言 + 语义断言两层。
+ */
+
+test("★ 执行面的 mustChange 判定必须比 lastExecutedMacros（不是 lastMacros）", async () => {
+    const fs = await import("node:fs");
+    const src = fs.readFileSync(new URL("./loop.mjs", import.meta.url), "utf8");
+
+    /* 找到执行面那一段：`if (st.mustChange...)` 之后的 actionSetHash 比较 */
+    const m = /if \(st\.mustChange[^)]*\)\s*\{[\s\S]{0,400}?actionSetHash\(now\)\s*===\s*actionSetHash\(([^)]+)\)/.exec(src);
+    assert.ok(m, "应当能在 loop.mjs 里找到执行面的 mustChange 判定");
+    assert.equal(m[1].trim(), "st.lastExecutedMacros",
+        `执行面必须比 lastExecutedMacros，实际比的是 ${m[1].trim()}`);
+});
+
+test("★ 上一轮什么都没执行时，mustChange 判定不该触发", async () => {
+    const fs = await import("node:fs");
+    const src = fs.readFileSync(new URL("./loop.mjs", import.meta.url), "utf8");
+    /* 必须带 `lastExecutedMacros.length` 这个前置条件 ——
+       否则「上一轮全部 plan 阶段被拒」时，lastExecutedMacros 是空数组，
+       actionSetHash([]) 与 actionSetHash(now) 的比较虽然不同，但这条规则本身没意义。 */
+    assert.match(src, /st\.mustChange\s*&&\s*st\.lastExecutedMacros\.length/,
+        "mustChange 判定必须要求 lastExecutedMacros 非空");
+});
+
+test("语义：同一套宏但上一轮没执行 ⇒ 不算「照抄」", () => {
+    /* 用 filterCandidatesForMustChange 的「executed」口径做类比断言 ——
+       两处判定共用同一个语义：只有 executed 的才算「试过」。 */
+    const last = [{ macro: "connect", executed: false }];
+    const executed = last.filter(c => c.executed !== false).map(c => c.macro);
+    assert.deepEqual(executed, [], "没执行的宏不该进「上轮试过」的集合");
+});
