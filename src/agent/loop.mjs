@@ -2057,12 +2057,38 @@ function mapParseCode(code) {
 }
 
 /** 从 verifyRound 的 L4 evidence 取 goal 的累计交付增量（live 才有；其余恒 0）。 */
+/**
+ * 从 L4-behavior 的证据里取「本轮新增交付」。
+ *
+ * ★ 跨关时不能用 `goal_delivered_delta` ★
+ *   `delivered` 是**当前关卡**的计数，升级会归零 ⇒ 跨关时 delta 是个大负数
+ *   （实测 -69），那是「目标换了」，不是「货没了」。
+ *   `checkBehavior` 已经把它记成 null，这里改用 hub 的**累计**账本
+ *   `target_stored_delta` —— 升级不清零，是跨关时唯一可用的权威增量。
+ *
+ * 这条链上任何一环退回「delta 必须 > 0」，都会把真实成功判成失败。
+ */
 function readGoalDelta(report, mode) {
     if (!report || !Array.isArray(report.checks)) return 0;
     const l4 = report.checks.find(c => c && c.name === "L4-behavior");
-    const d = l4 && l4.evidence && l4.evidence.goal_delivered_delta;
-    if (typeof d !== "number" || !Number.isFinite(d)) return 0;
-    return d;
+    const ev = l4 && l4.evidence;
+    if (!ev) return 0;
+
+    const crossed = ev.level_changed === true
+        || (typeof ev.level_before === "number" && typeof ev.level_after === "number"
+            && ev.level_before !== ev.level_after);
+
+    /* 跨关：只认 hub 累计账本。读不到就是 0（没有证据，不猜）。 */
+    if (crossed) {
+        const s = ev.target_stored_delta;
+        return typeof s === "number" && Number.isFinite(s) ? Math.max(0, s) : 0;
+    }
+
+    const d = ev.goal_delivered_delta;
+    if (typeof d === "number" && Number.isFinite(d)) return d;
+    /* delta 不可用（null/缺失）时退回累计账本 —— 它同样是「货进了 hub」的证据。 */
+    const s = ev.target_stored_delta;
+    return typeof s === "number" && Number.isFinite(s) ? Math.max(0, s) : 0;
 }
 
 /** HALT.json 的 next_actions：给人看的三条以内，按码给（不是给 LLM 的提示）。 */
