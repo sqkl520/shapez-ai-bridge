@@ -288,10 +288,15 @@ function checkOpShape(op) {
  *
  * 下游怎么找（三级，任一命中即止）：
  *   ① 该槽的 approach 格上就是**本次新放的建筑**（机对机直贴）→ via:"adjacent"
+ *      命中带子不算终点：继续沿带子链走（见下）。
  *   ② `debug_items.paths[]` 里有一条 path 的首格 == approach 格 → 沿 path 到 acceptor → via:"paths"
  *      （只有这一类能被 L3 的 checkFlow 复核 —— 它有 path 可走）
- *   ③ obs 里 approach 格是带子 → 沿 `beltExit` 逐格走，直到撞上非带子实体 → via:"chain"
+ *   ③ 带子链（obs 里已有的 + 本轮新放的）→ 沿 `beltExit` 逐格走，直到撞上非带子实体 → via:"chain"
  *      （obs 可复核：verify.mjs 在 apply 之后对 afterObs 重走一遍）
+ *
+ *   ★ 终点必须是**实体**，不能是带子 ★
+ *     `checkFlow.reach()` 只把 path 的接收方实体放进 `seen`；flow.to 指向带子则永远判红。
+ *     实测：cutter → 新放带子 → hub，trail 里写着货到了 hub，但 flow.to=带子 ⇒ ok=false。
  */
 function scanFlows(places, obs, items) {
     const entities = Array.isArray(obs.entities) ? obs.entities : [];
@@ -360,15 +365,69 @@ function scanFlows(places, obs, items) {
     return { flows, warnings };
 }
 
+/** 计划态带子的出口方向。rv 优先级：rv → rotationVariant → code-1。
+ *  三者都没有 ⇒ null（**不许猜**：猜错出口会把死端算成接通，正是本函数要防的假绿）。 */
+function placedBeltDir(p) {
+    const rv = typeof p.rv === "number" ? p.rv
+        : typeof p.rotationVariant === "number" ? p.rotationVariant
+            : typeof p.code === "number" ? p.code - 1 : null;
+    return rv === null ? null : beltExit(rv, p.rot || 0);
+}
+
+/** obs 里带子的出口方向。 */
+function obsBeltDir(e) {
+    const rv = typeof e.rotation_variant === "number" ? e.rotation_variant
+        : typeof e.code === "number" ? e.code - 1 : null;
+    return rv === null ? null : beltExit(rv, e.r || 0);
+}
+
+/**
+ * 从 `startCell` 起沿带子链走，直到撞上**非带子实体**。
+ *
+ * ★ 为什么不能停在第一格带子上 ★
+ *   `checkFlow.reach()`（verify_runtime.mjs:651-680）只把 path 的**接收方实体**放进 `seen`。
+ *   flow.to 指向带子 ⇒ 永远到不了 ⇒ 每条冷启动 flow 都判红，哪怕 trail 里写着货已经到了 hub。
+ *   所以这里必须走到真正的终点实体（机器 / hub / trash）。
+ *
+ * 两条链都要看：`placeByCell`（本轮新放的，可能排在后面还没走到）和 `entByCell`（世界里已有的）。
+ *
+ * @returns {{target: object|null, moved: boolean}} moved = 是否至少走过一格带子
+ */
+function walkChain(startCell, self, idx) {
+    let cur = [startCell[0], startCell[1]];
+    const seen = new Set([K(cur)]);
+    let moved = false;
+    for (let step = 0; step < MAX_CHAIN_STEPS; step++) {
+        const placed = idx.placeByCell.get(K(cur));
+        const ent = idx.entByCell.get(K(cur));
+        const here = placed || ent;
+        if (!here) return { target: null, moved };                  // 走出世界 ⇒ 死端
+        if (here === self) return { target: null, moved };          // 自己占自己的槽 / 绕回起点
+        if (here.uid !== null && here.uid !== undefined
+            && self.uid !== null && self.uid !== undefined && here.uid === self.uid) return { target: null, moved };
+        const type = placed ? placed.kind : here.type;
+        if (type === "underground_belt") return { target: null, moved };   // 隧道语义不建模
+        if (type !== "belt") return { target: placed ? placementTarget(placed) : here, moved };
+        const dir = placed ? placedBeltDir(placed) : obsBeltDir(here);
+        if (!dir) return { target: null, moved };                   // rv 未知 ⇒ 不猜，判死端
+        cur = [cur[0] + DIRV[dir][0], cur[1] + DIRV[dir][1]];
+        if (seen.has(K(cur))) return { target: null, moved };       // 自环
+        seen.add(K(cur));
+        moved = true;
+    }
+    return { target: null, moved };                                 // 超步数上限
+}
+
 function findDownstream(out, self, idx) {
     const cell = out.cell;
-    /* ① 本次新放的建筑直接贴在这个槽上（L4 的 cutter.left → trash@(4,-14) 就是这种） */
+    /* ① 本次新放的建筑直接贴在这个槽上（L4 的 cutter.left → trash@(4,-14) 就是这种）。
+       命中机器/hub/trash ⇒ 直接返回；命中**带子** ⇒ 不停，继续往下追（见 walkChain）。 */
     const placed = idx.placeByCell.get(K(cell));
-    if (placed) {
+    if (placed && !BELT_KINDS.has(placed.kind)) {
         if (placed === self) return null;             // 自己占自己的槽 = 几何错，不造自环
-        return { target: { uid: placed.uid, token: placed.token, x: placed.x, y: placed.y, type: placed.kind }, via: "adjacent" };
+        return { target: placementTarget(placed), via: "adjacent" };
     }
-    /* ② 游戏自己的 path */
+    /* ② 游戏自己的 path（权威：它给出的接收方就是货真正到的地方） */
     if (idx.paths) {
         const p = idx.startAt.get(K(cell));
         if (p) {
@@ -382,30 +441,14 @@ function findDownstream(out, self, idx) {
             if (!accCell) return null;
         }
     }
-    /* ③ obs 里的带子链 */
-    let cur = [cell[0], cell[1]];
-    const seen = new Set();
-    for (let step = 0; step < MAX_CHAIN_STEPS; step++) {
-        const placedHere = idx.placeByCell.get(K(cur));
-        if (placedHere) {
-            if (placedHere === self) return null;
-            return { target: { uid: placedHere.uid, token: placedHere.token, x: placedHere.x, y: placedHere.y, type: placedHere.kind }, via: "adjacent" };
-        }
-        const e = idx.entByCell.get(K(cur));
-        if (!e || e === self) return null;
-        if (e.uid === self.uid && e.uid !== null && e.uid !== undefined) return null;
-        if (e.type === "belt") {
-            const rv = typeof e.rotation_variant === "number" ? e.rotation_variant : (e.code - 1);
-            const dir = beltExit(rv, e.r || 0);
-            cur = [cur[0] + DIRV[dir][0], cur[1] + DIRV[dir][1]];
-            if (seen.has(K(cur))) return null;
-            seen.add(K(cur));
-            continue;
-        }
-        if (e.type === "underground_belt") return null;   // 隧道语义不建模，如实报「找不到」
-        return { target: e, via: "chain" };
-    }
-    return null;
+    /* ③ 带子链：obs 里已有的 + 本轮新放的，一格一格走到非带子实体 */
+    const w = walkChain(cell, self, idx);
+    if (!w.target) return null;
+    return { target: w.target, via: w.moved ? "chain" : "adjacent" };
+}
+
+function placementTarget(p) {
+    return { uid: p.uid, token: p.token, x: p.x, y: p.y, type: p.kind };
 }
 
 function entityOfPlacement(p) {
@@ -627,6 +670,9 @@ export function planToTxOps(calls, ctx = {}) {
     const scanned = scanFlows(ordered.map(p => ({
         kind: p.kind, variant: p.variant, x: p.x, y: p.y, rot: p.rot,
         uid: null, token: p.token, cells: p._cells, macro: p.macro,
+        /* ★ 带子必须带上 rv ★ 否则带子链走不了：flow.to 会停在第一格带子上、
+           或者干脆判死端。ovs 是「apply 之前」的快照，新放的带子不在里面。 */
+        rv: BELT_KINDS.has(p.kind) ? p.rv : undefined,
     })), obs, ctx.items ? unwrapItems(ctx.items) : ctx.items);
     const flows = scanned.flows;
     warnings.push(...scanned.warnings);

@@ -343,6 +343,63 @@ export function readTranscript(file) {
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /**
+ * `debug_items` 必须带 `region`（长度 4 的数字数组），否则真 mod 直接抛 2001：
+ *
+ *   src/mod/shapez-ai-bridge.js:903-908
+ *     debugItems(params) {
+ *         const region = params.region;
+ *         if (!Array.isArray(region) || region.length !== 4) throw rpcError(2001, …);
+ *
+ * `FakeGame.debugItems` 接受 `{}`（假世界没有 region 概念，这不是 bug），
+ * 所以缺参数在离线**永远**不会被发现 —— 曾经就是这样：真桥上 `items` 恒 null，
+ * 于是 `checkFlow` 的 `paths=null` → `L3-flow` 永久 undecidable → strict 判红 →
+ * `outcome` 永不为 success。
+ *
+ * ## region 从哪来（为什么不直接抄 verify_runtime）
+ *
+ * `verify_runtime.mjs:904-906` 的口径是「**计划 placements 的 origin bbox 外扩 6 格**」——
+ * 那个调用点手里有 plan。本函数在 observe 阶段**还没有 plan**，所以拿不到同一个输入。
+ * 能拿到的、且语义等价的唯一量是 `obs.entities`：
+ *
+ *   · loop 的 obs 请求**不带 region**（`observeOnce` 的全量读法），所以 obs 的实体 bbox
+ *     就是整个世界的外接矩形 —— 它是任何未来计划 bbox 的超集；
+ *   · `debug_items` 的 region 只用于过滤 `belts`/`ejectors`/`pending` 这类**逐格列表**
+ *     （`paths`/`pathCount` 是全局的、不按 region 过滤，见 mod 的 `paths.slice(0,40)`），
+ *     所以「宁可大一点」不会造成任何假绿/假红，只会多返回几行不会读的明细；
+ *   · pad 沿用 verify_runtime 的 6（同一个常量口径，不发明第二套）。
+ *
+ * 兜底顺序：实体 bbox → `obs.region` → `[0,0,0,0]`。空世界时给一个合法的最小矩形，
+ * **不是**「假装没问题」—— `ITEMS_UNAVAILABLE` 仍会照常因 paths 为空而报出来。
+ *
+ * @param {object|null} obs  unwrapObs 之后的 obs
+ * @returns {[number,number,number,number]}
+ */
+const DEBUG_ITEMS_PAD = 6;      // 与 verify_runtime.mjs:905 的 pad 同口径
+export function debugItemsRegion(obs) {
+    const ents = (obs && Array.isArray(obs.entities)) ? obs.entities : [];
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, n = 0;
+    for (const e of ents) {
+        /* 用循环而不是 `Math.min(...xs)`：世界可以有 50000 个实体（obs 的 max_entities 上限），
+           而 `Math.min(...arr)` 的超参数上限约 6.5 万 —— 贴着边界跑，改一版 mod 就会 stack overflow。 */
+        if (!e || !Number.isFinite(e.x) || !Number.isFinite(e.y)) continue;
+        if (e.x < x0) x0 = e.x;
+        if (e.y < y0) y0 = e.y;
+        if (e.x > x1) x1 = e.x;
+        if (e.y > y1) y1 = e.y;
+        n++;
+    }
+    if (n) {
+        return [x0 - DEBUG_ITEMS_PAD, y0 - DEBUG_ITEMS_PAD, x1 + DEBUG_ITEMS_PAD, y1 + DEBUG_ITEMS_PAD]
+            .map(Math.round);
+    }
+    const r = obs && obs.region;
+    if (Array.isArray(r) && r.length === 4 && r.every(v => typeof v === "number" && Number.isFinite(v))) {
+        return r.map(Math.round);
+    }
+    return [0, 0, 0, 0];
+}
+
+/**
  * 读一次世界。四个读取面分别容错：一个坏了不代表另外三个也不能用，
  * 但**坏了这件事必须成为诊断**（不许把「没读到」当成「没问题」）。
  *
@@ -374,7 +431,10 @@ async function observeOnce(reader) {
         }
     }
     try {
-        out.items = unwrapItems(await reader.debugItems({}));
+        /* ★ 必须带 region ★ —— 真 mod 的 `debugItems` 第一句就校验它
+           （`shapez-ai-bridge.js:903-908`），缺了就抛 2001。
+           region 的取法见 `debugItemsRegion()` 的注释（obs 实体 bbox 外扩 6 格）。 */
+        out.items = unwrapItems(await reader.debugItems({ region: debugItemsRegion(out.obs) }));
     } catch (e) {
         out.problems.push(mkDiag("ITEMS_UNAVAILABLE", {
             layer: "L0", expected: "debug_items 可读", observed: `抛异常：${e && e.message ? e.message : e}`,
