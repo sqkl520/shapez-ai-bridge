@@ -50,6 +50,11 @@ export const MIN_LEVEL_FOR_MACHINE = Object.freeze({
     mixer: 8,
     stacker: 10,
     cutQuad: 16,
+    /* 隧道（underground_belt）不是 solver 的 op，所以这里**不**参与 `flagsForLevel` 的 `--no-*`
+       映射 —— 它没有对应的 solver flag。列在这里是为了让"配方层能看见它"：
+       L<6 的方案不可能合法使用隧道（reward_tunnel 是 levels.js 第 5 关完成时授予的）。
+       真值来源：`op-templates.mjs` 的 `TUNNEL_UNLOCKED_LEVEL`（本项必须与它相等，测试对拍）。 */
+    tunnel: 6,
 });
 
 /** 逐个导出，方便调用方只取一个；也方便测试直接断言。 */
@@ -58,6 +63,7 @@ export const PAINTER_MIN_LEVEL = MIN_LEVEL_FOR_MACHINE.painter;
 export const MIXER_MIN_LEVEL = MIN_LEVEL_FOR_MACHINE.mixer;
 export const STACKER_MIN_LEVEL = MIN_LEVEL_FOR_MACHINE.stacker;
 export const CUTQUAD_MIN_LEVEL = MIN_LEVEL_FOR_MACHINE.cutQuad;
+export const TUNNEL_MIN_LEVEL = MIN_LEVEL_FOR_MACHINE.tunnel;
 
 /** `recipeFor` 的缺省关卡：L4（第一个需要 cutter 的官方关；既有 prompt 的场景）。 */
 export const DEFAULT_LEVEL = 4;
