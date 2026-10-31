@@ -388,12 +388,22 @@ console.log("\n── 4. S3 goal + state ──");
     ok(!/^(H\d+) \w+ — \1 /m.test(pf.blocks.s3_hub), "hub 段同样不重复句柄");
     ok(/undefined/.test(pf.blocks.s3_belts) === false, "desc 里没有 undefined（夹具自身也没写错）");
     ok(/上游=无/.test(pf.blocks.s3_belts), "摘要按原样保留（摘掉的只是重复前缀）");
+    /* ★ 走**显式参数** `production`，不是塞进 obs ★
+       这里原来写的是 `obs: {...L5, production: {...}}` —— 而 loop 传的是 `ob.obs`，
+       production 在 `ob.production`（另一个字段）。于是测试绿、实机永远 unavailable。
+       完整回归见 prompt_production.test.mjs（含 loop→prompt 的接线用例）。 */
     const withProd = buildPrompt(baseOpts({
-        obs: { ...L5, production: { window_seconds: 60, produced_total: { "Cu----Cu": 12 }, delivered_per_sec: { "Cu----Cu": 0.2 } } },
+        production: { window_seconds: 60, produced_total: { "Cu----Cu": 12 }, delivered_per_sec: { "Cu----Cu": 0.2 } },
     }));
     ok(withProd.blocks.s3_production.includes("window_seconds: 60"), "production 窗口渲染");
     ok(withProd.blocks.s3_production.includes("produced Cu----Cu: 12"), "production 产出渲染");
     ok(withProd.blocks.s3_production.includes("rate Cu----Cu: 0.2"), "production 速率渲染");
+    /* 负例：塞进 obs 不再生效 —— 钉住「不从 obs 里摸」，防止有人改回去 */
+    const smuggled = buildPrompt(baseOpts({
+        obs: { ...L5, production: { window_seconds: 60, produced_total: { "Cu----Cu": 12 } } },
+    }));
+    ok(/unavailable/.test(smuggled.blocks.s3_production),
+        "把 production 塞进 obs 不生效（它是独立参数；否则「忘了传」又会被静默吞掉）");
     const noProd = buildPrompt(baseOpts());
     ok(/unavailable/.test(noProd.blocks.s3_production), "没有 production 时明说 unavailable");
 }
