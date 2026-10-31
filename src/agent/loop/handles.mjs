@@ -25,7 +25,7 @@
 import crypto from "node:crypto";
 import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
 import { DIRV, OPP, beltEntry, beltExit } from "../../ai/belt-rules.mjs";
-import { slotsOf } from "../verify_runtime.mjs";
+import { slotsOf, beltRvOf } from "../verify_runtime.mjs";
 
 /* ══════════════════════════════════════════════════════════════════════════
  * 1. 编号
@@ -417,7 +417,7 @@ export function describeEntity(e, obs, items = null, table = null) {
     /* ── hub：16 个入口全列会把 S3 预算吃光，且 LLM 对它只有「接进/接出」两件事。
        所以压成「入口数 + 已接哪几个」。 ── */
     if (type === "hub") {
-        const s = slotsOf(type, e.variant || "default", e.x, e.y, e.r | 0);
+        const s = slotsOf(type, e.variant || "default", e.x, e.y, e.r | 0, beltRvOf(e));
         const total = s ? s.inputs.length : 0;
         const fed = (s ? s.inputs : [])
             .map(sl => handleAt(tbl, sl.cell))
@@ -426,7 +426,7 @@ export function describeEntity(e, obs, items = null, table = null) {
     }
 
     /* ── 机器：槽位逐条列出（slot 的世界方位 + 对端句柄） ── */
-    const s = slotsOf(type, e.variant || "default", e.x, e.y, e.r | 0);
+    const s = slotsOf(type, e.variant || "default", e.x, e.y, e.r | 0, beltRvOf(e));
     if (!s) {
         /* constant_signal 这类没有模板的实体：只说类型，不猜几何 */
         return `${h} ${type}`;
@@ -455,7 +455,7 @@ function slotRoleAt(table, obs, cell, facingDir, side) {
     if (!h) return null;
     const ent = table.byHandle.get(h);
     if (!ent) return null;
-    const s = slotsOf(ent.type, ent.variant, ent.x, ent.y, ent.r);
+    const s = slotsOf(ent.type, ent.variant, ent.x, ent.y, ent.r, beltRvOf(ent));
     if (!s) return null;
     const list = side === "in" ? s.inputs : s.outputs;
     /* 槽的 dir 是「机器 → 外侧」；带子从外面看进来时方向相反，已由调用方取 OPP */
