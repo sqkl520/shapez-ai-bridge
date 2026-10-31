@@ -284,7 +284,15 @@ export function capacityOf(obs) {
     }
 
     return {
-        levels: { ...levels },
+        /* 四条线**一律补齐为数字**。不补的话调用方会拿到 `levels.miner === undefined`，
+           再拿它去查 `UPGRADE_MULTIPLIERS[undefined]` 就是 undefined —— 后面乘以它得 NaN。
+           归一化放在这里（唯一出口），别让每个调用方自己 `|| 0`。 */
+        levels: {
+            belt: levels.belt | 0,
+            miner: levels.miner | 0,
+            processors: levels.processors | 0,
+            painting: levels.painting | 0,
+        },
         miners: { count: miners.length, active: activeMiners, idle: idle.length, ratePerSec: +minerRate.toFixed(3) },
         supplyPerSec: +supply.toFixed(3),
         process: { capacityPerSec: processCapacity === null ? null : +processCapacity.toFixed(3), machines },

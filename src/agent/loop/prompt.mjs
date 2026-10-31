@@ -1215,7 +1215,10 @@ export function renderCapacity(capacity, options = null, opts = {}) {
     if (cap.confidence !== "ok") return null;
 
     const supply = num(cap.supplyPerSec);
-    const processCap = cap.process && num(cap.process.capacityPerSec);
+    /* ⚠️ 必须走 `num()`：`cap.process && num(...)` 在 `cap.process` 缺失时得到 **undefined**，
+       而下面写的是 `processCap === null` —— undefined 会漏过这道闸，渲染出
+       `supply 1/s | processing ?/s` 这种自相矛盾的段（测试 C5 抓到的真 bug）。 */
+    const processCap = num(cap.process && cap.process.capacityPerSec);
     const util = num(cap.utilization);
     const bottleneck = cap.bottleneck;
 
@@ -1223,8 +1226,8 @@ export function renderCapacity(capacity, options = null, opts = {}) {
      *  · 没有产线（supply=0 且 process=null）⇒ 无可评估
      *  · 处理能力缺（null）：那是「没有加工机器」这个**真问题**，
      *    交给 DIAGNOSIS 的 PROCESSOR_REQUIRED，不在这里重复占预算。 */
-    if (!(supply > 0) && processCap === null) return null;
     if (processCap === null) return null;
+    if (!(supply > 0) && processCap === 0) return null;
 
     const room = num(opts.room);
     const form = opts.form === "short" ? "short" : "full";

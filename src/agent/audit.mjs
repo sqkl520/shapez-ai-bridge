@@ -15,7 +15,7 @@
  * 判据全部来自 rules.mjs（数字经源码复核）+ 研究 01 §8 的验收伪代码，
  * 不在本文件里硬编码任何速率。
  */
-import { RATES, UPGRADES, machinesForOneBelt } from "./rules.mjs";
+import { RATES, UPGRADES, machinesForOneBelt, machineRatePerSec } from "./rules.mjs";
 
 const BASE = process.env.SHAPEZ_BRIDGE_URL || "http://127.0.0.1:7777";
 let rpcId = 1;
@@ -32,16 +32,14 @@ async function rpc(method, params = {}, timeoutMs = 60000) {
     return b.result;
 }
 
-const MULT = [1, 1.5, 2, 3, 4, 6, 7, 8];
-const multOf = lvl => MULT[Math.min(Math.max(lvl | 0, 0), 7)];
+/* ★ 这里曾经内联一份 MULT 表 + 一份「机器 → 升级线」映射 —— 与 `rules.mjs` 的
+   `UPGRADE_MULTIPLIERS` / `MACHINE_UPGRADE_LINE` 是同一份真值的两个副本。
+   现在直接走 `machineRatePerSec`（它的注释里写着为什么只许有一份）。 */
+const multOf = lvl => machineRatePerSec("miner", { miner: lvl }) / RATES.minerPerSec;
 
-/** 一台机器的实际速率（含该线的升级倍率） */
+/** 一台机器的实际速率（含该线的升级倍率）。算法在 rules.mjs，这里只做转发。 */
 function machineSpeed(kind, upgrades) {
-    const line = { miner: "miner", cutter: "processors", rotater: "processors",
-        stacker: "processors", painter: "painting", mixer: "painting" }[kind];
-    const base = RATES.machinePerSec[kind];
-    if (base === undefined) return null;
-    return base * (line ? multOf(upgrades[line]) : 1);
+    return machineRatePerSec(kind, upgrades || {});
 }
 
 /* ═══════════════════════════ R1：产能配比 ═══════════════════════════ */
