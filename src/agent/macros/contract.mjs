@@ -181,26 +181,39 @@ const SEVERITY_RANK = Object.freeze({ info: 0, warn: 1, error: 2 });
  * 看到它们时应按 `aliasOf` 指向的规范码理解。合并动作留给实现方（本文件不改实现）。
  */
 export const WARNING_CODES = Object.freeze({
-    /* ── 「覆盖既有带子」：同一件事，实现里有三种拼写（见下方 alias 条目） ── */
+    /* ── 「覆盖既有带子」：同一件事，实现里有三种拼写（见下方 alias 条目） ──
+     *
+     * ★ uid 从哪读，一律以 `changed.removed_uids` 为准（v3 裁定，三宏同形）★
+     *
+     * 契约口径（实现方必须遵守，见 ROUTING-CONTRACT-DECISION.md）：
+     *   · **唯一规范通道**：`changed.removed_uids: Uid[]`（信封字段，见 RETURN_ENVELOPE）。
+     *     三个宏在「本单会替换销毁既有带子」时都必须把它填满，且**按格序确定**。
+     *   · 本 warning 的 `detail` **只描述人读语义**，不得作为机器读取 uid 的来源；
+     *     实现**可以**在 warning 同级附带 `replaced_belt_uids` / `replaced_cells` 作冗余
+     *     （便于日志与红队对账），但下游**只许**消费 `changed.removed_uids`。
+     *   · 历史单数/下划线别名条目仍在闭集里（实现尚未统一），按 aliasOf 读。
+     */
     "replacing-belts": {
-        severity: "warn", macro: "connect / insert_machine / trash_unused",
-        what: "本单会销毁既有带子（allow_replace / replace_belts / replace_belt 打开时）",
-        action: "把要删的 uid（connect 在 detail 里给格数，insert_machine 给 removed_uids，"
-            + "trash_unused 给 replaced_belt_uid）纳入 tx 的 destroys；不处理 = 覆盖没有回滚。",
+        severity: "warn", macro: "connect / insert_machine / trash_unused / replace_run",
+        what: "本单会销毁既有带子（allow_replace / replace_belts / replace_belt / replace_run 打开时）",
+        action: "把 **`changed.removed_uids`** 里的每个 uid 纳入 tx 的 destroys（这是唯一规范通道，"
+            + "不要解析 detail 的格数，也不要读各宏的历史字段名）。可选冗余：同等 warning 上可带 "
+            + "`replaced_belt_uids:Uid[]` 与 `replaced_cells:Cell[]`（同序、与 removed_uids 一致）。"
+            + "不处理 = 覆盖没有回滚。",
     },
     replacing_belts: {
         severity: "warn", macro: "insert_machine",
         canonical: false, aliasOf: "replacing-belts", deprecated: true,
         what: "（历史拼写）insert_machine 目前实际发出的码：footprint 内有既有带子被替换销毁",
-        action: "按 replacing-belts 理解；把 removed_uids 纳入 tx 的 destroys。"
-            + "规范名是 replacing-belts（横线），新代码不得使用本拼写（合并留给实现方）。",
+        action: "按 replacing-belts 理解；uid 读 `changed.removed_uids`（该宏另有顶层 `removed_uids` 同值冗余，"
+            + "历史字段名，新代码不得依赖）。规范名是 replacing-belts（横线），新代码不得使用本拼写（合并留给实现方）。",
     },
     "replacing-belt": {
         severity: "warn", macro: "trash_unused",
         canonical: false, aliasOf: "replacing-belts", deprecated: true,
         what: "（历史拼写）trash_unused 目前实际发出的码（单数）：opts.replace_belt=true 时喷口格带子被销毁",
-        action: "按 replacing-belts 理解；把 replaced_belt_uid 纳入 tx 的 destroys。"
-            + "规范名是 replacing-belts，新代码不得使用本拼写（合并留给实现方）。",
+        action: "按 replacing-belts 理解；uid 读 `changed.removed_uids`（该宏另有顶层 `replaced_belt_uid:Uid|null`，"
+            + "只能有一个值，多格场景会漏）。规范名是 replacing-belts，新代码不得使用本拼写（合并留给实现方）。",
     },
 
     /* ── connect ── */
@@ -213,7 +226,9 @@ export const WARNING_CODES = Object.freeze({
         severity: "warn", macro: "connect",
         what: "opts.rebind 与 opts.allow_replace 同时为 true —— 抢口 + 剪旧线，最危险的一次调用",
         action: "确认你就是**整段重铺**（旧口要抢、旧路要剪）；只解其中一个错误码时，"
-            + "把另一个关掉再调 —— 它们各自对应 port_already_bound / occupied，不能互相顶替。",
+            + "把另一个关掉再调 —— 它们各自对应 port_already_bound / occupied，不能互相顶替。"
+            + "本条不携带 uid：被覆盖的带子读 `changed.removed_uids`（规范通道），"
+            + "被抢的旧接收方 uid 读 `error.detail.boundTo` 或重规划，两者不是一件事。",
     },
 
     /* ── insert_machine ── */
@@ -1147,6 +1162,12 @@ export const MACRO_SPECS = Object.freeze({
             "to.port 当前**没有**供料方（否则 target_already_fed）。",
             "路径经过的格：空 → 可用；belt → 仅 allow_replace=true 时可覆盖并计 cost；机器/hub → occupied（整单失败）。",
             "路径格数 ≤ opts.max_cells。",
+            /* ★ 这条是 v3 新增的实现义务。它把「覆盖了谁」从人读摘要变成可机器消费的数据。 */
+            "【实现自证】allow_replace=true 且选中路径**确实压过** N≥1 格既有带子时，"
+                + "`changed.removed_uids` 必须给出这 N 个 uid（按 `cells[]` 的路径格序，去重、与 obs 的 uid 一致）；"
+                + "同时 `cells_planned` **仍只算新铺的格数**，不因覆盖而翻倍。"
+                + "压过 0 格时 `changed.removed_uids` 必须是 `[]`，且**不得**发 `replacing-belts` 警告。"
+                + "覆盖只针对 belt / underground_belt —— 机器与 hub 永不进这个列表（它们让路就等于删机器）。",
             /* 下面 3 条是**实现自证**，调用方既预知不了也补救不了 —— 单独标出来，不与上面同权并列。
                （v1 把它们混在同一个数组里，等于把「你必须先 obs」与「mod 有没有 tx」说成同一优先级。） */
             "【实现自证，调用方无需预判】路径首格 = from 出口格，末格 = to 入口格的前一格；"
@@ -1165,7 +1186,10 @@ export const MACRO_SPECS = Object.freeze({
             "两台机器紧贴、槽位本来就对齐（0 格连接）时不要用：那是**不需要铺带**的情形，"
                 + "调用 connect 只会得到 0 格路径；连接是否存在由 gate（G6b boundAcceptor）判定，不是 connect 的动作。",
         ],
-        returns: "MacroResult（cells_planned = 计划铺的带格数；cells_placed = 读回一致的格数；first_mismatch = 第一处 code/rotation/rv 与计划不符）",
+        returns: "MacroResult（cells_planned = 计划铺的带格数；cells_placed = 读回一致的格数；first_mismatch = 第一处 code/rotation/rv 与计划不符）"
+            + " + {cells:[{x,y,building,rotation,rotationVariant,code,inDir,outDir,entry,exit}], pathLen, choice, strategy, alternatives}。"
+            + "**allow_replace=true 且确实覆盖了既有带子时，`changed.removed_uids` 必须列出被覆盖的每一个 uid（按路径格序）**"
+            + " —— 这是规范通道（见 REPLACED_DESTROYS_FIELD）；`replacing-belts` 的 detail 里的格数只是人读摘要，不可当数据源。",
         lowerOps: ["obs", "debug_items", "place（逐格，按 rv 自证）", "paste_blueprint（带 rv 的精确拐角）", "delete{uid}（A1 交付；覆盖旧带时）", "tx（A1 交付）"],
         sideEffects: ["新增带子实体", "allow_replace=true 时销毁路径上的旧带子（必须回滚可还原）", "不动机器、不动 hub"],
         invariants: [
@@ -1218,7 +1242,8 @@ export const MACRO_SPECS = Object.freeze({
             "想调整既有机器朝向时不要用：那是删除+重放，会丢运行期状态；朝向错误应该由 connect 的 no_path 或 G7/G8 报出来，不该靠重放掩盖。",
             "想放一台「占多格但你要规划它周围所有线」的机器时不要用：本宏只保证机器本身与它**已被带子覆盖**的旧拓扑兼容；周围接线用 connect。",
         ],
-        returns: "MacroResult + {origin:[x,y], rotation:0|90|180|270, cells:[{x,y}], removed_uids:[], wiring:[{kind,role,slot,cell,dir,status,why?}], site:{mode,candidates,chosen_by,why?}, pending:PendingRef}；wiring.status ∈ ok|nothing|mismatch。**没有游戏 uid**：uid 由 tx 在执行后分配，计划态 added_uids 恒空。要给这台机器接下游，把返回值里的 `pending` 原样传给下游宏的端点（见 PENDING_REF_SPEC）；落盘之后才改用 obs 的真 uid。",
+        returns: "MacroResult + {origin:[x,y], rotation:0|90|180|270, cells:[{x,y}], removed_uids:[], wiring:[{kind,role,slot,cell,dir,status,why?}], site:{mode,candidates,chosen_by,why?}, pending:PendingRef}；wiring.status ∈ ok|nothing|mismatch。**没有游戏 uid**：uid 由 tx 在执行后分配，计划态 added_uids 恒空。要给这台机器接下游，把返回值里的 `pending` 原样传给下游宏的端点（见 PENDING_REF_SPEC）；落盘之后才改用 obs 的真 uid。"
+            + " footprint 内有既有带子被替换时，**`changed.removed_uids` 是规范通道**（顶层 `removed_uids` 是同值历史别名，只许读不许新依赖）。",
         lowerOps: ["obs", "op-templates（槽位/footprint/ROTATABLE 真值）", "delete{uid}（A1 交付）", "place", "tx（A1 交付）"],
         sideEffects: ["新增 1 台机器", "替换 footprint 内的带子（销毁其 uid，必须可回滚还原）", "不新建带子、不接线"],
         invariants: [
@@ -1330,7 +1355,8 @@ export const MACRO_SPECS = Object.freeze({
             "想铺隧道时不要用：v1 明确不支持（sender/receiver 成对），会报 unsupported_building。",
             "region 框不准时不要用：先 bulk_delete dry_run 看 items，或用 remove_run(uids) 精确指名。",
         ],
-        returns: "MacroResult + belt 模式 {mode:\"belt\", replaced_uids, removed_uids, added_uids, mismatched:[{cell,field,requested,actual}]}；机器模式 {mode:\"machines\", removed, placed, kept, summary:{removed,placed,kept}, flow, building}",
+        returns: "MacroResult + belt 模式 {mode:\"belt\", replaced_uids, removed_uids, added_uids, mismatched:[{cell,field,requested,actual}]}；机器模式 {mode:\"machines\", removed, placed, kept, summary:{removed,placed,kept}, flow, building}"
+            + "；两种模式的 **`changed.removed_uids` 都是规范通道**（顶层 `removed_uids` / `replaced_uids` 是同值历史别名）。",
         lowerOps: ["obs", "belt-rules（solveTurn）", "op-templates（footprint/槽位）", "delete{uid}", "place", "tx（A1 交付）"],
         sideEffects: ["belt 模式：销毁并重建 region 内每个带子（uid 全变）", "机器模式：销毁被 footprint 覆盖的带、放机器（trash 按点名槽位）", "不改 region 外的任何实体"],
         invariants: [
@@ -1371,7 +1397,9 @@ export const MACRO_SPECS = Object.freeze({
             "端口已经接了东西时不要用：先把那条拆掉（remove_run）并想清楚为什么它会空转。",
         ],
         returns: "MacroResult + {trashCell, outletPort:{kind:eject|belt-exit|pending-eject,...}, replaced_belt_uid?, trash:{…}, pending:{…}}"
-            + "（pending = 计划态 trash 引用，可继续喂给下游宏）",
+            + "（pending = 计划态 trash 引用，可继续喂给下游宏）"
+            + "；opts.replace_belt=true 顶掉喷口格带子时，**`changed.removed_uids` 是规范通道**"
+            + "（顶层 `replaced_belt_uid` 是**单数**历史别名，上限 1，只许读不许新依赖）。",
         lowerOps: ["obs", "debug_items（boundAcceptor）", "op-templates（wasteRoles / slot 表）", "place", "delete{uid}（replace_belt 时）", "tx（A1 交付）"],
         sideEffects: ["新增 1 台 trash", "replace_belt=true 时销毁 1 格带子", "之后该槽的产物被永久销毁"],
         invariants: [
@@ -1526,7 +1554,8 @@ export const RETURN_ENVELOPE = Object.freeze({
         cells_planned: "int — 计划写入的格数",
         cells_placed: "int — 读回一致的格数",
         first_mismatch: "null | {cell, field, requested, actual}",
-        changed: "{added_uids:Uid[], removed_uids:Uid[]}（**计划态**，added_uids 恒空：uid 由 tx 分配）",
+        changed: "{added_uids:Uid[], removed_uids:Uid[]}（**计划态**，added_uids 恒空：uid 由 tx 分配）"
+            + "；`removed_uids` 是**「本单会销毁哪些既有实体」的唯一规范通道**（v3）",
         warnings: "Array<{code ∈ WARNING_CODES, severity?: info|warn|error, cell?, detail, hint?}>",
         error: "null | MacroError（code ∈ ERROR_CODES）",
         tick: "number — 结束时游戏时钟（便于对账）",
@@ -1540,6 +1569,200 @@ export const RETURN_ENVELOPE = Object.freeze({
  *   first_mismatch:null|{cell:Cell, field:string, requested:any, actual:any},
  *   changed:{added_uids:Uid[], removed_uids:Uid[]},
  *   warnings:Array<object>, error:null|MacroError, tick?:number, dry_run?:boolean}} MacroResult */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 5b. 「替换式销毁」的唯一规范通道 —— `changed.removed_uids`（v3）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ## 为什么要立这一条
+ *
+ * 2026-11-01 实测（`.tmpverify/p1-probe*.mjs`，夹具 `.tmpverify/final-half/probe-obs.json`）：
+ * 三个宏都会「覆盖/替换既有带子」，但**报 uid 的拼写互不相同**，其中一个根本不给 uid：
+ *
+ * | 宏 | 实际给了什么 | 有 uid 吗 |
+ * |---|---|---|
+ * | `connect(allow_replace)` | 只在 `warnings[].detail` 里写「1 格」 | **没有** |
+ * | `insert_machine(replace_belts)` | `changed.removed_uids` + 顶层 `removed_uids`（同值） | 有 |
+ * | `trash_unused(replace_belt)` | `changed.removed_uids` + 顶层 `replaced_belt_uid:Uid\|null` | 有 |
+ * | `replace_run`（belt / machines） | `changed.removed_uids` + 顶层 `removed_uids` | 有 |
+ *
+ * 下游 `planToTxOps` 的 R3 因此被迫支持五条读取路径（`changed.removed_uids` /
+ * `removed_uids` / `removes[].uid` / `replaced_belt_uid` / `replaced_uids`），
+ * 还要为 `connect` **从 `cells[] ∩ obs` 反推**一遍并打 `DESTROYS_DERIVED`。
+ * 反推是危险的：它让「宏漏报」与「宏报对了」在 tx 里长得一样。
+ *
+ * ## 裁定（v3，三宏同形）
+ *
+ * **`changed.removed_uids: Uid[]` 是唯一规范通道。**
+ *
+ * 语义三条，缺一即违约：
+ *   1. **完整**：本单会从世界里消失的**每一个**既有实体 uid 都在里面，不许只报第一处、
+ *      不许只报 subscribe 到的那个。`connect` 覆盖 N 格就必须有 N 个 uid。
+ *   2. **存在**：每个 uid 必须来自**本次 ctx 的 obs**（`entities[].uid`）。不许是
+ *      「即将由 tx 分配的 uid」，也不许是从 `pending` 推出来的合成值。
+ *   3. **条件**：只在「本单确实会销毁既有实体」时非空。替换动作**不发生时**必须是 `[]`，
+ *      **不许省略字段、不许写 `null`**（信封要求它是数组；缺了 = 调用方无法区分
+ *      「没销毁」与「忘了报」）。
+ *
+ * 附加（可机器检查，见 `validateReplacedDestroys`）：
+ *   · 必须去重、无重复 uid；顺序必须**确定**（推荐按格序 `(y,x)`，与 `cells[]` 同序）。
+ *   · 若是「替换式销毁」（本单在同一个格子上又 place 了新东西），每个被删 uid 的
+ *     `(x,y)` 必须落在本宏 `cells[]` / `footprint` 覆盖的格里 —— 这是判「删的和放的是
+ *     不是同一件事」的机器化判据。实测四个宏全部满足（见 p1-probe-invariant.mjs）。
+ *
+ * ## 历史字段怎么办
+ *
+ * **保留、不删、不作为规范通道**。它们仍会出现在返回值里（实现未改），
+ * 下游若已经读它们，行为不变；但**新代码只许读 `changed.removed_uids`**。
+ * 别名对照见 `REPLACED_DESTROYS_LEGACY_FIELDS`。
+ */
+export const REPLACED_DESTROYS_FIELD = "changed.removed_uids";
+
+/**
+ * 实现里仍然存在、**只许读不许新写**的历史 uid 字段。值是它在返回值里的路径，
+ * 用于 (a) 迁移期对账（新规范字段必须与它们一致），(b) 红队写「别名漂移」断言。
+ *
+ * 注意 `replaced_belt_uid` 是**单数**：`trash_unused` 的噴口格只有一格，
+ * 所以结构上只能表达 1 个 —— 这正是它不能当规范通道的原因（多格场景会漏）。
+ */
+export const REPLACED_DESTROYS_LEGACY_FIELDS = Object.freeze({
+    connect: Object.freeze([]),                          // 历史：一个都没有，只能解析 detail 的格数
+    insert_machine: Object.freeze(["removed_uids"]),
+    trash_unused: Object.freeze(["replaced_belt_uid"]),  // 单数，上限 1
+    replace_run: Object.freeze(["removed_uids", "replaced_uids"]),
+    remove_run: Object.freeze(["removed_uids"]),         // 纯删除，不属于「替换」，列出仅为字段表完整
+    extend_line: Object.freeze([]),                      // 本宏不提供覆盖（契约 preconditions）
+});
+
+/**
+ * 校验「替换式销毁」的规范通道。**纯函数，不查世界**（世界一致性由调用方拿 obs 判）。
+ *
+ * 给 P2/P3 的实现自证、P6 的集成测试、以及 `planToTxOps` 的迁移期对账共用。
+ *
+ * @param {any} r 宏返回值
+ * @param {{macro?:string, allowEmpty?:boolean}} [opt]
+ *   `allowEmpty` 缺省 true：销毁集合为空是合法的（大多数调用都不销毁任何东西）。
+ *   传 false 表示「这一单必须销毁点什么」（例如刚发了 replacing-belts 警告）——
+ *   那时空数组即为违约。
+ * @returns {Validation} value = 归一后的 uid 数组（去重前原序的副本）
+ */
+export function validateReplacedDestroys(r, opt = {}) {
+    const allowEmpty = opt.allowEmpty !== false;
+    if (!isObj(r)) return fail("bad_type", null, "宏返回值必须是对象");
+
+    /* ── ① 字段必须在，且是数组（不许 undefined / null） ── */
+    if (!isObj(r.changed)) {
+        return fail("bad_type", "changed",
+            "宏返回值缺 `changed` 对象（或它不是对象）",
+            "信封要求 changed:{added_uids:Uid[], removed_uids:Uid[]}；没销毁任何东西也要给空数组。");
+    }
+    if (!("removed_uids" in r.changed)) {
+        return fail("missing_field", REPLACED_DESTROYS_FIELD,
+            `宏返回值缺 ${REPLACED_DESTROYS_FIELD}`,
+            "没销毁任何东西也必须给 []。省略字段会让调用方无法区分「没销毁」与「忘了报」。");
+    }
+    const arr = r.changed.removed_uids;
+    if (!Array.isArray(arr)) {
+        return fail("bad_type", REPLACED_DESTROYS_FIELD,
+            `${REPLACED_DESTROYS_FIELD} 必须是数组`, `实得 ${JSON.stringify(arr)}`);
+    }
+
+    /* ── ② 每个元素是合法 uid（>=0 整数），不许占位/合成值 ── */
+    for (let i = 0; i < arr.length; i++) {
+        if (!isInt(arr[i]) || arr[i] < 0) {
+            return fail("bad_type", `${REPLACED_DESTROYS_FIELD}[${i}]`,
+                `${REPLACED_DESTROYS_FIELD}[${i}] 必须是 >=0 整数 uid`,
+                `实得 ${JSON.stringify(arr[i])}。计划态没有 uid ⇒ 该实体不该出现在这里（uid 由 tx 分配）。`);
+        }
+    }
+
+    /* ── ③ 不许重复 ── */
+    const seen = new Set();
+    for (const u of arr) {
+        if (seen.has(u)) {
+            return fail("bad_type", REPLACED_DESTROYS_FIELD,
+                `${REPLACED_DESTROYS_FIELD} 有重复 uid ${u}`,
+                "重复会让 tx 生成两条 delete op，第二条必然失败并拖垮整个事务。");
+        }
+        seen.add(u);
+    }
+
+    /* ── ④ 「必须销毁点什么」时不许空 ── */
+    if (!allowEmpty && arr.length === 0) {
+        return fail("precondition_failed", REPLACED_DESTROYS_FIELD,
+            `${REPLACED_DESTROYS_FIELD} 为空，但这一单声明了要替换既有实体`,
+            "发了 replacing-belts / replacing_belts / replacing-belt 警告就必须给出对应 uid。");
+    }
+
+    /* ── ⑤ 历史字段若同时存在，必须与本字段一致（迁移期对账；缺省不算错） ── */
+    const macro = opt.macro || r.macro;
+    const legacy = macro ? REPLACED_DESTROYS_LEGACY_FIELDS[macro] : undefined;
+    for (const path of legacy || []) {
+        const v = path === "removed_uids" ? r.removed_uids
+            : path === "replaced_uids" ? r.replaced_uids
+                : path === "replaced_belt_uid" ? r.replaced_belt_uid
+                    : undefined;
+        if (v === undefined || v === null) continue;
+        const drift = diffUidLists(v, arr);
+        if (drift) {
+            return fail("precondition_failed", `${macro}.${path}`,
+                `历史字段 ${path}=${JSON.stringify(v)} 与规范通道 ${REPLACED_DESTROYS_FIELD}=${JSON.stringify(arr)} 不一致`,
+                "迁移期两者必须同值。不一致说明实现里有两处各算了一遍 —— 合并成一处再报。");
+        }
+    }
+
+    /* ── ⑥ warning 上的冗余 uid 列表（可选）若存在，也必须一致 ──
+     *
+     * 允许实现把 `replaced_belt_uids` 挂在 `replacing-*` 警告上（日志/红队对账用）。
+     * 但它**不是**规范通道；这里强制它与 changed.removed_uids 同集合，
+     * 于是「两份列表各自漂移」在机器上是不可能的 —— 要么一致，要么这条宏自己判红。
+     */
+    for (let i = 0; i < (Array.isArray(r.warnings) ? r.warnings.length : 0); i++) {
+        const w = r.warnings[i];
+        if (!isObj(w) || !Array.isArray(w.replaced_belt_uids)) continue;
+        const drift = diffUidLists(w.replaced_belt_uids, arr);
+        if (drift) {
+            return fail("precondition_failed", `warnings[${i}].replaced_belt_uids`,
+                `warnings[${i}].replaced_belt_uids=${JSON.stringify(w.replaced_belt_uids)} 与 `
+                + `${REPLACED_DESTROYS_FIELD}=${JSON.stringify(arr)} 不一致`,
+                "warning 上的 uid 列表只是冗余展示，必须与规范通道同集合。");
+        }
+        if (Array.isArray(w.replaced_cells) && w.replaced_cells.length !== w.replaced_belt_uids.length) {
+            return fail("precondition_failed", `warnings[${i}].replaced_cells`,
+                `warnings[${i}] 的 replaced_cells(${w.replaced_cells.length}) 与 `
+                + `replaced_belt_uids(${w.replaced_belt_uids.length}) 长度不等`,
+                "两者必须同序、同长：第 k 个 uid 对应第 k 个格。");
+        }
+    }
+
+    return ok(arr.slice());
+}
+
+/** 两个 uid 列表是否表示同一集合（不管顺序与重复写法）。返回 null = 一致，否则给一句人读差异。 */
+function diffUidLists(a, b) {
+    const norm = v => [...new Set((Array.isArray(v) ? v : [v]).map(Number))].sort((x, y) => x - y);
+    const x = norm(a), y = norm(b);
+    if (x.length === y.length && x.every((u, i) => u === y[i])) return null;
+    return `只有左边：${x.filter(u => !y.includes(u)).join(",") || "-"}；`
+        + `只有右边：${y.filter(u => !x.includes(u)).join(",") || "-"}`;
+}
+
+/**
+ * 「这条 warning 声称有替换，规范通道就必须非空」的联动判据。
+ * 纯函数；供宏自证与 P6 集成测试直接调用，避免两端各写一遍匹配逻辑。
+ *
+ * @param {any} r 宏返回值
+ * @returns {Validation} value = { claimed:bool, uids:Uid[] }
+ */
+export function checkReplacingWarningMatchesDestroys(r) {
+    if (!isObj(r)) return fail("bad_type", null, "宏返回值必须是对象");
+    const claimed = Array.isArray(r.warnings) && r.warnings.some(w => isObj(w) && (
+        w.code === "replacing-belts" || w.code === "replacing_belts" || w.code === "replacing-belt"));
+    const chk = validateReplacedDestroys(r, { macro: r.macro, allowEmpty: !claimed });
+    if (!chk.ok) return chk;
+    return ok({ claimed, uids: chk.value });
+}
 
 /**
  * 返回信封的结构校验（供宏的单测 / A6 的 loop 用）。
@@ -1620,6 +1843,53 @@ export function validateMacroResult(r) {
     }
     return ok(r);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 5c. 下游消费约定：`planToTxOps` 的 R3 该怎么读销毁
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 给 `planToTxOps`（P3）与 P6 的机器可读约定。**不是实现**，是判据表。
+ *
+ * 现状（2026-11-01 实测，`src/agent/loop/planToTxOps.mjs`）：
+ *   · `selfReportedDestroys()` 读了**五条**路径，其中三条是历史别名；
+ *   · 另有 `connectDestroysFromObs()` 为 `connect` 从 `cells[] ∩ obs` **反推**销毁，
+ *     并打 `DESTROYS_DERIVED`。
+ *
+ * v3 之后的目标状态：
+ *   · R3 **只**读 `changed.removed_uids`（一条路径）。别名读取可以留作迁移期兜底，
+ *     但必须**记一条迁移警告**，不许静默吞掉 —— 否则「实现还在用旧字段」永远暴露不出来。
+ *   · `connectDestroysFromObs` 的**反推必须降级为交叉校验**，不能继续当数据源：
+ *     反推 = 用 obs 猜「宏大概会删谁」，与「宏自报删谁」拼起来会让
+ *     「宏漏报」看起来和「宏报对了」完全一样，而前者正是要抓的缺陷形态。
+ *     正确用法：`derived === changed.removed_uids` 才通过；不等即判红（宏与 obs 不同步）。
+ *   · 反推**不得**再引入新 uid：即使它算出更多 uid，也不许把它们塞进 destroys。
+ *     （R6 会因此拒绝计划 —— 这正是想要的行为：宁可拒绝，不静默多删。）
+ */
+export const DESTROYS_CONSUMPTION_SPEC = Object.freeze({
+    /** R3 唯一该读的路径 */
+    canonical: REPLACED_DESTROYS_FIELD,
+    /** 迁移期允许继续读的路径，读到时必须发 `DESTROYS_LEGACY_FIELD` 警告（见下表） */
+    legacyReadable: Object.freeze([
+        "removed_uids",          // insert_machine / replace_run / remove_run
+        "replaced_belt_uid",     // trash_unused（单数）
+        "replaced_uids",         // replace_run
+        "removes[].uid",         // remove_run 的 intent 形态
+        "removed[].uid",         // remove_run 的明细形态
+    ]),
+    /** `connect` 专用：反推只许用于对账，不许当数据源 */
+    connectDerivation: Object.freeze({
+        role: "cross-check-only",
+        rule: "derived_uids（cells[] ∩ obs 的带子）必须与 changed.removed_uids 集合相等；不等 ⇒ 判红",
+        forbiddenSource: "把 derived 里「多出来」的 uid 塞进 destroys（那是静默多删）",
+    }),
+    /** 迁移期的告警码。**注意命名空间**：它是 `planToTxOps` 侧发出的警告，
+     *  与 `DESTROYS_DERIVED` / `FLOW_UNVERIFIED` / `DESTROYS_UNNAMED_CHECK_SKIPPED` 同一批，
+     *  **不属于** `WARNING_CODES`（那是宏返回值的闭集，`validateMacroResult` 才校验它）。
+     *  切莫为了「让它合法」而往 WARNING_CODES 里塞 —— 那会让宏实现以为可以发这个码。 */
+    legacyWarningCode: "DESTROYS_LEGACY_FIELD",
+    legacyWarningNamespace: "planToTxOps",
+});
 
 /* ══════════════════════════════════════════════════════════════════════════
  * 6. intent schema 扩展：removes[]

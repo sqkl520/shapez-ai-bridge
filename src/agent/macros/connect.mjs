@@ -176,14 +176,60 @@ function worldFor(ctx) {
 /* ═══════════════════════════════ 2. 端口枚举 ═══════════════════════════════ */
 
 /**
- * 一台机器的端口表。每个端口给出：
- *   · slot  = 机器自己那一格（acceptors/ejectors 的 tile）
+ * 端口**槽位**真值（tile + dir）。只有两个来源，且都不是第二套端口逻辑：
+ *
+ *   ① 带子：方向**必须**由 `beltExit(rv, r)` / `beltEntry(rv, r)` 算。
+ *      spec 是静态 JSON，`belt.ejectors[0].dir = "top"` / `belt.acceptors[0].dir = "bottom"`
+ *      只是 **(r=0, rv=0)** 的快照；带子的真实方向随 4 种 r × 3 种 rv 变化，
+ *      spec 没有「按 r/rv 推导」的表达能力，改 spec 只能写死另一种、仍然会错。
+ *      实测（2026-11-01，34 条真实带子）：21 条出口被算错，r≠0 的 17/19 错；
+ *      唯一「碰巧对」的是 (r=90, rv=1) —— 恰好 `beltExit(1,90)="top"` 与 spec 相同，
+ *      所以既有测试（只测 r=0）全绿。错的那 21 条让 `connect` 以错误起点搜索，
+ *      842 条候选全部落到错误位置。
+ *
+ *   ② 其余实体：仍然逐字段读 spec —— v1 不支持旋转机器，静态值即真值。
+ *
+ * 默认 `dir`（r=0, rv=0 时）两侧完全一致：`beltExit(0,0)="top"`、`beltEntry(0,0)="bottom"`，
+ * 所以这不是「改全表」，只是给带子补上随旋转变化的那一维。
+ *
+ * ⚠️ `underground_belt` **故意**不走这条：它的 `rotation_variant` 是 sender/receiver 位，
+ *    不是弯带的「直/左弯/右弯」，`beltExit(1,0)="left"` 套上去就是错的
+ *    （见 `loop/topology.test.mjs` 事实 1）。隧道真正的槽位在 spec 的
+ *    `rotationVariantSlots`，且连接语义还需要处理成对 portal —— 那是独立特性，不在本修复范围。
+ *
+ * @returns {{ejectors:Array, acceptors:Array}|null}
+ */
+function portSlots(rec, spec) {
+    if (rec.type === "belt") {
+        const rv0 = rec.rv === undefined ? 0 : rec.rv;
+        /* 带子只有 rv 0/1/2（belt.js:25-43）。越界值不静默算出垃圾方位，退回直带。 */
+        const rv = (rv0 === 0 || rv0 === 1 || rv0 === 2) ? rv0 : 0;
+        const r = rec.r === undefined ? 0 : rec.r;
+        return {
+            ejectors: [{ tile: [0, 0], dir: beltExit(rv, r) }],
+            acceptors: [{ tile: [0, 0], dir: beltEntry(rv, r) }],
+        };
+    }
+    const v = variantOf(spec, rec.type, rec.variant);
+    if (!v) return null;
+    return { ejectors: v.ejectors, acceptors: v.acceptors };
+}
+
+/**
+ * 一台实体的端口表。每个端口给出：
+ *   · slot  = 实体自己那一格（acceptors/ejectors 的 tile）
  *   · cell  = 带子该占的那一格 = slot + DIRV[dir]
  *   · vel   = 货流在**带子上**的方向
- *               ejector: vel = dir（机器沿 dir 喷出）
- *               acceptor: vel = OPP[dir]（带子朝机器喷，即反向冲进去）
- *   · face  = 机器的那一面（acceptors/ejectors 的 dir）
+ *               ejector: vel = dir（实体沿 dir 喷出）
+ *               acceptor: vel = OPP[dir]（带子朝实体喷，即反向冲进去）
+ *   · face  = 实体的那一面（acceptors/ejectors 的 dir）
  * 依据 F3（实机 14/14 + 12/12）。
+ *
+ * ⚠️ 带子的 dir 不是静态值 —— 见 `portSlots()` 的说明（r/rv ≠ 0 时必须由 belt-rules 推导）。
+ *
+ * `accept.vel` 的语义是「接进来的带子上的货流方向」（= 朝本实体喷），**不是**本带的入口面。
+ * 三条独立证据：F3 的「acceptor 带子 exit = OPP[dir]」、`mk()` 的 `vel = OPP[face]`、
+ * 以及 `connect` 把它当 `candidateShapes(..., E, vE)` 的 `vE`（末格出货方向）。
  */
 export function portsOf(rec, spec) {
     const out = { eject: [], accept: [] };
@@ -210,8 +256,8 @@ export function portsOf(rec, spec) {
         return out;
     }
 
-    const v = variantOf(spec, rec.type, rec.variant);
-    if (!v) return out;
+    const slots = portSlots(rec, spec);
+    if (!slots) return out;
 
     /* 角色名真值 = op-templates（contract.PORT_FORMS 的枚举就是它：primary/secondary/
        left/right/lower/upper/shape/color/out）。spec 的 acceptor/ejector 只有 tile+dir+filter，
@@ -247,8 +293,8 @@ export function portsOf(rec, spec) {
             return { ...p, index: n };
         });
     };
-    out.eject = mk("eject", v.ejectors);
-    out.accept = mk("accept", v.acceptors);
+    out.eject = mk("eject", slots.ejectors);
+    out.accept = mk("accept", slots.acceptors);
     return out;
 }
 
@@ -639,27 +685,115 @@ export function verifyChain(cells) {
 /* ═══════════════════════════════ 5. 占用检查 ═══════════════════════════════ */
 
 /**
- * 路径占用检查。**只报告第一处**冲突（任务书：告诉调用方卡在哪）。
- * @returns {{ok:boolean, firstConflict:null|{x,y,what,uid?}, replaceable:number}}
+ * 路径占用检查。**一条路径**的判据，不是跨候选的统计（那在 `summarizeBlocked`）。
+ *
+ * ## 三种「撞」必须分开记，因为修法完全不同
+ *   · `firstMachine` 撞机器/hub —— **永不可覆盖**，只能改布线或换端口；
+ *   · `firstBelt`    撞既有带子 —— 传 `opts.allow_replace=true` 就能过，代价是删旧带；
+ *   · `selfOverlap`  路径自己走回已经走过的格 —— 这条走法**本身不合法**
+ *                    （同一格不可能既是上游又是下游），跟世界里有什么无关。
+ *
+ * ## 为什么不复现旧行为（`self-overlap` 一旦出现就 `return`）
+ * 旧实现在 belt 检查**之前**判自交并**立刻返回**，于是「这条路既自交、又撞带子」时
+ * 只报自交。实测（半成品世界 `(1,-6)→hub`，842 条候选）156 条自交候选**全部**同时撞带子，
+ * 而自交是**候选生成器**的毛病（6 转角枚举会产出折回来的走法），对调用方毫无指导意义：
+ * 它拿不到「撞的是带子还是机器」这个真正决定下一步（allow_replace / 换端口 / 重布线）的信息。
+ * 现在三个都记，`firstConflict` 按 **机器 > 带子 > 自交** 的优先级挑一个（前两者里最有修法的那条）；
+ * 自交仍然**判红**（`ok:false`），只是不再霸占诊断文案。
+ * 注意：进了 `candidates[]` 的走法都过了 `fits`（不含机器），所以在「全部候选都撞」的聚合
+ * 文案里机器只以计数出现，`firstConflict` 不会指向机器 —— 那是**另一批**被更早剔除的走法。
+ *
+ * @returns {{ok:boolean, firstConflict:null|{x,y,what,uid?}, replaceable:number,
+ *            belts:number, firstBelt:null|object, firstMachine:null|object, selfOverlap:null|{x,y}}}
  */
 function checkOccupancy(cells, world, opts) {
     const seen = new Set();
-    let replaceable = 0;
-    let firstConflict = null;
+    let replaceable = 0;      // allow_replace 打开时，被覆盖的带子格数（旧口径，不改）
+    let belts = 0;            // 路径上的既有带子格数（**与 allow_replace 无关**，供聚合统计）
+    let firstBelt = null;
+    let firstMachine = null;
+    let selfOverlap = null;
     for (const c of cells) {
         const k = key(c[0], c[1]);
-        if (seen.has(k)) return { ok: false, firstConflict: { x: c[0], y: c[1], what: "self-overlap" }, replaceable };
-        seen.add(k);
         const rec = world ? world.cells.get(k) : null;
+        /* 先看世界再看自交：同一格既重复又撞实体时，两个事实都要留下 */
+        if (seen.has(k)) {
+            if (!selfOverlap) selfOverlap = { x: c[0], y: c[1] };
+        } else {
+            seen.add(k);
+        }
         if (!rec) continue;
         if (rec.type === "belt") {
+            belts++;
             if (opts.allow_replace) { replaceable++; continue; }
-            if (!firstConflict) firstConflict = { x: c[0], y: c[1], what: "belt", uid: rec.uid };
+            if (!firstBelt) firstBelt = { x: c[0], y: c[1], what: "belt", uid: rec.uid };
             continue;
         }
-        if (!firstConflict) firstConflict = { x: c[0], y: c[1], what: rec.type, uid: rec.uid };
+        if (!firstMachine) firstMachine = { x: c[0], y: c[1], what: rec.type, uid: rec.uid };
     }
-    return { ok: firstConflict === null, firstConflict, replaceable };
+    const firstConflict = firstMachine || firstBelt
+        || (selfOverlap ? { ...selfOverlap, what: "self-overlap" } : null);
+    return {
+        ok: firstConflict === null,
+        firstConflict, replaceable, belts, firstBelt, firstMachine, selfOverlap,
+    };
+}
+
+/**
+ * 「所有候选都撞」时的**聚合**诊断。
+ *
+ * 旧实现在 842 条候选里按 (y,x) 挑一条的 `firstConflict` 上报 —— 那是**任意**一条，
+ * 不是有代表性的那一条，于是调用方读到 `(-3,-8) self-overlap`，而真相是
+ * 「842 条**全部**撞在既有带子上，最少覆盖 1 格就能通」。
+ *
+ * 这里按**修法**分类聚合，并给出「最少要覆盖几格」这个可直接行动的结论。
+ *
+ * @param {Array<{cells:Array, occ:object, sh:object}>} cands
+ * @param {number} machineBlocked 枚举阶段就因撞机器被 `fits` 剔除的走法数
+ */
+function summarizeBlocked(cands, machineBlocked) {
+    const beltOnly = [];      // 撞带子、不自交 → allow_replace 可以救
+    const beltAndSelf = [];   // 既撞带子又自交 → 覆盖也救不了（自交本身不合法）
+    const selfOnly = [];      // 纯自交
+    let clean = 0;            // 谁都没撞（理论上不会走到这里，留着自证）
+    for (const cd of cands) {
+        const oc = cd.occ;
+        if (oc.selfOverlap) (oc.belts > 0 ? beltAndSelf : selfOnly).push(cd);
+        else if (oc.belts > 0) beltOnly.push(cd);
+        else clean++;
+    }
+    /* 「最少覆盖几格」只看**非自交**的候选：自交路径覆盖了也不合法，不能拿它当解。
+       同分时按形状序（转角少 → 格少）挑，保证同一输入永远同一结论。 */
+    beltOnly.sort((a, b) => (a.occ.belts - b.occ.belts)
+        || (a.sh.turns - b.sh.turns)
+        || (a.cells.length - b.cells.length));
+    const best = beltOnly[0] || null;
+    const minReplace = best ? best.occ.belts : null;
+
+    const hist = new Map();   // 需要的覆盖格数 → 条数
+    for (const cd of beltOnly) hist.set(cd.occ.belts, (hist.get(cd.occ.belts) || 0) + 1);
+    const histText = [...hist.entries()].sort((a, b) => a[0] - b[0])
+        .map(([n, c]) => `${n} 格 ${c} 条`).join(" / ");
+
+    const parts = [];
+    if (beltOnly.length) parts.push(`撞既有带子 ${beltOnly.length} 条（${histText}）`);
+    if (beltAndSelf.length) parts.push(`撞带子且路径自交 ${beltAndSelf.length} 条`);
+    if (selfOnly.length) parts.push(`纯自交 ${selfOnly.length} 条（候选生成器产出的折回走法，不是世界里挡了什么）`);
+    if (machineBlocked) parts.push(`枚举阶段撞机器被剔除 ${machineBlocked} 条`);
+    if (clean) parts.push(`无冲突 ${clean} 条`);   // 不应出现；出现即说明筛选逻辑有 bug
+
+    return {
+        total: cands.length,
+        machineBlocked,
+        beltOnly: beltOnly.length,
+        beltAndSelf: beltAndSelf.length,
+        selfOnly: selfOnly.length,
+        beltHist: Object.fromEntries(hist),
+        minReplace,
+        example: best ? (best.occ.firstBelt || null) : null,
+        bestShape: best ? best.sh : null,
+        text: parts.join("；"),
+    };
 }
 
 /* ═══════════════════════════════ 6. 主入口 ═══════════════════════════════ */
@@ -774,7 +908,9 @@ export function connect(a, b, c, d) {
        但**不许因此丢掉诊断**：被机器挡住的候选要把 firstConflict 记下来，
        否则「撞了」会被错报成「无解」，调用方就不知道是该绕还是该改端口。 */
     let blockedBy = null;      // 被硬障碍挡住的第一处（按 y,x 确定性排序）
+    let machineBlocked = 0;    // 在枚举阶段就被机器剔除的**走法条数**（诊断用，不参与搜索）
     const noteBlocked = (cells) => {
+        machineBlocked++;
         for (const c of cells) {
             const rec = world.cells.get(key(c[0], c[1]));
             if (!rec || rec.type === "belt") continue;
@@ -843,15 +979,31 @@ export function connect(a, b, c, d) {
     // ── 先要**无冲突**的，再按 prefer 排序 ──
     const free = candidates.filter(cd => cd.occ.ok);
     if (!free.length) {
-        const best = candidates.reduce((a2, b2) => (b2.occ.firstConflict && a2.occ.firstConflict ? a2 : b2));
-        const fc = candidates.map(x => x.occ.firstConflict).filter(Boolean)
-            .sort((p, q) => p.y - q.y || p.x - q.x)[0];
+        /* 842 条全撞时，**不能**随手挑一条的 firstConflict 上报（旧行为）：
+           那一条是按 (y,x) 排序的**任意**候选，它的 `self-overlap` 既不是主因也
+           不是能修的因。改为按「修法」聚合 + 给出最少要覆盖几格。 */
+        const sum = summarizeBlocked(candidates, machineBlocked);
+        const hasBelt = sum.beltOnly > 0;
+        const hint = hasBelt
+            ? `这是「撞了」，不是参数错。有 ${sum.beltOnly} 条走法只需要覆盖既有带子（最少 ${sum.minReplace} 格）`
+                + `就能通 —— 传 opts.allow_replace=true 即可（执行时要 delete 那些 uid 并纳入 tx 回滚）。`
+                + `${sum.beltAndSelf + sum.selfOnly ? `另有 ${sum.beltAndSelf + sum.selfOnly} 条是候选生成器的自交走法，覆盖也救不了。` : ""}`
+            : `这是「撞了」，不是参数错。${sum.selfOnly + sum.beltAndSelf} 条候选全部自交（候选生成器的折回走法），`
+                + `没有一条是「撞了旧带子」—— allow_replace 帮不上，只能换端口或等阶段 3 的布线。`;
+        /* firstConflict 只报**这批候选**里真实存在的那一类：
+           能进 candidates[] 的走法都已过 `fits`，不含机器 —— 所以这里不该出现机器。
+           撞带子时指向**覆盖代价最小**的那条走法的那一格（照着删/覆盖就是对的）；
+           只有全是自交时才退回 self-overlap。机器挡路的信息在 detail.machineBlocked
+           与 message 里（那是另一批走法，不能拿它的格冒充这 842 条的冲突点）。 */
+        const fc = sum.example
+            || (sum.total ? candidates.map(x => x.occ.firstConflict).filter(Boolean)
+                .sort((p, q) => p.y - q.y || p.x - q.x)[0] : null);
         return failure({
             code: "occupied", field: "to",
-            message: `所有候选路径都被挡住；第一处冲突在 ${fc.x},${fc.y}（${fc.what}${fc.uid !== undefined ? ` uid=${fc.uid}` : ""}）`,
-            hint: "这是「撞了」，不是参数错。要绕开需要阶段 3 的布线；要覆盖旧带传 opts.allow_replace=true。",
+            message: `${sum.total} 条候选路径全部被挡住：${sum.text}`,
+            hint,
             firstConflict: fc,
-            detail: { firstConflict: fc, tried: candidates.length, sample: best && best.sh },
+            detail: { firstConflict: fc, tried: sum.total, machineBlocked: sum.machineBlocked, breakdown: sum, sample: sum.bestShape },
         });
     }
 
