@@ -286,8 +286,46 @@ function normalizeRemoves(list) {
 
 /* ══════════════════════════ 机器槽位（几何真值来自 op-templates） ══════════════════════════ */
 
-/** 一台机器的世界槽位。rot≠0 时按 rotOffset 旋转局部格（与游戏 origin 语义一致）。 */
-export function slotsOf(kind, variant, ox, oy, rot) {
+/** 带子的 rv：rotation_variant → code-1；两者都没有 ⇒ null（**不猜**）。
+ *  与 `loop/planToTxOps.mjs#placedBeltDir` / `loop/verify.mjs#obsReach` 同源。 */
+export function beltRvOf(e) {
+    if (!e || typeof e !== "object") return null;
+    if (typeof e.rotation_variant === "number") return e.rotation_variant;
+    if (typeof e.code === "number") return Math.max(0, (e.code | 0) - 1);
+    if (typeof e.rv === "number") return e.rv;
+    return null;
+}
+
+/**
+ * 一台实体（机器 / 带子）的世界槽位。rot≠0 时按 rotOffset 旋转局部格（与游戏 origin 语义一致）。
+ *
+ * ★ 带子必须单独算，不能走机器模板 ★
+ *   带子的方向由 `(rotation_variant, r)` 共同决定，`op-templates` 里 belt 的
+ *   `inputs/outputs` 是空表（它是静态 JSON，只能写 (rv=0, r=0) 的快照）。
+ *   只看模板 ⇒ 带子永远是 `outputs: []` ⇒ `checkFlow.reach()` 无法从带子起手、
+ *   `deriveFlows` 也认不出「纯带子计划」。和 `connect.mjs#portSlots()` 修的是同一个病。
+ *
+ *   `rv` 是第 6 个**可选**参数（默认 0，越界值退回 0，与 `portSlots` 的钳制口径一致）：
+ *   调用点手里有实体时用 `beltRvOf(entity)` 传进来；没有实体（只给几何）时按 rv=0 算，
+ *   与历史行为（r=0 的带子）一致。
+ *
+ *   `cell` 语义与机器槽一致 = `slot + DIRV[dir]`：输出槽的 cell 是货**离开后进入的那一格**。
+ *   这正是游戏 path 的 `cells[0]`（path 从「接货的第一格带子」起算），所以
+ *   `checkFlow.reach()` 用 `startAt.get(out.cell)` 能命中带子链的 path。
+ */
+export function slotsOf(kind, variant, ox, oy, rot, rv = null) {
+    if (kind === "belt") {
+        const r = rot || 0;
+        const rv0 = (rv === 0 || rv === 1 || rv === 2) ? rv : 0;
+        const inDir = beltEntry(rv0, r);
+        const outDir = beltExit(rv0, r);
+        const slot = [ox, oy];
+        return {
+            footprint: [1, 1],
+            inputs: [{ role: "primary", slot, dir: inDir, cell: [ox + DIRV[inDir][0], oy + DIRV[inDir][1]] }],
+            outputs: [{ role: "out", slot, dir: outDir, cell: [ox + DIRV[outDir][0], oy + DIRV[outDir][1]] }],
+        };
+    }
     const tpl = templateByBuildingVariant(kind, variant || "default");
     if (!tpl) return null;
     const conv = s => {
@@ -536,7 +574,7 @@ export function checkSlots(plan, obs, items, opts = {}) {
         /* 机对机直连：本槽的 approach 格上就是上游机器的本体格；
            上游机器的**出口格** = 本机器的本体格 = approach - DIRV[slotDir]。 */
         const myCell = [approach[0] - DIRV[slotDir][0], approach[1] - DIRV[slotDir][1]];
-        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r);
+        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r, beltRvOf(e));
         return !!s && s.outputs.some(o =>
             o.cell[0] === myCell[0] && o.cell[1] === myCell[1] && o.dir === OPP[slotDir]);
     };
@@ -583,7 +621,7 @@ export function checkSlots(plan, obs, items, opts = {}) {
                         const rv = typeof e.rotation_variant === "number" ? e.rotation_variant : (e.code - 1);
                         return beltEntry(rv, e.r || 0) === OPP[slot.dir];
                     }
-                    const os = slotsOf(e.type, e.variant, e.x, e.y, e.r);
+                    const os = slotsOf(e.type, e.variant, e.x, e.y, e.r, beltRvOf(e));
                     /* 机对机直连：下游机器的**入口格**（approach）必须落在我这台机器的本体格上，
                        且它的 dir 指向我。`slot.slot` 是本槽所在的本体格。 */
                     return !!os && os.inputs.some(i =>
@@ -600,7 +638,7 @@ export function checkSlots(plan, obs, items, opts = {}) {
     for (const r of require) {
         const m = r.cell ? byOrigin.get(K(r.cell)) : (r.uid !== undefined ? byUid.get(r.uid) : null);
         if (!m) { requireFails.push({ want: r, why: "实体不存在" }); continue; }
-        const s = slotsOf(m.type, m.variant, m.x, m.y, m.r);
+        const s = slotsOf(m.type, m.variant, m.x, m.y, m.r, beltRvOf(m));
         if (!s) { requireFails.push({ want: r, why: "槽位表未知" }); continue; }
         const list = r.side === "out" ? s.outputs : s.inputs;
         const slot = list.find(x => x.role === r.role) || list[0];
@@ -669,6 +707,25 @@ export function checkFlow(plan, obs, items, opts = {}) {
     const byUid = new Map(ent.map(e => [e.uid, e]));
     const byOrigin = new Map();
     for (const e of ent) if (!byOrigin.has(K([e.x, e.y]))) byOrigin.set(K([e.x, e.y]), e);
+    /* ★ path 的接收方必须按 **footprint** 查，不能只按 origin ★
+     *
+     * `acceptorOf()` 回的是接收方的**本体格**，而 hub 是 4×4、cutter/balancer 是 2×1 ——
+     * 那条 path 落进接收方的第二格、第三格是常态（实测 probe-obs：整段带子 path 的
+     * 末端落在 (1,-6)，hub 的本体覆盖 x∈[-2,1]×y∈[-5,-2]，(1,-2) 才是 origin）。
+     * 用 `byOrigin` 查 ⇒ 看不见 hub ⇒ `reached=0` ⇒ 一条真通的线判红。
+     * 与 `checkSlots` 的 byCell 同一口径（origin 优先，其余格只在空位写入）。 */
+    const byCell = new Map();
+    for (const e of ent) {
+        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
+        const fw = (s && s.footprint) ? s.footprint : (e.type === "hub" ? [4, 4] : [1, 1]);
+        for (let dy = 0; dy < fw[1]; dy++) {
+            for (let dx = 0; dx < fw[0]; dx++) {
+                const k = K([e.x + dx, e.y + dy]);
+                if (dx === 0 && dy === 0) { byCell.set(k, e); continue; }
+                if (!byCell.has(k)) byCell.set(k, e);
+            }
+        }
+    }
 
     const startAt = new Map();
     for (const p of paths) {
@@ -677,9 +734,9 @@ export function checkFlow(plan, obs, items, opts = {}) {
     }
     const resolve = ep => {
         if (isInt(ep)) return byUid.get(ep) || null;
-        if (Array.isArray(ep)) return byOrigin.get(K(ep)) || null;
+        if (Array.isArray(ep)) return byCell.get(K(ep)) || null;
         if (ep && isInt(ep.uid)) return byUid.get(ep.uid) || null;
-        if (ep && Array.isArray(ep.cell)) return byOrigin.get(K(ep.cell)) || null;
+        if (ep && Array.isArray(ep.cell)) return byCell.get(K(ep.cell)) || null;
         return null;
     };
 
@@ -691,14 +748,15 @@ export function checkFlow(plan, obs, items, opts = {}) {
         for (let hop = 0; hop < evidence.hops_max && frontier.length; hop++) {
             const next = [];
             for (const m of frontier) {
-                const s = slotsOf(m.type, m.variant, m.x, m.y, m.r);
+                /* 带子的方向要 rv（见 slotsOf 的说明）：调用点手里就是实体，直接取。 */
+                const s = slotsOf(m.type, m.variant, m.x, m.y, m.r, beltRvOf(m));
                 if (!s) continue;
                 for (const out of s.outputs) {
                     const p = startAt.get(K(out.cell));
                     if (!p) continue;
                     const accCell = acceptorOf(p);
                     if (!accCell) continue;
-                    const acc = byOrigin.get(K(accCell));
+                    const acc = byCell.get(K(accCell));
                     if (!acc) continue;
                     trail.push({ from: m.uid, path_first: p.cells[0], path_last: p.cells[p.cells.length - 1], to: acc.uid, at: [acc.x, acc.y] });
                     if (!seen.has(acc.uid)) { seen.add(acc.uid); next.push(acc); }

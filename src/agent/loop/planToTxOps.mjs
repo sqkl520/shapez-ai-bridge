@@ -26,8 +26,8 @@
  */
 
 import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
-import { DIRV, beltExit } from "../../ai/belt-rules.mjs";
-import { slotsOf, acceptorOf } from "../verify_runtime.mjs";
+import { DIRV, beltExit, beltEntry } from "../../ai/belt-rules.mjs";
+import { slotsOf, acceptorOf, beltRvOf } from "../verify_runtime.mjs";
 import { validateMacroResult } from "../macros/contract.mjs";
 
 /* ══════════════════════════ 小工具 ══════════════════════════ */
@@ -328,7 +328,13 @@ function scanFlows(places, obs, items) {
     const selfOf = (p) => refOf({ uid: p.uid, token: p.token });
 
     for (const p of places) {
-        const s = slotsOf(p.kind, p.variant, p.x, p.y, p.rot || 0);
+        /* ★ 带子不走「机器输出槽」那条路 ★
+         *   `connect` / `extend_line` 铺的是**纯带子**：没有机器、没有输出槽，
+         *   而且宏只回 `cells[]`（带子没有 token、uid 由 tx 事后分配）。
+         *   从带子自己的 outputs 起手只能产出 `from=null` 的 flow（端点解析不了）。
+         *   所以带子链单独处理（下面第二段循环）：从「链头之前的那台实体」起手。 */
+        if (BELT_KINDS.has(p.kind)) continue;
+        const s = slotsOf(p.kind, p.variant, p.x, p.y, p.rot || 0, beltRvOf(p));
         const outs = (s && s.outputs) || [];
         for (const out of outs) {
             const hit = findDownstream(out, p, { entByCell, placeByCell, startAt, paths });
@@ -362,7 +368,123 @@ function scanFlows(places, obs, items) {
             });
         }
     }
+
+    /* ── 纯带子计划（connect / extend_line）：从链头之前的那台实体起手 ──
+     *
+     * 为什么起点不是「新铺的第一格带子」：`connect` 的 cells 没有 token，新带子的 uid
+     * 也还不存在 ⇒ `from` 解析不出来，flow 会被 verify.mjs 记成 unresolved ⇒ 仍然红。
+     * 链条的上游实体（B34 那类已有的带子，或直接喷货的机器）**在 obs 里有 uid**，
+     * 而 `checkFlow.reach()` 从它起手能走通：它的 `out.cell` 正好是 path 的 `cells[0]`。
+     *
+     * 起点口径：从新带子沿 `beltEntry` **一路往上走到链首**，取链首之前的那个实体。
+     *
+     * ★ 为什么必须走到底，不能只取上游一格 ★
+     *   游戏给一条带子跑的 path 是**整段**的：`cells[0]` 是货进入这一段的格，
+     *   不是每格一条 path。实测 probe-obs（B34@(1,-6) r=180 接 hub）：
+     *   整段 path 从 (5,-18) 起、到 (1,-6) 止，boundAcceptor=null（当前是死端）。
+     *   补上 (1,-5)(1,-4)(1,-3) 之后游戏会把它并成**同一条** path，`cells[0]` 仍是 (5,-18)。
+     *   所以 `from=B34` 的 `out.cell=(1,-5)` 永远命不中 path ⇒ 必须走到 (5,-18) 那格
+     *   （它的 `out.cell=(5,-19)` 才是 `cells[0]`）。
+     *
+     *   上游若是机器（喷货方），`from` 就是机器 —— 与机器路径派生出的 flow 完全同形。
+     *   链首悬空（上游空格）或链首是新带子（还没有 uid/token）⇒ 不产 flow。
+     *
+     * ★ 反例：链条走到世界外 / 撞到自己 / 成环 ⇒ `walkChain` 返回 null ⇒ **不产 flow** ★
+     */
+    const seenFlow = new Set(flows.map(f => `${f.from}|${f.to}|${f.via_slot || ""}`));
+    for (const p of places) {
+        if (!BELT_KINDS.has(p.kind)) continue;
+        const dir = placedBeltDir(p);
+        if (!dir) continue;                                     // rv 未知 ⇒ 不猜（判死端）
+        /* 只从**本段新带子的链头**起手：上游也是一格新带子 ⇒ 交给更上游那一格。
+           否则一条 3 格新带子会产出 3 条 from 相同（或 from 越走越远）的 flow。 */
+        const prvRv = placedBeltRv(p);
+        if (prvRv === null) continue;
+        const entryDir = beltEntry(prvRv, p.rot || 0);
+        const entryCell = [p.x + DIRV[entryDir][0], p.y + DIRV[entryDir][1]];
+        const prevPlaced = placeByCell.get(K(entryCell));
+        if (prevPlaced && prevPlaced !== p && BELT_KINDS.has(prevPlaced.kind)) continue;
+
+        const exitCell = [p.x + DIRV[dir][0], p.y + DIRV[dir][1]];
+        const w = walkChain(exitCell, p, { entByCell, placeByCell, startAt, paths });
+        if (!w.target) continue;                                // 死端：不许造 flow
+        const head = walkUpstream(p, { entByCell, placeByCell });
+        if (!head) continue;                                    // 链头悬空 ⇒ 没有源头
+        const from = refOf({ uid: head.uid, token: head.token });
+        if (from.value === null) continue;                      // 链头还没身份 ⇒ 无从起手
+        const to = refOf(w.target);
+        if (from.value === to.value) continue;                  // 自环
+        /* 上游若是机器，顺手把它的输出槽 role 填上（与机器路径的 flow 同形）。
+           注意配的是**链首机器下游第一格带子**（head.to），不是本格 p —— 中间可能还隔着既有带子。 */
+        const headKind = head.kind || head.type;
+        const mus = slotsOf(headKind, head.variant, head.x, head.y, head.r || 0, beltRvOf(head));
+        const role = mus && mus.outputs.find(o => o.cell[0] === head.to[0] && o.cell[1] === head.to[1]);
+        const key = `${from.value}|${to.value}|${role ? role.role : ""}`;
+        if (seenFlow.has(key)) continue;
+        seenFlow.add(key);
+        flows.push({
+            from: from.value,
+            to: to.value,
+            ...(role ? { via_slot: role.role } : {}),
+            via: "chain",
+            from_cell: [entryCell[0], entryCell[1]],
+            to_cell: [w.target.x, w.target.y],
+            ...(from.token ? { from_token: from.token } : {}),
+            ...(to.token ? { to_token: to.token } : {}),
+        });
+    }
     return { flows, warnings };
+}
+
+/**
+ * 沿 `beltEntry` 往上游走到**链首之前的那台实体**（机器 / 链首之前的带子）。
+ *
+ * 返回 `null` 表示链条悬空：走到一半上游是空格（没有源头，`from` 解析不出来）。
+ * 返回的若不是带子（机器），那就是喷货方；若是带子，说明它的上游已经不在 obs 里（
+ * 一条独立的断头带），它自己就是这段 path 的 `cells[0]` 所在处。
+ *
+ * 带子的入口方向必须用 `(rv, r)` 算 —— 与 `connect.mjs#portSlots` 同一套规则。
+ * 新铺的带子没有 `rotation_variant`，它的 rv 在 placement 的 `.rv` 上。
+ */
+function walkUpstream(start, idx) {
+    const isEntity = o => typeof o.type === "string";
+    const rvOf = o => isEntity(o) ? beltRvOf(o) : placedBeltRv(o);
+    const rotOf = o => isEntity(o) ? (o.r || 0) : (o.rot || 0);
+    const kindOf = o => isEntity(o) ? o.type : o.kind;
+
+    const seen = new Set([K([start.x, start.y])]);
+    let cur = start;
+    for (let step = 0; step < MAX_CHAIN_STEPS; step++) {
+        const rv = rvOf(cur);
+        if (rv === null) return null;                           // 方向未知 ⇒ 不猜
+        const inDir = beltEntry(rv, rotOf(cur));
+        const cell = [cur.x + DIRV[inDir][0], cur.y + DIRV[inDir][1]];
+        const up = idx.placeByCell.get(K(cell)) || idx.entByCell.get(K(cell));
+        if (!up) return null;                                   // 上游空格 ⇒ 链头悬空
+        if (seen.has(K([up.x, up.y]))) return null;             // 成环
+        seen.add(K([up.x, up.y]));
+        const kind = kindOf(up);
+        if (kind === "underground_belt") return null;           // 隧道语义不建模
+        if (!BELT_KINDS.has(kind)) {
+            /* 机器：它就是源头。
+               `.to` 必须是**它往下游喷的那一格**（下游第一格带子），不是它自己那一格 ——
+               调用方拿 `.to` 去 `slotsOf(machine).outputs` 里配 role，配的是 output 的 `cell`。
+               实测踩过：写成 `to: cell`（=上游格=机器本体格）时，outputs 里没有任何一格的
+               cell 等于机器本体格 ⇒ role 恒 undefined ⇒ flow 缺 `via_slot`，
+               与机器路径派生的 flow 不同形。 */
+            return { ...up, to: [cur.x, cur.y] };
+        }
+        cur = up;
+    }
+    return null;
+}
+
+/** 计划态带子的 rv：rv → rotationVariant → code-1（与 `placedBeltDir` 同源）。 */
+function placedBeltRv(p) {
+    if (typeof p.rv === "number") return p.rv;
+    if (typeof p.rotationVariant === "number") return p.rotationVariant;
+    if (typeof p.code === "number") return p.code - 1;
+    return null;
 }
 
 /** 计划态带子的出口方向。rv 优先级：rv → rotationVariant → code-1。
