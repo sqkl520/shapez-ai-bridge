@@ -1,6 +1,13 @@
 /**
  * cli.mjs — P8 harness 的命令行入口（plan §1.8 / §5 L3 的命令形态）。
  *
+ * ⚠️ **2026-10-28 起：已降级为「库的回归入口」，不是主线。**
+ * 方向终裁（research/ai-plan/DIRECTION-FINAL.md §1.1）：`src/ai/compiler/*` 从 main 降为 library，
+ * `compilePlan()` 只作为宏 `buildLine`（src/agent/macros/build_line.mjs）的内部实现被调用。
+ * 本 CLI **不删**（还要拿它跑离线回归：空地 9/12 是这条管线的能力基线），但它**不面向用户**：
+ * 它只在空地上成立；有既有工厂的存档请用 `connect` / `insert_machine` 就地改造。
+ * 详见 `render()` 与 `main()` 里那句常驻的弃用提示（DEPRECATION）。
+ *
  *   node src/ai/compiler/cli.mjs --goal "----CuCu" --seed 43391 [--hub x,y] [--json] [--out DIR]
  *
  * 选项（全部可选，除 --goal）：
@@ -10,13 +17,17 @@
  *   --site <x,y>            厂区锚点（当前等价于 --hub 的偏移基准，保留给 P7 兼容）
  *   --range <n>             选址搜索半径（默认 96 格）
  *   --demand <n>            需求吞吐 items/s（默认 0 = 只要能跑通；影响 V7）
- *   --level <n>             当前关卡（默认按 goal 反推；只影响 cutQuad 门控与 V10 报告）
+ *   --level <n>             当前关卡（默认按 goal 反推；影响 cutQuad 门控、V10 报告与隧道门控）
  *   --row-gap/--col-gap <n> 作图行距/列距（默认 P3 的 8/3）
  *   --depth/--max-states <n> solver 预算
  *   --allow-cutquad         强制开 cutQuad（默认：level<16 关，见 compile.mjs CUTQUAD_MIN_LEVEL）
  *   --tunnels               允许用隧道跨过必然相交的通道（默认关；v1 的纯带布局不需要它）
+ *                           ⚠️ 只是"允许"：真用到隧道时要求 **level ≥ 6**（reward_tunnel 是
+ *                           levels.js 第 5 关完成时授予的），否则 ok:false + code=tunnels-not-unlocked。
+ *                           开关开着但方案没用上 ⇒ 不受影响（不误伤）。
  *   --miners <n>            把每台形状矿机复制成 n 台并用 balancer 汇流（默认 1 = 不复制）
  *   --enforce-unlocks       让 V10 从「报告」升级成「阻断」（默认 god-mode 口径，plan §6 R4）
+ *                           ⚠️ 只影响 P5 的报告口径；隧道的产出前硬门**不受它控制**。
  *   --json                  输出完整 CompiledPlan JSON（默认只给人读摘要）
  *   --out DIR               交接件目录（默认 research/ai-plan/harness/out）
  *   --no-handoff            不写交接件（只编译）
@@ -50,9 +61,23 @@ import { compilePlan, writeHandoff, HANDOFF_DIR, REPO_ROOT } from "./compile.mjs
 
 /** 本文件未被使用到的路径常量刻意省略：所有路径都从 compile.mjs 的 REPO_ROOT/HANDOFF_DIR 派生。 */
 
+/**
+ * 常驻弃用提示（`--help` 与正常输出都打）。
+ * 用常量而不是字面量，理由：回归判据（`grep -q "✓"`）要能把它和真正的结论区分开 ——
+ * 它不带 ✓/✗，所以 grep 的结果仍只反映编译结论。
+ */
+export const DEPRECATION =
+	"⚠️ 编译器已降级为库。真实存档（有既有工厂）请用 connect / insert_machine 宏，\n"
+	+ "   或 buildLine(goal, site) 在空地建线再接回 hub。";
+
 export const USAGE = `用法：node src/ai/compiler/cli.mjs --goal <shortKey> [--seed 43391] [--hub x,y] [--json] [--out DIR]
       例：node src/ai/compiler/cli.mjs --goal "----CuCu" --seed 43391
           node src/ai/compiler/cli.mjs --goal "CgScScCg" --seed 43391 --demand 0.25 --json
+
+${DEPRECATION}
+
+本 CLI 只留作**离线回归**（空地 9/12 的能力基线）。它不产用于真实存档的方案：
+只给 --hub 时它会把既有实体当"世界不干净"直接拒绝（code=site-not-empty）。
 全部选项见文件头注释；--help 复读一次。`;
 
 /** 取 flag 的值（`--key value` 形态）。 */
@@ -166,6 +191,7 @@ export function render(plan, handoff) {
 	} else {
 		lines.push(`✗ ${plan.goal || "?"} → ok:false`);
 		lines.push(`  reason=${plan.reason}`);
+		if (plan.code) lines.push(`  code=${plan.code}（宏级语义：${plan.precondition ? `precondition=${plan.precondition}` : "见 hint"}）`);
 		if (plan.failingNode) lines.push(`  failingNode=${JSON.stringify(plan.failingNode)}`);
 		if (plan.class) lines.push(`  class=${plan.class}`);
 		lines.push(`  hint=${plan.hint || "-"}`);
@@ -179,6 +205,8 @@ export function render(plan, handoff) {
 			lines.push(`  全部段：${Object.entries(plan.stages).map(([k, v]) => `${k}:${v && v.ok === false ? "✗" : "✓"}`).join(" ")}`);
 		}
 	}
+	// 弃用提示常驻（成功与失败都打）——它不带 ✓/✗，所以回归脚本 `grep -q "✓"` 仍只看编译结论。
+	lines.push(DEPRECATION);
 	return lines.join("\n");
 }
 

@@ -113,6 +113,9 @@ function failure(reason, hint, extra = {}) {
  * @param {{seed?:number, level?:number, demandPerSec?:number, range?:number,
  *          rowGap?:number, colGap?:number, tunnels?:boolean, minersPerLine?:number,
  *          allowCutQuad?:boolean, world?:object|Array}} [opts] 编译选项（透传 compilePlan）
+ *        `tunnels` 只是"允许"：真用到隧道时要求 `level ≥ 6`（reward_tunnel 是 L5 目标完成时授予），
+ *        否则编译器返回 `unlock:machine-not-available` + `code:"tunnels-not-unlocked"`，
+ *        本宏把它翻成"去掉 opts.tunnels"的 hint（不是"等解锁"）。
  * @returns {{ok:boolean, blueprint:string|null, entities:Array|null, cells:Array|null,
  *            anchor:[number,number]|null, hub:[number,number]|null, precondition:string,
  *            reason?:string, compilerReason?:string, hint:string, evidence?:object}}
@@ -172,6 +175,8 @@ export function buildLine(goal, site = {}, opts = {}) {
 		...(o.rowGap !== undefined ? { rowGap: o.rowGap } : {}),
 		...(o.colGap !== undefined ? { colGap: o.colGap } : {}),
 		...(o.tunnels === true ? { tunnels: true } : {}),
+		// 隧道门控在 compile.mjs（`code:"tunnels-not-unlocked"`）：level ≥ 6 才产得出隧道。
+		// 本宏不重复判 —— 否则就是第二份真值（与 MIN_LEVEL_FOR_MACHINE 的教训同源）。
 		...(Number.isInteger(o.minersPerLine) ? { minersPerLine: o.minersPerLine } : {}),
 		...(o.allowCutQuad === true ? { noCutQuad: false } : {}),
 		// 世界快照：两条入口合成一条（空数组按"无快照"处理，与 entitiesToWorld 同口径）
@@ -236,7 +241,15 @@ export function buildLine(goal, site = {}, opts = {}) {
 		"unlock:machine-not-available": "需要的机器/等级未解锁：等解锁，或换目标。",
 		"out-of-scope:multilayer": "多层目标在 v1 范围外。",
 	};
-	const hint = HINTS[cReason] || (plan && plan.hint) || `编译器拒绝（${cReason}）：按编译器 hint 处置，别手改坐标。`;
+	/* 隧道未解锁是 `unlock:machine-not-available` 的一个**具体**分支（编译器给 `code:"tunnels-not-unlocked"`）。
+	   它的处置与"机器没解锁"完全不同：不是等机器，而是**把 opts.tunnels 关掉**（v1 本来就不需要隧道）。
+	   所以必须先于通用 HINTS 命中 —— 否则用户会去"等解锁"，而正确动作是去掉这个开关。 */
+	const tunnelLocked = cReason === "unlock:machine-not-available" && plan && plan.code === "tunnels-not-unlocked";
+	const hint = tunnelLocked
+		? `隧道（underground_belt）在 level < 6 时未解锁（reward_tunnel 是 levels.js 第 5 关完成时授予的）。`
+			+ `处置：去掉 opts.tunnels（v1 的「水平错位 + 加宽行距」不需要隧道 —— 先试默认），`
+			+ `或等交付完 L5 目标升级后再编。不要靠换 hub/seed/range 绕过这道门。`
+		: (HINTS[cReason] || (plan && plan.hint) || `编译器拒绝（${cReason}）：按编译器 hint 处置，别手改坐标。`);
 	return failure(cReason, hint, { compilerReason: cReason, evidence });
 }
 

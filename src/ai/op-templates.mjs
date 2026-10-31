@@ -93,7 +93,37 @@ export const UNLOCK_LEVEL_FALLBACK = Object.freeze({
     paintQuad: 20,        // L20 → reward_wires_painter_and_levers（⚠️ 同时需要 wire 层 → v1 范围外）
     mineChainable: 11,    // L11 → reward_miner_chainable
     trash: 1,             // L1 → reward_cutter_and_trash
+    tunnel: 5,            // levels.js 第 5 项 → reward_tunnel（**完成**该关才授予，见 TUNNEL_UNLOCKED_LEVEL）
 });
+
+/**
+ * 隧道（underground_belt T1）**实际可用**的关卡 —— 编译器侧所有隧道门控的唯一真值。
+ *
+ * 依据（`recon/upstream-full/`，三处互证）：
+ *   1. `buildings/underground_belt.js:178-180` `getIsUnlocked()` = `isRewardUnlocked(reward_tunnel)`
+ *   2. `modes/levels.js` **三套**关卡表（WEB_DEMO :56 / STEAM_DEMO :130 / STANDALONE :201）
+ *      的第 **5** 项都是 `shape:"Cu----Cu"` → `reward_tunnel` —— 三套在**这一项上完全一致**。
+ *      程序化对拍（逐项比较 shape+reward 序列）也证实：前 8 项三套逐字相同（只有 `required`
+ *      数量不同）；第 9 项起才分叉（WEB/STEAM 到 `reward_demo_end` 结束，STANDALONE 继续到 L26）。
+ *      ⇒ 不存在"按 game_mode 门控"的问题：任何一套表里隧道都是第 5 项。
+ *   3. `hub_goals.js:46-52` `deserialize` 按 `i < level-1` 回填 `gainedRewards`；
+ *      `isRewardUnlocked` 只读 `gainedRewards`（:196-211）⇒ **完成**第 k 关才拿到该关奖励。
+ *
+ * ⇒ 语义：`level = 5` 表示"正在打第 5 关"，此时 reward_tunnel **还没到手**；交付完 `Cu----Cu`
+ *   升到 level=6 才有。所以门槛是 **6**，不是 5。
+ *   （`UNLOCK_LEVEL_FALLBACK` 其余项用的是"第 k 关开始即可用"的工程口径 —— machine-spec.md §5 第 9 条
+ *    已登记那比真实语义早半关。隧道这一条**不沿用**那个偏移：L4/L5 存档里确实没有 reward_tunnel，
+ *    `test/fixtures/saves/L4-obs.json` 的 level=4 就是没有。）
+ *
+ * 其它解锁路径：**没有**。
+ *   · `modes/regular.js` 的 `generateUpgrades()`（:394 起）给的 4 条线（belt/miner/processors/painting）
+ *     条目里只有 `required`（买它要交什么形状），**没有 reward 字段** —— 它们只改速度倍率，不发放建筑。
+ *   · T2 隧道是另一个 reward（`reward_underground_belt_tier_2`，L13），与本条（T1，code 22/23）无关。
+ *   · 基类 `meta_building.js:184-186` 的 `getIsUnlocked` 恒 true，但 `UndergroundBelt` **覆写**了它。
+ *   · **唯一的例外是 dev 开关** `G_IS_DEV && globalConfig.debug.allBuildingsUnlocked`（`hub_goals.js:197-199`）
+ *     —— 那是调试通道，不是 campaign 分支，不作为门控依据（本项目定位是 god-mode 但**不**靠这个开关）。
+ */
+export const TUNNEL_UNLOCKED_LEVEL = 6;
 
 /* ───────────────── 非 belt 建筑的 rv 许可集（H2 的代码化，源码+实机双证） ─────────────────
  * 证据（比"没有证据"强，见 NOTES.md G1）：
