@@ -1407,6 +1407,20 @@ export async function runLoop(opts = {}) {
         fpSeen: new Map(),
         /** 上一轮用过的宏（供「必须换动作」时从候选中剔除，以及机器判定是否照抄） */
         lastMacros: [],
+        /**
+         * 上一轮**真正执行过**的宏（`lastMacros` 的子集）。
+         *
+         * 为什么不能直接剔 `lastMacros`（2026-10-31 半成品世界实验）：
+         *   模型一轮可以给多个调用。若**排在前面的宏**在 plan 阶段就失败，`planToTxOps`
+         *   按 R1「一条宏失败 ⇒ 一条 op 都不生成」整轮拒绝 —— **后面的宏根本没执行过**。
+         *
+         *   实测：第 1 轮 `[replace_run, connect]`，`replace_run` 因 `out_of_scope` 被拒，
+         *   `connect` 一次都没跑。第 2 轮却把两个一起剔了 ⇒ **正确答案 `connect` 被一个
+         *   它从未参与过的失败牵连出局**。
+         *
+         *   所以「换动作」只该换**导致这次失败的那个动作**。没轮到的 = 没试过 = 保留。
+         */
+        lastExecutedMacros: [],
         candidatesOverride: null,
         /** 本轮的诊断指纹第 2 次出现 ⇒ 必须换动作（见 countFingerprint） */
         mustChange: false,
@@ -1474,12 +1488,19 @@ export async function runLoop(opts = {}) {
         if (rec.count >= 3) haltReason = "NO_PROGRESS_3X";
         else if (rec.count === 2) {
             mustChange = true;
-            const last = st.lastMacros;
+            /* ★ 只剔**真正执行过**的宏 ★
+               `lastMacros` 是「上一轮计划里的所有宏」，但一轮里排在前面的宏失败时，
+               后面的根本没执行。剔它们等于惩罚一个未被检验的假设 ——
+               实测让正确答案 `connect` 出局（见 `lastExecutedMacros` 的注释）。
+               若整轮一条都没执行（全部 plan 阶段被拒），这条规则无法区分谁该背锅 ⇒
+               保留全部候选，交给模型自己换；`NO_PROGRESS_3X` 仍是兜底。 */
+            const last = st.lastExecutedMacros;
             if (last.length) {
                 const next = candidatesFor(diagnoses).filter(m => !last.includes(m));
                 if (!next.length) haltReason = "NO_PROGRESS";
                 else st.candidatesOverride = next;
             }
+            /* last 为空 ⇒ 不设 override（保留全量候选） */
         } else {
             st.candidatesOverride = null;
         }
@@ -1739,6 +1760,9 @@ export async function runLoop(opts = {}) {
                     });
                     st.diagnoses = [p.diagnosis];
                     st.lastMacros = parsed.plan.calls.map(c => c.macro);
+                    /* plan 阶段被拒 ⇒ **一条 op 都没生成** ⇒ 没有任何宏真正执行过。
+                       清空：下一轮的「必须换动作」不该剔除这些（它们没被检验过）。 */
+                    st.lastExecutedMacros = [];
                     st.lastPlanSummary = {
                         round: roundNo, calls: st.lastMacros.slice(),
                         verify: { checks: [], codes: [p.diagnosis.code] }, decision: "plan_rejected",
@@ -1773,9 +1797,12 @@ export async function runLoop(opts = {}) {
                     placements: planned.txPlan.placements.length,
                     flows: planned.txPlan.flows.length,
                     pending: Object.keys(planned.txPlan.pendingByOp).length,
-                },
-                warnings: planned.warnings,
+                },                warnings: planned.warnings,
             });
+
+            /* plan 全绿 ⇒ 每个宏都通过了校验、即将进 tx。**从这里起才算「真正执行过」**。
+               （宏内部可能有自己的 dry-run，但 plan 过了就意味着它们都会产生 op。） */
+            st.lastExecutedMacros = planned.calls.map(c => c.macro);
 
             if (ctx.dryRun) {
                 st.lastPlanSummary = { round: roundNo, calls: planned.calls.map(c => c.macro), verify: { checks: [] }, decision: "dry_run" };

@@ -187,7 +187,13 @@ function worldFor(ctx) {
  */
 export function portsOf(rec, spec) {
     const out = { eject: [], accept: [] };
-    if (rec.r !== 0) return out;   // v1：加工机器只处理 r=0（见 assertV1Rotation 的 D1 决策）
+    /* r≠0 只对**机器**是限制（槽位偏移需 origin 位移表）。
+       带子的方向由 `(rotation_variant, r)` 共同决定，任何 r 都合法 ——
+       拦在这里会让 r≠0 的带子拿不到任何 eject/accept 端点，
+       于是一个正确的 `connect` 被拒成 `endpoint_not_a_port`。
+       实测：半成品世界里断点是 r=180 的带子，整个修复动作因此做不到。 */
+    const ROTATION_FREE = new Set(["belt", "underground_belt"]);
+    if (rec.r !== 0 && !ROTATION_FREE.has(rec.type)) return out;   // v1：加工机器只处理 r=0
 
     if (rec.type === "hub") {
         // hub 入口表**只**来自 op-templates.hubEntriesWorld（裁决 K1）—— 索引顺序也是它定的
@@ -691,8 +697,22 @@ export function connect(a, b, c, d) {
     if (rf.rec.uid === rt.rec.uid && fe.port === te.port) {
         return failure({ code: "precondition_failed", field: "to", message: "from 与 to 是同一个实体的同一个端口" });
     }
+    /* ★ r≠0 只对**机器**是限制，对带子不是 ★
+     *
+     * 这条限制的理由是「旋转**机器**的槽位偏移需要 P2 的 origin 位移表」—— 说的是机器。
+     * 而带子根本没有「槽位偏移」这回事：它的方向完全由 `(rotation_variant, r)` 共同决定
+     * （`beltExit(0,180)=bottom`、`beltExit(0,270)=left`），每个方向都合法。
+     *
+     * 旧实现没区分类型，于是**带子也被拦了**。实测后果：半成品世界实验里，
+     * 断点 `(1,-6)` 是 r=180 的带子，loop 诊断正确（`DEAD_END`）、模型也选对了动作
+     * （`connect`，原文「Route the dead-ended output into the hub」），却被这道闸拒成
+     * `out_of_scope` —— 一个正确的计划被能力缺口挡死。
+     *
+     * 而真实世界里 r≠0 的带子占绝大多数（长竖直段全是 r=0/r=180，转角是 r=270）。
+     */
+    const ROTATABLE_ONLY_IF_MACHINE = new Set(["belt", "underground_belt"]);
     for (const [rec, field] of [[rf.rec, "from"], [rt.rec, "to"]]) {
-        if (rec.r !== 0) {
+        if (rec.r !== 0 && !ROTATABLE_ONLY_IF_MACHINE.has(rec.type)) {
             return failure({ code: "out_of_scope", field, message: `${field} 指向的 ${rec.type} rotation=${rec.r}；v1 只支持 r=0（旋转机器的槽位偏移需 P2 的 origin 位移表）` });
         }
     }
