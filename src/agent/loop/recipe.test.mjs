@@ -26,7 +26,7 @@ import {
     recipeFor, recipeForCached, clearRecipeCache, recipeCacheSize, flagsForLevel,
     solveRecipe, renderRecipe, recipeBlock, SOLVER_PATH,
     CUTQUAD_MIN_LEVEL, STACKER_MIN_LEVEL, MIXER_MIN_LEVEL, PAINTER_MIN_LEVEL, ROTATER_MIN_LEVEL,
-    MIN_LEVEL_FOR_MACHINE, OP_TO_MACHINE, RECIPE_CACHE_CAPACITY, DEFAULT_LEVEL,
+    TUNNEL_MIN_LEVEL, MIN_LEVEL_FOR_MACHINE, OP_TO_MACHINE, RECIPE_CACHE_CAPACITY, DEFAULT_LEVEL,
 } from "./recipe.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -182,6 +182,16 @@ test("★ 防漂移：本模块的门限与 compile.mjs 的导出常量逐项相
     assert.equal(MIXER_MIN_LEVEL, 8);
     assert.equal(STACKER_MIN_LEVEL, 10);
     assert.equal(compileMod.MIN_LEVEL_FOR_QUAD, CUTQUAD_MIN_LEVEL);
+
+    /* 隧道：配方层不参与 solver 的 --no-* 映射（它没有对应 flag），但门槛必须与
+       op-templates 的唯一真值一致 —— 否则"配方说用隧道"与"编译器拒绝产隧道"会各说一套。 */
+    assert.equal(TUNNEL_MIN_LEVEL, 6, "隧道在 levels.js 第 5 关**完成**（level 6）后才解锁");
+    assert.equal(MIN_LEVEL_FOR_MACHINE.tunnel, 6);
+    const opTemplates = await import(pathToFileURL(path.join(REPO, "src/ai/op-templates.mjs")).href);
+    assert.equal(TUNNEL_MIN_LEVEL, opTemplates.TUNNEL_UNLOCKED_LEVEL,
+        "MIN_LEVEL_FOR_MACHINE.tunnel 必须 == op-templates.TUNNEL_UNLOCKED_LEVEL");
+    assert.equal(opTemplates.UNLOCK_LEVEL_FALLBACK.tunnel, 5,
+        "UNLOCK_LEVEL_FALLBACK.tunnel 记的是 levels.js 的**关卡号**（第 5 关），不是可用关卡");
 });
 
 test("recipe.mjs 不 import compile.mjs（那是 165ms + 内部 spawnSync，热路径付不起）", async () => {
