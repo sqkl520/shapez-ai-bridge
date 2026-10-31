@@ -46,7 +46,7 @@
  */
 import { DIRV, OPP, ORDER, beltEntry, beltExit } from "../../ai/belt-rules.mjs";
 import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
-import { slotsOf } from "../verify_runtime.mjs";
+import { slotsOf, beltRvOf } from "../verify_runtime.mjs";
 
 /* ══════════════════════════════════════════════════════════════════════════
  * 0. 小工具
@@ -215,7 +215,7 @@ export function accepts(idx, cell, fromDir) {
         }
         return { ok: false, kind: "tunnel_receiver", by: e.uid, opaque: false };
     }
-    const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
+    const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
     if (!s) return { ok: false, kind: e.type, by: e.uid, opaque: true };
     /* ★ 比的是 `sl.slot`（槽位本体格）== 落点格，不是 `sl.cell`（approach 格）。★
        见文件头第 3 条：游戏判的就是本体格（belt_path.js 的 findMatchingSlot）。 */
@@ -329,7 +329,7 @@ export function inputFed(sl, idx) {
         const c = exitCellOf(f);
         return c[0] === sl.cell[0] && c[1] === sl.cell[1];
     }
-    const os = slotsOf(f.type, f.variant, f.x, f.y, f.r || 0);
+    const os = slotsOf(f.type, f.variant, f.x, f.y, f.r || 0, beltRvOf(f));
     if (!os) return false;
     const my = [sl.cell[0] - DIRV[sl.dir][0], sl.cell[1] - DIRV[sl.dir][1]];
     return os.outputs.some(o => o.cell[0] === my[0] && o.cell[1] === my[1] && o.dir === OPP[sl.dir]);
@@ -346,7 +346,7 @@ export function outputRouted(sl, idx) {
     if (!e) return false;
     if (isBelt(e)) return beltEntry(rvOf(e), e.r || 0) === OPP[sl.dir];
     if (isTunnel(e)) return tunnelIsSender(e);
-    const os = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
+    const os = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
     if (!os) return false;
     return os.inputs.some(i => i.slot[0] === sl.slot[0] && i.slot[1] === sl.slot[1] && i.dir === OPP[sl.dir]);
 }
@@ -375,7 +375,7 @@ export function upstreamFed(idx, belt) {
         const c = exitCellOf(up);
         return c[0] === origin[0] && c[1] === origin[1];
     }
-    const s = slotsOf(up.type, up.variant, up.x, up.y, up.r || 0);
+    const s = slotsOf(up.type, up.variant, up.x, up.y, up.r || 0, beltRvOf(up));
     if (!s) return false;
     return s.outputs.some(o =>
         o.cell[0] === origin[0] && o.cell[1] === origin[1] && accepts(idx, origin, o.dir).ok);
@@ -453,7 +453,7 @@ export function hubReachable(obs, idx) {
     const q = [hub];
     while (q.length) {
         const e = q.shift();
-        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
+        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
         if (!s) continue;
         for (const sl of s.inputs) {
             let cur = sl.cell;

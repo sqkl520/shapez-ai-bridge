@@ -56,7 +56,7 @@
  *   坐标只允许出现在 `evidence.cells`（独立字段，prompt 不渲染它）。
  */
 import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
-import { slotsOf } from "../verify_runtime.mjs";
+import { slotsOf, beltRvOf } from "../verify_runtime.mjs";
 import { OPP } from "../../ai/belt-rules.mjs";
 import {
     K, indexOf, at, isBelt, isTunnel, tunnelIsSender, tunnelPeer,
@@ -184,7 +184,7 @@ function rawCorridor(idx, recipe) {
     /* 顺流展开（只走带子/隧道，遇机器就停 —— 机器之后属于另一条流）。 */
     const MAX_HOPS = 16;
     for (const m of heads) {
-        const s = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0);
+        const s = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m));
         if (!s) continue;
         for (const o of s.outputs) {
             let cur = o.cell;
@@ -289,7 +289,7 @@ function collectWaste(idx) {
     for (const e of idx.ent) {
         const tpl = templateByBuildingVariant(e.type, variantOf(e));
         if (!tpl || !Array.isArray(tpl.wasteRoles) || !tpl.wasteRoles.length) continue;
-        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
+        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
         if (!s) continue;
         for (const o of s.outputs) {
             if (!tpl.wasteRoles.includes(o.role)) continue;

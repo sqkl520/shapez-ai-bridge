@@ -480,8 +480,96 @@ function buildStreams(idx) {
     return streams;
 }
 
-/** 该类机器是否**在这条流上**（流的终点是它，或它的输入槽由流内带子喂）。 */
-function processorOnStream(idx, st, kind) {
+/** 透传建筑（内容不变、只改流向）—— 只有它们的出口可以继续跟。判据来自模板的 `passthrough`。 */
+function isPassthrough(e) {
+    if (!e) return false;
+    const t = templateByBuildingVariant(e.type, variantOf(e));
+    return !!(t && t.passthrough === true);
+}
+
+/** 沿带子走的跳数上限（防御性：真实世界里一段流远达不到这个量）。 */
+const TRACE_MAX_HOPS = 4096;
+
+/**
+ * 从 `cell`/`fromDir` 出发，沿货流走到第一个非带子实体。
+ *
+ * 与 `topology#runEnd` 的区别：**每一跳都验 `accepts`**。`runEnd` 只看几何（它服务的是
+ * 「这条带子有去处吗」），而这里要回答「货**真的**能流过去吗」——
+ * 一条反向的带子几何上相邻，货却推不进去。隧道不跟（与形状传播的“隧道是屏障”一致）。
+ *
+ * @returns {{kind:string, entity:object|null, truncated:boolean}}
+ */
+function traceDownstream(idx, cell, fromDir) {
+    let cur = cell;
+    let dir = fromDir;
+    for (let i = 0; i < TRACE_MAX_HOPS; i++) {
+        const e = at(idx, cur);
+        if (!e) return { kind: "empty", entity: null, truncated: false };
+        if (isTunnel(e)) return { kind: "underground_belt", entity: e, truncated: false };
+        if (!isBelt(e)) return { kind: e.type, entity: e, truncated: false };
+        /* 货进得来这条带子吗（入口朝向） */
+        if (!accepts(idx, cur, dir).ok) return { kind: "belt", entity: e, truncated: false };
+        cur = exitCellOf(e);
+        dir = exitDirOf(e);
+    }
+    return { kind: "truncated", entity: null, truncated: true };
+}
+
+/**
+ * 从 `st` 的**终点**继续往下游找 `kind`：遇到透传节点（balancer）枚举**全部**输出槽。
+ *
+ * 为什么必须跨过 balancer：`buildStreams` 把 balancer 当边界（它不是带子），
+ * 于是一条真实产线被切成「矿机 → balancer」与「balancer → …→ cutter」两段。
+ * 2026-10-31 实机三次复现：`cutter@(4,-17)` 就在 `(2,-7)/(3,-7)/(4,-7)/(2,-9)`
+ * 四条流的下游（`balancer (2,-8) → balancer (3,-10) → belts → cutter`），
+ * 但旧的 `processorOnStream` 只认「流内带子直接喂」⇒ 报「工厂有 1 台 cutter，但都不在这条流上」，
+ * 模型于是去**再放一台 cutter**（`replace_run` 两次失败），一次都没想过补断掉的 3 格带子。
+ *
+ * balancer 有 2 个输出槽（`process_BALANCER` 轮流发），**两路都要跟** ——
+ * 只跟一路会漏掉「货从另一路到 cutter」的情况，而两路都跟不会把独立的线连起来：
+ * 只有真的共用一个 balancer 的两段，才是同一条货流。
+ *
+ * 跟到非透传机器就**停**（它改形状，下游不再属于这条流的货）。
+ */
+function passthroughReaches(idx, st, kind) {
+    const end = st && st.end;
+    /* 货必须**真的进了**这台 balancer：撞在它侧面上（accepted=false）不算这条流的延续。 */
+    if (!end || !Number.isInteger(end.by) || end.accepted !== true) return false;
+    const root = idx.byUid.get(end.by);
+    if (!isPassthrough(root)) return false;
+
+    const queue = [root];
+    const seen = new Set();
+    for (let hops = 0; queue.length && hops < TRACE_MAX_HOPS; hops++) {
+        const node = queue.shift();
+        if (!node || seen.has(node.uid)) continue;
+        seen.add(node.uid);
+        const s = slotsOf(node.type, node.variant, node.x, node.y, node.r || 0, beltRvOf(node));
+        if (!s) continue;
+        for (const o of s.outputs) {
+            const r = traceDownstream(idx, o.cell, o.dir);
+            if (r.kind === kind) return true;
+            if (r.truncated) continue;
+            if (r.entity && isPassthrough(r.entity)) queue.push(r.entity);
+        }
+    }
+    return false;
+}
+
+/**
+ * 该类机器是否**在这条流上**。
+ *
+ * 三个判据，任一成立即算：
+ *   1. 流的终点就是它（`buildStreams` 停在机器上时 `end.kind === kind`）；
+ *   2. 它的输入槽由**流内带子**直接喂（同一条带子链，原有行为）；
+ *   3. 流经透传节点（balancer）之后还到得了它 —— 见 `passthroughReaches`。
+ *
+ * ★ 判据 3 不能退化成「世界上有这类机器」★
+ *   那会让这条诊断永远不触发（等于删掉它）。它仍然要求**物理连通**：
+ *   从这条流的终点出发、沿真实带子走、只穿过内容不变的 balancer。
+ *   另一条独立产线上的 cutter 不在同一条货流里 ⇒ 仍然 false。
+ */
+export function processorOnStream(idx, st, kind) {
     if (st.end && st.end.kind === kind) return true;
     const uids = new Set(st.belts.map(b => b.uid));
     for (const e of idx.ent) {
@@ -494,7 +582,7 @@ function processorOnStream(idx, st, kind) {
                 && sameCell(exitCellOf(up), sl.slot) && accepts(idx, sl.slot, exitDirOf(up)).ok) return true;
         }
     }
-    return false;
+    return passthroughReaches(idx, st, kind);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -808,7 +896,8 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             expected: `a ${kind} on the stream that carries ${top.shapes.join("/")}`
                 + (kind === "cutter" ? `, plus a trash on its waste port (build: [cutter, {kind:"trash", port:"left", confirm_waste:true}])` : ""),
             observed: `this stream carries ${top.shapes.join("/")}, which the recipe turns into the next shape with `
-                + `${op}; the factory has ${factoryCount(kind)} ${kind}(s) but none of them is on this stream`
+                + `${op}; the factory has ${factoryCount(kind)} ${kind}(s) but none of them is reachable from this stream`
+                + ` (the check follows the line downhill across balancers)`
                 + ` (a ${kind} fits at ${sites.length} place(s) on the goal corridor)`,
             evidence: {
                 /* ★ `handles` 必须给出**可施工的落点对**，不能只给一列带子 ★

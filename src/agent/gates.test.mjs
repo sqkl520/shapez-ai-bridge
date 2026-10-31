@@ -1133,9 +1133,89 @@ console.log("\n── ⑱ gateGDeleteReplay：声明的删除逐 uid 回放 / �
     const gCellEmpty = gateGDeleteReplay({ removes: [{ cell: [99, 99] }] }, before, good);
     ok(!gCellEmpty.ok, "cell 声明的格上贴前没有实体 → 红（计划过期）", gCellEmpty.reason);
 
+    /* ── 必红 4b：`unresolved` 分支**单独**验证（世界不动，没有任何 uid 消失）──
+     *
+     * 上面那条 gCellEmpty 是被"多删"兜红的：它的 after=good 里 10042/10043/10044 都消失了，
+     * 而 removes 只声明了 1 条 → extraGone 先报「多删了」。所以 unresolved 判据
+     * 从来没有独立生效过（变异报告 G9：删掉 `unresolved.push(...)`，373 条全绿）。
+     *
+     * 正确夹具：before === after（世界完全不动）+ 一条指向空格的 cell 声明。
+     * 这样 vanished 为空、extraGone 为空、stillAlive 为空 —— 除了 unresolved 没有别的判据能报红。
+     * ★ 变异体会在这里返回 ok:true，且 evidence.deleted 记成 1（"从没解析到实体的声明算删除成功"），
+     *   这是比"没报红"更糟的假绿，必须钉住 evidence 的每个字段。 */
+    {
+        const same = snapOf([...oldBelts, ...keep]);
+        const gUnresolved = gateGDeleteReplay({ removes: [{ cell: [99, 99] }] }, same, same);
+        ok(!gUnresolved.ok, "cell 声明落空（世界不动）→ 必须红，不能靠别的判据兜", gUnresolved.reason);
+        eq(gUnresolved.evidence.unresolved, 1, "evidence.unresolved = 1");
+        eq(gUnresolved.evidence.cell_mismatch, 0, "这不是 cellMismatch（那格根本没有实体）");
+        eq(gUnresolved.evidence.still_alive, 0, "这不是 stillAlive");
+        eq(gUnresolved.evidence.extra_deleted, 0, "这不是多删（世界没动）");
+        eq(gUnresolved.evidence.vanished, 0, "世界没动，vanished 必须为 0");
+        eq(gUnresolved.evidence.deleted, undefined, "★ 未解析到实体的声明绝不能被算成删除成功（变异体的 evidence.deleted=1）");
+        ok(/那格上没有实体/.test(gUnresolved.reason), "reason 必须说「那格上没有实体」", gUnresolved.reason);
+        ok(/计划过期/.test(gUnresolved.reason), "reason 必须提示「计划过期」", gUnresolved.reason);
+    }
+
+    /* ── 必红 4c：`unresolved` 与"多删"同时可能命中时，unresolved 必须先报 ──
+     * （顺序是有意的：先告诉他"你有一条声明作废了"，再谈别的。这条也顺带证明
+     *  上面的 4b 不是"因为世界不动所以必然无条件红"。） */
+    {
+        const gBoth = gateGDeleteReplay({ removes: [{ cell: [99, 99] }] }, before, good);
+        eq(gBoth.evidence.unresolved, 1, "同时存在多删时，evidence 里 unresolved 仍要计 1");
+        eq(gBoth.evidence.extra_deleted, 3, "同时存在多删时，extra_deleted 也要如实计 3");
+    }
+
     // 必红 5：uid 与 cell 互相矛盾（uid 在 A 格，cell 写 B 格）
     const gMismatch = gateGDeleteReplay({ removes: [{ uid: 10042, cell: [11, 10] }] }, before, good);
     ok(!gMismatch.ok, "uid 与 cell 指向不同实体 → 红（计划写完后世界变过）", gMismatch.reason);
+
+    /* ── 必红 5b：`cellMismatch` 分支**单独**验证（所有消失的 uid 都被声明）──
+     *
+     * 上面那条 gMismatch 是被"多删"兜红的：before 有 5 个实体、good 只剩 2 个 keep，
+     * vanished = 3，而 removes 只声明了 10042 → extraGone 先报红。
+     * 所以 uid↔cell 交叉校验这条判据从未独立生效（变异报告 G4：整段 `if (false)`，373 条全绿）。
+     *
+     * 正确夹具：removes 把**全部 3 个消失的 uid** 都声明掉，其中只有第一条带一个矛盾的 cell。
+     * 这样 stillAlive=0、unresolved=0、extraGone=0 —— 只有 cellMismatch 能报红。
+     * 另外断言 evidence.cell_mismatch 与 sample 里的 declared/actual 位置，防止"报红但报错地方"。 */
+    {
+        const gX = gateGDeleteReplay({
+            removes: [
+                { uid: 10042, cell: [11, 10] },   // 10042 实际在 (10,10) → 矛盾
+                { uid: 10043 },                    // 正确声明，应被计入删除
+                { uid: 10044 },                    // 同上
+            ],
+        }, before, good);
+        ok(!gX.ok, "uid 与 cell 对不上（且所有消失的 uid 都已声明）→ 必须红，不能靠多删兜", gX.reason);
+        eq(gX.evidence.cell_mismatch, 1, "evidence.cell_mismatch = 1");
+        eq(gX.evidence.unresolved, 0, "这不是 unresolved（uid 存在）");
+        eq(gX.evidence.still_alive, 0, "这不是 stillAlive（三条都真的删了）");
+        eq(gX.evidence.extra_deleted, 0, "这不是多删（三条都声明了）");
+        eq(gX.evidence.vanished, 3, "vanished 应为 3");
+        eq(gX.evidence.deleted, undefined, "矛盾时不得声称删除成功");
+        ok(/对不上/.test(gX.reason), "reason 必须说「对不上」", gX.reason);
+        ok(/计划写完之后世界变过/.test(gX.reason), "reason 必须点出「计划写完之后世界变过」", gX.reason);
+        const smp = gX.evidence.sample && gX.evidence.sample[0];
+        ok(!!smp, "必须给出 sample");
+        /* sample 缺失时用空对象兜底，让下面每条断言都独立报红 ——
+           不要因为 "smp 是 undefined" 抛 TypeError（那也是红，但只红一条，
+           看不出到底是哪个字段没给）。 */
+        const s0 = smp || {};
+        eq(s0.uid, 10042, "sample.uid");
+        ok(jEq(s0.declared_cell, [11, 10]), "sample.declared_cell", s0.declared_cell);
+        ok(jEq(s0.actual_cell, [10, 10]), "sample.actual_cell（uid 权威：以贴前实体的 origin 为准）", s0.actual_cell);
+    }
+
+    /* ── 必红 5c：cell 正确、uid 也对时**不许**误报 cellMismatch（正例对照）── */
+    {
+        const gXok = gateGDeleteReplay({
+            removes: [{ uid: 10042, cell: [10, 10] }, { uid: 10043 }, { uid: 10044 }],
+        }, before, good);
+        ok(gXok.ok, 'uid 与 cell 一致、三条都删了 → 必须绿（否则 5b 可能只是「带 cell 就红」）', gXok.reason);
+        eq(gXok.evidence.cell_mismatch, 0, "正例下 cell_mismatch 必须 0");
+        eq(gXok.evidence.deleted, 3, "正例下 deleted=3");
+    }
 
     // 必绿 2：removes 为空时对"什么都没删"的世界恒绿（老 intent 不受影响）
     ok(gateGDeleteReplay({}, before, before).ok, "没有 removes 的 intent → 绿（老 intent 不被这道闸判死）");
