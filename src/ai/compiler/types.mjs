@@ -65,7 +65,8 @@ import {
  *   blueprintCost:number, chargeMode:"false"|"auto"}} PlanStats */
 
 /** v1 范围（§0 范围裁决 / §2.1「scope 是契约的一部分」）：超出者一律 ok:false。
- * @typedef {{layers:1, wires:false, tunnels:false, rotatedMachines:false, maxFanIn:2}} Scope */
+ * `tunnels` 是唯一可变项：true 必须由实体表里的 underground_belt 支撑（见 assertCompiledPlan 硬规定 3）。
+ * @typedef {{layers:1, wires:false, tunnels:boolean, rotatedMachines:false, maxFanIn:2}} Scope */
 
 /**
  * §2.3 P3 产出、P4 消费、P5 复核。
@@ -377,7 +378,11 @@ export function entityOrderPhase(e) {
  * 硬规定（全部断言）：
  *   1. ok:true ⟺ validation.errors.length === 0 且 blueprint !== null；
  *   2. !ok 时 reason 必填且 ∈ §2.5；
- *   3. scope 必须等于 v1 常量（超出 = 契约错误，不是"近似"）；
+ *   3. scope 必须自洽：layers/wires/rotatedMachines/maxFanIn 恒为 v1 常量；
+ *      `tunnels` 允许 true **当且仅当**实体表里真有 underground_belt（否则仍是契约错误）。
+ *      旧口径要求 tunnels 恒 false —— 那是 `--tunnels` 还不存在时的写死值，会让
+ *      「带隧道的 ok:true 计划」在 scope 上撒谎（compile.mjs 的 assemblePlan 曾写死 {...SCOPE_V1}）。
+ *      v1 的**默认**仍是 false：打开它必须是产出里真的用到了，不是声明一句就算。
  *   4. stats.beltTiles / corners 与 entities 自洽（拐角数 = rv≠0 的带子数）；
  *   5. entities 顺序 = 机器 → 直线带 → 拐角带（可 opts.entityOrder="off" 关闭，默认严格）；
  *   6. blueprint 非 null 时必须以 SZBP1. 开头。
@@ -508,6 +513,22 @@ export function assertCompiledPlan(v, path = "plan", opts = {}) {
         try {
             requireKeys(v.scope, ["layers", "wires", "tunnels", "rotatedMachines", "maxFanIn"], `${path}.scope`);
             for (const k of Object.keys(SCOPE_V1)) {
+                if (k === "tunnels") {
+                    /* tunnels 是**唯一**允许偏离 v1 常量的项，且必须与实体表一致：
+                       true ⇒ 实体里真有 underground_belt；false ⇒ 实体里没有。
+                       两向都查（false 而实体里有隧道 = 撒谎；true 而实体里没有 = 声明了假能力）。 */
+                    const declared = v.scope.tunnels;
+                    if (declared !== true && declared !== false) {
+                        push(new ContractViolation(`${path}.scope.tunnels`, "true|false", declared));
+                        continue;
+                    }
+                    const hasTunnel = entities.some(e => e && e.kind === "underground_belt");
+                    if (hasTunnel !== declared) {
+                        push(new ContractViolation(`${path}.scope.tunnels`,
+                            `必须与实体表一致（declared=${declared}，实体里${hasTunnel ? "有" : "没"} underground_belt）`, declared));
+                    }
+                    continue;
+                }
                 if (v.scope[k] !== SCOPE_V1[k]) push(new ContractViolation(`${path}.scope.${k}`, `v1 恒为 ${JSON.stringify(SCOPE_V1[k])}（超出必须 ok:false + reason，不许静默近似）`, v.scope[k]));
             }
         } catch (e) { push(e); }

@@ -1203,6 +1203,29 @@ const runV10 = (ctx, checks, errors) => {
         if (level === null || level === undefined || need === null) continue;
         if (level < need) rows.push({ nodeId: p.nodeId, kind: p.kind, op: p.op, need, level, cell: p.cell });
     }
+    /* 隧道**不在** layout.placements 里（它是布线元件，P3 只把它记进 route 的 beltCells），
+       所以上面那个循环天生看不见它 —— 这正是 `--level 1 --tunnels --enforce-unlocks` 曾经
+       报「3 台机器全部在可用集内」而方案里躺着 2 条 underground_belt 的原因。
+       现在按**实体表**补扫（layout.beltCells 在 plan-only 输入里可能为空，实体表才是唯一凭据）。
+       解锁门槛用 `UNLOCK_LEVEL_FALLBACK.tunnel`（levels.js 第 5 项 → 完成才授予）；
+       与 compile.mjs 的产出前硬门（TUNNEL_UNLOCKED_LEVEL = 6）**刻意差一级**：
+       这里是"报告口径"（沿用 P5 既有的 level<need 判据，与 rotater=4 等同一条线），
+       那边是"能不能产"的硬门（按真实语义：L5 进行中拿不到 reward_tunnel）。 */
+    const tunnelNeed = UNLOCK_LEVEL_FALLBACK.tunnel ?? null;
+    if (level !== null && level !== undefined && tunnelNeed !== null) {
+        const seen = new Set();
+        for (const e of view.entities || []) {
+            if (!e || e.kind !== "underground_belt" || level >= tunnelNeed) continue;
+            const k = [e.dx, e.dy].join(",");
+            if (seen.has(k)) continue;
+            seen.add(k);
+            rows.push({
+                nodeId: e.nodeId || `tunnel@${k}`, kind: "underground_belt",
+                op: e.rotationVariant === 1 ? "tunnel(receiver)" : "tunnel(sender)",
+                need: tunnelNeed, level, cell: [e.dx, e.dy],
+            });
+        }
+    }
     ctx.unlockRows = rows;
 
     if (rows.length && view.enforceUnlocks) {

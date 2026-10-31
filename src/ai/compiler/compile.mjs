@@ -34,7 +34,7 @@ import { fileURLToPath } from "node:url";
 
 import { makeFailure, ContractViolation, validateReason } from "./errors.mjs";
 import { SCOPE_V1, entityOrderPhase } from "./types.mjs";
-import { ALL_TEMPLATES, RATES, codeFor } from "../op-templates.mjs";
+import { ALL_TEMPLATES, RATES, codeFor, TUNNEL_UNLOCKED_LEVEL } from "../op-templates.mjs";
 import { tileResource, resourcesInRegion, regionAround, DEFAULT_SEED } from "../world.mjs";
 import { place, PLACE_VERSION, ROW_H, COL_GAP } from "./place.mjs";
 import { routeAll, ROUTE_SCHEMA_VERSION } from "./route.mjs";
@@ -1042,10 +1042,11 @@ export function siteStage(layout, ctx) {
 		   脏区被静默接受 —— 而 `--hub` 正是 README 让用户走的唯一路径。
 		   判据与旧路径同源（regionClear），不新造规则。 */
 		if (!regionClear(ctx)) {
-			return fail("no-site-large-enough", { nodeId: "", cell: null, check: "V1-occupancy" },
-				`世界快照里有既有实体（非 hub）⇒ 这份计划不是「全新址」，v1 不做增量对接（plan §6 R2）。`
-				+ `本闸在钉死 hub 的路径上同样生效 —— 否则 paste 会与既有建筑重叠（C1：带子被静默覆盖）。`
-				+ `处置：换一块空地（新 --hub），或先清掉该区域的实体。`);
+			/* ⚠️ A8（2026-10-28）：这里以前报 `no-site-large-enough` —— 把"世界不干净"说成"地方不够大"。
+			   两者处置完全不同（前者只能换地方/改增量宏，后者可以扩 range）。现在统一走
+			   `siteNotEmptyFailure`：reason 仍是 §2.5 枚举里的 `no-site-large-enough`（冻结枚举不能加项），
+			   但带 `code:"site-not-empty"` + `precondition:"empty-site"` + 既有实体证据，hint 指向增量宏。 */
+			return siteNotEmptyFailure(regionClearReport(ctx), { goal: ctx.goal || null, hub: ctx.hub });
 		}
 		const anchor = [hubWorldFixed[0] - ctx.hubLocal[0], hubWorldFixed[1] - ctx.hubLocal[1]];
 		const minersW = miners.map(m => ({ nodeId: m.nodeId, cell: [anchor[0] + m.cell[0], anchor[1] + m.cell[1]], shape: m.shape }));
@@ -1099,8 +1100,13 @@ export function siteStage(layout, ctx) {
 	const ordered = preferred
 		? [preferred, ...anchors.filter(x => x.a[0] !== preferred.a[0] || x.a[1] !== preferred.a[1])]
 		: anchors;
-	// 增量对接：v1 不支持（与 P3 validateWorld 同口径）—— 与候选无关，循环外判一次
-	const worldClear = regionClear(ctx);
+	// 增量对接：v1 不支持（与 P3 validateWorld 同口径）—— 与候选无关，循环外判一次。
+	/* ⚠️ A8：这里以前是 `const worldClear = regionClear(ctx)` 然后在循环里 `continue`，
+	   于是**每一个候选都被跳过**，函数末尾落到 `no-resource-in-range`（"这片区域没有矿"）。
+	   那是第二处名不副实：世界脏 ≠ 没矿，前者扩 range 无用。现在脏就直接返回
+	   `site-not-empty`（带证据），只有**地是干净的**、候选真的不够时才报 no-resource-in-range。 */
+	const worldRep = regionClearReport(ctx);
+	if (!worldRep.clear) return siteNotEmptyFailure(worldRep, { goal: ctx.goal || null, hub: ctx.hub });
 	let hubBlocked = 0, tried = 0, firstRejected = null;
 	for (const cand of ordered) {
 		tried++;
@@ -1115,7 +1121,7 @@ export function siteStage(layout, ctx) {
 			}
 			continue;
 		}
-		if (!worldClear) continue;
+		// 净地已在循环外判过（worldRep.clear === true 才走到这里），候选只需过资源与 hub 两项
 		// ★ 世界系硬约束：落点矩形 ∩ hub 世界 4×4 == ∅（设计系自洽 ≠ 世界系自洽，见函数头注）
 		let hubClear = null;
 		if (hubWorldFixed) {
@@ -1148,16 +1154,83 @@ export function siteStage(layout, ctx) {
 
 /**
  * 落点区净地检查（既有世界若有实体则算不净 —— v1 不增量对接）。
+ *
  * ⚠️ 返回 boolean 是**旧契约**（"世界可不可用"，与候选无关）；hub 的世界 4×4 不在这里判 ——
  *   它随候选 anchor 移动，判据在 `hubClearOf()` / `worldFrameHubCheck()`。这里**故意**不把 hub 算占用：
  *   若把 hub 当"世界不干净"直接拒，任何给 hub 的编译都会恒 fail（hub 永远在 entities 里），
  *   而真判据是"布局矩形不压 hub"。
+ *
+ * ⚠️ 语义（DIRECTION-FINAL §1.1 降级后）：这条**不再是"世界必须空"的全局闸**，而是**宏的前置条件**。
+ *   它回答的是「这份计划要占的那块地，是不是一块白纸」——`build_line` 宏把它当
+ *   `precondition:"empty-site"` 显式声明；非空地时宏如实返回 `site-not-empty`，让调用方
+ *   去用 `connect` / `insert_machine` 就地改造，而不是让编译器硬编一座压在旧厂上的工厂。
+ *   判据本身不变（有非 hub 实体 ⇒ 不净），变的只是**它被谁消费、报什么错**。
  */
 function regionClear(ctx) {
-	const world = ctx.world;
-	if (!world || !Array.isArray(world.entities)) return true;
-	return world.entities.filter(e => e && e.type !== "hub").length === 0;
+	return regionClearReport(ctx).clear;
 }
+
+/**
+ * `regionClear` 的可诊断版本 —— 把「不干净」拆成**能行动的**结论。
+ *
+ * 背景（A8）：旧代码把"世界不干净"报成 `no-site-large-enough`（空间不够），
+ * 两者完全不是一回事：空间不够可以扩 range / 换 seed，而"世界不干净"扩什么都救不了，
+ * 唯一的出路是换地方或改用增量宏。所以这里给出：
+ *   · `clear`     —— 跟旧 boolean 同义，调用点零改动
+ *   · `foreign`   —— 非 hub 的既有实体（前 8 条，作凭据）
+ *   · `count`     —— 非 hub 实体总数
+ *   · `hub`       —— 世界快照里的 hub（若有）；**不计入 foreign**，因为 hub 永远在 entities 里
+ *   · `snapshot`  —— false = "没给观测，我们不知道"，true = "看过，且结论是 X"
+ *   ⚠️ 本函数**不给 reason**：§2.5 的 reason 由 `siteNotEmptyFailure()` 统一填（唯一构造点）。
+ * @param {{world?:{entities?:Array}}} ctx
+ * @returns {{clear:boolean, count:number, foreign:Array<{type:string,x:number,y:number}>, hub:object|null, snapshot:boolean}}
+ */
+export function regionClearReport(ctx) {
+	const world = ctx && ctx.world;
+	if (!world || !Array.isArray(world.entities)) {
+		// 没有快照 ≠ 世界是空的：调用方没给观测，我们**不知道**。按旧契约当作可用（不改既有行为），
+		// 但 snapshot:false 让上面的宏能说明"这是「没看见」，不是「看过且干净」"。
+		return { clear: true, count: 0, foreign: [], hub: null, snapshot: false };
+	}
+	const foreign = world.entities.filter(e => e && typeof e === "object" && e.type !== "hub");
+	const hub = world.entities.find(e => e && e.type === "hub") || null;
+	return {
+		clear: foreign.length === 0,
+		count: foreign.length,
+		foreign: foreign.slice(0, 8).map(e => ({ type: String(e.type), x: e.x, y: e.y })),
+		hub: hub ? { type: "hub", x: hub.x, y: hub.y } : null,
+		snapshot: true,
+	};
+}
+
+/**
+ * 「世界不干净」的统一失败对象（唯一构造点，CLI 与宏读同一份语义）。
+ *
+ * 为什么 reason 仍是 `no-site-large-enough`：§2.5 是**冻结枚举**（errors.mjs:28，
+ * contract/test.mjs:115 断言无一多余项），加一项就会让 P1 契约与 282 条闸同时红。
+ * 所以"名不副实"改在**可行动的那一层**：`code`（稳定标签，调用方按它分支）
+ * + `precondition`（宏的前置条件名）+ `evidence`（到底有几台、什么类型、在哪个格）
+ * + `hint`（处置指向 connect/insert_machine，而不是"扩大 range"）。
+ * @param {ReturnType<typeof regionClearReport>} rep
+ * @param {{goal?:string|null, hub?:[number,number]|null}} [opts]
+ */
+export function siteNotEmptyFailure(rep, opts = {}) {
+	const f = fail("no-site-large-enough", { nodeId: "", cell: null, check: "V1-occupancy" },
+		`前置条件不满足：世界快照里已有 ${rep.count} 个非 hub 实体（不是"地方不够大"）。`
+		+ `本编译器（v1 范围）只做**全新址**，不做增量对接 —— 它会把新产线整块摆下去，与既有建筑重叠`
+		+ `（C1：带子被静默覆盖）。`
+		+ (rep.foreign.length ? `既有实体样本：${rep.foreign.map(e => `${e.type}@(${e.x},${e.y})`).join(" ")}${rep.count > rep.foreign.length ? " …" : ""}。` : "")
+		+ `处置：① 就地改造请用 connect(from,to) / insert_machine(at,facing,machine)；`
+		+ `② 或换一块**真正的空地**当 site，用 buildLine(goal, site) 建线，再用 connect 接回 hub。`
+		+ `③ 不要靠扩大 --range/-换 seed 解决 —— 这不是选空间的问题。`);
+	return {
+		...f,
+		code: "site-not-empty",
+		precondition: "empty-site",
+		evidence: { foreignCount: rep.count, foreign: rep.foreign, hubInSnapshot: rep.hub },
+	};
+}
+
 
 /**
  * §2.6 WorldState（全新址：一台 hub、无其它实体）。交接件与 V1/V2/V3 都要它。
@@ -1378,7 +1451,14 @@ function assemblePlan(parts) {
 		site: { anchor: [anchor[0], anchor[1]], hub: hub ? [hub[0], hub[1]] : null },
 		blueprint: null, entities,
 		layout, validation: null, stats,
-		scope: { ...SCOPE_V1 },
+		/* scope.tunnels 必须反映**实际产出**，不能恒 false。
+		   旧代码写死 `{...SCOPE_V1}`（tunnels:false），于是 `--tunnels` 编出的方案在
+		   scope 上撒谎 —— P5 的 V8 收的是 validateStage 单独传的 scope（:1615 已按 input.tunnels 打开），
+		   但 compilePlan 的**出参**仍是 tunnels:false，下游（P7/handoff/assertCompiledPlan）看到的是
+		   "无隧道的 v1 契约 + 一堆 underground_belt 实体"，自相矛盾。
+		   判据用**实体表**（entities 里真有 underground_belt），不是 input 开关 ——
+		   `--tunnels` 开着但没用上时 scope 仍为 false（那才是如实的"没用到"）。 */
+		scope: { ...SCOPE_V1, tunnels: entities.some(e => e.kind === "underground_belt") },
 		_meta: {
 			harnessVersion: HARNESS_VERSION, placeVersion: PLACE_VERSION, routeSchemaVersion: ROUTE_SCHEMA_VERSION,
 			validatorVersion: VALIDATOR_VERSION, solver: { argv: solver.argv, ops: solver.ops, stats: solver.stats, ms: solver.ms, known: solver.known },
@@ -1394,6 +1474,10 @@ function assemblePlan(parts) {
 
 /**
  * goal → CompiledPlan。**永不 throw**（plan §0）。
+ * ⚠️ 自 2026-10-28（DIRECTION-FINAL §1.1）起，本函数**不再是主线入口**：
+ *   `src/ai/compiler/*` 已降为库，正常调用方是宏 `src/agent/macros/build_line.mjs`。
+ *   CLI（cli.mjs）只留作离线回归，不再是对用户的推荐路径 —— 因为它只在空地工作
+ *   （前置条件 `precondition:"empty-site"`，见 regionClearReport）。
  * @param {{goal:string, seed?:number|string, hub?:string|[number,number]|{x:number,y:number},
  *          world?:object, demandPerSec?:number, range?:number, depth?:number, maxStates?:number,
  *          rowGap?:number, colGap?:number, level?:number, noCutQuad?:boolean, enforceUnlocks?:boolean,
@@ -1480,6 +1564,33 @@ function compileInner(input) {
 	if (rt.ok === false) return bail({ ...rt, layout: pl.layout, entities: null });
 	const layoutLocal = rt.layout;
 
+	/* 4½. ★隧道的等级门控★（离线可测，不依赖 P5 的 enforceUnlocks 开关）
+	   `--tunnels` 只表示"允许用隧道"，**不表示"当前存档已解锁隧道"**。后者由 `reward_tunnel`
+	   决定：`modes/levels.js` 三套表都是第 5 项才给，`hub_goals.js:46-52` 按 `i < level-1` 回填
+	   ⇒ 进行到第 5 关（level=5）时**还没**解锁，要交付完 `Cu----Cu` 升到 level 6 才有。
+	   旧行为：`--tunnels` 在 L4 编出 2 条 underground_belt 并报 ok:true（实机贴不进去，
+	   或贴进去后隧道被游戏静默丢弃）。现在改为**直接失败**，理由与 cutQuad 门控同源：
+	   产一份"看起来对但造不出来"的蓝图比失败更危险（redteam:158 / plan §0）。
+	   ⚠️ 判据是**真的用到隧道**（route 给出了 tunnel 格），不是"开关开着" —— 否则
+	   `CuCuCuCu --tunnels` 这种「允许但没用上」的调用会被误伤（它必须继续 ok:true）。
+	   `level` 未给时按 `levelForGoal(goal)` 反推（既有口径）；反推下界 ≥ 6 的目标不受影响。 */
+	const usedTunnels = (rt.route.beltCells || []).filter(b => b.tunnel);
+	const gateLevel = isInt(input.level) ? input.level : g.level;
+	if (usedTunnels.length && gateLevel < TUNNEL_UNLOCKED_LEVEL) {
+		const first = usedTunnels[0];
+		const f = fail("unlock:machine-not-available",
+			{ nodeId: first.tunnel === "sender" ? "tunnel(sender)" : "tunnel(receiver)", cell: [first.cell.x, first.cell.y], check: "V10-unlock-report" },
+			`方案需要 ${usedTunnels.length} 格隧道（underground_belt），但当前 level=${gateLevel} 尚未解锁 tunnel：`
+			+ `reward_tunnel 在 levels.js 第 5 关（Cu----Cu）**完成时**才授予（hub_goals.js:46-52 按 i<level-1 回填），`
+			+ `即 level≥${TUNNEL_UNLOCKED_LEVEL} 才可用。`
+			+ `处置：① 去掉 --tunnels（v1 的「水平错位 + 加宽行距」不需要隧道）；`
+			+ `② 或等交付完 L5 目标升级后再编；③ 或先用 connect/insert_machine 就地改造。`
+			+ `｜本闸**不受 --enforce-unlocks 影响**（那是 P5 的报告口径开关，这里是产出前的硬门）。`);
+		f.code = "tunnels-not-unlocked";
+		f.tunnelCells = usedTunnels.map(b => [b.cell.x, b.cell.y]);
+		return bail({ ...f, layout: pl.layout, entities: null, tunnelCells: f.tunnelCells });
+	}
+
 	/* entities（作图局部系，§2.1 的执行序：机器 → 直线带 → 拐角带）*/
 	const entsLocal = orderedEntities(machineEntities(layoutLocal), beltEntities(rt.route));
 	trace(stages, "entities", { ok: true, n: entsLocal.length });
@@ -1492,6 +1603,8 @@ function compileInner(input) {
 	     ctx.entityRect = entsLocal 的 min/max（局部系）—— 判"落点矩形"用实体跨度，不用 layout.bbox
 	                     （P3 的 bbox 含 hub 16 格 ⇒ 拿它判 hub 相交恒假，见 designEntityRect 头注） */
 	const site = siteStage(layoutLocal, {
+		// goal 只用于失败凭据（site-not-empty 的 evidence 里回填目标），不参与选址
+		goal: g.goal,
 		// ★ `input.world` 与 `input.worldEntities` 是同一份数据的两条入口：
 		//   · 库调用方习惯传 `world:{entities:[...]}`；
 		//   · CLI 的 `--world` 只填 `worldEntities`（cli.mjs 的 .map 产物）。
@@ -1530,10 +1643,12 @@ function compileInner(input) {
 	   （hub 在 hubLocal），平移不改变任何相对几何（V1/V3/V4/V6 全是相对判据），所以闸的结论与框无关。 */
 	const vd = trace(stages, "validateStage", validateStage({
 		goal: g.goal, layout, entities: entsLocal,
-		// scope 随 input.tunnels 打开：P5 的 V8 会按 `scope.tunnels !== false` 判「越界」，
-		// 而隧道是否可用由调用方显式决定（默认关 ⇒ 既有目标逐字节不变）。
+		/* scope.tunnels 必须与**实际产出**一致（不是照抄 input 开关）：
+		   P5 的 V8 用它判「范围外实体」—— 传 true 而没隧道只是放宽，传 false 而有隧道会把
+		   合法方案误判成越界；两种撒谎都会让 P5 与出参（assemblePlan 按实体表算）说两套话。
+		   唯一真值 = `usedTunnels`（上面 4½ 的门控也用它）。 */
 		world: hubWorldState(hubLocal, seed),
-		scope: { ...SCOPE_V1, tunnels: input.tunnels === true },
+		scope: { ...SCOPE_V1, tunnels: usedTunnels.length > 0 },
 		demandPerSec: input.demandPerSec || 0,
 	}, {
 		dag: dagForS1(dg), level: isInt(input.level) ? input.level : g.level,
@@ -1640,6 +1755,11 @@ function compileInner(input) {
 /**
  * hub 未钉死 ⇒ 编译"成功"也不算数（见 compileInner 尾部的 hub 政策）。
  * 把已算出的布局/凭据原样留着作诊断，但**不产蓝图** —— 蓝图是"能贴"的承诺。
+ *
+ * ⚠️ A8（2026-10-28）：这里以前报 `no-site-large-enough` —— **第三处名不副实**。
+ *   "没给 hub 坐标"与"地方不够大"在任何处置上都无关：前者只要把 obs 观测到的 hub 传进来，
+ *   后者要换地方。现在补 `code:"hub-unpinned"` + `precondition:"pinned-hub"`，
+ *   reason 仍留在 §2.5 的冻结枚举里（不加枚举项），宏 `buildLine` 按 code 翻成 `hub-unpinned`。
  * @param {object} plan 已走完全部 stage 的 CompiledPlan
  * @returns {object} 一个 `ok:false` 的结构化失败
  */
@@ -1650,6 +1770,9 @@ export function hubPolicyFailure(plan) {
 		ok: false,
 		goal: plan && plan.goal !== undefined ? plan.goal : null,
 		reason: "no-site-large-enough",
+		// 稳定标签（调用方按它分支；reason 是冻结枚举，语义靠这两个字段承载）
+		code: "hub-unpinned",
+		precondition: "pinned-hub",
 		class: "hub:unpinned",
 		failingNode: null,
 		hint: `未给 --hub：编译只能"发明"一个 hub${inferred ? `（hubInferred=${JSON.stringify(inferred)}）` : ""}，`
