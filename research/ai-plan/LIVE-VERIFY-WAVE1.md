@@ -289,72 +289,50 @@ for (const e of ent) if (!byOrigin.has(K([e.x, e.y]))) byOrigin.set(K([e.x, e.y]
 
 ---
 
-## 堵点 B 修复后的新发现：堵点 D（balancer 的两个输出）
 
-修复 `deriveFlows`（终点从带子下沉到真实体）后，用**带 rv 的真实夹具**重跑
-`verifyRound`，结果从 `0/8 reached` 变成 **`5/8 reached`**。
+## 更正：所谓「堵点 D」是我自己的夹具错误，不存在
 
-剩下 3 条红的都是 **balancer 的 secondary 输出口**：
+**2026-10-31 更正。原结论作废。**
+
+修复堵点 B 之后，我用一份手搓的夹具跑 `checkFlow`，得到 `reached 5/8`，
+于是写下「堵点 D：balancer 的两个输出导致 `startAt` 冲突」。
+
+**这个结论是错的。** 有两个独立的夹具 bug：
+
+1. **balancer 是 2×1，我只按 origin 建 `byCell`** —— 第二格 `(3,-8)` 没索引，
+   于是从 `(3,-9)` 起的链在第一步就找不到实体。
+2. **hub 是 4×4，我没把它放进 `byCell`** —— `cutter → hub` 那条链走到 `(1,-2)`
+   （hub 的覆盖格）就断了，而 hub 的 origin 是 `(-2,-2)`。
+
+按**正确的 footprint 索引**重建后：
 
 ```
-miner@(3,-6)    → balancer@(2,-8)    via=chain   ← 红
-balancer@(2,-8) → balancer@(3,-10)   via=chain   ← 红（两条）
+flows: 8   paths: 8   L3-flow ok = true   reached 8/8
 ```
 
-**原因**：`checkFlow.reach()` 用 `startAt` 索引 path：
+**全绿。没有堵点 D。**
+
+### 为什么我一开始会误判
+
+`startAt` 确实是 `Map<cell, path>`（一格只留一条），看起来像冲突源。
+但 balancer 的两个输出口是**两个不同的格**（`primary` 喷口 `(2,-9)`、
+`secondary` 喷口 `(3,-9)`），`startAt` 按格索引不会互相覆盖。
+直接验证过：
 
 ```js
-for (const p of paths) {
-    const c = (p.cells || [])[0];
-    if (c) startAt.set(K(c), p);        // ← 每格只留一条 path
-}
+checkFlow(plan, obs, {pathCount: 2, paths: [
+  {cells: [[2,-9],[2,-10]], boundAcceptor: [-2,-2]},
+  {cells: [[3,-9],[3,-10]], boundAcceptor: [-2,-2]},
+]}, {flows: [{from: 20001, to: 10000}]})
+// → ok = true, reached 1
 ```
 
-而 balancer 有**两个输出口**（`primary` / `secondary`），在同一轮里可能各自起一条 path。
-`startAt` 是 Map，后写的覆盖先写的 ⇒ 只有一个口能查到 path。
+**把「看起来像」当成「已验证」——这是我这一轮犯的第 5 次同类错误**
+（前四次：L4/L5 夹具混用、手抄 `hubReachable`、`byCell` 用 origin 索引、
+以为 footprint 只对 hub 重要）。这次犯的正是**第四次那个错误的同一个变体**。
 
-更根本的是：**balancer 的两个输出在游戏里可能汇入同一条 belt path**（取决于摆法），
-而 `slotsOf("balancer")` 报两个输出槽。验证器没有「两个槽映射到同一条 path」的概念。
+### 教训
 
-### 这不是修复引入的，是既有局限
-
-修复前是 `0/8`（全部因 `to=带子` 而红），修复后 `5/8`（只有 balancer secondary 红）。
-**修复是净改善，但没到 8/8。**
-
-### 对 loop 的实际影响
-
-- **cutter → hub 那条绿了**（最关键的一条，极性正确）
-- **cutter → trash 也绿了**
-- miner → balancer 部分红
-
-⇒ 冷启动建线时，如果计划里有 balancer，`L3-flow` 仍可能判红。
-
-**这一条需要在下一轮单独修**，方向可能是：
-1. `startAt` 改成 `Map<cell, path[]>`，一个格子允许多条 path
-2. 或者 `reach()` 在找不到 path 时，退回沿 obs 带子链走（但那要考虑假绿）
-
-**登记在此，本轮不修**（修复 B 已经让情况从 0/8 变 5/8，继续缠下去会让本轮无法收尾）。
-
----
-
-## region 修复的真桥验证（2026-10-31 11:55，只读）
-
-用**真实桥接**验证 `debugItemsRegion()` 算出来的 region 在真机上被接受：
-
-```
-obs → 1 实体（hub），debugItemsRegion(obs) → [-8,-8,4,4]
-
-POST /rpc debug_items {}                    → 2001 "region must be [x0,y0,x1,y1]"   ← 修复前
-POST /rpc debug_items {"region":[-8,-8,4,4]} → ok, keys: belts,ejectors,underground,pending,
-                                                pathCount,truncatedPaths,paths,counts
-                                             pathCount: 0  paths: 0  belts: 0  ejectors: 0
-```
-
-- 旧写法在真桥上**确实**抛 2001 —— 与 `LIVE-VERIFY-REPORT.md` §4.1 的判断一致
-- 新写法被真桥接受，返回结构完整
-- `pathCount: 0` 是对的：这个世界现在只有 hub，没有带子。
-  所以 `checkFlow` 之后会走「肯 paths 为空」分支 —— 但那是**世界的真实状态**，不是参数错误。
-  （这也说明：`L3-flow` 的 undecidable 有两种成因，必须靠 `ITEMS_UNAVAILABLE` 区分，
-  不能只看 `L3-flow` 的颜色。）
-
-**这是本轮唯一一次「修复已在真桥上被验证」的结论。** 堵点 B 的修复仍然只在离线夹具上验证过。
+凡是要在建索引后做几何判定的检查，**索引必须按 footprint 建**。
+hub 4×4，balancer / cutter / stacker / painter / mixer 都是 2×1。
+只用 `e.x, e.y` 一定漏。

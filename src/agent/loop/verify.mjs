@@ -314,23 +314,48 @@ export function strictVerdict(report, { mode, goalShape, flowsProvided, hasMachi
         else if (l4.undecidable === true) why.push(`L4-behavior 不可判定（${l4.reason || ""}）`);
         else {
             const ev = l4.evidence || {};
-            const goalNull = ev.goal_delivered_before === null || ev.goal_delivered_after === null
-                || ev.goal_delivered_delta === null || ev.goal_delivered_delta === undefined;
-            if (goalNull) {
+            /* ★ 跨关：`goal_delivered_delta` 合法地为 null ★
+             *
+             * `delivered` 是**当前关卡**的计数，升级会归零。若 step 窗口跨过关口，
+             * `goalAfter - goalBefore` 会是个大负数，毫无意义 —— 所以
+             * `checkBehavior` 在跨关时把它记为 **null**（「读到了但不可比」），
+             * 判据改用 hub 的**累计**账本 `target_stored_*`（升级不清零）。
+             *
+             * 这一条不修的话：`checkBehavior` 判绿、`strictVerdict` 却因为
+             * 「delta 为 null」判红 —— 又一次在真正成功的那一刻把成功读成失败。 */
+            const crossed = ev.level_changed === true
+                || (ev.level_before !== null && ev.level_after !== null && ev.level_before !== ev.level_after);
+            const storedDelta = ev.target_stored_delta;
+            const storedOk = typeof storedDelta === "number" && storedDelta > 0;
+
+            /* 读不到 before/after 才是真的「没有证据」。delta 为 null 但两端
+               delivered 都读到了 ⇒ 那是跨关，不是读失败。 */
+            const readFailed = ev.goal_delivered_before === null || ev.goal_delivered_after === null
+                || ev.goal_delivered_before === undefined || ev.goal_delivered_after === undefined;
+
+            if (readFailed && !storedOk) {
                 /* v2 §2.1：读不到权威计数时**不许假设它涨了**。
                    注意这里比 v2 原文更严：原文允许「或 delivered_in_window_after>0」兜底，
                    但那条分支在 hub 读不到时恰好最可疑（窗口求和分不清是本次还是旧线的存量），
-                   所以 null 一律红。 */
+                   所以 null 一律红。
+                   例外：hub 累计账本确实涨了 ⇒ 那才是真权威，放行。 */
                 why.push("L4-behavior 的 goal_delivered_* 为 null —— 读不到 hub 权威计数，不能假设关卡推进了");
             } else if (l4.ok !== true) {
                 why.push(`L4-behavior 未通过（${l4.reason || "ok=false"}）`);
+            } else if (crossed) {
+                /* 跨关：只认 hub 累计账本。delivered 归零是**正常**的，不能当证据。 */
+                if (!storedOk) {
+                    why.push(`L4-behavior 跨关（${ev.level_before}→${ev.level_after}）但 hub.stored_shapes 没有增长`
+                        + `（${ev.target_stored_before}→${ev.target_stored_after}）—— 升级不是交付的证据`);
+                }
             } else {
                 const delta = ev.goal_delivered_delta;
                 const window = ev.delivered_in_window_after;
                 const advanced = (typeof delta === "number" && delta > 0)
-                    || (typeof window === "number" && window > 0);
+                    || (typeof window === "number" && window > 0)
+                    || storedOk;
                 if (!advanced) {
-                    why.push("L4-behavior：goal_delivered_delta 与 delivered_in_window_after 都为 0 —— 关卡没有推进");
+                    why.push("L4-behavior：goal_delivered_delta、delivered_in_window_after 与 target_stored_delta 都为 0 —— 关卡没有推进");
                 }
             }
             if (goalShape && ev.shape && ev.shape !== goalShape) {

@@ -459,6 +459,40 @@ export function checkSlots(plan, obs, items, opts = {}) {
     const evidence = { machines: 0, fed_inputs: 0, unfed_inputs: [], unrouted_outputs: [], via_obs: 0, via_paths: 0 };
     const ent = obs.entities || [];
     const byOrigin = new Map(ent.map(e => [K([e.x, e.y]), e]));
+
+    /* ★ footprint 索引：只按 origin 建一定漏 ★
+     *
+     * `byOrigin` 只能回答「这个电机格上有没有实体」。但槽口的 approach 格是**任意一格**，
+     * 它可能落在 2×1 机器（balancer / cutter / stacker / painter / mixer）的**第二格**，
+     * 也可能落在 4×4 hub 的内部格 —— 那些格不在 `byOrigin` 里。
+     *
+     * 实测过的假红：`balancer@(2,-8)`（覆盖 (2,-8)(3,-8)）喂 `cutter@(3,-9)`，
+     * cutter 的输入 approach 是 `(3,-8)` = balancer 的第二格。
+     * 用 `byOrigin.get("3,-8")` 拿到 null ⇒ 判「没被喂」⇒ L2 假红。
+     *
+     * 所以凡是用**格**去查实体（而不是用 uid / origin），都必须走 `byCell`。
+     */
+    const byCell = new Map();
+    {
+        const fpOf = (e) => {
+            const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
+            if (s && s.footprint) return s.footprint;
+            if (e.type === "hub") return [4, 4];
+            return [1, 1];
+        };
+        for (const e of ent) {
+            /* origin 优先（与 byOrigin 一致：先写的不覆盖）；第二格及以后只在空位写入，
+               这样一个体素被两台机器的 footprint 覆盖时，origin 那台优先。 */
+            const [w, h] = fpOf(e);
+            for (let dy = 0; dy < h; dy++) {
+                for (let dx = 0; dx < w; dx++) {
+                    const k = K([e.x + dx, e.y + dy]);
+                    if (dx === 0 && dy === 0) { byCell.set(k, e); continue; }
+                    if (!byCell.has(k)) byCell.set(k, e);
+                }
+            }
+        }
+    }
     const byUid = new Map(ent.map(e => [e.uid, e]));
 
     // path 索引：末格 → boundAcceptor；首格 → path
@@ -490,7 +524,8 @@ export function checkSlots(plan, obs, items, opts = {}) {
      *   机对机直连（cutter 左槽 → trash）永远比不中 —— 实测就是这么假红的。
      */
     const obsFeeds = (approach, slotDir) => {
-        const e = byOrigin.get(K(approach));
+        /* 按 footprint 查（不是 byOrigin）：approach 可能落在 2×1 机器的第二格。 */
+        const e = byCell.get(K(approach));
         if (!e) return false;
         if (e.type === "belt") {
             const rv = typeof e.rotation_variant === "number" ? e.rotation_variant : (e.code - 1);
@@ -540,7 +575,8 @@ export function checkSlots(plan, obs, items, opts = {}) {
             for (const slot of s.outputs) {
                 const viaPath = !!paths && startAt.has(K(slot.cell));
                 const viaObs = (() => {
-                    const e = byOrigin.get(K(slot.cell));
+                    /* 同样是 footprint 查：喷口格可能落在下游 2×1 机器的第二格上。 */
+                    const e = byCell.get(K(slot.cell));
                     if (!e) return false;
                     if (e.type === "belt") {
                         // 带子的入口必须朝本机器：本槽 dir 的反方向
@@ -767,11 +803,36 @@ export async function checkBehavior(plan, reader, opts = {}) {
        slices 的 delivered 是窗口求和 —— 两者分开记，不混。 */
     const prodBefore = await reader.production({ slices: 2 });
     const goalBefore = await readGoalDelivered(reader);
+    const storedBefore = await readStoredShape(reader, shape);
+    const levelBefore = await readGoalLevel(reader);
+    const goalShapeBefore = await readGoalShape(reader);
 
     await reader.step(ticks);
 
     const prodAfter = await reader.production({ slices: 6 });
     const goalAfter = await readGoalDelivered(reader);
+    const storedAfter = await readStoredShape(reader, shape);
+    const levelAfter = await readGoalLevel(reader);
+    const goalShapeAfter = await readGoalShape(reader);
+
+    /* ★ 跨关：goal.requirement.delivered 会**归零** ★
+     *
+     * `getCurrentGoalDelivered()` 读的是**当前关卡**的交付量。一旦本次 step 跨过
+     * required，目标换成下一关，这个数就从 69 掉到 0 ⇒ `goalAfter - goalBefore = -69`。
+     *
+     * 于是实测出现过最恶劣的一种翻转：**这条线在「差一点成功」时判绿，
+     * 在「真的成功」的那一刻判红** —— 把唯一的成功信号读成了失败。
+     *
+     * 所以跨关时 `goal_delivered_delta` 记 **null**（「读到了但不可比」），
+     * 不是 0、也不是负数。下游 `readGoalDelta()` 会把它当 0，这是对的：
+     * 跨关本身不是「本轮新增交付」的证据。
+     *
+     * 真正的证据是 `stored_shapes[shape]`：hub 的**累计**计数，升级后不清零
+     * （实测：L4→L5 之后 `RuRu----` 仍是 71）。 */
+    const levelChanged = levelBefore !== null && levelAfter !== null && levelBefore !== levelAfter;
+    /* 目标形状本身变了也是跨关的同义词（level 读不到时的兜底） */
+    const shapeChanged = !!(goalShapeBefore && goalShapeAfter && goalShapeBefore !== goalShapeAfter);
+    const crossedLevel = levelChanged || shapeChanged;
 
     /* ① 同口径增量：逐片求和（每片都是 slice_seconds，窗口长度不同不影响） */
     const sliceSum = (slices, s) => (Array.isArray(slices) ? slices : [])
@@ -785,28 +846,67 @@ export async function checkBehavior(plan, reader, opts = {}) {
     const prodBeforeN = (prodBefore.produced_total && prodBefore.produced_total[shape]) || 0;
     const rate = prodAfter.delivered_per_sec ? (prodAfter.delivered_per_sec[shape] || 0) : null;
 
-    const goalDelta = (goalBefore !== null && goalAfter !== null) ? goalAfter - goalBefore : null;
+    const goalDelta = crossedLevel
+        ? null
+        : (goalBefore !== null && goalAfter !== null ? goalAfter - goalBefore : null);
+    /* stored 的增量：hub 累计计数，跨关不影响。两端都读到才算。 */
+    const storedDelta = (storedBefore !== null && storedAfter !== null)
+        ? storedAfter - storedBefore : null;
+
     const evidence = {
         shape, ticks,
+        /* 升级窗口：这是判「为什么 delta 是 null」的依据，必须露出来 */
+        level_before: levelBefore, level_after: levelAfter,
+        level_changed: crossedLevel,
+        ...(shapeChanged ? { goal_shape_changed: `${goalShapeBefore} → ${goalShapeAfter}` } : {}),
         produced_window_before: prodBeforeN, produced_window_after: prodAfterN,
         produced_window_secs_before: prodBefore.window_seconds, produced_window_secs_after: prodAfter.window_seconds,
         delivered_in_window_after: delAfter, delivered_in_window_before: delBefore,
+        target_stored_before: storedBefore, target_stored_after: storedAfter, target_stored_delta: storedDelta,
         goal_delivered_before: goalBefore, goal_delivered_after: goalAfter, goal_delivered_delta: goalDelta,
         rate_per_sec: rate, window_seconds: prodAfter.window_seconds,
         /* 明确写出「哪些数字不能相减」，免得读 evidence 的人再踩一次 */
-        caveat: "produced_*/delivered_in_window_* 是窗口求和，before/after 窗口长度不同，不可相减；增量只看 goal_delivered_delta",
+        caveat: "produced_*/delivered_in_window_* 是窗口求和，before/after 窗口长度不同，不可相减；"
+            + "goal_delivered_delta 在跨关时为 null（delivered 归零，不可比）；"
+            + "target_stored_* 是 hub 累计计数，跨关不影响，是**权威**的交付证据",
     };
 
-    /* ── 判据一：交付必须真的发生（不是"产出过"） ── */
-    const deliveredHappened = delAfter > 0 || (goalDelta !== null && goalDelta > 0);
+    /* ── 判据一：交付必须真的发生（不是"产出过"） ──
+     *
+     * 三条腿，任一成立即可（都是「货真的进了 hub」的证据）：
+     *   · goalDelta > 0       —— 未跨关时的权威增量
+     *   · storedDelta > 0     —— hub 累计量增长（**跨关时唯一可用的一条**）
+     *   · delAfter > 0         —— 窗口内确有交付（同口径逐片求和）
+     *
+     * 单靠 goalDelta 会在升级瞬间判红（见上面）。单靠 storedDelta 会在 hub
+     * 不返回 stored_shapes 时失去证据 —— 所以三条腿并存，互不替代。 */
+    const deliveredHappened = delAfter > 0
+        || (goalDelta !== null && goalDelta > 0)
+        || (storedDelta !== null && storedDelta > 0);
+    evidence.delivered_happened = deliveredHappened;
     if (!deliveredHappened) {
-        /* 区分三种"没交付"，因为修法完全不同 */
+        /* 区分几种"没交付"，因为修法完全不同。
+           顺序有讲究：**先报最具体、最能指导动作的那一种**。
+           「一件都没产出」比「读不到证据」更能说明问题（后者可能只是 reader 的局限，
+           前者直接告诉你线没跑起来）。 */
         const producedSomething = prodAfterN > 0;
-        const reason = !producedSomething && prodBeforeN <= 0
-            ? `跑完 ${ticks} tick 后 ${shape} 一件都没产出 —— 这条线在游戏里没跑起来`
-            : producedSomething
-                ? `${shape} 在产出（窗口内 ${prodAfterN} 件）但**一件都没交付**到 hub —— 货流没通到终点，或产物被丢弃`
-                : `${shape} 没有新产出，也没有新交付 —— 这条线处于停滞`;
+        const readNothing = storedBefore === null && storedAfter === null
+            && goalBefore === null && goalAfter === null;
+        let reason;
+        if (producedSomething) {
+            reason = `${shape} 在产出（窗口内 ${prodAfterN} 件）但**一件都没交付**到 hub —— 货流没通到终点，或产物被丢弃`;
+        } else if (!producedSomething && prodBeforeN <= 0) {
+            reason = `跑完 ${ticks} tick 后 ${shape} 一件都没产出 —— 这条线在游戏里没跑起来`;
+        } else if (crossedLevel && storedDelta === null) {
+            /* 跨关时 delivered 归零（不可比），而 hub 累计量又读不到 ⇒ 没有权威证据。
+               这一条必须单独说：否则读报告的人会以为是「产线没跑」。 */
+            reason = `关卡从 ${levelBefore} 变成 ${levelAfter}（delivered 归零，增量不可比），`
+                + `但读不到 hub.stored_shapes["${shape}"] —— 没有权威证据证明这 ${ticks} tick 交付了`;
+        } else if (readNothing) {
+            reason = `读不到 ${shape} 的交付证据 —— goal.delivered 与 hub.stored_shapes 都不可读，不能假设它涨了`;
+        } else {
+            reason = `${shape} 没有新产出，也没有新交付 —— 这条线处于停滞`;
+        }
         return { name: "L4-behavior", ok: false, reason, evidence };
     }
 
@@ -824,6 +924,44 @@ async function readGoalDelivered(reader) {
         const o = await reader.obs({ max_entities: 1, include_hub: true });
         const d = o && o.goal && o.goal.requirement && o.goal.requirement.delivered;
         return typeof d === "number" ? d : null;
+    } catch { return null; }
+}
+
+/**
+ * 读 hub 里某个形状的**累计**存量。
+ *
+ * 为什么需要它：`goal.requirement.delivered` 是**当前关卡**的计数，升级会归零。
+ * `hub.stored_shapes[shape]` 是 hub 的累计账本，升级**不清零**
+ * （实测：L4→L5 之后 `RuRu----` 仍是 71）。跨关时它是唯一可用的权威证据。
+ *
+ * 读不到返回 null —— 不猜（调用方据此判「没有证据」）。
+ */
+async function readStoredShape(reader, shape) {
+    if (!shape) return null;
+    try {
+        const o = await reader.obs({ max_entities: 1, include_hub: true });
+        const s = o && o.hub && o.hub.stored_shapes;
+        const v = s && s[shape];
+        return typeof v === "number" ? v : null;
+    } catch { return null; }
+}
+
+/** 读当前关卡号。读不到返回 null。 */
+async function readGoalLevel(reader) {
+    try {
+        const o = await reader.obs({ max_entities: 1, include_hub: true });
+        const l = o && o.goal && o.goal.level;
+        return typeof l === "number" ? l : null;
+    } catch { return null; }
+}
+
+/** 读当前关卡要求的形状。读不到返回 null。
+ *  跨关时它会变（L4 `RuRu----` → L5 `Cu----Cu`），是与 level 同义的跨关信号。 */
+async function readGoalShape(reader) {
+    try {
+        const o = await reader.obs({ max_entities: 1, include_hub: true });
+        const s = o && o.goal && o.goal.requirement && o.goal.requirement.shape;
+        return typeof s === "string" ? s : null;
     } catch { return null; }
 }
 

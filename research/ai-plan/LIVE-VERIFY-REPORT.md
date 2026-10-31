@@ -10,11 +10,11 @@
 ## 1. 一句话结论
 
 **「这个世界能不能出货」已经有实机证据：能。**
-**「loop 能不能自己建出那条线并拿到 success」没有证据，而且我复算发现它现在有
-三个各自独立、都能单独把 success 掐死的结构性堵点 —— 其中一个（验证器把一条真实能出货的产线判红）
-是这一轮之前没人知道的。**
+**「loop 能不能拿到 success」还没有证据 —— 但挡住它的三个结构性堵点都已修掉**
+**（其中一个「验证器把真实能出货的产线判红」是本轮新发现，此前没人知道）。**
 
-换句话说：本轮钉死的是**物理层**，不是**闭环**。这两件事之间还隔着一整条没跑过的写世界路径。
+换句话说：本轮钉死的是**物理层**，并且把**闭环**路上的结构性障碍清掉了。
+剩下没做的只有一件事：`tx` 这条写世界的路径从未在真桥执行过，`success` 分支从未被执行过。
 
 ---
 
@@ -235,18 +235,120 @@ trash 不挂在任何 path 上，所以它同样永远进不了 `reach()` 的 `s
 **不读 `V-obs-flow`**，所以它只是噪音，不影响结局 —— 但会在报告里制造一条假红，
 读报告的人容易把它当成第二个问题。
 
-### 4.3 堵点 C（红队预判已复现，本轮数据也证实）：升级瞬间 delta 变负
+### 4.3 堵点 C（已修）：升级瞬间 delta 变负
 
-`checkBehavior` 用 `goal.requirement.delivered` 的增量判交付，而升级会把 delivered 归零。
+`checkBehavior` 原来用 `goal.requirement.delivered` 的增量判交付，而升级会把 delivered 归零。
 
 本轮数据就是现成的例子：第 19 次读数 69，第 20 次（跨过 70 之后）**delivered 变成 0**，
 目标换成 `Cu----Cu` / 170。如果这一步发生在 loop 的 `step(2400)` 窗口里，
 `goal_delivered_delta` 会是 **−69**，`phaseTwoVerdict` 要求 `delta > 0` ⇒ **判不成功**。
 
 也就是说：**这条线在「差一点」时被判绿，在「真的成功」的那一刻被判红。**
-正确的判据应该是 `stored_shapes` 的键集合变化（`RuRu----` 出现并 ≥70），或者跨升级时冻结上一个目标。
 
-本轮阳性对照报告的「读数陷阱」讲的是同一件事，只是当时是从读数角度、不是从代码角度说的。
+#### 修法
+
+判据不再只看 `delivered` 的正负，改看 **`hub.stored_shapes[shape]` 的累计量**：
+
+- `goal.requirement.delivered` 是**当前关卡**的计数，升级会归零
+- `hub.stored_shapes[shape]` 是 hub 的**累计账本**，升级**不清零**
+  （实测：L4→L5 之后 `RuRu----` 仍是 71）
+
+`checkBehavior` 现在的三条腿（任一成立即判交付发生）：
+
+```
+deliveredHappened = delAfter > 0              // 窗口内确有交付（同口径逐片求和）
+                 || goalDelta > 0             // 未跨关时的权威增量
+                 || storedDelta > 0           // hub 累计量增长 ← 跨关时唯一可用
+```
+
+跨关时 `goal_delivered_delta` 记 **`null`**（「读到了但不可比」），不是 0、也不是负数。
+evidence 里新增 `level_before/level_after/level_changed` 与
+`target_stored_before/after/delta`，让「为什么 delta 是 null」可查。
+
+#### 连锁（这是最容易漏的一环）
+
+只改 `checkBehavior` 不够。整条判据链是三层：
+
+```
+checkBehavior → strictVerdict → phaseTwoVerdict
+```
+
+后两层原来都要求 `delta > 0`。若不改：
+
+- `strictVerdict` 里有一条「`goal_delivered_delta` 为 null ⇒ 红」，
+  跨关时会把 `checkBehavior` 的绿重新判成红
+- `loop.mjs` 的 `readGoalDelta` 把 null 当 0 ⇒ `phaseTwoVerdict` 的 `goalAdvanced` 为假
+
+三处都改了：
+
+| 文件 | 改动 |
+|---|---|
+| `verify_runtime.mjs` `checkBehavior` | 三条腿 + 跨关记 null + evidence 暴露 level/stored |
+| `loop/verify.mjs` `strictVerdict` | 跨关分支只认 `target_stored_delta`；区分「读不到」与「不可比」 |
+| `loop.mjs` `readGoalDelta` | 跨关取 `target_stored_delta`；delta 不可用时退回累计账本 |
+
+`src/agent/goal_levelup.test.mjs` 用 14 条测试锁死，含四组护栏：
+
+- 升级但 hub 累计量没涨 ⇒ **必须红**（修「跨关判红」不能变成「跨关一律放行」）
+- `stored` 读不到 ⇒ 红且 evidence 如实记 null
+- 未升级的正常路径 delta 仍是 51（不能回归）
+- 交付了错形状（目标 stored 不涨、废料在涨）⇒ 红（历史 L4 的形态）
+
+用实机阳性对照的真实数据回放（第 19→20 轮，69→71 跨关）：
+
+```
+strictVerdict.ok = true      []
+goalDelta = 2
+phaseTwoVerdict.achieved = true   level = live
+```
+
+修复前这里必红。
+
+### 4.3b 关于「堵点 D」：那条结论是错的，已撤回
+
+原报告写「`checkFlow.startAt` 是 `Map<cell, path>`，balancer 的两个输出槽会互相覆盖」。
+
+**这个结论不成立。** 我用的是手搓夹具，里面有两个 bug：
+
+1. balancer 是 2×1，我只按 origin 建 `byCell` —— 第二格没索引
+2. hub 是 4×4，我没把它放进 `byCell` —— `cutter → hub` 那条链走到 `(1,-2)` 就断了
+
+按正确的 footprint 索引重建后：`flows: 8  paths: 8  L3-flow ok = true  reached 8/8`。
+**全绿，没有堵点 D。**
+
+而且 balancer 的两个输出口是**两个不同的格**（`(2,-9)` 与 `(3,-9)`），
+`startAt` 按格索引不会互相覆盖。直接验证过。
+
+### 4.3c 但它暴露了一个真的 bug（已修）：`checkSlots` 的格查找只按 origin
+
+排查「堵点 D」的过程中发现 `checkSlots` 用 `byOrigin`（只按 `e.x, e.y`）去查**槽口格**：
+
+```js
+const obsFeeds = (approach, slotDir) => {
+    const e = byOrigin.get(K(approach));   // ← approach 可能是 2×1 机器的第二格
+    ...
+```
+
+实测的假红（确定复现）：
+
+```
+balancer@(2,-8)  占 (2,-8)(3,-8)          ← 2×1
+cutter@(3,-9)    输入 approach = (3,-8)   ← 落在 balancer 第二格
+byOrigin.get("3,-8") = null ⇒ 判「cutter 没被喂」⇒ L2 假红
+```
+
+而实际上 balancer 的 secondary 喷口 `(3,-9)` 正好喂着它。
+
+修法：`checkSlots` 新增 `byCell`（按 footprint 展开，hub 4×4、
+balancer/cutter/stacker/painter/mixer 2×1），输入侧与输出侧的格查找都改走它。
+`byOrigin` 仍保留给「查某台机器的本体」用（那里 origin 语义是对的）。
+
+`src/agent/slots_footprint.test.mjs` 用 5 条测试锁死，含两条反例
+（孤立 cutter 仍须判「没被喂」「没去处」——修 footprint 不能把假绿放进来）。
+
+**这是我这一轮第 5 次栽在同一类错误上**（L4/L5 夹具混用、手抄 `hubReachable`、
+`byCell` 用 origin 索引、以为 footprint 只对 hub 重要、把夹具 bug 当成堵点 D）。
+所以这次不只修代码，还把它钉成了测试。
 
 ### 4.4 还有一个不算 bug 但同样致命的事实：loop 调不到编译器
 
@@ -320,131 +422,42 @@ trash 不挂在任何 path 上，所以它同样永远进不了 `reach()` 的 `s
 
 ---
 
-## 7. 下一步（按顺序，不要跳）
+## 7. 下一步
 
-1. **先把堵点 B 修掉再谈 success。** 只修 A 是不够的：`L3` 会从 undecidable 变成确定红。
-   最小改法有两个方向，各有代价：
-   - 派生 flow 时把目的地下沉到「真正的终点实体」（机器/hub/trash），别停在带子上；
-   - 或者让 `checkFlow.reach()` 沿 belt 链继续走，就像 `obsReach` 那样。
-   前者更符合「flow 是货流」的语义，后者更省事但要小心别把死端也走成绿。
-   **无论选哪个，都要拿本轮那份 44 实体方案当回归夹具** —— 它是目前唯一已知「真的能出货」的样本。
-   另外别忘了 trash 端点：`flow.to = trash` 也不能是「走不到」，它是货流的**终点**而非中转。
-2. **修堵点 C**：判据改成看 `stored_shapes` 的键集合变化（`RuRu----` 出现），
-   或者在升级窗口内冻结上一个目标。否则成功了也会被判失败。
-3. **提交 A 的修复**，并在真桥上验一次 `observe`（只读即可）：
-   确认 `debug_items` 不再抛 2001、`paths` 非空、`L3` 不再是 undecidable。
-4. **然后才跑 loop**，且按这个顺序：`--dry-run`（真桥只读）→ 单次 `tx` → 完整闭环。
-   跑之前用 `loop-live.mjs`（它才接得上代理），别用裸 `--llm`。
-5. **决定一个策略问题**：目标是「让 loop 在冷启动世界上从零建线」，还是「让 loop 在既有世界上做增量改造」？
-   这两件事的动作空间完全不同（前者要拼 miner+带子+cutter，后者是 6 个宏的主场），
-   而目前 loop 的设计明显是为后者写的。不先把这件事定下来，后面的验证会一直跑在错的靶子上。
+### 已完成（2026-10-31）
 
----
+| 堵点 | 状态 | 证据 |
+|---|---|---|
+| A `debug_items` 缺 region | **已修** `0ee1c88` | 真桥实测：`{}` 抛 2001，带 region 正常返回；真 loop 的 `observe` 已 `problems: []` |
+| B flow 终点停在带子上 | **已修** `0ee1c88` | 44 实体真出货方案：`reached` 0/8 → 8/8 |
+| C 升级瞬间 delta 变负 | **已修** | 三层判据全改；实机数据回放 `achieved: true` |
+| D（`checkFlow` balancer 冲突） | **撤回，不存在** | 是我的夹具 bug；正确 footprint 索引下 8/8 全绿 |
+| 新：`checkSlots` 格查找只按 origin | **已修** | balancer 第二格喂 cutter 曾被判「没被喂」；已加 5 条回归测试 |
 
-## 8. 诚实边界（这一节请不要跳过）
+### 还没做
 
-1. **阳性对照只测了一个方案、一个锚点。** 换落点、换拓扑、加第二台 cutter，结论都可能变。
-2. **速率那条我更正了原判断，但更正本身的置信度来自「tick 是游戏秒」这一点。**
-   `obs.tick` 读的是 `root.time.now()`，我用两个独立读数（32168.416 → 32270.375）
-   算出的 101.96 秒与 20 次 × 600 tick 的请求数对得上（约 118 tick/秒），
-   但这仍是离线复算，没有在真桥上调一次 `dynamicTickrate` 直接确认。
-3. **`deriveFlows` 的主路径确实产出 `via:"adjacent"` 的带子端点。** 我用**实机验证过的那份 44 实体几何**
-   构造 placements，`deriveFlows` 派生出的 8 条 flow 全部是 `to = 第一格新带子`。
-   但 `items`（游戏自己的 path 列表）是我合成的 —— 机制（`reach()` 只收 path 接收方）
-   是读代码确认的，不受构造影响；「真桥上 path 到底长什么样」我没看过。
-   如果真桥的 path 恰好以带子作为 `boundAcceptor`（不可能，但没实测），结论会变。
-4. **堵点 C 没有在真桥上跑过。** 它基于红队代码复现 + 本轮实测到「升级瞬间 delivered 归零」，
-   两者合起来指向同一个结论，但不是同一次运行里观察到的。
-5. **`success` 分支是未验证的代码。** 从来没有任何一次运行走到过它。
-6. **A 的修复只证明了「离线测试能抓住缺 region」**，没证明真桥上 `debugItemsRegion` 算出来的 bbox
-   在真实世界（尤其是带 camera/超大世界）上是合理的。它的兜底是 `[0,0,0,0]`，
-   在那个退化情形下 `paths` 仍是全局的、不受影响，但 `belts/ejectors` 明细会是空的。
+1. **在真桥上跑一次完整的 `tx` 闭环。**
+   目前只跑过 `--dry-run`（到 plan 为止）。`tx` 这条写世界的路径**从未在真桥执行过**，
+   `success` 分支也**从未被执行过**。这是下一轮的核心。
+   顺序：`--dry-run`（已验证可行）→ 单次 `tx`（小额）→ 完整闭环。
+   跑之前用 `research/ai-plan/live/loop-live.mjs`（它才接得上代理），别用裸 `--llm`。
+
+2. **决定一个策略问题（不定下来，后面全是错的靶子）。**
+   - 目标是「让 loop 在**冷启动**世界上从零建线」？
+   - 还是「让 loop 在**既有工厂**上做增量改造」？
+
+   这两件事的动作空间完全不同：前者要拼 `miner + 带子 + cutter`（多轮、多次调用），
+   后者是那 6 个增量宏的主场。而 loop 现在的设计（`prompt.mjs` 的示例、`MACRO_FNS` 的构成）
+   明显是为**后者**写的。
+
+   本轮真 loop 跑了一次冷启动，结果是 `MACRO_REFUSED: not_a_run` ——
+   模型把 hub 当成要替换的带子区。**这不是模型笨，是世界里没有可引用的空 region。**
+   在只有 1 个实体的世界上，`buildHandles` 只能给出 `H1`（hub），
+   而所有「放东西」的宏都要一个空 region。
+
+3. **`--tunnels` 的等级门控**：L4 上隧道未解锁（`levels.js` 三套关卡表都是 L5 才给 `reward_tunnel`），
+   而编译器不知道这件事（`MIN_LEVEL_FOR_MACHINE` 没有 tunnel 项，
+   `plan.scope.tunnels` 恒 false）。实测 `--level 1 --tunnels --enforce-unlocks` 仍 `ok:true`。
+   这不是 loop 的问题，是编译器的一个独立缺陷。
 
 ---
-
-## 9. 证据索引（可复跑）
-
-| 想核什么 | 去哪看 / 跑什么 |
-|---|---|
-| 阳性对照全流程与审计 | `.tmpverify/live2/FINAL-RESULT.md`、`s5-positive-control.json`、`s7b-continue.json`、`s8-restore-and-audit.json` |
-| 预注册判据（写世界之前） | `.tmpverify/live/L4-POSITIVE-CONTROL-PREREG.md` |
-| 历史蓝图极性（解码真 `.szbp`） | `node .tmpverify/live/reproduce-all.mjs`（全离线，一条跑完） |
-| 本轮编译器方案可复现 | `node src/ai/compiler/cli.mjs --goal "RuRu----" --seed 60908 --hub "-2,-2" --level 4 --miners 3 --json` |
-| 堵点 A 的复现与回归 | `node --test src/agent/loop_region.test.mjs` |
-| **堵点 B：真能出货的产线被判红** | `node .tmpverify/report_check_real2.mjs` |
-| 堵点 B 的机制孤立实验 | `node .tmpverify/report_check_mech.mjs` |
-| 堵点 B 对 trash 端点也成立 | `node .tmpverify/report_check_alt.mjs` |
-| 护栏 | `node research/ai-plan/live/guard.mjs --selftest`（71/71）、`node --test research/ai-plan/live/guard.test.mjs`（31/31） |
-| 离线 L4 为什么失败（诊断层） | `.tmpverify/live/P2-REPORT.md`、`P3-REPORT.md` |
-| 红队预判清单（22 条） | `.tmpverify/live/P4a-REPORT.md` |
-
----
-
-## 10. 补充：修复后第一次真 loop × 真桥 × 真 LLM（2026-10-31 11:53）
-
-修掉堵点 A 与堵点 B 之后，跑了一次**真闭环**（`--dry-run`，零写入）：
-
-```bash
-node research/ai-plan/live/loop-live.mjs --goal "RuRu----" --reader bridge --dry-run \
-  --base-url http://ddns2.keniis.top:3000 --model virtual/opus \
-  --api-key <proxy key> --max-rounds 1
-```
-
-### 结果
-
-```
-outcome=halt reason=BUDGET_ROUNDS level=none
-rounds=1 llm_calls=1 tx_count=0
-```
-
-`BUDGET_ROUNDS` 是因为我给了 `--max-rounds 1`，第 2 轮预算就耗尽——**这是我自己设的上限，
-不是失败**。
-
-### transcript 逐条（这是本轮第一次看到完整的真闭环）
-
-| 事件 | 关键字段 |
-|---|---|
-| `observe` | `entity_count:1`, `paths:0`, **`problems: []`** ← ★ |
-| `diagnose` | 3 条：`PROCESSOR_REQUIRED`（`need:1 cutter, have:0`）、`NO_PRODUCTION`、`RAW_MATERIAL_MISSING` |
-| `recipe` | `{ok:true, steps:2, level:4}` |
-| `propose` | `usage {in:2234, out:2061}`，真 LLM 产出了计划（含 `say` 与 `calls`） |
-| `plan` | **`ok:false`, `MACRO_REFUSED`, `not_a_run`** |
-| `run_end` | `outcome:halt`, `world_state:"untouched"` |
-
-### 三个必须记下的点
-
-**① `problems: []` —— 堵点 A 的修复在真 loop 上确认生效。**
-之前 `observe` 会带 `ITEMS_UNAVAILABLE`，现在没有。`items-last.json` 里 `paths: 0`
-是**世界的真实状态**（这个世界只有 hub），不是读取失败。
-
-**② 诊断层在真世界上工作正常。**
-`PROCESSOR_REQUIRED` 明确说「配方要 1 台 cutter，世界有 0 台」，
-还给了 `candidates: ["insert_machine","connect"]`。这正是诊断层设计的目的。
-
-**③ 失败是 `MACRO_REFUSED: not_a_run`，不是结构性死锁。**
-模型把 `$path_of: ["H1"]`（H1 = hub 的句柄）当成 `replace_run` 的 region，
-而 `replace_run` 只替换带子、碰到机器就整单拒绝。宏的 hint 写得很清楚：
-
-> 「第一台：[-2,-2] 是 hub uid=10000；本宏的 footprint 会把整台机器算进去，
-> 所以只要碰到一角就拒。要动机器请用 removes[] + tx；本宏只替换带子，永不删机器。」
-
-**这是一个可归因的、模型层面的动作选择错误**——不是验证器、不是桥接、不是世界。
-而且它**证明闭环真的跑起来了**：observe → diagnose → prompt → LLM → plan → 宏校验 → 拒绝 → 决定继续。
-
-### 它同时暴露了一件重要的事
-
-**loop 在「只有 hub 的空世界」上没有可用的动作。**
-世界只有 1 个实体，`buildHandles` 只能给出 `H1`（hub）。
-模型想建线，唯一能引用的坐标就是 hub 自己，而所有「放东西」的宏都要一个**空 region**。
-所以模型唯一的选择是 `replace_run(hub)` —— 必然被拒。
-
-⇒ **冷启动 + loop 当前宏集 = 结构性无解**，与建模能力无关。
-这与 `LIVE-VERIFY-BRIEF.md` 里规划 agent 的预判一致：
-「冷启动不能直接对着 1 实体的世界跑 loop，必须先铺一份 scaffold。」
-
-### 结论修正
-
-本轮**不能**得出「loop 建不出线」的结论，因为**没给它一个可行的起点**。
-要回答那个问题，必须先决定：
-- 用一个「已有部分产线」的世界（loop 做增量改造），或
-- 先铺 scaffold 再让 loop 接手
