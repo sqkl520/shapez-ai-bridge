@@ -53,6 +53,13 @@ import { templateByBuildingVariant, worldSlots } from "../../ai/op-templates.mjs
 /* 出口方向：与 handles.mjs / verify_runtime.mjs 同一套约定（rv0=top / rv1=left / rv2=right，
    再按 r 旋转）。自己写一份 EXIT_BASE 就是第三份真值 —— 这个仓库已因两份真值出过事故。 */
 import { DIRV, beltExit } from "../../ai/belt-rules.mjs";
+/* 产能分析：**复用 `assess.mjs`，不在这里重算**。
+   为什么必须复用：供给/处理/利用率的算法要跟 `rules.mjs` 的源码核证值绑在一起，
+   在 prompt 层再写一遍同样的除法就是第二份真值 —— 这个仓库已经因两份真值出过事故
+   （见 `modelsForOneBelt` / `UPGRADES` 的注释）。
+   为什么**不会**循环依赖：`assess.mjs` 只 import `rules.mjs`，而 `rules.mjs` 只 import
+   node 内置模块。`prompt.mjs` 单向依赖它们，没有回路（测试里也钉住了这一条）。 */
+import { capacityFor } from "../assess.mjs";
 
 /* ══════════════════════════ 0. 常量 ══════════════════════════ */
 
@@ -79,6 +86,8 @@ export const PROMPT_RULES = Object.freeze({
     STATE_BELTS_MAX: BUDGET.PROMPT_STATE_BELTS_MAX,
     /** S3 机器表上限（不是契约硬数，是 900 tok 预算的工程上限） */
     MACHINES_MAX: 20,
+    /** 诊断点名带子的保底名额（见 pickBelts 的取舍规则；实测值 2，不是随手取的整） */
+    STATE_BELTS_DIAG_RESERVE: 2,
     /** `say` 的字符上限（LLM_NARRATION，V2 §4 裁决保留） */
     SAY_MAX: 280,
 });
@@ -181,6 +190,53 @@ const SYSTEM_PROMPT = [
     '     {"$bbox_of":["B7","B8"]}       a set of handles -> the smallest box covering them',
     '     {"$path_of":["B7","B8"]}       a set of handles -> EXACTLY the cells of those entities',
     "   Any other $-operator (offset, expand, arithmetic) is rejected. Handles must come from THIS prompt.",
+    "6. Argument names must be copied verbatim from the macro card. Unknown or misspelled arguments",
+    "   (e.g. source instead of from) are rejected and waste a round.",
+    "7. A multi-CELL machine is addressed by ONE cell (use asCell) or by the handle of an existing",
+    "   entity; the macro derives the footprint and the rotation. Never try to derive them yourself.",
+    "8. Do not invent handles. If a thing you need has no handle, say so in `say` and pick a macro",
+    "   that works with what IS listed.",
+    "9. Prefer the smallest set of calls that can plausibly fix the top diagnosis. Explanations",
+    "   belong in `say`/`why` and must not contain numbers that look like positions.",
+    "",
+    /* ★ 第 10 条：改造既有带子（2026-10-28 真 LLM 实验的直接产物）★
+     *
+     * 实测 5 次冷启动，模型**从不**删东西 —— 它一致地选 insert_machine
+     * （"在旁边加一台机器"），5/5 次都没想到可以把一段既有带子就地改造成机器。
+     * 而正解恰好是 replace_run：删三条带子在原地放 cutter+trash。
+     *
+     * 原因不是模型笨，是 prompt 里没有任何一句话说"改造既有产线"是允许且常见的。
+     * insert_machine 与 replace_run 在候选卡片里并列，模型没有理由优先后者。
+     */
+    "10. Most real tasks are MODIFICATIONS of an existing factory, not greenfield builds.",
+    "    Replacing a run of belts in place with a machine (replace_run) is the normal move;",
+    "    inserting a machine NEXT TO the existing run usually leaves the old run dead and is",
+    "    rarely what you want. If a diagnosis says a run delivers nothing, prefer converting",
+    "    that run over adding a parallel one. remove_run is also legitimate: sometimes the fix",
+    "    is to delete belts that lead nowhere.",
+    /* ★ 10 的第二段：诊断说「没地方放」时怎么办（规则与诊断的矛盾）★
+     *
+     * 规则 10 的主调是「优先就地改造」，而诊断可能同时说
+     * `(a cutter fits at 0 place(s) on the goal corridor)` —— 一条命令一个禁止。
+     * 模型夹在中间时最省事的做法是**再试一次 replace_run**，而同一指纹下的
+     * 第 2 次必须换动作（`lastExecutedMacros` 会被剔除出候选）、第 3 次直接 halt
+     * （`BUDGET.SAME_FINGERPRINT_MAX = 2`，见 `loop.mjs:countFingerprint`）。
+     * 所以「没地方放」的正确出路必须写出来，否则「优先改造」这条主调会把人推进死循环。
+     *
+     * ★ 措辞纪律：上面 6 行**逐字节保持改前原样**，本段只追加在后面 ★
+     *   主调仍是「就地改造是常态」，例外**只由诊断触发**（模型看不到几何，
+     *   它没有能力自己判断「没地方放」）。prompt_rules.test.mjs 的 B' 断言
+     *   「新规则 10 以旧规则 10 全文为前缀」—— 追加而不是改写，丢字在测试里会红。
+     *
+     * ★ 长度纪律：S1 每多一个字符都吃掉 S3 的带子名额（总预算 12000 是硬的）★
+     *   第一版这段写了 9 句，把 l4-coldstart 第 2 轮的 prompt 顶到 12030
+     *   → PROMPT_OVER_BUDGET → `INTERNAL` halt（`loop.test.mjs` §11 立刻红）。
+     *   压成 4 句后留出余量。再加句子之前先跑 loop.test.mjs §11 —— 它是这条预算的探针。 */
+    "    EXCEPTION - if the diagnosis says the machine \"fits at 0 place(s)\" (no site on that",
+    "    corridor), in-place conversion is IMPOSSIBLE: do not repeat replace_run on it.",
+    "    Instead remove_run that run and build a fresh one, or fix what blocks it first.",
+    "    Repeating it cannot work: the 2nd time you must change the action, the 3rd halts.",
+    "",
     /* ★ 第 11 条：`$bbox_of` vs `$path_of`（第三轮真 LLM 实验的直接产物）★
      *
      * 实测：模型把一段链的 7 个句柄交给 `$bbox_of`，得到的矩形顺带框进了它没指名的格子，
@@ -217,30 +273,6 @@ const SYSTEM_PROMPT = [
     "    If you are unsure how many runs feed the same place, make ONE call with every handle you",
     "    consider relevant; the macro rejects a region that cannot hold the machine instead of",
     "    silently placing it somewhere else.",
-    "6. Argument names must be copied verbatim from the macro card. Unknown or misspelled arguments",
-    "   (e.g. source instead of from) are rejected and waste a round.",
-    "7. A multi-CELL machine is addressed by ONE cell (use asCell) or by the handle of an existing",
-    "   entity; the macro derives the footprint and the rotation. Never try to derive them yourself.",
-    "8. Do not invent handles. If a thing you need has no handle, say so in `say` and pick a macro",
-    "   that works with what IS listed.",
-    "9. Prefer the smallest set of calls that can plausibly fix the top diagnosis. Explanations",
-    "   belong in `say`/`why` and must not contain numbers that look like positions.",
-    "",
-    /* ★ 第 10 条：改造既有带子（2026-10-28 真 LLM 实验的直接产物）★
-     *
-     * 实测 5 次冷启动，模型**从不**删东西 —— 它一致地选 insert_machine
-     * （"在旁边加一台机器"），5/5 次都没想到可以把一段既有带子就地改造成机器。
-     * 而正解恰好是 replace_run：删三条带子在原地放 cutter+trash。
-     *
-     * 原因不是模型笨，是 prompt 里没有任何一句话说"改造既有产线"是允许且常见的。
-     * insert_machine 与 replace_run 在候选卡片里并列，模型没有理由优先后者。
-     */
-    "10. Most real tasks are MODIFICATIONS of an existing factory, not greenfield builds.",
-    "    Replacing a run of belts in place with a machine (replace_run) is the normal move;",
-    "    inserting a machine NEXT TO the existing run usually leaves the old run dead and is",
-    "    rarely what you want. If a diagnosis says a run delivers nothing, prefer converting",
-    "    that run over adding a parallel one. remove_run is also legitimate: sometimes the fix",
-    "    is to delete belts that lead nowhere.",
 ].join("\n");
 
 /* ══════════════════════════ 3. S2：宏卡片 ══════════════════════════ */
@@ -601,10 +633,35 @@ function pickBelts(tbl, diagnoses, goalShape, obs) {
      *
      * 所以走廊优先。诊断点名的带子只要不带出走廊，仍然会被 push 进来（第二顺位）。
      */
-    for (const h of byGoal) push(h);
-    for (const h of referenced) push(h);
-    for (const e of all) push(e.handle);                  // 最后才用表顺序兜底
-    return { ordered: chosen, referenced, byGoal, padded: chosen.filter(h => !referenced.includes(h) && !byGoal.includes(h)), total: all.length };
+    /* ★ 名额分配：走廊保底 (cap - reserve) + 诊断点名保底 reserve ★
+     *
+     * 老 bug（2026-10-30）：referenced 排在 byGoal 之前 ⇒ 8 条诊断把正解三条 3/3 挤到 1/3。
+     * 反向 bug（2026-11-01，本次修的）：byGoal 一次就填满 cap（L4 走廊组正好 12 条）
+     *   ⇒ 诊断点名的带子永远排在 cap 之外，出现过 `DEAD_END: B34` 而 BELTS 段里没有 B34、
+     *   表头却写「2 referenced by diagnosis」。
+     *
+     * 取舍规则（referenced + byGoal > cap 时）：
+     *   ① 给 referenced 留 reserve = min(referenced.length, STATE_BELTS_DIAG_RESERVE, cap) 个；
+     *   ② byGoal 按原顺序吃剩下的 cap - reserve 个（切掉的永远是尾巴 = 最弱的那些分量）；
+     *   ③ 还有空位才轮到 referenced 的溢出部分，再是表顺序兜底；
+     *   ④ referenced 比 reserve 少时，多出来的名额自动还给走廊。
+     *
+     * reserve = 2 是**实测值**：L4 走廊组恰好 12 条，正解三条 B69(序1)/B81(序2)/B82(序9)。
+     * reserve=3 ⇒ byGoal 只 9 个名额 ⇒ B82 掉出、B81/B82 并排段被拆散（3/3 → 2/3，
+     * 正是 2026-10-30 那次回归的形态）。reserve=2 ⇒ 10 个名额 ⇒ B82 仍在。
+     * 改这个数之前先跑 prompt_belt_visibility.test.mjs 的回归 E。 */
+    const reserve = Math.min(referenced.length, PROMPT_RULES.STATE_BELTS_DIAG_RESERVE, cap);
+    const goalSlots = Math.max(0, cap - reserve);
+
+    for (const h of byGoal.slice(0, goalSlots)) push(h);   // ① 走廊保底
+    for (const h of referenced) push(h);                   // ② 诊断点名保底
+    for (const h of byGoal.slice(goalSlots)) push(h);      // ③ 走廊的尾巴（有空位才进）
+    for (const e of all) push(e.handle);                   // ④ 表顺序兜底
+    return {
+        ordered: chosen, referenced, byGoal, reserve,
+        padded: chosen.filter(h => !referenced.includes(h) && !byGoal.includes(h)),
+        total: all.length,
+    };
 }
 
 /**
@@ -993,7 +1050,23 @@ function connectedComponents(belts, posOf, exitOf) {
 
 function renderBelts(tbl, selection, shownCount, omittedByBudget) {
     const shown = selection.ordered.slice(0, shownCount);
-    const lines = [`## BELTS (${shown.length} of ${selection.total}; ${selection.referenced.length} referenced by diagnosis)`];
+    /* ★ 表头数字必须是**实际渲染出来**的，不是候选池的大小 ★
+     *
+     * 老版本写 `${selection.referenced.length} referenced by diagnosis` —— 那是
+     * 「诊断点名了几条」而不是「这几条里显示了几条」。实测出过
+     * `## BELTS (12 of 34; 2 referenced by diagnosis)` 而正文里**一条诊断点名的带子
+     * 都没有**（B34 被 byGoal 挤掉了）：表头在对模型撒谎，模型据此以为
+     * u8bcau65adu63d0u5230u7684u5e26u5b50u6211u90fdu770bu89c1u4e86，于是去找一个根本不在表里的句柄。
+     *
+     * 现在按**实际渲染的 shown** 统计点名的条数，并且压掉一部分时给出
+     * `of N ... shown` 的下半句 —— 同样说实话。 */
+    const shownSet = new Set(shown);
+    const refTotal = (selection.referenced || []).length;
+    const refShown = (selection.referenced || []).filter(h => shownSet.has(h)).length;
+    const refBit = refShown === refTotal
+        ? `${refShown} referenced by diagnosis`
+        : `${refShown} of ${refTotal} referenced by diagnosis shown`;
+    const lines = [`## BELTS (${shown.length} of ${selection.total}; ${refBit})`];
     if (!shown.length) lines.push("(none shown)");
 
     /* ★ 标出「这条链到不了 hub」（2026-10-29 第十轮的直接产物）★
@@ -1024,10 +1097,33 @@ function renderBelts(tbl, selection, shownCount, omittedByBudget) {
     return lines.join("\n");
 }
 
-function renderProduction(obs) {
-    const p = obs && obs.production;
-    if (!p || typeof p !== "object") {
-        return "## PRODUCTION\nunavailable (obs.production absent) — decide from the diagnosis, do not assume anything is running";
+/**
+ * S3 的 PRODUCTION 段。
+ *
+ * ## 参数为什么是 `production` 而不是 `obs`（2026-10 实测修的一处硬伤）
+ *
+ * 旧实现读 `obs.production`，但 `loop.mjs` 传进来的是 `ob.obs` —— 而
+ * `observeOnce()` 把 production 读成**与 `ob.obs` 并列的第三个字段**（`ob.production`），
+ * 从来没有塞进 `ob.obs`。于是每一轮、每个存档，模型都只看见同一句
+ * `unavailable (obs.production absent)`，**永远不知道产线产不产、多快**。
+ *
+ * 旧测试没抓到，是因为它手工把 production 拼进 obs（`{...L5, production: {...}}`）——
+ * 那正是 loop 不做的事：单模块测试自己造了个调用方不提供的形状，于是恒绿。
+ *
+ * 裁决：production 走**显式参数**，不再从 obs 里摸。理由不是洁癖：
+ *   · `obs` 是「游戏返回的原文」，`worldUidSetHash(obs)` / 落盘的 `obs-last.json` 都按这个
+ *     语义用它；往里塞私货会让「同一份世界」在两处不再是同一个对象；
+ *   · 读显式参数时，「调用方忘了传」会以**可见的 unavailable** 暴露出来；
+ *     而读 `obs.production` 时，忘了传与真的没数据长得一模一样 —— 这个 bug 就是这么活了两周的。
+ *
+ * @param {object|null} production `reader.production()` 的返回（形态见 mod 的
+ *   `observeProduction`：window_seconds / produced_total / produced_per_sec /
+ *   delivered_* / stored_delta / *_slices），或 null（没读到）。
+ */
+function renderProduction(production) {
+    const p = production;
+    if (!p || typeof p !== "object" || Array.isArray(p)) {
+        return "## PRODUCTION\nunavailable (production not read) — decide from the diagnosis, do not assume anything is running";
     }
     const lines = ["## PRODUCTION"];
     let n = 0;
@@ -1037,7 +1133,15 @@ function renderProduction(obs) {
     for (const [k, v] of totals.slice(0, 4)) push(`produced ${sanitize(k).text}`, v);
     const rates = p.delivered_per_sec && typeof p.delivered_per_sec === "object" ? Object.entries(p.delivered_per_sec) : [];
     for (const [k, v] of rates.slice(0, 4)) push(`rate ${sanitize(k).text}`, v);
-    if (n === 0) lines.push(compact(p, 200));
+    if (n === 0) {
+        /* 一个字段都认不出来。两种情况必须分开说，否则模型会把「没读到」读成「产出 0」：
+         *   · `{}`（或只有空表）—— 读到了响应，但里面什么都没有；
+         *   · 其它形态 —— 协议变了吗？原样贴 200 字，让下一个人有东西可查。 */
+        const json = compact(p, 200);
+        lines.push(json === "{}"
+            ? "no data (production returned an empty object) — throughput is UNKNOWN, not zero; check the diagnosis"
+            : json);
+    }
     return lines.join("\n");
 }
 
@@ -1060,6 +1164,154 @@ function renderBudget(budget) {
     if (b) for (const k of keys) if (num(b[k]) !== null) bits.push(`${k} ${b[k]}`);
     return "## BUDGET\n" + (bits.length ? bits.join(" | ") : "not provided (assume a single attempt)");
 }
+
+/* ══════════════════════════ 6b. CAPACITY（产能瓶颈） ══════════════════════════ */
+
+/**
+ * S3 的 CAPACITY 段：**现在瓶颈在哪，加机器和升级哪个划算**。
+ *
+ * ## 为什么需要它（这是本段的唯一理由）
+ *
+ * 用户的反馈原话：「建的很丑陋也没有调理的绕远路，**明明有可以快捷提高产能的方法却没有用**」。
+ *
+ * 实测的 L4 存档（`belt:1 miner:1 processors:0`、3 台矿机、1 台 cutter）：
+ *
+ *   供给 3 × 0.60 = 1.80/s     处理 1 × 0.50 = 0.50/s     ⇒ **利用率 28%**
+ *
+ * 72% 的矿机产出堵在那一台 cutter 前面。而在加这一段之前，prompt 里
+ * 关于"产能"的全部信息只有 MACHINES 段的一串句柄 + PRODUCTION 段的历史速率 ——
+ * **没有任何一句说「你现在卡在哪、加什么最划算」**。模型能从 MACHINES 数出
+ * `1 台 cutter`，但它没有依据判断这个 1 是够的还是不够的。
+ *
+ * ## 设计取向（三条，都是被预算逼出来的）
+ *
+ * 1. **只在有话说时才出现**。没有产线、数据不可信、或者供给与处理已经平衡（≥90%）
+ *    并且没有可负担的升级 ⇒ 返回 `null`，整段消失。原因：prompt 在
+ *    `tokensMax=2800` 下实测只有 ~500–750 字符余量（L4 4 条诊断时 9484/9800），
+ *    一段常驻的空白说明会把它推进截断区。
+ * 2. **短**。目标 ≤ 6 行 / ~420 字符。用 `##` 段头 + 竖线分隔，不写完整句子。
+ * 3. **数字全部来自 `assess.mjs`，本函数不重算**。重算就是第二份真值。
+ *
+ * ## 预算保护（这是本段最容易出事的地方）
+ *
+ * 它**不是**可截断段 —— 截断契约只允许砍 BELTS。所以两种形态都由调用方**显式挑**：
+ *
+ *   · `form:"full"`  完整 3–5 行（指标 + 瓶颈 + 两条路）；
+ *   · `form:"short"` 只留 2 行（指标 + 瓶颈 + 一句可执行动作）。
+ *
+ * **不在这里偷偷按 room 裁行**（一版这么写过，结果是「渲染器自己降级了，调用方
+ * 却以为给的是 full」—— `capacity_downgraded` 永远不置位，测试也拿不到真实形态）。
+ * `room` 仍然接受，但只用来做**整体取舍**：放不下就返回 null，让调用方去试下一档。
+ *
+ * @param {object|null} capacity `assess().capacity`（`capacityOf` 的点）
+ * @param {object|null} options  `assess().options`（`capacityOptions` 的点）
+ * @param {object} [opts]        `{room?:number, form?:"full"|"short"}`
+ * @returns {string|null} 片段（不含前后的空行），或 null = 不渲染 / 放不下
+ */
+export function renderCapacity(capacity, options = null, opts = {}) {
+    const cap = capacity;
+    if (!cap || typeof cap !== "object") return null;
+    /* 数据不可信时不渲染 —— 「不知道」比「猜一个」好。理由写在 capacityOf 的 confidence 注释里。 */
+    if (cap.confidence !== "ok") return null;
+
+    const supply = num(cap.supplyPerSec);
+    const processCap = cap.process && num(cap.process.capacityPerSec);
+    const util = num(cap.utilization);
+    const bottleneck = cap.bottleneck;
+
+    /* ── 什么时候**不**说 ──
+     *  · 没有产线（supply=0 且 process=null）⇒ 无可评估
+     *  · 处理能力缺（null）：那是「没有加工机器」这个**真问题**，
+     *    交给 DIAGNOSIS 的 PROCESSOR_REQUIRED，不在这里重复占预算。 */
+    if (!(supply > 0) && processCap === null) return null;
+    if (processCap === null) return null;
+
+    const room = num(opts.room);
+    const form = opts.form === "short" ? "short" : "full";
+
+    /* ── 平衡时不硬报问题（测试「正例 B」）──
+     * utilization ≥ 0.9 且没有能立刻买的升级 ⇒ 说一句「不是瓶颈」就够，
+     * 一行，不再展开两条路。 */
+    const affordable = (options && Array.isArray(options.doNow))
+        ? options.doNow.filter(a => a && a.action === "buy-upgrade") : [];
+    const balanced = util !== null && util >= 0.9;
+    if (balanced && !affordable.length) {
+        return "## CAPACITY\n"
+            + `balanced: supply ${fmt(supply)}/s vs processing ${fmt(processCap)}/s`
+            + `${upper(util)} — no capacity bottleneck. Do not add machines for throughput.`;
+    }
+
+    const lines = ["## CAPACITY"];
+    const parts = [];
+    parts.push(`supply ${fmt(supply)}/s`);
+    parts.push(`processing ${fmt(processCap)}/s`);
+    if (util !== null) parts.push(`${upper(util)} utilized`);
+    lines.push(parts.join(" | "));
+
+    if (bottleneck === "process" && cap.bottleneckMachine) {
+        const pct = util !== null ? Math.round((1 - util) * 100) : null;
+        lines.push(`bottleneck: ${cap.bottleneckMachine}`
+            + (pct !== null ? ` — ${pct}% of supply is stuck here` : ""));
+    } else if (bottleneck === "supply") {
+        lines.push("bottleneck: miners (processing has spare capacity)");
+    }
+
+    const add = options && options.addMachines;
+    const up = options && options.upgrade;
+
+    if (form === "short") {
+        /* 短版：只留**一条**最该做的动作。优先「现在就买得起」的升级（零占格、全局生效），
+           否则才说加机器。 */
+        const buyNow = affordable[0];
+        if (buyNow) {
+            lines.push(`act: buy ${buyNow.line} T${buyNow.tier} ⇒ ${fmt(buyNow.capacityAfter)}/s`);
+        } else if (add && add.add > 0) {
+            lines.push(`act: add ${add.add} ${add.kind} ⇒ ${fmt(add.capacityAfter)}/s`);
+        }
+    } else {
+        /* 两条路：加机器 / 升升级（都可执行时才写） */
+        const roads = [];
+        if (add && add.add > 0) {
+            roads.push(`add ${add.add} ${add.kind} (${add.from}→${add.to}) ⇒ ${fmt(add.capacityAfter)}/s`
+                + (add.enough ? " — fills the line" : ""));
+        }
+        if (up) {
+            const short = up.affordable ? "ready now" : `needs ${fmtShort(up.missing)}`;
+            roads.push(`${up.line} T${up.tier} (×${up.multiplierFrom}→×${up.multiplierTo}) ⇒ ${fmt(up.capacityAfter)}/s — ${short}`);
+        }
+        if (roads.length) {
+            lines.push("options:");
+            for (const r of roads.slice(0, 2)) lines.push(`  · ${r}`);
+        }
+    }
+
+    const out = lines.join("\n");
+    if (room !== null && out.length > room) return null;
+    return out;
+}
+
+/** 数字格式化：3 位小数对 prompt 是浪费，2 位够；整数不带小数点。 */
+function fmt(n) {
+    if (!Number.isFinite(n)) return "?";
+    const r = Math.round(n * 100) / 100;
+    return Number.isInteger(r) ? String(r) : r.toFixed(2).replace(/0$/, "");
+}
+
+/** `0.278` → `28%`；null → 空串（调用方决定要不要省略）。 */
+function upper(u) {
+    if (u === null || !Number.isFinite(u)) return "";
+    return `${Math.round(u * 100)}%`;
+}
+
+/** 升级缺口：`SuSuSuSu×500, RuRu----×600` → 超长就折叠成 `3 shapes, 500+600`。 */
+function fmtShort(missing) {
+    const list = Array.isArray(missing) ? missing : [];
+    if (!list.length) return "nothing";
+    const one = list.map(m => `${sanitize(m.shape).text}×${m.short}`).join(", ");
+    if (one.length <= 46) return one;
+    return `${list.length} shapes (${list.map(m => m.short).join("+")})`;
+}
+
 
 /* ══════════════════════════ 7. S4 / S5 / S6 ══════════════════════════ */
 
@@ -1239,7 +1491,10 @@ export class PromptOverBudget extends Error {
  *
  * @param {object} p
  * @param {string|object} p.goal    形状串（`RuRu----`），或 `{shape, level, required, delivered, progress}`
- * @param {object} p.obs            ObsSnapshot（只用 goal / hub / production；entities 仅用于 uid→实体兜底）
+ * @param {object} p.obs            ObsSnapshot（只用 goal / hub；entities 仅用于 uid→实体兜底）。
+ *   **不读 `obs.production`** —— 产线数据是独立参数 `p.production`（理由见 renderProduction）。
+ * @param {object|null} [p.production] `reader.production()` 的返回（window_seconds /
+ *   produced_total / produced_per_sec / delivered_* / …）。缺省 ⇒ PRODUCTION 段如实说 unavailable。
  * @param {object|Array} p.handles  句柄表（见 normalizeHandles 的三种形态）
  * @param {Array} [p.diagnoses]     Diagnosis[]
  * @param {Array} [p.candidates]    宏名 或 {macro, why}；**必须是 MACRO_NAMES 的子集**
@@ -1252,7 +1507,7 @@ export class PromptOverBudget extends Error {
  * @throws {PromptOverBudget} code=PROMPT_OVER_BUDGET（总字符 > in_chars_max）
  * @throws {TypeError} 缺 goal / obs / 未知候选宏
  */
-export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, budget, recipe: injectedRecipe = null } = {}) {
+export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, budget, production = null, recipe: injectedRecipe = null } = {}) {
     if (!obs || typeof obs !== "object") throw new TypeError("buildPrompt: obs is required");
     const goalShape = typeof goal === "string"
         ? goal
@@ -1302,7 +1557,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         : null;
     const s3Hub = renderHub(tbl);
     const s3Machines = renderMachines(tbl, diagList);
-    const s3Production = renderProduction(obs);
+    const s3Production = renderProduction(production);
     const s3Budget = renderBudget(budget);
     const s4 = renderDiagnoses(diagList);
     const s5 = renderLastRound(lastRound);
@@ -1311,13 +1566,58 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     const selection = pickBelts(tbl, diagList, goalShape, obs);
     /* 配方紧跟在 GOAL 之后：它是「这个目标怎么造」的一部分，不是独立信息 */
     const goalAndRecipe = s3Recipe ? [s3Goal, s3Recipe].join("\n\n") : s3Goal;
-    const fixed = [s2, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, s5, s6].join("\n\n");
+
+    /* ★ CAPACITY（产能瓶颈）★
+     *
+     * 位置：紧跟在 MACHINES 之后、BELTS 之前。理由 ——
+     *   · 它讲的是「这些机器够不够」，MACHINES 正好是它的论据；
+     *   · BELTS 是**唯一**可截断段，放在它后面意味着「预算紧时先砍带子，不砍产能诊断」。
+     *
+     * 数据来自 `capacityFor(obs)`（assess.mjs），**本文件不重算任何速率**。
+     * 这里只负责「有没有地方放」：先算出其余各段的实际长度，把剩余字符交给
+     * `renderCapacity` 的 `room`，让它自己决定给 full 还是 2 行版。
+     * 不可信 / 无可说时 `capacityFor` 或 `renderCapacity` 返回 null，整段消失。 */
+    let s3Capacity = null;
+    let capacityUnavailable = null;
+    let capacityNote = null;
+    let capacityInfo = null;
+    try {
+        capacityInfo = capacityFor(obs);
+        const { capacity } = capacityInfo;
+        if (capacity && capacity.confidence && capacity.confidence !== "ok") {
+            capacityUnavailable = `confidence=${capacity.confidence}`;
+            capacityInfo = null;                       // 数据不可信：下面一律按「没有 capacities」处理
+        }
+    } catch (e) {
+        /* 产能分析是**附加信息**：它算炸了不许让整轮 prompt 崩掉（与 recipe 段同一条纪律），
+           但必须留痕 —— 静默跳过等于让这个功能悄悄消失。 */
+        capacityInfo = null;
+        capacityUnavailable = `capacity error: ${e && e.message ? e.message : e}`;
+    }
+
+    const fixed = [s2, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, s5, s6]
+        .filter(x => x !== null && x !== undefined).join("\n\n");
 
     /* ── 截断：只动带子列表。目标 = min(token 预算, 字符硬上限) ── */
     const targetChars = Math.min(Math.floor(limits.tokensMax * PROMPT_RULES.CHARS_PER_TOKEN), limits.inCharsMax);
+    const compose = (belts, capacity) => [s2, goalAndRecipe, s3Hub, s3Machines, capacity, belts,
+        s3Production, s3Budget, s4, s5, s6].filter(x => x !== null && x !== undefined).join("\n\n");
+
+    /* ★ 顺序：**先定带子，再花余量** ★
+     *
+     * 一版错误做法是「先把带子按新预算截一遍，再塞 CAPACITY」—— 那样 CAPACITY
+     * 会去抢带子的名额，`belts_shown` 比加这一段之前更差。而带子是**可改造对象**，
+     * 少了它模型连该改哪条都看不见；产能数字再多也补不回来。
+     *
+     * 现在的顺序：
+     *   ① 用**不含 CAPACITY** 的 prompt 跑原来的截断循环 ⇒ `shown` 与加这段之前**逐字节相同**；
+     *   ② 量出还剩多少字符（`room`），把这个额度交给 `renderCapacity`；
+     *   ③ 如果 full 版塞不下，试 2 行短版；还塞不下就不出现（并记 `capacity_unavailable`）。
+     *
+     * 这样「预算 D：belts_shown 不许变差」是**结构性成立**的，不是靠调参凑出来的。 */
     let shown = selection.ordered.length;
     let s3Belts = renderBelts(tbl, selection, shown, false);
-    let user = [s2, goalAndRecipe, s3Hub, s3Machines, s3Belts, s3Production, s3Budget, s4, s5, s6].join("\n\n");
+    let user = compose(s3Belts, null);
     let trimmed = 0;
     while (s1.length + user.length > targetChars && shown > 0) {
         shown -= 1;
@@ -1329,7 +1629,36 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
          * 模型再也看不到"这个形状该怎么造"，而那正是第五轮实验唯一起作用的信号。
          *
          * 截断的契约是「只动带子列表」，配方不属于可截断的东西 —— 必须用 goalAndRecipe。 */
-        user = [s2, goalAndRecipe, s3Hub, s3Machines, s3Belts, s3Production, s3Budget, s4, s5, s6].join("\n\n");
+        user = compose(s3Belts, null);
+    }
+
+    /* ── 余量全部给 CAPACITY（不给带子动刀子） ── */
+    let capacityDowngraded = false;
+    if (capacityInfo) {
+        const room = targetChars - (s1.length + user.length) - 2;   // 2 = 插入段后的空行
+        try {
+            if (room >= 120) {
+                /* 先试 full，塞不下再退 short，还塞不下就不出现 —— 每一级都**显式**挑。 */
+                for (const form of ["full", "short"]) {
+                    const text = renderCapacity(capacityInfo.capacity, capacityInfo.options, { room, form });
+                    if (text) {
+                        s3Capacity = text;
+                        capacityDowngraded = form === "short";
+                        capacityNote = capacityInfo.capacity.bottleneck;
+                        break;
+                    }
+                }
+                if (s3Capacity) user = compose(s3Belts, s3Capacity);
+                else { capacityUnavailable = "dropped-for-budget"; capacityNote = null; }
+            } else {
+                capacityUnavailable = "dropped-for-budget";
+            }
+            if (!s3Capacity && !capacityUnavailable) capacityUnavailable = "nothing-to-say";
+        } catch (e) {
+            s3Capacity = null;
+            capacityUnavailable = `capacity error: ${e && e.message ? e.message : e}`;
+            user = compose(s3Belts, null);
+        }
     }
 
     /* ── 硬上限：不静默截断任何东西，直接抛 ── */
@@ -1342,7 +1671,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
                 chars, limit: limits.inCharsMax,
                 sections: { s1: s1.length, s2: s2.length, s3_goal: s3Goal.length, s3_hub: s3Hub.length,
                     s3_machines: s3Machines.length, s3_belts: s3Belts.length, s3_production: s3Production.length,
-                    s3_recipe: (s3Recipe || "").length,
+                    s3_recipe: (s3Recipe || "").length, s3_capacity: (s3Capacity || "").length,
                     s3_budget: s3Budget.length, s4: s4.length, s5: s5.length, s6: s6.length },
                 diagnoses: diagList.length,
                 belts: selection.total,
@@ -1350,7 +1679,8 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         );
     }
 
-    const s3 = [goalAndRecipe, s3Hub, s3Machines, s3Belts, s3Production, s3Budget].join("\n\n");
+    const s3 = [goalAndRecipe, s3Hub, s3Machines, s3Capacity, s3Belts, s3Production, s3Budget]
+        .filter(x => x !== null && x !== undefined).join("\n\n");
     const blocks = {
         S1: s1, S2: s2, S3: s3, S4: s4, S5: s5, S6: s6,
         s3_goal: s3Goal, s3_hub: s3Hub, s3_machines: s3Machines, s3_belts: s3Belts,
@@ -1358,12 +1688,24 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         /* 配方段（可能为 null —— solver 不可用）。单独暴露，便于测试与排查 */
         s3_recipe: s3Recipe,
         recipe_unavailable: recipeUnavailable,
+        /* CAPACITY：`null` 表示「这段没出现」。**为什么没出现**记在 `capacity_unavailable` ——
+         * 「数据不可信」/「没什么可说」/「预算不够被丢掉」是三种完全不同的情况，
+         * 混成一个 null 会让事后排查（和测试）分不清「功能没触发」和「功能坏了」。 */
+        s3_capacity: s3Capacity,
+        capacity_unavailable: capacityUnavailable,
+        capacity_bottleneck: capacityNote,
+        capacity_downgraded: capacityDowngraded,
         chars,
         tokens_estimate: Math.round(chars / PROMPT_RULES.CHARS_PER_TOKEN),
         trimmed_belts: trimmed,
         belts_shown: shown,
         belts_total: selection.total,
+        /* `belts_referenced` = 诊断点名了几条带子（**候选池**口径，不随截断变化）。
+         * `belts_referenced_shown` = 这些条里**真被渲染出来**的几条 —— 表头写的就是它。
+         * 两者分开是因为老 bug 正是把前者的数字贴到了后者的位置（表头撒谎）。 */
         belts_referenced: selection.referenced.length,
+        belts_referenced_shown: selection.referenced.filter(h => selection.ordered.slice(0, shown).includes(h)).length,
+        belts_diag_reserve: selection.reserve,
         belts_padded: selection.padded.length,
         over_token_budget: chars > Math.floor(limits.tokensMax * PROMPT_RULES.CHARS_PER_TOKEN),
         redactions: countMarks([s2, s3, s4, s5, s6].join("\n"), "coord"),

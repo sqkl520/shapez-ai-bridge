@@ -1729,6 +1729,10 @@ export async function runLoop(opts = {}) {
                 try {
                     bundle = buildPrompt({
                         goal, obs: ob.obs, handles: st.handles,
+                        /* ★ 必须显式传：production 是 `observeOnce()` 的**第三个字段**
+                           （`ob.production`），不在 `ob.obs` 里。过去这里漏了它，于是
+                           prompt 每一轮都渲染 `unavailable`，模型永远看不见产线真实速率。 */
+                        production: ob.production,
                         diagnoses,
                         candidates: cands,
                         lastRound: st.lastPlanSummary || null,
