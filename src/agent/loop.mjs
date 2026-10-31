@@ -977,6 +977,24 @@ function planRejectFromViolations(violations, stage) {
  *
  * 这个映射是 planToTxOps 不提供的那一层（见文件头适配层第 1 条）。
  * 只做**查找**，不做补全：找不到就返回 null，让 assertProvenance 判红。
+ *
+ * ## `connect` / `extend_line` 的 token 是**合成**的，但仍然是宏算出来的
+ *
+ * 这两个宏「铺一串带子」，没有 pending 语义（没有「新 uid 待分配」的东西）：
+ * 宏返回的 `cells[]` 里既没有 `token` 也没有 `pending`。于是三级来源对它们全落空
+ * —— 实机半成品世界跑的、唯一一条 connect 计划就是这样被判成 COORD_PROVENANCE 的。
+ *
+ * 但契约 `coords.mjs:26` 明确把 `cells[]` 列为 `macro:<token>` 的合法来源之一。
+ * 所以这里按既有命名惯例（`<macro>:<kind>@<x>,<y>`，与 `replace_run:cutter@4,-13` 同形）
+ * 从**宏返回值自己的格子**合成 token：`connect:belt@1,-5`。
+ *
+ * 为什么这不算「编造标签」：坐标取自宏返回值（`entry.x/entry.y`），不是取自 op。
+ * 若 op 的坐标被改过，要么 `sourceOfPlace` 反查不到（untagged → 红），
+ * 要么 reverse 出来的 token 里的 @x,y 与 op 对不上（`checkTag` 的坐标断言 → 红）。
+ * 唯一需要 loop 额外做的事是把它登记进 `knownTokens` —— 见 attachProvenance 的返回值。
+ *
+ * `entry.building` 与 op 的 building 必须一致：不一致说明 txPlan 被改过（宏不可能
+ * 在两处说不同的建筑），这时**不挂标签**，宁可红。
  */
 function sourceOfPlace(calls, op) {
     for (let i = 0; i < calls.length; i++) {
@@ -994,7 +1012,12 @@ function sourceOfPlace(calls, op) {
             if (at(r.trashCell)) return { call: c, index: i, entry: r, token: (r.pending && r.pending.token) || null };
         } else if (c.macro === "connect" || c.macro === "extend_line") {
             for (const cell of r.cells || []) {
-                if (cell && cell.x === op.x && cell.y === op.y) return { call: c, index: i, entry: cell, token: null };
+                if (!cell || cell.x !== op.x || cell.y !== op.y) continue;
+                /* 与 planToTxOps 的 kind 推法同口径（`cell.building || "belt"`）；
+                   不一致 ⇒ 这一格不是这条 op 的来源，**跳过**（继续找，不就地认领）。 */
+                const kind = cell.building || "belt";
+                if (kind !== op.building) continue;
+                return { call: c, index: i, entry: cell, token: `${c.macro}:${kind}@${cell.x},${cell.y}`, synthesized: true };
             }
         }
     }
@@ -1006,12 +1029,28 @@ function sourceOfPlace(calls, op) {
  *
  * 三级优先（**只挑一条**，不合并、不猜）：
  *   ① 宏返回里的 pending token → `macro:<token>`（最精确：坐标是宏算的）
+ *      1b. `connect` / `extend_line` 没有 pending，但 `cells[]` 是契约允许的来源
+ *           （coords.mjs:26）→ 用同样的 `<macro>:<kind>@<x>,<y>` 形从**宏返回的格子**合成
  *   ② 该调用的 args 里有 `$bbox_of`（解析后是 4 元 bbox）→ `computed:bbox_of[…]`
  *      （assertProvenance 对 place 用「落在 bbox 内」判，不是相等）
  *   ③ 该调用只引用了 `$ref`/`$uids`，且 op 的 (x,y) 正好等于被引实体的 origin → `obs:uid=N`
  * 都不成立 → 不挂标签（宁可红，也不编造一条可追溯性）。
  *
- * @returns {{ops:Array, tagged:number, untagged:Array}}
+ * ## 返回值里的 `tokens` 不是可选的
+ *
+ * `checkTag` 对 `macro:` 标签会先判「token 在当轮宏返回值里」。三个有 pending 的宏由
+ * `planToTxOps` 把 token 写进 `txPlan.pendingByOp`，`assertProvenance` 自动收；
+ * **合成 token 没有这条通道**，所以必须由调用方显式作为 `opts.knownTokens` 传下去
+ * （见 buildTxPlan ⑤）。不传的话断言会红在「token 不在当轮宏返回值里」——
+ * 那是正确行为：光挂标签不进白名单，等于放行一条没人复核过的字符串。
+ *
+ * 为什么不直接塞进 `txPlan.pendingByOp`：那张表的语义是「**这一条 op 落盘后要回读真 uid**」
+ * （verify.mjs#buildUidMap 按 op 下标查 `tx.results[i].uid`）。connect 的格子也会拿到 uid，
+ * 但把它们混进去会改变 apply 之后的桥接结果，属于**另一件事**；provenance 这一层
+ * 不该顺手改动执行侧的语义。
+ *
+ * @returns {{ops:Array, tagged:number, untagged:Array, tokens:string[]}}
+ *          `tokens` = 本次合成出来的 macro token（不含 pendingByOp 里已有的那些）。
  */
 export function attachProvenance(txPlan, resolvedCalls, obs) {
     const byUid = new Map(((obs && obs.entities) || []).filter(e => e && isInt(e.uid)).map(e => [e.uid, e]));
@@ -1019,6 +1058,7 @@ export function attachProvenance(txPlan, resolvedCalls, obs) {
     const ops = [];
     let tagged = 0;
     const untagged = [];
+    const tokens = new Set();
 
     for (const op of (txPlan && txPlan.ops) || []) {
         const copy = { ...op };
@@ -1059,11 +1099,11 @@ export function attachProvenance(txPlan, resolvedCalls, obs) {
                 }
             }
         }
-        if (tag) { copy.provenance = { x: tag, y: tag }; tagged++; }
+        if (tag) { copy.provenance = { x: tag, y: tag }; tagged++; if (src.synthesized) tokens.add(src.token); }
         else untagged.push({ op, why: src ? "宏返回里没有可用的溯源 token/bbox/同格实体" : "找不到产出这条 place 的宏声明" });
         ops.push(copy);
     }
-    return { ops, tagged, untagged };
+    return { ops, tagged, untagged, tokens: [...tokens] };
 }
 
 /** 从 args 里按 `a.b[0].c` 取值（与 coords.mjs#getPath 同语义，独立实现避免导出面扩大）。 */
@@ -1257,7 +1297,11 @@ export function buildTxPlan(llmPlan, obs, items, handles) {
        `sourceOfPlace` 要靠宏返回值反查这条 place 是哪个宏落的。两者都带 `provenance`
        （executed 是从 resolved 原样复制过来的），所以溯源校验不受影响。 */
     const withProv = attachProvenance(txPlan, executed, o);
-    const lc = assertProvenance({ calls: executed }, { ...txPlan, ops: withProv.ops }, o);
+    /* `knownTokens`：`connect` / `extend_line` 的 macro token 是**从 cells[] 合成**的
+       （见 sourceOfPlace），不像 pending 那样能由 planToTxOps 写进 `pendingByOp`。
+       不把它显式传下去，checkTag 会红在「token 不在当轮宏返回值里」—— 而那句红色
+       指向的恰好就是这里缺的一根线。 */
+    const lc = assertProvenance({ calls: executed }, { ...txPlan, ops: withProv.ops }, o, { knownTokens: withProv.tokens });
     if (!lc.ok) {
         return reject("COORD_PROVENANCE", {
             layer: "plan", stage: "assertProvenance",
