@@ -56,7 +56,7 @@
  */
 import { templateByBuildingVariant, UNLOCK_LEVEL_FALLBACK } from "../../ai/op-templates.mjs";
 import { DIRV, OPP } from "../../ai/belt-rules.mjs";
-import { slotsOf } from "../verify_runtime.mjs";
+import { slotsOf, beltRvOf } from "../verify_runtime.mjs";
 import {
     parse, hash, cutHalf, cutQuad, rotateCW, rotateCCW, rotate180, stack, paint, ALL_COLORS,
 } from "../../../research/ai-player/proto/shape-ops.mjs";
@@ -237,14 +237,14 @@ function makeShapeEngine(obs, idx) {
     function ejectSlotInto(up, cell, fromDir) {
         if (!up) return null;
         if (isBelt(up) || isTunnel(up)) return null;
-        const s = slotsOf(up.type, up.variant, up.x, up.y, up.r || 0);
+        const s = slotsOf(up.type, up.variant, up.x, up.y, up.r || 0, beltRvOf(up));
         if (!s) return null;
         return s.outputs.find(o => sameCell(o.cell, cell) && o.dir === OPP[fromDir]) || null;
     }
 
     /** 机器输入槽收到的形状（按槽位 role 找槽）。 */
     function inputValue(m, role) {
-        const s = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0);
+        const s = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m));
         if (!s) return null;
         const sl = s.inputs.find(i => i.role === role);
         if (!sl) return null;
@@ -486,7 +486,7 @@ function processorOnStream(idx, st, kind) {
     const uids = new Set(st.belts.map(b => b.uid));
     for (const e of idx.ent) {
         if (e.type !== kind) continue;
-        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
+        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
         if (!s) continue;
         for (const sl of s.inputs) {
             const up = at(idx, sl.cell);
@@ -541,7 +541,7 @@ function cutSites(idx, reach, inCorridor, tblRef = null) {
             const c = exitCellOf(e);
             if (c) push(c[0], c[1]);
         } else if (!isBelt(e) && !isTunnel(e) && e.type !== "hub" && e.type !== "trash") {
-            const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
+            const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
             if (!s) continue;
             for (const o of s.outputs) if (o.dir === "top") push(o.cell[0], o.cell[1]);
         }
@@ -613,7 +613,7 @@ function oneCellSites(idx, reach, inCorridor) {
         } else if (isTunnel(up)) {
             continue;
         } else {
-            const s = slotsOf(up.type, up.variant, up.x, up.y, up.r || 0);
+            const s = slotsOf(up.type, up.variant, up.x, up.y, up.r || 0, beltRvOf(up));
             if (!s || !s.outputs.some(o => sameCell(o.cell, [b.x, b.y]) && o.dir === OPP[entryDirOf(b)])) continue;
         }
         /* 下游：机器出口喷 (b.x,b.y-1)，那里必须接得住。 */
@@ -902,7 +902,7 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
      *    否则 `pickBelts` 会把 B135/B136/B137 顶到 BELTS 段第 1–3 位，与目标相反。
      * ──────────────────────────────────────────────────────────────────── */
     if (hub) {
-        const hs = slotsOf(hub.type, hub.variant, hub.x, hub.y, hub.r || 0);
+        const hs = slotsOf(hub.type, hub.variant, hub.x, hub.y, hub.r || 0, beltRvOf(hub));
         const inlet = [];
         const wrong = new Set();
         for (const sl of (hs ? hs.inputs : [])) {
@@ -915,7 +915,7 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             } else if (isTunnel(e)) {
                 continue;                            // 隧道跨界的形状不可判定 ⇒ SHAPE_UNKNOWN 已记
             } else {
-                const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
+                const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
                 const o = s && s.outputs.find(x => sameCell(x.cell, sl.slot) && x.dir === OPP[sl.dir]);
                 if (o) val = engine.outValue(e, o.role);
             }
@@ -959,7 +959,7 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
         const tpl = templateByBuildingVariant(m.type, variantOf(m));
         if (!tpl || !Array.isArray(tpl.outputs) || tpl.outputs.length < 2) continue;
         if (m.type === "balancer" || m.type === "trash" || m.type === "hub") continue;
-        const s = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0);
+        const s = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m));
         if (!s) continue;
 
         const ports = [];
