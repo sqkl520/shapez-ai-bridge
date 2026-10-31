@@ -20,7 +20,7 @@
  * 本文件不写世界、不发 tx：它只读 reader 并把读到的结果裁决掉。
  */
 
-import { verifyRuntime, slotsOf } from "../verify_runtime.mjs";
+import { verifyRuntime, slotsOf, beltRvOf } from "../verify_runtime.mjs";
 import { DIRV, beltExit } from "../../ai/belt-rules.mjs";
 
 const isInt = n => typeof n === "number" && Number.isInteger(n);
@@ -203,7 +203,7 @@ export function obsReach(fromUid, obs) {
             return [[e.x + DIRV[dir][0], e.y + DIRV[dir][1]]];
         }
         if (e.type === "underground_belt") return [];      // 隧道语义不建模
-        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
+        const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
         if (!s) return [];
         return s.outputs.map(out => [out.cell[0], out.cell[1]]);
     };
@@ -240,7 +240,7 @@ export function obsReach(fromUid, obs) {
 }
 
 function footprintOf(e) {
-    const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0);
+    const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
     if (s && s.footprint) {
         const out = [];
         for (let dy = 0; dy < s.footprint[1]; dy++) for (let dx = 0; dx < s.footprint[0]; dx++) out.push([e.x + dx, e.y + dy]);

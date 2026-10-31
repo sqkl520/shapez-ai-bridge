@@ -306,6 +306,167 @@ function provenanceOfOp(op, calls, txp, idx) {
     }
 }
 
+/* ═════════ ⑥ $path_of → 真宏 → tx：一条拐弯的链不再被静默扩成矩形 ═════════
+ *
+ * 这里的每一条都对应第三轮真 LLM 实验的一个失败码（`EXPERIMENT-COLDSTART.md` §15）。
+ * 关键不是「`$path_of` 能解析」，而是：**同一组句柄交给 `$bbox_of` 时，宏会拒绝**——
+ * 没有这条对照，「新算子解决了问题」就没有对照组，测试会变成恒真的。
+ */
+{
+    /* `B69/B81/B82` 是 L3 上游拐弯链段的三格：x=4 上 (4,-14)/(4,-13) + x=5 上 (5,-13)。
+       外接矩形 2×2 会顺带框进 (5,-14) —— 那是**同高另一条链**的带子。 */
+    const bend = [H.byUid.get(10209), H.byUid.get(10149), H.byUid.get(10143)];   // B81,B82,B69
+    ok(bend.every(Boolean), "⑥ 夹具：拐弯链段的三个句柄都在", bend);
+
+    /* ── ⑥a：`$path_of` 给不连续格集 → 在 coords 层停住，零写入 ── */
+    {
+        const text = JSON.stringify({
+            calls: [{
+                macro: "replace_run",
+                args: { region: { $path_of: ["B69", "B81", "B82"] }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+            }],
+        });
+        const r = pipeline(text);
+        ok(r.stops.length > 0, "⑥a 拐弯链的 $path_of → 流水线停住（不静默扩大）", r.stops);
+        ok(r.stops[0] === "resolveRefs:PATH_NOT_RECT", "⑥a 停住的位置是 resolveRefs 的 PATH_NOT_RECT", r.stops);
+        ok(!r.txp, "⑥a 被拦住的计划不产出 tx（零写入）");
+        /* 半解析的调用不许留下：否则宏会拿到一个「少一格」的 region 继续跑 */
+        ok(r.resolved && r.resolved.calls.length === 0, "⑥a 没有半解析的 call 继续往下走",
+            r.resolved && r.resolved.calls);
+    }
+
+    /* ── ⑥b：对照组 —— 同一组句柄交给 `$bbox_of` 会走到宏，并**多删一条没被点名的带子** ──
+       这条是「$path_of 真的修好了东西」的唯一证据。实测（本文件跑出来的真实结果，trash:right）：
+         · `$bbox_of(["B69","B81","B82"])` → region `[4,-14,5,-13]`（2×2，含 (5,-14)）
+         · `replace_run` 对它是 **ok:true** —— 但删掉的 3 条是 `[10149, 10150, 10209]`：
+           其中 `10150` = `B70` @(5,-14) **从头到尾没被点名**，而被点名的 `10143` = `B69`
+           反而被留了下来。
+       也就是说 `$bbox_of` 的失败形态不一定是「宏拒绝」（那要看多出来那一格上是谁）：
+       这里宏接受了，却静默地动了模型没指的东西 —— 比拒绝更糟，因为**没有任何信号**。
+       （实验记录里的 #1/#3/#5 是同一个病在不同格子上的三种表现：occupied / not_a_run /
+       precondition_failed；本夹具恰好落在「成功但换了对象」这一支上。） */
+    {
+        const text = JSON.stringify({
+            calls: [{
+                macro: "replace_run",
+                args: { region: { $bbox_of: ["B69", "B81", "B82"] }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+            }],
+        });
+        const r = pipeline(text);
+        ok(r.resolved && r.resolved.ok, "⑥b（对照）$bbox_of 版本能过 coords 层（说明差别不在这一层）",
+            r.resolved && r.resolved.violations);
+        ok(r.resolved && JSON.stringify(r.resolved.calls[0].args.region) === JSON.stringify([4, -14, 5, -13]),
+            "⑥b（对照）$bbox_of 产出 2×2 矩形（覆盖了没被点名的 (5,-14)）",
+            r.resolved && r.resolved.calls[0].args.region);
+        ok(r.stops.length === 0 && r.txp && r.txp.ok,
+            "⑥b（对照）宏**接受了**它 —— 失败是静默的，没有任何拒绝信号", r.stops);
+        const named = [10209, 10149, 10143];               // 模型点名的三格：B81/B82/B69
+        const destroyed = (r.txp && r.txp.destroys) || [];
+        ok(destroyed.includes(10150),
+            "★★ ⑥b（对照）$bbox_of 把一个**没被点名**的实体删了（B70 @(5,-14)，uid 10150）",
+            { destroyed, named });
+        ok(!named.includes(10150), "★★ ⑥b（对照）10150 确实不在输入句柄里 —— 这就是『静默扩大』的实证",
+            { named });
+        ok(named.includes(10143) && !destroyed.includes(10143),
+            "★★ ⑥b（对照）更糟：**被点名的 B69 反而没动**，动的是它旁边没被点名的 —— 选区换了对象",
+            { destroyed, named });
+    }
+
+    /* ── ⑥b'：`$path_of` 对**完全同一组句柄**绝不会删到选区外的实体 ──
+       与 ⑥b 并排读：同一个输入，一个多删一条，一个连解析都不过。
+       （`$path_of` 不连续的版本见 ⑥a —— 它直接拒绝，所以更谈不上误删。） */
+    {
+        const text = JSON.stringify({
+            calls: [{
+                macro: "replace_run",
+                args: { region: { $path_of: ["B69", "B81", "B82"] }, building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }] },
+            }],
+        });
+        const r = pipeline(text);
+        ok(!r.txp, "⑥b' $path_of 版本没有任何写入（先停住，再谈精确）");
+        const c = r.resolved;
+        ok(c && c.calls.length === 0,
+            "⑥b' 没有任何 call 带着 region 走到宏（因此不可能删到选区外）", c && c.calls);
+    }
+
+    /* ── ⑥c：把链段选成**恰好填满**的 2×2 → 新算子放行，宏真的能跑通 ──
+       `B69/B70/B81/B82` = (4,-14)/(5,-14)/(4,-13)/(5,-13) 恰好填满 2×2。
+       这证明 `$path_of` 的判据是「填满矩形」而不是「必须同一条链」——后者会让唯一正解无法表达。 */
+    {
+        const text = JSON.stringify({
+            calls: [{
+                macro: "replace_run",
+                args: { region: { $path_of: ["B69", "B70", "B81", "B82"] }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+            }],
+        });
+        const r = pipeline(text);
+        ok(r.stops.length === 0, "⑥c 恰好填满的 2×2 → 整条链跑通", r.stops);
+        ok(r.txp && r.txp.ok, "⑥c 产出 tx plan", r.txp && r.txp.error);
+        ok(r.txp && r.txp.ops.length === 5, "⑥c ops 恰好 5 条（3 delete + 2 place）", r.txp && r.txp.ops.length);
+        /* ★ 核心：删的必须是 region 里那 4 条中的 3 条，**不多不少** ★
+           第 4 条（(5,-14)，即 B70）被 cutter 的机身占到，所以它也在删除清单里；
+           真正的断言是「没有任何 region 之外的 uid 被删」。 */
+        const regionUids = [10143, 10150, 10209, 10149].sort((a, b) => a - b);
+        const destroyed = r.txp && r.txp.destroys.slice().sort((a, b) => a - b);
+        ok(destroyed.every(u => regionUids.includes(u)),
+            "⑥c 被删的 uid 全部落在 $path_of 指的 4 格里（没有扩到选区外）", { destroyed, regionUids });
+        ok(r.prov && r.prov.ok, "⑥c 溯源全绿", r.prov && r.prov.violations);
+        const tags = r.resolved.calls.flatMap(c => Object.values(c.provenance || {}));
+        ok(tags.some(t => typeof t === "string" && t.startsWith("computed:path_of[")),
+            "⑥c region 的出处是 computed:path_of[…]", tags);
+    }
+
+    /* ── ⑥d：溯源不能是伪证 —— 把 region 改宽一格，必须红 ── */
+    {
+        const text = JSON.stringify({
+            calls: [{
+                macro: "replace_run",
+                args: { region: { $path_of: ["B69", "B70", "B81", "B82"] }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+            }],
+        });
+        const r = pipeline(text);
+        ok(r.stops.length === 0 && r.txp, "⑥d（前置）正确链路先跑通", r.stops);
+        if (r.txp) {
+            const clone = o => JSON.parse(JSON.stringify(o));
+            const prov = t => assertProvenance(r.resolved.calls, t, OBS);
+            ok(prov(r.txp).ok, "⑥d 原样 → 绿（对照组）");
+
+            const m = clone(r.txp);
+            const cut = m.ops.find(o => o.op === "place" && o.building === "cutter");
+            ok(!!cut, "⑥d 找得到 cutter 的 place op");
+            if (cut) {
+                cut.x += 1;
+                const v = prov(m);
+                ok(!v.ok && v.violations.some(x => x.rule === "COORD_PROVENANCE"),
+                    "⑥d 把 cutter 的 x 加 1 → 必须红（path_of 标签不是伪证）", v.ok ? "仍然绿" : v.violations);
+            }
+        }
+    }
+}
+
+/* ═════════ ⑦ 诊断码接线：PATH_NOT_RECT 是独立码，且从 plan 入口能观察到 ═════════ */
+{
+    const { buildTxPlan } = await import("./loop.mjs");
+    const { DIAG_CODES } = await import("./loop/constants.mjs");
+    ok(Object.prototype.hasOwnProperty.call(DIAG_CODES, "PATH_NOT_RECT"),
+        "⑦ PATH_NOT_RECT 在 DIAG_CODES 闭集里（不是自造码）");
+    ok(DIAG_CODES.PATH_NOT_RECT !== DIAG_CODES.LLM_COORD, "⑦ 它与 LLM_COORD 是两条不同的说明");
+
+    const r = buildTxPlan({
+        calls: [{
+            macro: "replace_run",
+            args: { region: { $path_of: ["B69", "B112"] }, building: "belt" },
+        }],
+    }, OBS, ITEMS, H);
+    ok(r.ok === false, "⑦ 不连续选区 ⇒ plan 拒绝", r.ok);
+    ok(r.code === "PATH_NOT_RECT", "⑦ 拒绝码是 PATH_NOT_RECT（不是 LLM_COORD / MACRO_REFUSED）", r.code);
+    ok(!r.txPlan, "⑦ 被拒时没有 txPlan（零写入）");
+    ok(Array.isArray(r.diagnosis.candidates) && r.diagnosis.candidates.includes("replace_run"),
+        "⑦ 候选里保留 replace_run（它选的宏是对的，只是选区要拆小）", r.diagnosis.candidates);
+    ok(/拆|split|空洞/.test(r.diagnosis.hint || ""),
+        "⑦ hint 说的是「拆成更小的连续段」，不是「坐标只能来自算子」", r.diagnosis.hint);
+}
+
 /* ═════════ 汇总 ═════════ */
 console.log(`\nloop_pipeline 自测：${pass} 通过 / ${fail} 失败`);
 if (fail) { console.log("失败项："); for (const f of failures) console.log("  ✗ " + f); }
