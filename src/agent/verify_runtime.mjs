@@ -794,11 +794,33 @@ export function checkFlow(plan, obs, items, opts = {}) {
     const bx0 = Math.min(...xs) - pad, bx1 = Math.max(...xs) + pad;
     const by0 = Math.min(...ys) - pad, by1 = Math.max(...ys) + pad;
     const inBox = c => c && c[0] >= bx0 && c[0] <= bx1 && c[1] >= by0 && c[1] <= by1;
+    /* ★ 死端判据必须用游戏的权威布尔 `boundAcceptor`，不能用 `acceptorOf()` ★
+     *
+     * 实测（2026-10-31 受控实验）：一次 connect(B34→H1) 的降级 L3 报
+     *   "计划附近有 2 段带子没有去处（[2,-7]..[2,-7]，1 格）"
+     * 而 `(2,-7)` 是矿机→balancer 的输出带，`debug_items` 对它回的是 `boundAcceptor:"yes"`
+     * —— **游戏明确说有接收方**。误报的唯一原因是 `acceptorOf()` 在 `cells.length < 2`
+     * 时返回 null：单格 path 没有走向可外推，所以**推不出接收方坐标**。
+     *
+     * 「推不出坐标」和「没有接收方」是两件事，`acceptorOf()` 只回答前者（它服务于
+     * reach 的逐跳，必须给出坐标）。死端是后者，权威答案就在 `boundAcceptor` 上：
+     * `gates.mjs#G6b` 一直用的就是 `!p.boundAcceptor`。
+     *
+     * fail-open 防护：key 缺失（undefined）也要算死端 —— 与 G6b 同一条纪律。
+     */
+    evidence.paths_with_acceptor = 0;
+    evidence.paths_coord_unknown = 0;
     for (const p of paths) {
         const cells = p.cells || [];
         if (!cells.some(inBox)) continue;
-        if (!acceptorOf(p)) {
-            evidence.dead_ends.push({ head: cells[0], tail: cells[cells.length - 1], len: cells.length, items: p.itemsOnPath });        }
+        if (p.boundAcceptor) {
+            evidence.paths_with_acceptor++;
+            /* 有接收方但拿不到坐标（桥对非 StaticMapEntity 回 "yes"，或单格推不出来）——
+               不是死端，但也**没有**可用于 reach 的坐标。单独记数，别混进 dead_ends。 */
+            if (!acceptorOf(p)) evidence.paths_coord_unknown++;
+            continue;
+        }
+        evidence.dead_ends.push({ head: cells[0], tail: cells[cells.length - 1], len: cells.length, items: p.itemsOnPath });
     }
     evidence.scope = [bx0, by0, bx1, by1];
     /* ★ 降级模式必须自曝（F10 实测的假绿入口）★
