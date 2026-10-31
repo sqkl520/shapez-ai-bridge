@@ -76,7 +76,7 @@ import { semanticDiagnoses } from "./loop/semantic.mjs";
 import { recipeForCached } from "./loop/recipe.mjs";
 /* hub 入口判据需要世界几何：`slotsOf` 是槽位几何的**唯一**实现（handles/semantic/verify 同源），
    在这里抄一份就是第三份真值。 */
-import { slotsOf } from "./verify_runtime.mjs";
+import { slotsOf, beltRvOf } from "./verify_runtime.mjs";
 import FakeGame from "./fake_game.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -531,7 +531,7 @@ function hubInletUids(obs, idx) {
     const hub = idx.ent.find(e => e && e.type === "hub");
     if (!hub) return out;
     let slots = null;
-    try { slots = slotsOf(hub.type, hub.variant, hub.x, hub.y, hub.r || 0); }
+    try { slots = slotsOf(hub.type, hub.variant, hub.x, hub.y, hub.r || 0, beltRvOf(hub)); }
     catch { return out; }
     if (!slots || !Array.isArray(slots.inputs)) return out;
     for (const sl of slots.inputs) {
@@ -1875,7 +1875,20 @@ export async function runLoop(opts = {}) {
             /* ── ⑤ apply：一次 tx；判据只用 applyVerdict（绝不读 tx.verify） ── */
             if (st.txCount >= budget.TX_MAX) { outcome = "halt"; reason = "BUDGET_TX"; break; }
             st.txCount++;
-            const ap = await doApply(ctx, planned.txPlan.ops);
+            /* ★ 发出去的 ops 必须剥掉 `provenance` ★
+             *
+             * `provenance` 是 loop **本地**的溯源标签（`assertProvenance` 用它证明
+             * 「每条落盘坐标都能追回 obs 句柄或宏 token」）。它**不是**给游戏的字段。
+             *
+             * 而 mod 的 `validateAction` 对未知字段是**硬拒**（2001 `unknown field`，
+             * `shapez-ai-bridge.js:2400-2412`），`place` 的允许字段里没有 `provenance`。
+             *
+             * 实测（2026-11-01 受控实验）：带上 provenance 直接发 ⇒ tx 2001 全轮失败，
+             * `dry_run` 也是 `rolled_back:true`。剥掉之后 `applied:3/3` 正常。
+             *
+             * 所以：**校验用带标签的，落盘用剥干净的**。两者不能是同一份数组。 */
+            const wireOps = planned.txPlan.ops.map(({ provenance: _p, ...rest }) => rest);
+            const ap = await doApply(ctx, wireOps);
             st.lastTx = ap.tx;
             if (!ap.tx) {
                 const d = mkDiag("TX_UNAVAILABLE", {
