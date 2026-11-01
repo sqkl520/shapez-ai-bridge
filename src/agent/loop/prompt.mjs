@@ -53,6 +53,10 @@ import { templateByBuildingVariant, worldSlots } from "../../ai/op-templates.mjs
 /* 出口方向：与 handles.mjs / verify_runtime.mjs 同一套约定（rv0=top / rv1=left / rv2=right，
    再按 r 旋转）。自己写一份 EXIT_BASE 就是第三份真值 —— 这个仓库已因两份真值出过事故。 */
 import { DIRV, beltExit } from "../../ai/belt-rules.mjs";
+/* 从 hub 反向的**物理**可达（穿机器/隧道、每跳验 accepts）：
+   prompt 的 `[not reaching hub]` 标记靠它，不再自己在本文件里写一份 BFS。
+   `hubReachable` 是另一个问题（诊断 tier 的「能影响 goal」），不要混用。 */
+import { flowReachable } from "./topology.mjs";
 /* 产能分析：**复用 `assess.mjs`，不在这里重算**。
    为什么必须复用：供给/处理/利用率的算法要跟 `rules.mjs` 的源码核证值绑在一起，
    在 prompt 层再写一遍同样的除法就是第二份真值 —— 这个仓库已经因两份真值出过事故
@@ -612,9 +616,10 @@ function pickBelts(tbl, diagnoses, goalShape, obs) {
     const all = [...tbl.byHandle.values()].filter(e => isBeltType(e.type));
     const cap = PROMPT_RULES.STATE_BELTS_MAX;
 
-    /* ③ 目标反查：从「能到 hub 的带子之外」的那一片里，挑出**离目标原料源头最近、
+    /* ③ 目标反查：从「到不了 hub」∪「目标原料线」的那一片里，挑出**离目标原料源头最近、
           并且可以并排改造**的那一段（见 `pickBeltsForGoal` 的三层判据）。 */
-    const byGoal = pickBeltsForGoal(tbl, all, goalShape, obs);
+    const goalPick = pickBeltsForGoal(tbl, all, goalShape, obs);
+    const byGoal = goalPick.handles;
 
     const chosen = [];
     const push = h => { if (h && !chosen.includes(h) && chosen.length < cap) chosen.push(h); };
@@ -659,6 +664,10 @@ function pickBelts(tbl, diagnoses, goalShape, obs) {
     for (const e of all) push(e.handle);                   // ④ 表顺序兜底
     return {
         ordered: chosen, referenced, byGoal, reserve,
+        /* `[not reaching hub]` 标记的**唯一**依据：候选池里真的到不了 hub 的那些。
+           不能用 `byGoal`（候选池还含"通了但造错形状"的原料线），
+           也不能用「候选池 − 可达」以外的任何近似 —— 那样标记会重新对模型说谎。 */
+        notReaching: goalPick.notReaching,
         padded: chosen.filter(h => !referenced.includes(h) && !byGoal.includes(h)),
         total: all.length,
     };
@@ -693,8 +702,16 @@ function pickBelts(tbl, diagnoses, goalShape, obs) {
  *
  *     判据分三层，全部是"从 obs 读出来的事实"，没有阈值：
  *
- *       ① **hub 反向不可达**（`toHub`）：从出口直接落进 hub 占地的带子出发反向扩散。
- *          L4 实测 58 条可达 / 105 条不可达。
+ *       ① **货到不了 hub**（`toHub`）：沿货流**正向**走，穿过透传/改形状的机器
+ *          （balancer / cutter / …：从它们的输出槽继续），遇 hub 到达、遇 trash 或
+ *          空地停止。由 `topology#flowReachable` 一次算完全部实体（正向建边 + 从 hub
+ *          反向闭包，O(V+E)），**每一跳验 `accepts`**（几何相邻但朝向不对 ≠ 一条路）。
+ *
+ *          ⚠️ 2026-11-01 修过一次：旧实现只在**带子之间**反向扩散，遇到机器就断，
+ *          于是「矿机 → balancer → cutter → 带子 → hub」这条通链上 cutter 上游全被
+ *          标成「到不了」。实测 45 实体夹具里 prompt 标 11/12 不可达，物理口径 36/37 可达
+ *          —— 模型据此去 connect 一个**已经连通**的端口（四臂 82 条样本同一撞法）。
+ *          不要把它退回成「只在带子之间传播」的版本。
  *
  *       ② **目标原料的矿机线**（`rawLine`）：`obs.resources` 里矿种 = 目标原料
  *          （`RuRu----` → `RuRuRuRu`）的矿机，其输出格起沿下游的整条链。
@@ -714,18 +731,22 @@ function pickBelts(tbl, diagnoses, goalShape, obs) {
  * @param {object[]} allBelts            带子 entry（**可能不含坐标**，只用来定"哪些句柄算带子"）
  * @param {string} goalShape             目标形状串（`RuRu----`）
  * @param {object} obs                   ObsSnapshot（几何**唯一**真值来源）
- * @returns {string[]} 带子句柄（按"该看程度"降序，长度 ≤ STATE_BELTS_MAX）
+ * @returns {{handles:string[], notReaching:Set<string>}}
+ *   `handles` = 值得让模型看的带子句柄（按"该看程度"降序，长度 ≤ STATE_BELTS_MAX）；
+ *   `notReaching` = 其中**真的到不了 hub** 的那些句柄 —— `[not reaching hub]` 标记只用它。
+ *   ⚠️ 两者**不是**同一个集合：候选池还包含「目标原料线上、但已经通到 hub」的带子
+ *   （它们要改是因为造错了形状，不是因为断了）。合并它们会让标记对模型说谎。
  */
 function pickBeltsForGoal(tbl, allBelts, goalShape, obs) {
     const out = [];
-    if (!allBelts.length) return out;
+    if (!allBelts.length) return { handles: out, notReaching: new Set() };
 
     /* ── 几何唯一来源：obs.entities（不是参数里的 allBelts）──
        这里有一步**必须**做的映射：obs 实体只有 uid，句柄表只有 handle。
        两边都缺对方的键，所以建 uid ↔ handle 的双向索引；任何一边缺了就跳过，
        绝不"猜"一个句柄出来（猜错的句柄会让 LLM 指到另一条产线上）。 */
     const world = obsWorld(obs, tbl);
-    if (!world) return out;
+    if (!world) return { handles: out, notReaching: new Set() };
     const { belts, exitCell } = world;
 
     /* ── ① 目标形状 → 相关原料（`RuRu----` → `RuRuRuRu`）──
@@ -751,10 +772,6 @@ function pickBeltsForGoal(tbl, allBelts, goalShape, obs) {
             破平用句柄表顺序（确定性）。
 
        三个信号都是「从 obs 读出来的事实」，不是启发式阈值。 */
-    const unreachable = belts.filter(b => !b.toHub);
-    if (!unreachable.length) return out;
-
-    const comps = connectedComponents(unreachable, b => [b.x, b.y], exitCell);
     const byHandle = tbl.byHandle;
 
     /* (a) 目标原料矿机线：矿种 → 机器 → 输出格上的带子 → 沿下游走完整条链。 */
@@ -771,6 +788,38 @@ function pickBeltsForGoal(tbl, allBelts, goalShape, obs) {
         }
     }
 
+    /* ★ 2026-11-01：候选池不再只是「到不了 hub」的那批 ★
+     *
+     * 旧口径是 `belts.filter(b => !b.toHub)`。它当时"能用"，是因为 `toHub` 只在带子之间
+     * 传播 ⇒ L4 目标区（M3/M4 → balancer → cutter → … → hub 这条**实际连通**的链）
+     * 被整片误标成不可达，正解三条恰好落进池子。**那是借了一个假信号的便利**。
+     * `toHub` 修对之后它们正确地变成「可达」，于是被这个过滤器排除 —— 但
+     * **它们仍然是该看的带子**：那是目标原料的源头链。
+     *
+     * 所以池子 = 「到不了 hub」∪「目标原料线」。两条入选理由是不同的信号，不要合并：
+     *   · 到不了 hub  ⇒ 断了，要 `connect` / `extend_line`
+     *   · 在原料线上  ⇒ 通了，但它造的不是目标形状，要 `replace_run` / `insert_machine`
+     * 只保留前一条会让 L4 冷启动看不到正解（实测：三条全掉出 12 个名额）。 */
+    const unreachable = belts.filter(b => !b.toHub || rawLine.has(b.uid));
+    if (!unreachable.length) return { handles: out, notReaching: new Set() };
+
+    /* 「真的到不了 hub」的那批（`[not reaching hub]` 标记的唯一依据）。
+       它与上面的候选池**故意不同**：候选池里的目标原料线是"通的但造错了形状"，
+       给它们打上「not reaching hub」就是让标记替模型撒谎 —— 模型会去 connect
+       一个已经连通的端口，这正是本次要修的那类 bug 的镜像。 */
+    const notReaching = new Set(
+        unreachable.filter(b => !b.toHub && b.handle).map(b => b.handle));
+
+    /* ★ 分量/汇聚判据跑在**全部带子**上，不是只跑步道候选池的那几条 ★
+     *
+     * (b) 的核心是「两条并排段汇进同一台机器」。如果只把候选池喂进来，
+     * 并排的另一半只要不在池子里，这条判据就看不见它 —— 实测 L4：`B81` 在原料线上、
+     * 并排的 `B82` 不在（它的矿机 M4 的 origin 格是空矿），于是 `B81` 被当成一条
+     * 孤立链，`replace_run` 的 `$bbox_of` 会覆盖到模型没见过的 `B82` 那一格。
+     * 先在全量上建好分量与分组，再**按组**决定要不要入选：组里只要有成员落在候选池，
+     * 整组一起进 —— 这才是「并排段必须成对出现」的正确口径。 */
+    const comps = connectedComponents(belts, b => [b.x, b.y], exitCell);
+
     /* (b) 共享下游：把每条"链尾"（出口格上没有带子的那条）的出口格当作汇聚点，
            统计有多少**不同分量**的链尾落在同一格/同一台机器的不同槽上。 */
     const sinkKeyOf = (b) => {
@@ -779,6 +828,7 @@ function pickBeltsForGoal(tbl, allBelts, goalShape, obs) {
         return o && o.type !== "belt" && o.type !== "underground_belt" ? `m:${o.uid}` : `c:${ex[0]},${ex[1]}`;
     };
 
+    const cand = new Set(unreachable.map(b => b.uid));
     const scored = comps.map((list, idx) => {
         const onRawLine = list.some(b => rawLine.has(b.uid));
         /* 链尾 = 分量内没有下游的那条 */
@@ -789,7 +839,10 @@ function pickBeltsForGoal(tbl, allBelts, goalShape, obs) {
         /* 本分量汇入的那些 sink */
         const mySinks = new Set(tails.map(sinkKeyOf));
         const minOrder = Math.min(...list.map(b => byHandleOrder(byHandle, b.handle)));
-        return { list, onRawLine, mySinks, minOrder, size: list.length, idx };
+        /* 这一分量是否**有成员**落在候选池里。没有的整组不入选，但它的存在仍参与
+           分组（并排段的另一半可能正是它）。 */
+        const inPool = list.some(b => cand.has(b.uid));
+        return { list, onRawLine, mySinks, minOrder, size: list.length, idx, inPool };
     });
 
     /* 共享下游分组：把"汇入同一台机器"的分量归成一个**组**，组内一起入选。
@@ -809,10 +862,11 @@ function pickBeltsForGoal(tbl, allBelts, goalShape, obs) {
         }
     }
     for (const s of scored) s.group = find(s.idx);
-    /* 组级属性：组里任一分量在原料线上 / 组汇聚了 ≥2 条链 */
+    /* 组级属性：组里任一分量在原料线上 / 组汇聚了 ≥2 条链 / 组里有成员在候选池 */
     for (const s of scored) {
         const mem = scored.filter(t => t.group === s.group);
         s.groupOnRaw = mem.some(t => t.onRawLine);
+        s.groupInPool = mem.some(t => t.inPool);
         s.groupSize = mem.length;
         s.groupBelts = mem.reduce((n, t) => n + t.size, 0);
         s.groupMinOrder = Math.min(...mem.map(t => t.minOrder));
@@ -832,15 +886,21 @@ function pickBeltsForGoal(tbl, allBelts, goalShape, obs) {
        `B81/B82` 依次成对）—— LLM 看到成对的相邻行，才推得出"这两列是一条并排段"，
        `$bbox_of` 的 region 才覆盖得到整段。
 
+       ★ 整组入选，不是「只把候选池那几条拿出来」★
+       并排段的另一半可能不在候选池里（L4 的 `B82` 就属于这种情况：它自己在原料线上，
+       但分组时曾经被排除在池子外，于是 `B81` 单独出现）。整组一起给，
+       `$bbox_of` 才不会包含模型没见过的格子。
+
        ⚠️ 别用"每轮每组各取一条"的轮转：那会把组分量的头部先各取一条，成员被拆散到
        12 条里的各处，反而更难看出"这是一段连续带子"。 */
     for (const s of scored) {
+        if (!s.groupInPool) continue;          // 整组都不在候选池：不占名额
         for (const b of s.list.slice().sort((p, q) => (p.y - q.y) || (p.x - q.x))) {
-            if (out.length >= PROMPT_RULES.STATE_BELTS_MAX) return out;
+            if (out.length >= PROMPT_RULES.STATE_BELTS_MAX) return { handles: out, notReaching };
             if (b.handle) out.push(b.handle);
         }
     }
-    return out;
+    return { handles: out, notReaching };
 }
 
 /**
@@ -851,12 +911,28 @@ function pickBeltsForGoal(tbl, allBelts, goalShape, obs) {
  *   · 拿得到 → 用它精确筛"目标原料矿机"；
  *   · 拿不到 → 返回空数组，**判据整体失效**（不猜"矿机都算"，那会让一条铜线上任取矿机
  *     也排到最前面，比没有判据更糟）。这是有意的 fail-open，且不影响 b/c 两条判据。
+ *
+ * ⚠️ 判据是「矿机**占地内任一格**的矿种」，不是只看 origin 格。
+ *    矿机是 2×2，`obs.resources` 按格给矿种，而 origin 格未必定是该矿：
+ *    L4 的 `M4@(5,-8)` origin 格是**空矿**，`RuRuRuRu` 在它的 `(6,-7)` 那格上。
+ *    只看 origin ⇒ M4 被漏掉 ⇒ 它的下游链（`B70`…`B82`）进不了候选池，
+ *    并排段 `B81/B82` 被拆散（`$bbox_of` 会覆盖到没见过的格子）。
+ *    旧实现侥幸能用，是因为当时候选池靠的是另一个（错的）信号，不依赖这条判据。
  */
 function targetRawMiners(world, goalKind) {
     if (!goalKind) return [];
     const res = world.resources;
     if (!res || !res.size) return [];
-    return world.machines.filter(m => m.type === "miner" && res.get(`${m.x},${m.y}`) === goalKind);
+    const hasKind = m => {
+        const [w, h] = footprintOf(m);
+        for (let dx = 0; dx < w; dx++) {
+            for (let dy = 0; dy < h; dy++) {
+                if (res.get(`${m.x + dx},${m.y + dy}`) === goalKind) return true;
+            }
+        }
+        return false;
+    };
+    return world.machines.filter(m => m.type === "miner" && hasKind(m));
 }
 
 /**
@@ -934,36 +1010,27 @@ function obsWorld(obs, tbl) {
         return cells;
     };
 
-    /* hub 反向可达：种子 = 出口直接落进 hub 占地的带子；再沿"谁指向我"扩散。
-       hub 的占地用 footprint 算（4×4），不写死 `hub.x..hub.x+3`。 */
-    const hubCells = new Set();
-    if (hub) {
-        const [w, h] = footprintOf(hub);
-        for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) hubCells.add(`${hub.x + dx},${hub.y + dy}`);
-    }
-    const toHub = new Set();
-    const frontier = [];
-    for (const b of view) {
-        const [x, y] = exitCell(b);
-        if (hubCells.has(`${x},${y}`)) { toHub.add(b.uid); frontier.push(b); }
-    }
-    /* 反向 BFS 用「出口格 → 带子」的索引，O(n) 建表 + O(n) 扩散；
-       上一版是 O(n²) 的双层循环（163² 可接受，但真存档 5000 条带子会明显变慢）。 */
-    const into = new Map();          // "x,y" → 出口落在这里的带子
-    for (const b of view) {
-        const [x, y] = exitCell(b);
-        const k = `${x},${y}`;
-        if (!into.has(k)) into.set(k, []);
-        into.get(k).push(b);
-    }
-    while (frontier.length) {
-        const cur = frontier.pop();
-        for (const b of into.get(`${cur.x},${cur.y}`) || []) {
-            if (toHub.has(b.uid)) continue;
-            toHub.add(b.uid);
-            frontier.push(b);
-        }
-    }
+    /* ── 到 hub 的可达性：**对全部实体**算一遍，不是只在带子之间传播 ──
+     *
+     * ★ 这里必须穿过机器 ★
+     *   旧实现从「出口落进 hub 占地面积」的带子出发，**只在带子之间**反向扩散
+     *   （索引键只建给带子）。于是「矿机 → balancer → cutter → 带子 → hub」这条通链上，
+     *   只有 cutter **下游**那段被标可达，cutter **上游**全被标成「到不了」。
+     *   实测（`.tmpverify/capacity-scenario.json`，45 实体）：prompt 标 11/12 条
+     *   「not reaching hub」，而物理口径是 36/37 通 —— 11 条里有 11 条是假信号。
+     *   四臂 82 条样本几乎逐字相同地撞在这个假信号上：模型据此去 `connect` 一个
+     *   **已经连通**的端口。
+     *
+     *   正确的语义是「这条带子上的货，最终能不能进 hub」，沿下游走：
+     *     带子 → 沿出口；透传/改形状的机器（balancer/cutter/stacker/painter/mixer）
+     *     → 从**它的输出槽**继续；trash / 没输出槽 → 停；hub → 到达；走出世界 → 停。
+     *
+     * ★ 用 `flowReachable` 而不是两条路径逐条走 ★
+     *   那是 `topology.mjs` 里已有的一份实现（正向建边 + 从 hub 反向闭包，O(V+E)），
+     *   和这里的 `hubReachable`（诊断 tier 用，语义更宽松）区分得开：这一份每一跳都验
+     *   `accepts`，因为「入口朝向对不上」的带子在几何上相邻但货推不进去。
+     *   自己再写一份就是第三份真值 —— 这个仓库已经因此出过三次事故。 */
+    const toHub = flowReachable(obs);
     for (const b of view) b.toHub = toHub.has(b.uid);
 
     return {
@@ -1082,10 +1149,10 @@ function renderBelts(tbl, selection, shownCount, omittedByBudget) {
      * ⚠️ 只标「我们**建议**看的」，不断言「hub 环一定不能改」：
      * 有的关卡正解就是改入口。标的是**信号**，不是禁令。
      */
-    const suspect = new Set(selection.byGoal || []);
+    const suspect = new Set(selection.notReaching || []);
     if (suspect.size) {
-        lines.push("(lines marked `[not reaching hub]` are belt runs that do NOT currently connect to the hub —");
-        lines.push(" this is computed from the hub's inlet ring backwards. Lines WITHOUT the mark already reach the hub.)");
+        lines.push("(lines marked `[not reaching hub]` are belt runs whose goods cannot currently reach the hub —");
+        lines.push(" followed downstream through machines and tunnels. Lines WITHOUT the mark do reach the hub.)");
     }
     for (const h of shown) {
         const e = tbl.byHandle.get(h);

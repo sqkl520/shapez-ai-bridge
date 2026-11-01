@@ -429,7 +429,99 @@ export function sourceKindOf(idx, belt, maxHops = 256) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
- * 7. hub 反向可达（从 loop.mjs 原样搬来，语义不变）
+ * 7. 货能不能流进 hub（**正向建边 + 反向闭包**）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 一台实体**把货送出去**的落点：`[{cell, dir}]`。
+ *
+ *   · 带子：出口格 + 出口方向；
+ *   · 隧道 sender：跳到配对 receiver 的出口（**穿过隧道**，不是停在隧道口）；
+ *     隧道 receiver 自己不会吐货，返回空表；
+ *   · 机器（含 hub / trash）：模板的**输出槽**（`slotsOf().outputs` 的 `cell`/`dir`）。
+ *     trash 与 hub 没有输出槽 ⇒ 空表，天然就是「货到此为止」。
+ *
+ * `dir` 是货离开本实体时的**行进方向**，直接喂给 `accepts()`。
+ */
+function flowOutlets(idx, e) {
+    if (isBelt(e)) return [{ cell: exitCellOf(e), dir: exitDirOf(e) }];
+    if (isTunnel(e)) {
+        if (!tunnelIsSender(e)) return [];              // receiver 只收不吐
+        const peer = tunnelPeer(idx, e);
+        return peer ? [{ cell: exitCellOf(peer), dir: exitDirOf(peer) }] : [];   // 没配对 = 断在隧道口
+    }
+    const s = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
+    return s ? s.outputs.map(o => ({ cell: o.cell, dir: o.dir })) : [];
+}
+
+/**
+ * 「这个实体上的货，最终能不能进 hub」—— 对**全部实体**一次算完。
+ *
+ * ## 与 `hubReachable` 的区别（这不是重复实现，是另一个问题）
+ *
+ * `hubReachable`（§8）回答的是「**能影响 goal** 的实体集合」，它从 hub 的输入槽**反向**
+ * 沿带子的 entry 方向爬，用于诊断的 tier 过滤，语义宽松（不看 `accepts`，且把隧道当死端）。
+ *
+ * 本函数回答的是「**这条带子上的货真的能流进 hub 吗**」，用于 prompt 的 BELTS 标记 ——
+ * 那条标记会直接操纵模型的决策（「到不了 hub」会诱导它去 connect 一个已经连通的端口），
+ * 所以必须用**物理口径**：每一跳都要 `accepts()` 验「货推得进去吗」。
+ *
+ * ## 为什么是「正向建边 + 反向闭包」而不是「每条带子正向走一遍」
+ *
+ * 正向逐条走是 O(带子数 × 路径长度)：163 条时无所谓，但真存档 5000 条带子上每次
+ * 都要重走同一条长链，同一段路被走几百遍。这里先把**每个实体 → 下游实体**的边建出来
+ * （O(实体数 × 输出槽数)，与路径长度无关），再从 hub 反向做一次闭包（O(V+E)）。
+ * 一次会话里只算一遍，与 `hubReachable` 同复杂度量级。
+ *
+ * 成环（A→B→A）由 BFS 的 visited 集合天然吸收：环上的实体只有在**真能通到 hub** 时
+ * 才会被反向闭包收进来，不会因为环本身被误判成「可达」或「不可达」。
+ *
+ * @param {object} obs ObsSnapshot
+ * @param {object} [idx] `indexOf(obs)`（可选，省一次索引）
+ * @returns {Set<number>} 能到达 hub 的实体 uid（**含 hub 自己**，与 `hubReachable` 一致）
+ */
+export function flowReachable(obs, idx) {
+    const ix = idx || indexOf(obs);
+    const out = new Set();
+    const hub = ix.ent.find(e => e.type === "hub");
+    if (!hub) return out;
+
+    /* 反向邻接：`下游 uid → Set(上游 uid)`。下游是**落点实体**（footprint 级），
+       所以「带子出口落进 2×1 cutter 的第二格」也算一条边。 */
+    const feeds = new Map();
+    const link = (down, up) => {
+        let s = feeds.get(down);
+        if (!s) { s = new Set(); feeds.set(down, s); }
+        s.add(up);
+    };
+    for (const e of ix.ent) {
+        if (e.uid === hub.uid) continue;
+        for (const o of flowOutlets(ix, e)) {
+            const dst = at(ix, o.cell);
+            if (!dst || dst.uid === e.uid) continue;               // 空地 / 自环
+            /* ★ 每一跳都验 accepts ★
+               几何相邻但入口朝向对不上的两条带子，货推不进去 —— 那不是一条路。
+               对 hub 同样要验：撞在 hub 侧面（不是输入槽本体格）不算交货。 */
+            if (!accepts(ix, o.cell, o.dir).ok) continue;
+            link(dst.uid, e.uid);
+        }
+    }
+
+    const q = [hub.uid];
+    out.add(hub.uid);
+    while (q.length) {
+        const cur = q.shift();
+        for (const up of feeds.get(cur) || []) {
+            if (out.has(up)) continue;
+            out.add(up);
+            q.push(up);
+        }
+    }
+    return out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 8. hub 反向可达（从 loop.mjs 原样搬来，语义不变）
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /**
