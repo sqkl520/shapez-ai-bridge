@@ -963,7 +963,12 @@ export function connect(a, b, c, d) {
             return failure({
                 code: "occupied", field: "to",
                 message: `所有候选路径都被挡住；第一处冲突在 ${blockedBy.x},${blockedBy.y}（${blockedBy.what}${blockedBy.uid !== undefined ? ` uid=${blockedBy.uid}` : ""}）`,
-                hint: "这是「撞了」，不是参数错。要绕开需要阶段 3 的布线；机器永远不会被覆盖。",
+                /* ⚠️ 2026-11-02：删掉「要绕开需要阶段 3 的布线」。
+                 * 实测证否（`CONNECT-OCCUPIED-DIAGNOSIS.md`）：7 个唯一 `occupied` 里
+                 * 4 个是**端口落点被非带实体占死**——换端口即可，与路径长短无关。
+                 * 那句「等阶段 3」会让模型不再试换端口，而换端口正是多数情况的正解。
+                 * 现在只留可执行的那一半。 */
+                hint: "这是「撞了」，不是参数错。换一个 from 端口（多输出机器的另一侧常是空的），或换一个 to 目标；机器永远不会被覆盖。",
                 firstConflict: blockedBy,
                 detail: { firstConflict: blockedBy, maxTurns: MAX_TURNS },
             });
@@ -971,7 +976,9 @@ export function connect(a, b, c, d) {
         return failure({
             code: "no_path", field: "to",
             message: `没有任何 ≤${MAX_TURNS} 转角的折线能连上：from ${describePort(spf.port)}（出货 ${spf.port.vel}）→ to ${describePort(spt.port)}（进货 ${spt.port.vel}）`,
-            hint: "路径上需要穿越机器/绕更远，本阶段（直线/L/Z/多转角快路径）不覆盖；阶段 3 的 dijkstraOriented 会接这里。",
+            /* 同上：不指向「阶段 3」，指向**换端口/换目标**。
+               这是模型读完能立刻写出一个不同调用的建议。 */
+            hint: `换个 from 端口或换个 to 目标；当前这一对端口之间没有 ≤${MAX_TURNS} 转角的路径。`,
             detail: { fromPort: spf.port, toPort: spt.port },
         });
     }
@@ -984,12 +991,30 @@ export function connect(a, b, c, d) {
            不是能修的因。改为按「修法」聚合 + 给出最少要覆盖几格。 */
         const sum = summarizeBlocked(candidates, machineBlocked);
         const hasBelt = sum.beltOnly > 0;
+        /* ⚠️ 2026-11-02：删掉「等阶段 3 的布线」这半句。
+         *
+         * 它原来写作「allow_replace 帮不上，只能换端口或等阶段 3 的布线」。
+         * 前半句对，后半句**被实测证否**：
+         *
+         * `CONNECT-OCCUPIED-DIAGNOSIS.md` 逐条验证了 7 个唯一的 `occupied` 失败
+         * （格子级 BFS，判据与 `candidateShapes` 独立）：
+         *   · 4/7 是端口落点被非带实体占死 —— **换端口即可**，与路径无关
+         *   · 3/7 只差 `allow_replace:true`，宏已枚举出 89~1045 条合法折线
+         *   · **0/7 需要更好的布线**
+         *
+         * 而这句 hint 在多轮实验（`HINT-AB-RESULT.md`，38 条）里出现了 7 次，
+         * 每次都把模型引向一个**不存在的能力**。它比不给 hint 更糟：
+         * 模型读到「等阶段 3」，就不会再试换端口 —— 而换端口正是 4/7 的正解。
+         *
+         * 现在只留**真的可执行**的那一半：「换 from 端口，或换 to 目标」。
+         * 这是模型读完能立刻写出一个不同调用的建议。 */
         const hint = hasBelt
             ? `这是「撞了」，不是参数错。有 ${sum.beltOnly} 条走法只需要覆盖既有带子（最少 ${sum.minReplace} 格）`
                 + `就能通 —— 传 opts.allow_replace=true 即可（执行时要 delete 那些 uid 并纳入 tx 回滚）。`
                 + `${sum.beltAndSelf + sum.selfOnly ? `另有 ${sum.beltAndSelf + sum.selfOnly} 条是候选生成器的自交走法，覆盖也救不了。` : ""}`
             : `这是「撞了」，不是参数错。${sum.selfOnly + sum.beltAndSelf} 条候选全部自交（候选生成器的折回走法），`
-                + `没有一条是「撞了旧带子」—— allow_replace 帮不上，只能换端口或等阶段 3 的布线。`;
+                + `没有一条是「撞了旧带子」—— allow_replace 帮不上。`
+                + `换一个 from 端口（多输出机器的另一侧常是空的），或换一个 to 目标。`;
         /* firstConflict 只报**这批候选**里真实存在的那一类：
            能进 candidates[] 的走法都已过 `fits`，不含机器 —— 所以这里不该出现机器。
            撞带子时指向**覆盖代价最小**的那条走法的那一格（照着删/覆盖就是对的）；
