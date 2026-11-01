@@ -316,12 +316,47 @@ const MACRO_EXAMPLES = Object.freeze({
     trash_unused: { macro: "trash_unused", args: { outlet: { $ref: "C1", port: "left" }, opts: { confirm_waste: true } } },
 });
 
-/** 卡片的参数表：丢掉 `opts.dry_run`（loop 不让 LLM 决定 dry-run），最多 6 条。 */
+/**
+ * 卡片的参数表：丢掉 `opts.dry_run`（loop 不让 LLM 决定 dry-run），最多 6 条。
+ *
+ * ## 2026-11-02：`opts.*` 后面要带一句「它是干什么的」
+ *
+ * 原来只印 `名字:类型?`，于是 `connect` 的卡片长这样：
+ *
+ *     params: from:Endpoint, to:Endpoint, opts.rebind:boolean?, opts.allow_replace:boolean?
+ *
+ * —— **两个 boolean 开关，名字看不出区别，也没说解哪个错**。
+ *
+ * 实测（`EXECUTION-RATE-BOTTLENECK.md`，58 条真实存档样本）：
+ *   4 次 `port_already_bound`（`from.port` 已被占，只有 `opts.rebind=true` 能解）
+ *   3 次 `target_already_fed`（`to.port` 已被供料，同样只有 `rebind`）
+ *   6 次 `occupied`（路径撞带子，只有 `opts.allow_replace` 能解）
+ *
+ * 而 `contract.mjs:1135-1139` 里这两个参数的 `description` **写得很清楚**
+ * （「口上的开关」vs「路上的开关」，各自对应哪个错误码）——
+ * 只是 `renderParams` 从来没把它渲染出来。
+ *
+ * 修法：`opts.*` 的参数在名字后面附上 `description` 的**首句**（到第一个中文句号/分号），
+ * 非 `opts.*` 的参数不变（它们的名字已经够清楚，加了只是吃预算）。
+ */
 function renderParams(spec) {
+    /* 只取首句，避免把整段说明塞进卡片（预算很紧，见 PROMPT-BUDGET-DEFECT.md）。
+       30 字符够说清「哪个开关管哪件事」，又不至于把 params 行撑到 300+ 字符。 */
+    const firstClause = (s) => {
+        const t = String(s || "").replace(/\*\*/g, "").trim();
+        const m = t.split(/[。；;，,]/)[0];
+        return m.length > 30 ? m.slice(0, 28) + "…" : m;
+    };
     const ps = spec.params
         .filter(p => p.name !== "opts.dry_run")
         .slice(0, 6)
-        .map(p => `${p.name}:${p.type}${p.required ? "" : "?"}`);
+        .map(p => {
+            const base = `${p.name}:${p.type}${p.required ? "" : "?"}`;
+            /* 只给 `opts.*` 加说明：它们才是「光看名字猜不出来」的那批 */
+            if (!/^opts\./.test(p.name)) return base;
+            const d = firstClause(p.description);
+            return d ? `${base}  // ${d}` : base;
+        });
     return ps.join(", ");
 }
 
