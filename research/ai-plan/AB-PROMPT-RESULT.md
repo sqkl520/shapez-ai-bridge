@@ -155,3 +155,142 @@ ls .tmpverify/ab-prompt/results-*.json
 - **「命中」这个判据本身有争议**：`connect(B34→H1)` 是正解，但
   `connect(C1→H1)`（从 cutter 右槽直接接）在物理上也可能成立 ——
   只是会覆盖那段已有的带子。我没把后者算作命中，但它不一定是错的。
+
+---
+
+---
+
+# 第二轮：产能场景 —— **这是正结果**
+
+> 2026-11-02。第一轮（断点场景）是负结果；换到产能场景后，`CAPACITY` 段的效果
+> **极显著**。
+
+## 结论
+
+**在修正了夹具里的假信号之后，单独加 `CAPACITY` 段把「处理瓶颈」从 0/26 拉到 16/25
+（Fisher p = 2.9e-07），误判从 14 降到 5（p = 0.020）。**
+
+| 臂 | n | 处理瓶颈 | 结构化落 cutter | 提产能 | **误判** |
+|---|---|---|---|---|---|
+| **A2 无 CAPACITY** | 26 | **0** (0%) | 0 | 6 | **14** (54%) |
+| **B2 有 CAPACITY** | 25 | **16** (64%) | 15 | 18 | **5** (20%) |
+
+我独立重算的 Fisher p 值（与 agent 报告同量级）：
+
+```
+处理瓶颈  0/26 vs 16/25   p = 2.85e-07
+落 cutter 0/26 vs 15/10   p = 1.03e-06
+误判      14/12 vs 5/20   p = 2.01e-02
+```
+
+---
+
+## 关键：第一轮「产能场景也无效」是我把夹具做坏了
+
+第一批四臂 82 条**几乎逐字相同**，全部去 `connect(...→H1)`。我一度以为是 prompt 的
+「产品侧不可见」缺陷。查下去发现**两处假信号**，都在夹具里：
+
+### 假信号 1：`[not reaching hub]` 标反了
+
+```
+prompt 里标 [not reaching hub]：11 / 12
+物理口径（可穿机器的 hubReachable）：36 / 37 是通的  ← 97%
+```
+
+根因（`prompt.mjs:944-967`）：`toHub` 的反向 BFS **只在带子之间传播**
+——`into` 表只索引带子，遇到机器（cutter / balancer）就断了。
+
+于是「矿机 → balancer → cutter → belt → hub」这条通链，被标成「到不了 hub」。
+**模型照着这个标记去接线，是对 prompt 的正确解读。错的是 prompt。**
+
+### 假信号 2：`NO_PRODUCTION` 与 `delivered 0.5/s` 在同一份 prompt 里矛盾
+
+```
+## DIAGNOSIS
+NO_PRODUCTION: 窗口内 RuRu---- 产出 0（delivered 45/70）
+
+## PRODUCTION
+produced RuRuRuRu: 108
+rate RuRu----: 0.5          ← 上面说 0，这里说 0.5
+```
+
+是我构造夹具时 `produced_total` 只放了 `RuRuRuRu`、没放 `RuRu----`。
+
+---
+
+## 哪些改动有用 / 没用
+
+| 改动 | 证据 | 判定 |
+|---|---|---|
+| **CAPACITY 段** | 0/26 → 16/25, p=2.9e-07 | ✅ **有用，极显著** |
+| production 段 | A2 vs B2 都已自洽，差异不来自它 | ⚪ 无独立证据 |
+| 新 system prompt（规则重排） | A vs C 误判 16/20 vs 20/20, p=0.106 | ⚪ 不显著 |
+| **EXCEPTION 段** | 本轮 C 0/20 vs D 0/21, p=1.0000 **未复现** | ⚠️ 上一轮 p=0.0449 大概率是 n=10 的假阳性 |
+
+**上一轮「EXCEPTION 有害」的结论，本轮没复现。** 本轮 n 分别是 20/21，比上一轮的 10 更可信。
+所以那条结论应当撤回——它是小样本假阳性。
+
+---
+
+## 两轮合起来的结论
+
+1. **断点场景**：改前 prompt 就 90%，观察面改动零影响。那个场景**证明不了**任何东西
+   —— 诊断文本本身足够。
+2. **产能场景**：`CAPACITY` 段是唯一的信息源（旧 prompt 完全没有产能概念），
+   效果极显著。
+3. ⇒ **观察面的价值取决于「诊断有没有覆盖那个问题」**。
+   诊断能说清的（断点），补上下文无用甚至有害；
+   诊断说不清的（产能），补上下文是决定性的。
+
+---
+
+## 必须修的两处（独立于本实验）
+
+### 1. `toHub` 遇机器就断 —— 这是真 bug
+
+`prompt.mjs:944-967` 的反向 BFS 只在带子之间走。应当在遇到**透传建筑**
+（balancer，模板里 `passthrough: true`）时继续穿过去；
+遇到**改形状的机器**（cutter / stacker / painter / mixer）时停 —— 但**应该从它的输入侧继续反查**，
+因为它下游确实是通的（cutter → belt → hub 那条链上，上游所有带子都真的能到 hub）。
+
+这条 bug 会让 prompt **主动误导**模型，比"信息缺失"严重得多。
+
+### 2. 夹具的 `produced_total` 要包含目标形状
+
+我构造 `capacity-scenario.json` 时只放了 `RuRuRuRu`，导致诊断说 0 而 PRODUCTION 说 0.5。
+
+---
+
+## 实操教训（给后续所有实验）
+
+**`max_tokens=16000` 不够。**
+
+带 `CAPACITY` 段的 prompt 会让模型把预算全花在 thinking 上，
+`content` 里没有 `text` 块 → `stop_reason=max_tokens` → 被误记成 `LLM_NOT_JSON`。
+
+实测：**32000 才正常**，本轮用 64000。
+
+这个坑在上一轮就踩过（当时是 8000 不够），**阈值随 prompt 变长而上升**。
+
+---
+
+## 复现
+
+```bash
+cd "D:/Projects/rea/Project work/shapez"
+# 原始数据
+ls .tmpverify/ab-capacity/results.json      # 82 条（夹具坏的那批）
+ls .tmpverify/ab-capacity/results-v2.json   # 51 条（修正后）
+node .tmpverify/ab-capacity/analyze.mjs
+node .tmpverify/ab-capacity/diff.mjs        # 四臂逐字节自检
+```
+
+## 诚实边界
+
+1. **「处理瓶颈」这个正解有争议**：A2 的 14/26 是在给 balancer 的空 secondary 接垃圾桶 ——
+   那也可能是条合理路线（虽然不解决 cutter 瓶颈）。判成「误判」是偏严的。
+2. **V2 同时改了两件事**（去假标记 + 让 production 自洽），严格说不能完全归因到 CAPACITY。
+   但 A2 也拿到了自洽的 production，仍然 0/26 —— 这个反驳成立。
+3. **只测了一个产能场景**（L4，单 cutter 瓶颈）。
+4. **agent 没修 `pickBeltsForGoal` 算法本身**，V2 是文本层绕过。
+   要做成产品，下一步该修的是算法。
