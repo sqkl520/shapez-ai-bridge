@@ -618,6 +618,28 @@ function renderMachines(tbl, diagnoses) {
     const ordered = [...all].sort((a, b) => (rank(a.handle) - rank(b.handle)) || 0);
     const shown = ordered.slice(0, PROMPT_RULES.MACHINES_MAX);
     const lines = [`## MACHINES (${shown.length} of ${all.length})`];
+    /* ★ 图例：desc 里的 `→无` 是**可用性信号** ★
+     *
+     * 实测（本次会话，`.tmpverify/hintprobe/p0d.mjs`，L4 真实存档）：
+
+     *   desc 显示「→无」的端口 7 个 → **6 个真的能 connect 到 hub**
+     *   desc 显示「→有」的端口 17 个 → **0 个能连**（port_already_bound / occupied）
+     *
+     * 也就是说「端口后面写着"无"」几乎等价于「这个端口是空的、可以用」。
+     *
+     * **这个信息本来就在 prompt 里，但从来没有解释过这些符号是什么意思。**
+     * 模型看到 `输出=top:secondary(→无)` 时，无从知道 `→无` 意味着「这里是空的」，
+     * 更不知道「空 = 可连」。
+     *
+     * 而 `CONNECT-OCCUPIED-DIAGNOSIS.md` 说：7 个唯一 `occupied` 失败里
+     * **4 个是端口选错**（选了一个落点被占死的端口）。这条图例直接对准那 4 个。
+     *
+     * 放在 MACHINES 段头而不是 S1：紧挨着它解释的数据，且 S1 是 prompt cache 的
+     * 前缀（改它会让所有缓存失效）。代价只有 1 行。 */
+    if (all.length) {
+        lines.push("(notation: `(→X)` = that output already feeds X, so it is TAKEN;"
+            + " `(→无)` = that output is free — this is the port to use for a new connect)");
+    }
     if (!all.length) lines.push("(none)");
     for (const e of shown) {
         lines.push(`${e.handle} ${e.type}${e.variant && e.variant !== "default" ? `(${e.variant})` : ""}`
