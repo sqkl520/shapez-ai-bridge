@@ -644,6 +644,35 @@ t("信封：计划态下 added_uids 恒空（uid 由 tx 分配），契约已写
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * contract.mjs 自带的 selftest —— 必须真的被跑到
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `contract.mjs:2154` 起有一段自测（含「宏名齐全」「每条 spec 七项必填」等断言），
+ * 但**没有任何测试文件 spawn 它** —— 本次 grep 过 `spawnSync`/`execFileSync`，
+ * 本文件是纯 import，不跑子进程。
+ *
+ * ⇒ 那段 selftest 只在人工执行 `node src/agent/macros/contract.mjs` 时生效。
+ * 它里面的 `MACRO_NAMES.length === 6` 这条 ABI tripwire 因此形同虚设：
+ * 加了宏却忘了改它，CI 不会红。
+ *
+ * 这一条断言把那段自测接进 CI。**不要删**：删掉等于把 ABI tripwire 再次变成孤儿。 */
+{
+    const { spawnSync } = await import("node:child_process");
+    const { fileURLToPath } = await import("node:url");
+    const path = await import("node:path");
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const r = spawnSync(process.execPath, [path.join(here, "contract.mjs")], {
+        encoding: "utf8", timeout: 60000,
+    });
+    ok(r.status === 0,
+        `contract.mjs 的 selftest 必须通过（退出码 ${r.status}）\n`
+        + `--- stdout ---\n${(r.stdout || "").slice(-1500)}\n`
+        + `--- stderr ---\n${(r.stderr || "").slice(-800)}`);
+    ok(/全部通过|passed/.test(r.stdout || ""),
+        `selftest 的输出应当自报通过，实得：${(r.stdout || "").slice(-300)}`);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * 汇总
  * ══════════════════════════════════════════════════════════════════════════ */
 
