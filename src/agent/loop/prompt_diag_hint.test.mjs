@@ -126,3 +126,43 @@ test("H6 真实 L4 存档：加 hint 后 CAPACITY 仍在（hint 不能挤掉它�
         `CAPACITY 必须在（unavailable=${p.blocks.capacity_unavailable}）`);
     assert.ok(p.system.length + p.user.length <= 16000, "总字符不许超上限");
 });
+
+
+/* ═══════════ 5. 端到端：宏的真实 hint 走完 buildTxPlan → 诊断 → prompt ═══════════
+ *
+ * 前面 H1-H6 用的是手写的假 hint。这一条用**真实宏产出的 hint**，
+ * 走完整链路：`buildTxPlan` reject → `diagnosis.hint` → `renderDiagnoses` → S4。
+ *
+ * 为什么必须有这条：如果 `loop.mjs:1232` 的 `hint: e.hint || null` 哪天被删掉，
+ * 或者 `connect.mjs` 改了 hint 的内容，前面那些用假 hint 的测试**全都还是绿的**。
+ *
+ * 实测（本次会话）：这个世界上最常见的 hint 就是
+ * 「确实要抢过来就传 opts.rebind=true」—— 因为所有矿机→端口的连接
+ * 都撞在 `port_already_bound` / `target_already_fed` 上（四轮共 6-14 次）。
+ */
+test("H7 端到端：真实宏的 rebind hint 走到 prompt", async () => {
+    const { buildTxPlan } = await import("../loop.mjs");
+
+    /* ① 宏确实拒了，并且给出了 hint —— 链路的源头 */
+    const plan = {
+        say: "feed the cutter",
+        calls: [{
+            macro: "connect",
+            args: { from: { $ref: "M1" }, to: { $ref: "C1", port: "primary" } },
+            why: "cutter is starved",
+        }],
+    };
+    const txp = buildTxPlan(plan, OBS, null, handles);
+    assert.equal(txp.ok, false, "M1→C1.primary 应当被拒（那个端口已经有供料方）");
+    const d = txp.diagnosis;
+    assert.ok(d, "拒绝必须带诊断");
+    assert.equal(d.code, "MACRO_REFUSED", `诊断码应为 MACRO_REFUSED，实际 ${d.code}`);
+    assert.equal(typeof d.hint, "string", `诊断必须带 hint，实际 ${JSON.stringify(d.hint)}`);
+    assert.match(d.hint, /rebind/, `hint 必须点出开关名 rebind，实际：${d.hint}`);
+
+    /* ② 那条诊断渲染进 prompt 时，hint 跟着走 */
+    const p = render([d]);
+    assert.match(p.blocks.S4, /rebind/,
+        `真实 hint 里的 rebind 必须到达 prompt，实际 S4：${p.blocks.S4}`);
+    assert.match(p.blocks.S4, /hint: /, "而且是作为 hint 段出现的");
+});
