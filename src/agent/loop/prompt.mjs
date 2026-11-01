@@ -1329,23 +1329,41 @@ export function renderCapacity(capacity, options = null, opts = {}) {
     const add = options && options.addMachines;
     const up = options && options.upgrade;
 
+    /* ── 「买升级」这条路：**只有真能做的时候才提** ──
+     *
+     * `capacityFor` 会把 `buy-upgrade` 放进 `doNow`（`assess.mjs:520-527`），
+     * 那是"哪种办法更快吃满供给"的**策略**答案。但 loop 的执行面只有 6 个宏，
+     * 里面**没有**任何宏能买升级 —— 于是 prompt 会输出
+     * `act: buy processors T2 ⇒ 0.75/s`，而模型照着写 `{"macro":"upgrade"}`
+     * 会被 `LLM_UNKNOWN_MACRO` 拒掉。
+     *
+     * **教模型做一个不存在的动作，比不提更坏**：它浪费一轮、消耗预算，
+     * 而且会被记成"模型答错了"，掩盖真正的原因（宏缺失）。
+     *
+     * 判据不看 `MACRO_NAMES` 里有没有 `upgrade` 这个字符串 —— 那是猜"买了升级之后
+     * 会叫什么名字"。判据是**有没有宏的产物能实现一次升级**：升级不增删实体，
+     * 所以任何只产出 place/delete 类 op 的宏都不可能做到它。
+     * 等 `upgrade` 宏真的接进 loop 的执行面，这里再加一个显式的白名单条目。
+     */
+    const canBuyUpgrade = false;   // ← 加 `upgrade` 宏并接进 `MACRO_FNS` + `doApply` 后改这里
+    const buyNow = canBuyUpgrade ? affordable[0] : null;
+
     if (form === "short") {
         /* 短版：只留**一条**最该做的动作。优先「现在就买得起」的升级（零占格、全局生效），
            否则才说加机器。 */
-        const buyNow = affordable[0];
         if (buyNow) {
             lines.push(`act: buy ${buyNow.line} T${buyNow.tier} ⇒ ${fmt(buyNow.capacityAfter)}/s`);
         } else if (add && add.add > 0) {
             lines.push(`act: add ${add.add} ${add.kind} ⇒ ${fmt(add.capacityAfter)}/s`);
         }
     } else {
-        /* 两条路：加机器 / 升升级（都可执行时才写） */
+        /* 两条路：加机器 / 升升级（**都可执行时才写** —— 见上面 canBuyUpgrade 的理由） */
         const roads = [];
         if (add && add.add > 0) {
             roads.push(`add ${add.add} ${add.kind} (${add.from}→${add.to}) ⇒ ${fmt(add.capacityAfter)}/s`
                 + (add.enough ? " — fills the line" : ""));
         }
-        if (up) {
+        if (up && canBuyUpgrade) {
             const short = up.affordable ? "ready now" : `needs ${fmtShort(up.missing)}`;
             roads.push(`${up.line} T${up.tier} (×${up.multiplierFrom}→×${up.multiplierTo}) ⇒ ${fmt(up.capacityAfter)}/s — ${short}`);
         }
