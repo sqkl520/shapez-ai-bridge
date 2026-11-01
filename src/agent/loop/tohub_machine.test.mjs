@@ -1,0 +1,442 @@
+/**
+ * tohub_machine.test.mjs — 钉住 `[not reaching hub]` 标记的**物理口径**。
+ *
+ * ## 这个文件守的 bug（2026-11-01 实测）
+ *
+ * `prompt.mjs` 给每条带子标 `[not reaching hub]`，但旧实现的反向 BFS **只在带子之间
+ * 传播**：索引 `into` 只装带子，遇到机器就断。于是
+ *
+ *     矿机 → balancer → cutter → 带子 → hub
+ *
+ * 这条**物理连通**的链上，cutter 下游那段被标「能到 hub」，cutter 上游全被标
+ * 「到不了」。实测（`.tmpverify/capacity-scenario.json`，45 实体）：
+ *
+ *     prompt 里标 [not reaching hub]：11 / 12 条（可渲染的名额里）
+ *     物理口径（穿机器 + 穿隧道 + 每跳验 accepts）：36 / 37 条通  ← 97%
+ *
+ * 后果：模型看到「12 条里 11 条到不了 hub」，就去 `connect` 一个**已经连通**的端口。
+ * 四臂 82 条样本几乎逐字相同，全部撞在这个假信号上。
+ *
+ * ## 这个文件为什么必须这么写
+ *
+ * 三条判据都**独立于实现**：
+ *   1. 正例 A 拿 `flowReachable`（物理口径）当独立真值，对拍 prompt 里的标记；
+ *   2. 正例 B 用**真实半成品存档**：断点上游必须标「到不了」，下游必须能到 ——
+ *      如果实现退化成「恒 false」（谁都不标）或「恒 true」（谁都标），B 立刻红；
+ *   3. 反例 C/D 各造一个最小世界：通向 trash、出口是空地。
+ *      它们是**方向性**判据：一个"只会答 true"的实现过不了 C，"只会答 false"的过不了 A。
+ *
+ * 回归 E 守的是**预算**：修语义不能把 prompt 撑大或把带子名额吃掉。
+ *
+ * 用法：`node --test src/agent/loop/tohub_machine.test.mjs`
+ */
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { buildPrompt } from "./prompt.mjs";
+import { buildHandles } from "./handles.mjs";
+import { indexOf, flowReachable } from "./topology.mjs";
+import { DIRV, beltExit } from "../../ai/belt-rules.mjs";
+import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(HERE, "../../..");
+const SAVES = path.join(ROOT, "test/fixtures/saves");
+const load = f => JSON.parse(fs.readFileSync(path.join(SAVES, f), "utf8"));
+
+/** 45 实体的完整产线（矿机 → balancer → cutter → 带子 → hub），由主线程构造。 */
+const SCENARIO = JSON.parse(fs.readFileSync(path.join(ROOT, ".tmpverify/capacity-scenario.json"), "utf8"));
+const SCENARIO_OBS = SCENARIO.obs;
+const SCENARIO_TABLE = buildHandles(SCENARIO_OBS, SCENARIO.items || null);
+
+/** 真实半成品存档：`B34@(1,-6)` 是断头，断点在 `(1,-6)` 之后。 */
+const HALF = load("half-L4-obs.json");
+const HALF_OBS = HALF.obs;
+const HALF_TABLE = buildHandles(HALF_OBS, HALF.items || null);
+
+const L4_OBS = load("L4-obs.json").result;
+const L4_TABLE = buildHandles(L4_OBS, null);
+
+/* ═══════════════════════════ 小工具 ═══════════════════════════ */
+
+/** 渲染 BELTS 段（这一段带 `[not reaching hub]` 标记）。 */
+const beltsSection = (obs, handles, over = {}) => buildPrompt({
+    goal: "RuRu----", obs, handles, diagnoses: [],
+    candidates: ["connect"], lastRound: null, budget: {}, ...over,
+}).blocks.s3_belts;
+
+/** 渲染里**被标了**的句柄（行尾带标记的那几行）。 */
+const markedHandles = section => section.split("\n")
+    .filter(l => l.includes("[not reaching hub]"))
+    .map(l => (l.match(/^(B\d+) /) || [])[1])
+    .filter(Boolean);
+
+/** 渲染里出现的句柄（按行首 `B<n> ` 认 —— `includes` 会被 `B3` 命中 `B34`）。 */
+const shownHandles = section => section.split("\n")
+    .map(l => (l.match(/^(B\d+) /) || [])[1])
+    .filter(Boolean);
+
+/** uid → handle 的句柄表视图（只读）。 */
+const handleMap = tbl => new Map([...tbl.byHandle.values()]
+    .filter(e => typeof e.uid === "number").map(e => [e.uid, e.handle]));
+
+/** 某份 obs 里所有带子（含隧道）的 uid。 */
+const beltUids = obs => (obs.entities || [])
+    .filter(e => e && (e.type === "belt" || e.type === "underground_belt"))
+    .map(e => e.uid);
+
+/**
+ * **旧实现**（修复前 `prompt.mjs` 里的那段）的逐字复刻，只用于对照。
+ *
+ * 它只做两件事：从「出口落进 hub 占地面积」的带子出发，然后**在带子之间**
+ * 沿「谁的出口落在我这一格」反向扩散。遇到机器就断。
+ *
+ * 这里保留它不是为了怀旧 —— 测试 0 要证明夹具**能**让新旧口径给出不同答案，
+ * 否则正例 A 就是恒真的。没有这份副本，那条断言只能靠"我记得"。
+ */
+function legacyBeltOnlyToHub(obs) {
+    const ents = obs.entities || [];
+    const rvOf = e => (Number.isInteger(e.rotation_variant) ? e.rotation_variant
+        : (Number.isInteger(e.rv) ? e.rv : 0));
+    const exitCell = e => {
+        const d = beltExit(rvOf(e), Number(e.r) || 0);
+        return [e.x + DIRV[d][0], e.y + DIRV[d][1]];
+    };
+    const isBelt = e => e && (e.type === "belt" || e.type === "underground_belt");
+    const belts = ents.filter(isBelt);
+    const hub = ents.find(e => e.type === "hub");
+    const hubCells = new Set();
+    if (hub) {
+        const [w, h] = footprintOf(hub);
+        for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) hubCells.add(`${hub.x + dx},${hub.y + dy}`);
+    }
+    const toHub = new Set();
+    const frontier = [];
+    for (const b of belts) {
+        const [x, y] = exitCell(b);
+        if (hubCells.has(`${x},${y}`)) { toHub.add(b.uid); frontier.push(b); }
+    }
+    const into = new Map();
+    for (const b of belts) {
+        const k = exitCell(b).join(",");
+        if (!into.has(k)) into.set(k, []);
+        into.get(k).push(b);
+    }
+    while (frontier.length) {
+        const cur = frontier.pop();
+        for (const b of into.get(`${cur.x},${cur.y}`) || []) {
+            if (toHub.has(b.uid)) continue;
+            toHub.add(b.uid);
+            frontier.push(b);
+        }
+    }
+    return toHub;
+}
+
+/** obs 里的 hub 实体（复刻版要与实现用同一份 footprint 定义）。 */
+function footprintOf(e) {
+    try {
+        const tpl = templateByBuildingVariant(e.type, e.variant || "default");
+        if (tpl && Array.isArray(tpl.footprint) && tpl.footprint.length === 2) return tpl.footprint;
+    } catch { /* 拿不到就按 1×1 */ }
+    return [1, 1];
+}
+
+/* ═══════════════════════════ 0. 夹具自检 ═══════════════════════════ */
+
+test("0. 夹具：capacity-scenario 是一条**穿机器**才通的产线（否则下面的正例恒真）", () => {
+    const reach = flowReachable(SCENARIO_OBS, indexOf(SCENARIO_OBS));
+    const uids = beltUids(SCENARIO_OBS);
+    const ok = uids.filter(u => reach.has(u)).length;
+
+    assert.equal(uids.length, 37, `夹具 37 条带子（实际 ${uids.length}）`);
+    assert.equal(ok, 36, `物理口径 36/37 通（实际 ${ok}/${uids.length}）`);
+
+    /* ★ 这条是所有正例的**结构性前提** ★
+       如果这条链不穿机器也能全通，那么"旧实现只在带子间传播会漏"就测不出来 ——
+       正例 A 会变成恒真。钉住：**旧实现**与物理口径必须给出不同答案。 */
+    const legacy = legacyBeltOnlyToHub(SCENARIO_OBS);
+    const legacyOk = uids.filter(u => legacy.has(u)).length;
+    assert.notEqual(ok, legacyOk,
+        `★ 夹具必须让新旧口径给出不同答案（新 ${ok}/${uids.length}，旧 ${legacyOk}/${uids.length}）`
+        + " —— 否则正例 A 测不出修复");
+    assert.ok(legacyOk < ok,
+        `旧口径必须比新口径**更悲观**（旧 ${legacyOk} / 新 ${ok}）—— 这正是模型的假信号方向`);
+});
+
+/* ═══════════════════════════ 1. 正例 A：与物理口径一致 ═══════════════════════════
+ *
+ * 核心判据：prompt 里每一行**被标**的带子，都必须在物理口径里真的到不了 hub；
+ * 反过来，渲染出来但**没被标**的，必须真的能到。
+ *
+ * 允许的差异只有一个方向，且必须说明：**渲染里没出现**的带子不管
+ * （`STATE_BELTS_MAX=12` 的预算只给 12 条，剩下的 25 条走不到模型眼前）。
+ */
+test("A. 正例：capacity-scenario 上，标记与物理口径逐个 uid 一致", () => {
+    const section = beltsSection(SCENARIO_OBS, SCENARIO_TABLE);
+    const reach = flowReachable(SCENARIO_OBS, indexOf(SCENARIO_OBS));
+    const H = handleMap(SCENARIO_TABLE);
+    const uidOf = new Map([...H.entries()].map(([u, h]) => [h, u]));
+
+    const shown = shownHandles(section);
+    const marked = markedHandles(section);
+    assert.ok(shown.length > 0, "BELTS 段非空（否则下面的断言全是空的）");
+
+    /* ① 每一条被标的，物理上必须真的到不了 */
+    for (const h of marked) {
+        const u = uidOf.get(h);
+        assert.ok(typeof u === "number", `${h} 必须能映射回 uid`);
+        assert.equal(reach.has(u), false,
+            `★ ${h} 被标 [not reaching hub]，但物理口径说到得了 —— 这正是本次要修的假信号`);
+    }
+
+    /* ② 每一条渲染出来但没被标的，物理上必须真的能到 */
+    for (const h of shown) {
+        if (marked.includes(h)) continue;
+        const u = uidOf.get(h);
+        assert.equal(reach.has(u), true,
+            `★ ${h} 没被标，但物理口径说它到不了 —— 标记漏报同样是假信号`);
+    }
+
+    /* ③ 量级：修复前 12 条里 11 条被误标，现在应当只剩少数真的断的 */
+    assert.ok(marked.length <= 2,
+        `★ 被标的最多 2 条（实际 ${marked.length}：${marked.join(",")}）—— `
+        + "修复前这里是 11 条，全在 cutter 上游");
+});
+
+test("A2. 对照：物理口径本身在 capacity-scenario 上不是恒真/恒假", () => {
+    /* 一个"谁都能到"的实现过不了 C/D；一个"谁都到不了"的实现过不了这条。
+       这里同时钉住两头，证明 A 的判据有牙齿。 */
+    const reach = flowReachable(SCENARIO_OBS, indexOf(SCENARIO_OBS));
+    const uids = beltUids(SCENARIO_OBS);
+    const ok = uids.filter(u => reach.has(u)).length;
+    assert.ok(ok > 0, "至少有一条到得了（否则「恒假」的实现也能让 A 绿）");
+    assert.ok(ok < uids.length,
+        `至少有一条到不了（否则「恒真」的实现也能让 A 绿）；实际 ${ok}/${uids.length}`);
+});
+
+/* ═══════════════════════════ 2. 正例 B：真实半成品存档 ═══════════════════════════
+ *
+ * `half-L4-obs.json` 是实机半成品（42 实体 / 34 条带子），目标区断在 `(1,-6)`：
+ * `B34@(1,-6)` 出口是 `(1,-5)`，那里是**空地**，所以整条向上链到不了 hub。
+ * 这一条用**真实存档**而不是手搓世界：手搓会让分量/汇聚判据走不到真实分支。
+ *
+ * ⚠️ 诚实标注：**这一条对本次 bug 不具区分力**。这个存档里 34 条带子**全部**到不了
+ *    hub（断口在最下游），所以新旧口径都答「全不可达」，B 在老实现上也是绿的。
+ *    它守的是另一件事：标记不许**漏报**（断口上游必须被标）也不许**多报**
+ *    （被标的必须真的到不了）。真正的区分力在 A 与 F —— 那两条在老实现上是红的。
+ */
+test("B. 正例：半成品存档里，断点之后的带子标「到不了」，且实际到不了", () => {
+    const section = beltsSection(HALF_OBS, HALF_TABLE);
+    const reach = flowReachable(HALF_OBS, indexOf(HALF_OBS));
+    const marked = markedHandles(section);
+
+    /* 断点上游（`B34` 及其整条向上的链）—— 渲染里出现的话必须被标 */
+    const shown = shownHandles(section);
+    const upstream = shown.filter(h => {
+        const e = HALF_TABLE.byHandle.get(h);
+        return e && typeof e.uid === "number" && !reach.has(e.uid);
+    });
+    for (const h of upstream) {
+        assert.ok(marked.includes(h), `★ ${h} 真的到不了 hub，必须被标（实际标了 ${marked.join(",")}）`);
+    }
+
+    /* 反向：被标的必须真的到不了 —— 这一半让「无脑全标」过不了 */
+    for (const h of marked) {
+        const e = HALF_TABLE.byHandle.get(h);
+        assert.equal(reach.has(e.uid), false, `★ ${h} 被标了，但它真的到得了 —— 标记在撒谎`);
+    }
+
+    /* 这个存档里**全部**带子都到不了（断口在最下游），所以一条都不该是"能到"。
+       这不是断言标记的数量，而是断言口径：如果实现把某个机器当成了连通点，这里会红。 */
+    const total = beltUids(HALF_OBS);
+    assert.equal(total.filter(u => reach.has(u)).length, 0,
+        `★ 半成品存档的 34 条带子全部到不了 hub（断口在 B34 之后）`);
+});
+
+test("B2. 对照：同一份存档**补上那 3 格**之后，上游带子必须变成「能到」", () => {
+    /* `.tmpverify/capacity-scenario.json` 就是「半成品 + 断口那 3 格带子」：
+       B34 出口 (1,-5) → (1,-4) → (1,-3) → hub。补上之后整条链通。
+       这条证明 B 的判据不是恒真的：同一个上游带子在两处给出不同答案。 */
+    const reach = flowReachable(SCENARIO_OBS, indexOf(SCENARIO_OBS));
+    const H = handleMap(SCENARIO_TABLE);
+    const uidOf = new Map([...H.entries()].map(([u, h]) => [h, u]));
+
+    /* B34 在两份夹具里是同一个 uid（20033），只是几何不同 */
+    const b34 = uidOf.get("B34");
+    assert.ok(typeof b34 === "number", "capacity 夹具里也有 B34");
+    assert.equal(reach.has(b34), true,
+        "★ 补上断口之后 B34 必须能到 hub —— 否则 B 的『到不了』只是夹具坏了");
+
+    const halfReach = flowReachable(HALF_OBS, indexOf(HALF_OBS));
+    const halfB34 = HALF_TABLE.byHandle.get("B34");
+    assert.equal(halfReach.has(halfB34.uid), false,
+        "同一 uid 在半成品存档里到不了 —— 两份夹具的差异**只**在断口那 3 格");
+});
+
+/* ═══════════════════════════ 3. 反例 C：通向 trash ═══════════════════════════
+ *
+ * 货被销毁了，到不了 hub。这是「朝向对、几何相邻、但货不会继续流」的判据 ——
+ * 只看几何图连通的实现会把 trash 当成一个普通节点继续跟。
+ */
+test("C. 反例：一条带子通向 trash ⇒ 必须标「到不了」", () => {
+    /* 最小世界：hub 在左上，一条带子把货送进 trash。
+       trash 没有输出槽 ⇒ 货到此为止。 */
+    const obs = {
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, rotation_variant: 0, variant: "default" },
+            { uid: 2, type: "belt", x: 6, y: 0, r: 90, rotation_variant: 0, variant: "default" },  // 往右
+            { uid: 3, type: "trash", x: 7, y: 0, r: 0, rotation_variant: 0, variant: "default" },
+        ],
+    };
+    const tbl = buildHandles(obs, null);
+    const reach = flowReachable(obs, indexOf(obs));
+
+    assert.equal(reach.has(2), false, "★ 送进 trash 的带子到不了 hub（货被销毁）");
+
+    const section = beltsSection(obs, tbl);
+    const marked = markedHandles(section);
+    assert.ok(marked.length > 0, `★ 必须有标记（实际 0 条；渲染: ${section.split("\n").slice(2).join(" | ")}）`);
+    assert.ok(marked[0], "被标的是那条通向 trash 的带子");
+});
+
+test("C2. 反例：同一条链把 trash 换成 hub ⇒ 立刻变成「能到」（证明 C 有牙齿）", () => {
+    /* 与 C **只差一个实体**：`trash@(7,0)` 换成 `hub@(7,0)`（hub 是 4×4，
+       落在 (7,0) 时 (7,0) 就是它的一个输入格本体）。结论必须翻转。
+       如果实现是"见到机器就断"，这条也会 false ⇒ 这里红。 */
+    const obs = {
+        entities: [
+            { uid: 2, type: "belt", x: 6, y: 0, r: 90, rotation_variant: 0, variant: "default" },
+            { uid: 3, type: "hub", x: 7, y: 0, r: 0, rotation_variant: 0, variant: "default" },
+        ],
+    };
+    const reach = flowReachable(obs, indexOf(obs));
+    assert.equal(reach.has(2), true,
+        `★ 通向 hub 的带子必须能到（否则 C 恒真、测不出 trash 语义）；`
+        + `实际 false —— 接受判定: ${JSON.stringify(reach)}`);
+});
+
+/* ═══════════════════════════ 4. 反例 D：孤立带子 ═══════════════════════════
+ *
+ * 出口是空地 ⇒ 货走出世界 ⇒ 到不了 hub。
+ */
+test("D. 反例：孤立带子（出口是空地）⇒ 到不了 hub", () => {
+    const obs = {
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, rotation_variant: 0, variant: "default" },
+            { uid: 2, type: "belt", x: 6, y: 6, r: 0, rotation_variant: 0, variant: "default" },   // 往上，出口 (6,5) 空地
+        ],
+    };
+    const reach = flowReachable(obs, indexOf(obs));
+    assert.equal(reach.has(2), false, "★ 出口是空地的带子到不了 hub");
+
+    const section = beltsSection(obs, buildHandles(obs, null));
+    assert.ok(markedHandles(section).length > 0, "★ 渲染里必须有标记");
+});
+
+test("D2. 反例：成环（A→B→A）里没有任何一条通向 hub ⇒ 全部到不了", () => {
+    /* 环是「几何上连通、货一直转圈」的典型。一个用 visited 集合的 BFS 会正确判 false；
+       一个"能走就继续、走回自己才算停"的实现可能在这里死循环或误判 true。 */
+    const obs = {
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, rotation_variant: 0, variant: "default" },
+            /* (6,6) 往右 → (7,6)；(7,6) 往下 → (7,7)；(7,7) 往左 → (6,7)；(6,7) 往上 → (6,6) */
+            { uid: 2, type: "belt", x: 6, y: 6, r: 90, rotation_variant: 0, variant: "default" },
+            { uid: 3, type: "belt", x: 7, y: 6, r: 180, rotation_variant: 0, variant: "default" },
+            { uid: 4, type: "belt", x: 7, y: 7, r: 270, rotation_variant: 0, variant: "default" },
+            { uid: 5, type: "belt", x: 6, y: 7, r: 0, rotation_variant: 0, variant: "default" },
+        ],
+    };
+    const reach = flowReachable(obs, indexOf(obs));
+    for (const u of [2, 3, 4, 5]) {
+        assert.equal(reach.has(u), false, `★ 环上的 uid=${u} 到不了 hub（成环 ≠ 连通）`);
+    }
+});
+
+/* ═══════════════════════════ 5. 回归 E：预算不许变差 ═══════════════════════════
+ *
+ * 修语义不能挤掉带子名额，也不能把 prompt 撑大。两个数都钉死在实测值上：
+ *   · `belts_shown` = STATE_BELTS_MAX（12）—— 修语义不该让渲染变少；
+ *   · 总字符数不超过 LLM_IN_CHARS_MAX，且与修复前同量级。
+ */
+test("E. 回归：belt 名额用满、prompt 字符数没有变差", () => {
+    const cap = 12;
+    /* ⚠️ 2026-11-02：三个上限各上调 ~170 字符。
+     *
+     * 原因是新增了一段**有条件**的 `## MACRO PREFERENCE` 提示
+     * （`prompt.mjs` 里加它的那段注释有完整依据）：
+     * 90 条真实存档样本里 `connect:occupied` 占 33%，是唯一的主要失败源，
+     * 而 `replace_run` / `insert_machine` / `extend_line` 不涉及寻路。
+     *
+     * 它有两条纪律，所以这里只上调 `maxChars`，**不动** `belts_shown == 12` 那条：
+     *   1. 优先级低于 CAPACITY —— `s3Capacity` 没拿到时它不会出现
+     *   2. 加完若超上限就跳过 —— 它绝不把 prompt 顶出预算
+     *
+     * 这三个数是**新的实测基线**，不是「调到测试通过为止」：
+     * 上调后如果哪天又变长，仍然会红。 */
+    const cases = [
+        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4370 },
+        { name: "half", obs: HALF_OBS, tbl: HALF_TABLE, maxChars: 3370 },
+        { name: "capacity", obs: SCENARIO_OBS, tbl: SCENARIO_TABLE, maxChars: 3370 },
+    ];
+    for (const c of cases) {
+        const p = buildPrompt({
+            goal: "RuRu----", obs: c.obs, handles: c.tbl, diagnoses: [],
+            candidates: ["connect"], lastRound: null, budget: {},
+        });
+        const shown = shownHandles(p.blocks.s3_belts);
+        assert.equal(shown.length, cap,
+            `[${c.name}] 带子名额应当用满 ${cap} 条（实际 ${shown.length}）—— 修语义不该挤掉名额`);
+        assert.ok(p.user.length <= c.maxChars,
+            `[${c.name}] prompt 字符数 ${p.user.length} 超过实测上限 ${c.maxChars}`);
+        assert.equal(p.tokens_estimate,
+            Math.round((p.system.length + p.user.length) / 3.5),
+            `[${c.name}] tokens_estimate 的口径不变（round，不是 ceil）`);
+    }
+});
+
+/* ═══════════════════════════ 6. 契约：标记与候选池不是同一个集合 ═══════════════════════════
+ *
+ * 这是本次修复最容易复发的地方。候选池 =
+ *   「到不了 hub」（断了要接）∪「目标原料线」（通了但造错形状要 replace_run）。
+ * 旧实现把整个候选池都标成 `[not reaching hub]`，于是 L4 的 `B63/B69/B81`
+ * （**实际连通**、只是造错了形状）也被标了 —— 模型据此去 connect 一个已经通了的端口。
+ *
+ * 这条测试把「标记的依据是 `notReaching`，不是 `byGoal`」钉死。
+ */
+test("F. 契约：原料线上但已连通 hub 的带子，**不**打 [not reaching hub]", () => {
+    const section = beltsSection(L4_OBS, L4_TABLE);
+    const reach = flowReachable(L4_OBS, indexOf(L4_OBS));
+    const marked = markedHandles(section);
+
+    for (const h of marked) {
+        const e = L4_TABLE.byHandle.get(h);
+        assert.equal(reach.has(e.uid), false,
+            `★ L4 上被标的 ${h} 必须真的到不了 hub（它是"断了"，不是"造错了形状"）`);
+    }
+
+    /* 反向的关键一条：L4 目标区那三条**实际连通**的带子，出现在渲染里就**不许**被标。
+       修复前它们全被标了（`EXPERIMENT-COLDSTART.md` §12 的 "真能到 hub: 0/3"
+       就是拿同一个错口径量出来的）。 */
+    const targets = ["B69", "B81", "B82"];
+    const shown = new Set(shownHandles(section));
+    for (const h of targets) {
+        if (!shown.has(h)) continue;
+        assert.ok(!marked.includes(h),
+            `★ ${h} 实际能到 hub（54 跳，见下一条），不许标 [not reaching hub]`);
+    }
+});
+
+test("F2. 事实核查：L4 的 B69/B81/B82 真的能到 hub（长链，54~55 跳）", () => {
+    /* 这一条是 F 的**独立真值**：不看任何 prompt 代码，直接沿货流走。
+       `EXPERIMENT-COLDSTART.md` §12 记的 "正解三条 真能到 hub：0/3" 是**错的** ——
+       它用的是和 bug 同源的口径（只在带子间传播）。这里把正确的事实钉下来。 */
+    const reach = flowReachable(L4_OBS, indexOf(L4_OBS));
+    for (const uid of [10143, 10209, 10149]) {      // B69 / B81 / B82
+        assert.equal(reach.has(uid), true,
+            `uid=${uid} 必须能到 hub（M3/M4 → balancer → … → B137 → H1）`);
+    }
+});

@@ -222,8 +222,19 @@ test("B'. 规则 10 以改前全文为前缀 —— 是追加例外，不是改�
 test("C. 回归：规则文本集合与改前完全相同（只变了顺序）", () => {
     const after = parseRules(renderSystem()).map(r => norm(r.text));
 
-    assert.equal(after.length, RULES_BEFORE.length,
-        `规则条数不变（改前 ${RULES_BEFORE.length}，现在 ${after.length}）`);
+    /* ⚠️ 2026-11-02：条数断言从「不变」改成「不少于」。
+     *
+     * 这条测试的本意是**防止重排时丢字**（当时的改动是重排 + 给规则 10 追加例外段），
+     * 不是禁止新增规则。
+     *
+     * 后来加了规则 13（`connect` 优先级的实测结论，见 `THREE-FIXES-NET-EFFECT.md`：
+     * 90 条样本里 `connect:occupied` 占 33%，是唯一的主要失败源）。
+     * 用 `equal` 会把「新增一条有依据的规则」判成回归。
+     *
+     * 真正该守的是**下面那条逐字节比对**：改前每条都必须在场、一字不差。
+     * 条数的下限守在这里，上限由「不许多出规则正文」那条守。 */
+    assert.ok(after.length >= RULES_BEFORE.length,
+        `规则条数不许减少（改前 ${RULES_BEFORE.length}，现在 ${after.length}）`);
 
     /* 逐条比对：除规则 10 外，改前每条都必须**一字不差**地仍在（只是位置变了）。
        这里用「按编号前缀取正文」而不是按位置 —— 位置正是这次要动的东西。 */
@@ -236,9 +247,13 @@ test("C. 回归：规则文本集合与改前完全相同（只变了顺序）",
     }
     assert.deepEqual(missing, [], "改前 11 条规则（除 10）全部逐字节仍在，没有丢字/改写");
 
-    /* 反向：改后不能凭空多出规则正文（条数已断言，这里防「一拆二」） */
+    /* 反向：改后不能凭空多出规则正文（条数已断言，这里防「一拆二」）
+       —— 「新增规则」是白名单的：只有 13 允许是新的，且必须带实测依据。 */
+    const ALLOWED_NEW = [/^13\.\s/];
     const beforeSet = new Set(RULES_BEFORE.map(norm));
-    const extra = after.filter(t => !beforeSet.has(t) && !/^10\.\s/.test(t));
+    const extra = after.filter(t => !beforeSet.has(t)
+        && !/^10\.\s/.test(t)
+        && !ALLOWED_NEW.some(re => re.test(t)));
     assert.deepEqual(extra.map(t => t.slice(0, 80)), [], "除规则 10 外没有新增正文");
 });
 

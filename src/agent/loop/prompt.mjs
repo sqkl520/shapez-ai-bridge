@@ -1704,6 +1704,9 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     let capacityUnavailable = null;
     let capacityNote = null;
     let capacityInfo = null;
+    /* 「宏选择优先级」提示是否真的进了 prompt —— 记在 blocks 里，
+       这样测试和调试能区分「余量不够没加」和「加了但没用」。 */
+    let macroPrefShown = false;
     try {
         capacityInfo = capacityFor(obs);
         const { capacity } = capacityInfo;
@@ -1784,6 +1787,38 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         }
     }
 
+    /* ── 余量富余时补一条「宏选择优先级」提示 ──
+     *
+     * ## 为什么**不能**直接写进 S1
+     *
+     * 实测（本次会话）：S1 里加 1 行（152 字符）会让 L4 冷启动夹具
+     * （`prompt_capacity.test.mjs` 的 A6）从 `cap YES / 余量 115` 变成 `cap NO`。
+     * 那个夹具已经贴着 9800 的上限，S1 每多一个字符都是从带子/CAPACITY 名额里抢。
+     *
+     * 而这条提示的**价值低于 CAPACITY**（CAPACITY 是实测 p≈5e-7 的信息源，
+     * 见 `AB-PROMPT-RESULT.md`；这条只是选择顺序的建议）。所以它必须排在 CAPACITY 之后。
+     *
+     * ## 依据
+     *
+     * `THREE-FIXES-NET-EFFECT.md`（90 条真实存档样本、三轮修复后）：
+     * `connect:occupied` 从 6 涨到 11，是唯一的主要失败源（33%）。
+     * 接口类错误已被 3 个修复清零（bad_type 4→0、endpoint_not_a_port 5→0），
+     * 剩下的 `occupied` 是**寻路撞机器**（`connect.mjs:966`：「要绕开需要阶段 3 的布线」），
+     * 而 `replace_run` / `insert_machine` / `extend_line` 只需一格或一个方向，不涉及寻路。
+     *
+     * ## 顺序纪律
+     *
+     * 优先级：**CAPACITY > 这条 > 多显示一条带子**。
+     * 所以只在 `s3Capacity` 已经拿到、且加完仍不超上限时才加 —— 它绝不抢 CAPACITY 的名额。
+     */
+    const MACRO_PREF_HINT = "## MACRO PREFERENCE\n"
+        + "Prefer replace_run / insert_machine / extend_line over connect: connect must find a\n"
+        + "path and will not route through machines, so it often fails `occupied`.";
+    if (s3Capacity && s1.length + user.length + MACRO_PREF_HINT.length + 2 <= limits.inCharsMax) {
+        user = user + "\n\n" + MACRO_PREF_HINT;
+        macroPrefShown = true;
+    }
+
     /* ── 硬上限：不静默截断任何东西，直接抛 ── */
     const chars = s1.length + user.length;
     if (chars > limits.inCharsMax) {
@@ -1818,6 +1853,9 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         capacity_unavailable: capacityUnavailable,
         capacity_bottleneck: capacityNote,
         capacity_downgraded: capacityDowngraded,
+        /* 「宏选择优先级」提示有没有进去（余量不够时它会被跳过，
+           优先级低于 CAPACITY —— 理由见加它的那段注释）。 */
+        macro_pref_shown: macroPrefShown,
         chars,
         tokens_estimate: Math.round(chars / PROMPT_RULES.CHARS_PER_TOKEN),
         trimmed_belts: trimmed,
