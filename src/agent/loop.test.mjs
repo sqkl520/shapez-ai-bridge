@@ -433,6 +433,15 @@ console.log("\n── 5. 同一世界诊断第 3 次出现 ──");
         reader: g.reader(), goal: "RuRu----",
         llmClient: new ScriptedClient([bad]),
         mode: "mock", runDir: dir, game: g,
+        /* ★ 显式给 5 轮（2026-11-02）★
+         *
+         * 计数键改成 `(fp, 动作集)` 之后，这条测试**仍然成立** ——
+         * 它每次都发**同一个** `bad`，所以动作集也相同 ⇒ 第 3 次仍会 halt。
+         *
+         * 但默认 `ROUNDS_MAX=3` 会先把它撞成 `BUDGET_ROUNDS`（第 3 轮还没数指纹就没了），
+         * 于是这条测试测的就不是「NO_PROGRESS_3X」而是「预算用尽」。
+         * 给它 5 轮，让 `NO_PROGRESS_3X` 在预算之前触发 —— 这才是它要测的东西。 */
+        budget: { ROUNDS_MAX: 5, LLM_CALLS_MAX: 8 },
     });
 
     const rows = transcriptOf(res);
@@ -440,27 +449,86 @@ console.log("\n── 5. 同一世界诊断第 3 次出现 ──");
     const applyRows = rows.filter(r => r.kind === "apply");
     eq(res.outcome, "halt", "halt");
     eq(res.reason, "NO_PROGRESS_3X", "★ reason = NO_PROGRESS_3X");
-    eq(diagRows.length, 3, "★ 3 条 diagnose（世界诊断第 3 次被看见）", diagRows.length);
+    /* ★ 2026-11-02：条数从 3 改成 4，因为计数键加了「动作集」这一维。
+     *
+     * 第 1 轮轮首 `lastMacros` 是空的（还没试过任何东西），所以第 1 轮的键是
+     * `fp#<空动作>`；第 2、3 轮的键才是 `fp#<insert_machine>`。
+     * 于是「同一个计划重复」的计数从第 2 轮才开始：
+     *   第 1 轮 seen=1（不同键）、第 2 轮 seen=1（新键）、
+     *   第 3 轮 seen=2 ⇒ mustChange、第 4 轮 seen=3 ⇒ halt。
+     *
+     * 语义上这是对的：「第 1 轮还没试过任何动作」与「第 2 轮试了 insert_machine」
+     * 不是同一个状态。代价是同一个计划要多花一轮才被判定为 stall ——
+     * 而这一轮的价值是**给模型一次换动作的机会**（这正是本次修订的目的）。
+     *
+     * 防刷靠 `ROUNDS_MAX`：不能靠不停换动作无限续命。 */
+    eq(diagRows.length, 4, "★ 4 条 diagnose（第 4 轮看见同一个 world fp 的第 3 次计数）", diagRows.length);
     eq(applyRows.length, 0, "★ 0 条 apply（每轮都在 plan 就被拒，世界没变）");
     eq(res.tx_count, 0, "0 次 tx");
 
-    /* 指纹在 3 条 diagnose 上必须完全一致（否则「同指纹」这个前提不成立） */
+    /* 指纹在诊断行上必须完全一致（否则「同 fp」这个前提不成立） */
     const fps = diagRows.map(r => r.data.fingerprint);
-    eq(new Set(fps).size, 1, "3 条 diagnose 的 fingerprint 完全相同", fps);
+    eq(new Set(fps).size, 1, "所有 diagnose 的 world fingerprint 完全相同", fps);
 
-    /* 第 2 次必须「换动作」：repair_decide 里 must_change_action=true */
+    /* 第 3 轮必须「换动作」：repair_decide 里 must_change_action=true */
     const rds = rows.filter(r => r.kind === "repair_decide" && r.data.phase === "world_fingerprint");
-    eq(rds.length, 3, "3 条 repair_decide（每轮一条指纹计数）");
+    eq(rds.length, 4, "4 条 repair_decide（每轮一条指纹计数）");
     eq(rds[0].data.must_change_action, false, "第 1 次不要求换动作");
-    eq(rds[1].data.must_change_action, true, "★ 第 2 次要求换动作");
-    eq(rds[2].data.reason, "NO_PROGRESS_3X", "第 3 次的 reason = NO_PROGRESS_3X");
+    eq(rds[1].data.must_change_action, false, "第 2 次仍是新键，不要求换动作");
+    eq(rds[2].data.must_change_action, true, "★ 第 3 次要求换动作（同键第 2 次）");
+    eq(rds[3].data.reason, "NO_PROGRESS_3X", "第 4 次的 reason = NO_PROGRESS_3X");
 
-    /* 第 2 次与第 3 次之间只多花了一次 LLM 调用（第 3 轮不再问） */
-    eq(res.llm_calls, 2, "★ 第 3 轮不再问 LLM（llm_calls = 2）", res.llm_calls);
+    /* 第 4 轮不再问 LLM（轮首就停） */
+    eq(res.llm_calls, 3, "★ 第 4 轮不再问 LLM（llm_calls = 3）", res.llm_calls);
 
     cleanup(dir);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * 5b. ★ 动作不同 ⇒ 不算 stall（2026-11-02 修订，FINGERPRINT-FALSE-LEAD.md）
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * 计数键从 `fp` 改成 `(fp, 上一轮执行过的动作集)`。
+ * 语义：**「诊断没变**且**动作也没变」才算 stall**。
+ *
+ * 为什么改：runLoop 每轮轮首重跑 diagnose() 覆盖 st.diagnoses，
+ * 所以计划被宏拒绝时世界诊断不变 —— 上一轮的 MACRO_REFUSED 到不了计数。
+ * 模型想「换个修法再试」，第 3 轮就被 halt（NO_PROGRESS_3X），
+ * 实测 llm_calls=2 / rounds=3。这吃掉了多轮重试的全部价值。
+ */
+console.log("\n── 5b. 动作不同不算 stall ──");
+{
+    const dir = tmpRoot();
+    const g = l4Game();
+    /* 三轮发**三套不同**的、注定被拒的计划。
+       世界不变 ⇒ 诊断指纹相同；但动作集不同 ⇒ 不该在前两轮就 halt。 */
+    const tries = [
+        { say: "a", calls: [{ macro: "insert_machine", args: { at: { $ref: "C1", asCell: true }, facing: "top", machine: "cutter" }, why: "x" }] },
+        { say: "b", calls: [{ macro: "connect", args: { from: { $ref: "M1" }, to: { $ref: "C1", port: "primary" } }, why: "y" }] },
+        { say: "c", calls: [{ macro: "trash_unused", args: { outlet: { $ref: "B7" }, opts: { confirm_waste: true } }, why: "z" }] },
+    ];
+    const res = await runLoop({
+        reader: g.reader(), goal: "RuRu----",
+        llmClient: new ScriptedClient(tries),
+        mode: "mock", runDir: dir, game: g,
+        budget: { ROUNDS_MAX: 4, LLM_CALLS_MAX: 8 },
+    });
+
+    const rows = transcriptOf(res);
+    const rds = rows.filter(r => r.kind === "repair_decide" && r.data.phase === "world_fingerprint");
+    ok(rds.length >= 3, `至少数了 3 次指纹（实际 ${rds.length}）`);
+    for (let i = 0; i < 3; i++) {
+        eq(rds[i].data.seen, 1,
+            `第 ${i + 1} 轮 (fp,act) 首次出现，seen 应为 1（实际 ${rds[i].data.seen}）`);
+        eq(rds[i].data.reason, null,
+            `第 ${i + 1} 轮不该 halt（实际 ${rds[i].data.reason}）`);
+    }
+    /* 对照：诊断指纹本身确实相同（否则这条测试没测到动作集那一维） */
+    const diagFps = rows.filter(r => r.kind === "diagnose").map(r => r.data.fingerprint);
+    eq(new Set(diagFps.slice(0, 3)).size, 1, "3 轮的世界诊断指纹相同（对照条件成立）");
+    ok(res.llm_calls >= 3, `LLM 至少被问 3 次（实际 ${res.llm_calls}）`);
+    cleanup(dir);
+}
 /* ══════════════════════════════════════════════════════════════════════════
  * 6. 预算：LLM_CALLS_MAX=2 → 恰好 2 次 propose 后 halt
  * ══════════════════════════════════════════════════════════════════════════ */

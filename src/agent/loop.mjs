@@ -1229,7 +1229,26 @@ export function buildTxPlan(llmPlan, obs, items, handles) {
                 layer: "plan", stage: "macro",
                 expected: `${c.macro} 返回 ok:true`,
                 observed: `${e.code || "?"}: ${e.message || (r && r.reason) || "无 message"}`,
-                evidence: { index: i, macro: c.macro, macro_code: e.code || null, field: e.field || null },
+                /* ★ 2026-11-02：给 evidence 补上 `handles`，让这条诊断**可区分** ★
+                 *
+                 * `fingerprintOf` 只读 `code / layer / subject.handle / evidence.handles / evidence.uids`。
+                 * 原来的 `MACRO_REFUSED` 里一个都没有（只有 index/macro/macro_code/field），
+                 * 所以**所有**宏失败算同一个指纹（实测：M1→C1 / C1→H1 / B130→H1 全部
+                 * `sha256:8458c10d1`）。
+                 *
+                 * ⚠️ **这条修不了「多轮重试被提前掐断」那个问题** —— 我一开始以为能，
+                 * 实测证明不能：`runLoop` 每轮轮首会**重新跑 `diagnose(ob.obs, …)`**
+                 * 覆盖 `st.diagnoses`（`loop.mjs:1700`），所以 `MACRO_REFUSED` 根本
+                 * 到不了下一轮的指纹计数。真正掐断重试的是「世界没变 ⇒ 世界诊断相同」。
+                 *
+                 * 那为什么还要改？因为这条诊断会被写进 transcript、也会进
+                 * `settleFailure`。让它带着「哪种失败」的信息，对**读 transcript 的人**
+                 * 和**将来任何按指纹分组的地方**都有价值。
+                 * 改的是「诊断表达力」，不是「重试次数」—— 两者别混。 */
+                evidence: {
+                    index: i, macro: c.macro, macro_code: e.code || null, field: e.field || null,
+                    handles: [`${c.macro}@${e.code || "?"}`],
+                },
                 hint: e.hint || null,
                 candidates: ["connect", "remove_run", "insert_machine", "trash_unused", "replace_run", "extend_line"],
             });
@@ -1513,32 +1532,66 @@ export async function runLoop(opts = {}) {
      * 指纹取**轮首的世界诊断**（不是轮尾的失败诊断）：它是从同一份 obs/report 推出的，
      * 世界不变它就一模一样；轮尾的失败诊断带 message 派生的字段，反而会抖动。
      *
-     * 规则（v2 §4 的两层简化）：
+     * 规则（v2 §4 的两层简化，2026-11-02 修订）：
      *   · 第 1 次：正常继续；
      *   · 第 2 次：允许继续，但**必须换动作** —— 候选宏剔除上一轮用过的；
      *     剔空 ⇒ 无可换 ⇒ `halt: NO_PROGRESS`；剔完仍用了同一套宏 ⇒ `halt: NO_PROGRESS`；
-     *   · 第 3 次：`halt: NO_PROGRESS_3X`（无论动作是否相同）。
+     *   · 第 3 次：`halt: NO_PROGRESS_3X`。
+     *
+     * ## 2026-11-02 修订：计数键加上「动作集」
+     *
+     * 原规则是「同一 fp 第 3 次就 halt，**无论动作是否相同**」。
+     *
+     * 实测发现的副作用：`runLoop` 每轮轮首重跑 `diagnose()` 覆盖诊断，
+     * 所以计划被宏拒绝时**世界诊断不变**。模型想「换个修法再试」，
+     * 第 2 轮被剔掉一半候选，第 3 轮直接 halt（`llm_calls=2 rounds=3`）。
+     * 单条宏成功率约 32%，2 次机会 ⇒ 约 10%，与实测的执行率吻合。
+     *
+     * 新规则：**同一个 (fp, 动作集) 重复才累加；换了动作集就从 1 重新计。**
+     * 语义是「诊断没变且动作也没变才算 stall」—— 试了不同的修法但世界没变，
+     * 是探索，不是停滞。
+     *
+     * ⚠️ 防刷靠 `ROUNDS_MAX`，不靠指纹。换动作会让计数归零，所以模型理论上
+     * 能靠不停换动作刷满轮次 —— 但轮次本身是硬上限，刷不出更多。
+     *
+     * ⚠️ 动作集用 `st.lastMacros`（**计划里**的宏）而不是 `lastExecutedMacros`
+     * （真正跑过的）：计划在 `buildTxPlan` 阶段被拒时一条都没跑，后者恒空，
+     * 三套不同的被拒计划会全是空集 ⇒ 键相同 ⇒ 立刻 halt。而那正是最需要重试的场景。
+     *
+     * ⚠️ 第 1 轮 `lastMacros` 是空的（还没试过任何东西）。它的键是
+     * `fp#<空动作>`，与第 2 轮的真实动作集不同 ⇒ 第 2 轮从 1 重新计。
+     * 这是**正确**的：第 1 轮和第 2 轮试的是不同的东西。
      *
      * @returns {{fp, count, haltReason, mustChange}}
      */
     const countFingerprint = (diagnoses, roundNo) => {
         const fp = fingerprintOf(diagnoses);
-        const rec = st.fpSeen.get(fp) || { count: 0 };
+        const actKey = actionSetHash(st.lastMacros || []);
+        const key = `${fp}#${actKey}`;
+        const rec = st.fpSeen.get(key) || { count: 0, fp, actKey };
         rec.count += 1;
-        st.fpSeen.set(fp, rec);
+        st.fpSeen.set(key, rec);
 
         let haltReason = null;
         let mustChange = false;
         if (rec.count >= 3) haltReason = "NO_PROGRESS_3X";
         else if (rec.count === 2) {
             mustChange = true;
-            /* ★ 只剔**真正执行过**的宏 ★
-               `lastMacros` 是「上一轮计划里的所有宏」，但一轮里排在前面的宏失败时，
-               后面的根本没执行。剔它们等于惩罚一个未被检验的假设 ——
-               实测让正确答案 `connect` 出局（见 `lastExecutedMacros` 的注释）。
-               若整轮一条都没执行（全部 plan 阶段被拒），这条规则无法区分谁该背锅 ⇒
-               保留全部候选，交给模型自己换；`NO_PROGRESS_3X` 仍是兜底。 */
-            const last = st.lastExecutedMacros;
+            /* ★ 剔掉「上一轮试过且失败」的宏 ★
+             *
+             * 优先用 `lastExecutedMacros`（真正跑过的）—— 那是「已被世界检验过」的。
+             * 但如果整轮在 plan 阶段就被拒，它恒为空，而**那正是最需要换动作的场景**：
+             * 模型刚写了一套注定不行的宏，下一轮必须换。
+             *
+             * 2026-11-02 修：`last` 为空时退回 `st.lastMacros`（计划里写过的）。
+             * 原来的注释说「保留全部候选，交给模型自己换」——
+             * 实测（`loop.test.mjs` 第 5 条）那会导致第 2 轮**什么都不变**、
+             * 于是第 3 轮才 halt，多花一次 LLM 调用，而且模型没有任何信号。
+             *
+             * 现在：`last` 为空 ⇒ 用 `lastMacros`；两者都空 ⇒ 才保留全量。 */
+            const last = (st.lastExecutedMacros && st.lastExecutedMacros.length)
+                ? st.lastExecutedMacros
+                : (st.lastMacros || []);
             if (last.length) {
                 const next = candidatesFor(diagnoses).filter(m => !last.includes(m));
                 if (!next.length) haltReason = "NO_PROGRESS";
