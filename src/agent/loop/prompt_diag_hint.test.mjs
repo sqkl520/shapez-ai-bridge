@@ -166,3 +166,48 @@ test("H7 端到端：真实宏的 rebind hint 走到 prompt", async () => {
         `真实 hint 里的 rebind 必须到达 prompt，实际 S4：${p.blocks.S4}`);
     assert.match(p.blocks.S4, /hint: /, "而且是作为 hint 段出现的");
 });
+
+/* ═══════════ 6. `LAST ROUND` 要带上「为什么失败 + 怎么解」 ═══════════
+ *
+ * 原来 `LAST ROUND` 只说 `round 2: calls [connect]; codes: MACRO_REFUSED`。
+ * 模型知道上一轮失败，但不知道**原因和修法** —— 于是它常常重写一个几乎一样的计划。
+ *
+ * 现在多了 `previous failures: · connect → occupied: <hint>`，
+ * 其中 hint 是宏**已经算出的解法**。
+ */
+test("H8 `LAST ROUND` 带上失败原因与 hint", () => {
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"], budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: {
+            round: 1, calls: ["connect"],
+            verify: { checks: [], codes: ["MACRO_REFUSED"] },
+            decision: "plan_rejected",
+            failures: [{ macro: "connect", code: "MACRO_REFUSED", hint: "确实要抢过来就传 opts.rebind=true" }],
+        },
+    });
+    const s5 = p.blocks.S5;
+    assert.match(s5, /previous failures:/, `S5 必须有 failures 段，实际：${s5}`);
+    assert.match(s5, /connect → MACRO_REFUSED/, "要写清哪个宏、什么码");
+    assert.match(s5, /rebind/, "hint 里的开关名必须到模型眼前");
+});
+
+test("H9 没有 failures 时不渲染空段", () => {
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"], budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: { round: 1, calls: ["connect"], verify: { checks: [], codes: ["X"] }, decision: "plan_rejected" },
+    });
+    assert.doesNotMatch(p.blocks.S5, /previous failures:/, "没有 failures 就不该出现这个标题");
+});
+
+test("H10 failures 超过 2 条时折叠（预算纪律）", () => {
+    const many = ["a", "b", "c", "d"].map(m => ({ macro: m, code: "MACRO_REFUSED", hint: "hint text" }));
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"], budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: { round: 1, calls: ["a"], failures: many, decision: "plan_rejected" },
+    });
+    assert.ok(p.blocks.S5.includes("+2 more"),
+        `4 条时应显示 2 条 + 折叠 2 条，实际：${p.blocks.S5}`);
+});

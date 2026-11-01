@@ -1904,6 +1904,26 @@ export async function runLoop(opts = {}) {
                     st.lastPlanSummary = {
                         round: roundNo, calls: st.lastMacros.slice(),
                         verify: { checks: [], codes: [p.diagnosis.code] }, decision: "plan_rejected",
+                        /* ★ 2026-11-02：把失败原因和 hint 带到下一轮 ★
+                         *
+                         * `renderLastRound` 会把它渲染成
+                         *   `previous failures: · connect → occupied: <hint>`
+                         *
+                         * 原来下一轮只知道「用了 connect、失败了」，不知道**为什么**。
+                         * 实测（`ONE-CALL-EXPERIMENT.md` 的多轮实验）：
+                         * 模型常常重写一个几乎一样的计划。
+                         *
+                         * `hint` 是宏**已经算出的解法**（`MACRO_REFUSED` 的 `hint: e.hint`），
+                         * 它比 `message` 更适合给模型看。
+                         *
+                         * 这里取 `macros` 里**所有**调用 —— plan 阶段被拒时不知道是第几个失败的
+                         * （`p.diagnosis.observed` 里有 `call N/M`，但那要解析字符串）。
+                         * 一条诊断配上一组宏已经够用：模型知道「这些宏里有坏的」。 */
+                        failures: st.lastMacros.map(m => ({
+                            macro: m,
+                            code: p.diagnosis.code,
+                            hint: p.diagnosis.hint || null,
+                        })),
                     };
                     tr.write("repair_decide", roundNo, {
                         phase: "plan",
