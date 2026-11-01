@@ -1199,15 +1199,38 @@ export function replaceRun(a, b) {
                 want = { rotation: b.r, rotationVariant: b.rv };
             }
             if (!want) {
+                /* ★ 2026-11-02：hint 从「解释」改成「动作」★
+                 *
+                 * 原来这条写的是：「把 region 缩到『两侧都有可参照邻居』的那几格；
+                 * 或对孤立/单侧带子改用 place/paste_blueprint 显式带 rv」。
+                 *
+                 * 实测（`HINT-AB-RESULT.md`，38 条多轮样本）：它是**最高频的 hint**
+                 * （18/38），但模型读完仍然改不对。原因是它要求模型自己判断
+                 * 「哪几格两侧都有邻居」——**而 prompt 里没有这个信息**。
+                 * 模型看不到邻居关系，只能再猜一次。
+                 *
+                 * 修法：宏**已经把邻居证据算出来了**（`neighborFaces`），
+                 * 直接把「哪些格不能碰、哪些格可以」写成句柄，模型照抄即可。
+                 * 这是同一次失败里能立刻重写出来的东西 —— 判据是
+                 * 「模型读完能不能不推理就写出一个不同的调用」。
+                 *
+                 * 句柄从 `ctx` 的实体表取（`b.uid` 已经在手里，邻居 uid 在 evidence 里）。
+                 * **不引入坐标**（契约 V4 禁止），只说格数和句柄。 */
+                const ev = neighborFaces(b, c0).evidence || {};
+                const hasEntry = !!ev.entry, hasExit = !!ev.exit;
+                const sideDesc = hasEntry && hasExit ? "两侧都有"
+                    : (hasEntry || hasExit) ? "只有一侧有"
+                        : "两侧都没有";
                 return failure(A, {
                     code: "precondition_failed", field: "region",
                     message: `(${b.x},${b.y}) 的邻居证据不足以反解方向（入口 ${entry || "未知"} / 出口 ${exit || "未知"}）`,
-                    hint: `本路径**只信邻居**，不信这格自己的 rv（rv 被改坏正是它要修的病）。`
-                        + `现在能从邻居读到的只有 ${entry ? "入口" : ""}${exit ? "出口" : ""}`
-                        + `${!entry && !exit ? "（两侧都没邻居）" : "一侧"}，剩下的方向有 3 种合法解 —— 宏不猜。`
-                        + "处置：把 region 缩到「两侧都有可参照邻居」的那几格；"
-                        + "或对孤立/单侧带子改用 place/paste_blueprint 显式带 rv。",
-                    detail: { cell: [b.x, b.y], uid: b.uid, entry, exit, evidence: neighborFaces(b, c0).evidence },
+                    hint: `${sideDesc}邻居证据，这一格的方向有 3 种合法解，宏不猜。`
+                        + `把这个 uids 从 region 里去掉，或改用 replace_run 的 belt 模式逐格保持原样。`
+                        + (hasEntry || hasExit
+                            ? `（这一格能参照的邻居是 ${[ev.entry && ev.entry.uid, ev.exit && ev.exit.uid].filter(Boolean).join(" / ")}，`
+                            + `但它只给出一侧方向，另一侧仍然三选一。）`
+                            : `（这一格四周没有任何带子邻居。）`),
+                    detail: { cell: [b.x, b.y], uid: b.uid, entry, exit, evidence: ev },
                 });
             }
             if (want.rotation !== b.r || want.rotationVariant !== b.rv) {
