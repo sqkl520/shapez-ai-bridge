@@ -182,6 +182,30 @@ const SYSTEM_PROMPT = [
     "",
     "RULES",
     "1. Output RAW JSON only: no markdown fence, no prose before/after, no comments, no trailing commas.",
+    /* ★ 2026-11-02：加上「优先只写一个」—— 这是执行率的**决定因素** ★
+     *
+     * `buildTxPlan` 是**全有或全无**的（R1：一条宏失败 ⇒ 一条 op 都不生成）。
+     * 所以整轮成功率 ≈ 单条成功率的 `calls.length` 次方。
+     *
+     * 实测（`FIVE-ROUNDS-FINAL.md`，五轮 148 条去重样本）：
+     *
+     *   calls=1   2/2   (100%)      调用越多，整轮越不可能过
+     *   calls=2   2/19  (10.5%)
+     *   calls=3   4/45  ( 8.9%)
+     *   calls=4   0/48  (  0%)   ← 82 条 4+ 调用，一条都没成
+     *   calls=5   0/33  (  0%)
+     *
+     * `calls ≤3` 8/66 vs `calls ≥4` 0/82，Fisher **p = 0.0012**。
+     * 而模型 146/148 次写 2-5 个调用 —— 几乎从不写单调用。
+     * 这解释了为什么五轮修单条失败都没能提升整轮成功率。
+     *
+     * ★ 长度纪律（这次是硬碰硬的）★
+     *   第一版写了 4 行，直接把 L4 冷启动夹具（`prompt_capacity.test.mjs` A6）
+     *   的 CAPACITY 挤出预算（9775/9800，只剩 25 字符）。压到 2 行才腾出来。
+     *   这个夹具的余量本来就是 0 —— 任何新增行都会被它挡住。
+     *
+     * 措辞纪律：只说「优先一个」，**不说「最多一个」** ——
+     * 有些修法确实需要两步（先 remove_run 再 replace_run），硬限会逼模型写错。 */
     "2. calls must be an array with 1 to 6 entries. An empty calls array is rejected as a failed plan.",
     `3. The ONLY allowed macro names are: ${MACRO_NAMES.join(", ")}.`,
     "   Never emit build_line, paste_blueprint, or any other name: they are not part of this loop.",
@@ -637,8 +661,7 @@ function renderMachines(tbl, diagnoses) {
      * 放在 MACHINES 段头而不是 S1：紧挨着它解释的数据，且 S1 是 prompt cache 的
      * 前缀（改它会让所有缓存失效）。代价只有 1 行。 */
     if (all.length) {
-        lines.push("(notation: `(→X)` = that output already feeds X, so it is TAKEN;"
-            + " `(→无)` = that output is free — this is the port to use for a new connect)");
+        lines.push("(`(→X)` = TAKEN; `(→无)` = free = USE THIS ONE for connect)");
     }
     if (!all.length) lines.push("(none)");
     for (const e of shown) {
@@ -1869,7 +1892,8 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
      */
     const MACRO_PREF_HINT = "## MACRO PREFERENCE\n"
         + "Prefer replace_run / insert_machine / extend_line over connect: connect must find a\n"
-        + "path and will not route through machines, so it often fails `occupied`.";
+        + "path and will not route through machines, so it often fails `occupied`.\n"
+        + "Prefer ONE call: the whole plan is rejected if ANY call fails, so N calls = N chances to fail.";
     if (s3Capacity && s1.length + user.length + MACRO_PREF_HINT.length + 2 <= limits.inCharsMax) {
         user = user + "\n\n" + MACRO_PREF_HINT;
         macroPrefShown = true;

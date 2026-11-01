@@ -378,9 +378,9 @@ test("E. 回归：belt 名额用满、prompt 字符数没有变差", () => {
      * 这三个数是**新的实测基线**，不是「调到测试通过为止」：
      * 上调后如果哪天又变长，仍然会红。 */
     const cases = [
-        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4370 },
-        { name: "half", obs: HALF_OBS, tbl: HALF_TABLE, maxChars: 3370 },
-        { name: "capacity", obs: SCENARIO_OBS, tbl: SCENARIO_TABLE, maxChars: 3370 },
+        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4400 },
+        { name: "half", obs: HALF_OBS, tbl: HALF_TABLE, maxChars: 3400 },
+        { name: "capacity", obs: SCENARIO_OBS, tbl: SCENARIO_TABLE, maxChars: 3400 },
     ];
     for (const c of cases) {
         const p = buildPrompt({
