@@ -1225,10 +1225,30 @@ export function buildTxPlan(llmPlan, obs, items, handles) {
         }
         if (!r || r.ok !== true) {
             const e = (r && r.error) || {};
+            /* ★ 2026-11-02：`observed` 里带上「第几个调用失败 / 共几个」 ★
+             *
+             * 原来只说「connect 返回 ok:false（occupied: …）」。模型不知道：
+             *   · 这是 5 个调用里的第几个
+             *   · 其它几个本来能不能行
+             *   · 该把失败的删掉重试，还是整批换
+             *
+             * 实测（`FIVE-ROUNDS-FINAL.md`）：`calls≥4` 时执行率 **0/82**。
+             * 全有或全无 + 不知道哪个坏了 ⇒ 模型只能整批重写，而重写又引入新错误。
+             *
+             * 这条**不改原子性**，只是让拒绝信息能定位。零风险。
+             * 就算永远不做部分执行，这条也该有 —— 它让「重试」有的放矢。 */
+            const totalCalls = Array.isArray(res.calls) ? res.calls.length : 1;
+            const others = (Array.isArray(res.calls) ? res.calls : [])
+                .map((c2, j) => ({ j, m: c2 && c2.macro }))
+                .filter(x => x.j !== i)
+                .map(x => `#${x.j + 1} ${x.m}`);
             return reject("MACRO_REFUSED", {
                 layer: "plan", stage: "macro",
                 expected: `${c.macro} 返回 ok:true`,
-                observed: `${e.code || "?"}: ${e.message || (r && r.reason) || "无 message"}`,
+                observed: `${e.code || "?"}: ${e.message || (r && r.reason) || "无 message"}`
+                    + ` [call ${i + 1}/${totalCalls}`
+                    + (others.length ? `；其余 ${others.join("、")} 也一条 op 都没生成（原子性）` : "")
+                    + `]`,
                 /* ★ 2026-11-02：给 evidence 补上 `handles`，让这条诊断**可区分** ★
                  *
                  * `fingerprintOf` 只读 `code / layer / subject.handle / evidence.handles / evidence.uids`。
