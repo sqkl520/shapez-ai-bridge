@@ -407,9 +407,25 @@ export function describeEntity(e, obs, items = null, table = null) {
         const seg = pi ? pi.len : 1;
 
         /* 隧道：入口/出口的方位语义与普带相同（code 22/23 的 sender/receiver），
-           但「上游/下游」这个词对它不成立（另一端在别处），所以用 入口/出口。 */
+           但「上游/下游」这个词对它不成立（另一端在别处），所以用 入口/出口。
+         *
+         * ⚠️ **必须标出 sender / receiver 与「不可作为端点」**。
+         *
+         * `rotation_variant` 对隧道是 **sender(0) / receiver(1) 标志位**，
+         * 不是转弯形态（`underground_belt.js:30-37` 的 `overlayMatrices` 顺序即
+         * 「Sender / Receiver」，`EXPERIENCE-SOURCE-FACTS.md` §8.2 有出处）。
+         *
+         * 实测（`EXECUTION-RATE-BOTTLENECK.md`）：模型把 `B85` 当输出源去 `connect`，
+         * 宏报 `endpoint_not_a_port: from 指向的实体没有 ejector`。3/58 条栽在这上面。
+         *
+         * 而 `connect.mjs:194-199` 明写「隧道的连接语义还需要处理成对 portal ——
+         * 那是独立特性，不在本修复范围」。**所以隧道端点在 connect 里一律不可用**
+         * —— desc 必须直说，让模型改用配对端或干脆绕开。 */
         if (type === "underground_belt") {
-            return `${h} underground_belt 入口=${inDir}(←${ref(upH, upRole)}) 出口=${outDir}(→${ref(dnH, dnRole)}) 货=${goods}`;
+            const rv = typeof e.rotation_variant === "number" ? e.rotation_variant : Math.max(0, (e.code | 0) - 1);
+            const role = rv === 0 ? "sender(源)" : "receiver(汇)";
+            return `${h} underground_belt ${role} 入口=${inDir}(←${ref(upH, upRole)}) 出口=${outDir}(→${ref(dnH, dnRole)}) 货=${goods}`
+                + ` [隧道端点不能当 connect 的 from/to，用配对端]`;
         }
         return `${h} belt 上游=${ref(upH, upRole)} 下游=${ref(dnH, dnRole)} 货=${goods} 段=${seg}`;
     }
