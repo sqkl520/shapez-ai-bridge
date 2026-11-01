@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import { portsOf } from '../../src/agent/macros/connect.mjs';
+const BASE = JSON.parse(fs.readFileSync('test/fixtures/saves/L4-obs.json', 'utf8')).result;
+const bal = BASE.entities.find(e => e.uid === 10035);
+const spec = null;
+const p = portsOf(bal, spec);
+console.log('balancer 10035 的 accept 端口:');
+for (const pt of p.accept) console.log('  ', JSON.stringify({ role: pt.role, index: pt.index, slot: pt.slot, cell: pt.cell, vel: pt.vel }));
+const belt = BASE.entities.find(e => e.uid === 10027);
+console.log('belt 10027 的 accept 端口:');
+for (const pt of portsOf(belt, spec).accept) console.log('  ', JSON.stringify({ role: pt.role, slot: pt.slot, cell: pt.cell, vel: pt.vel }));

@@ -1,0 +1,92 @@
+{
+ "100% (原世界)": {
+  "ok": 10,
+  "n": 177,
+  "fails": {
+   "connect:bad_type": 5,
+   "connect:target_already_fed": 26,
+   "replace_run:precondition_failed": 44,
+   "connect:ambiguous_port": 3,
+   "connect:endpoint_not_a_port": 13,
+   "connect:unknown_field": 1,
+   "connect:occupied": 56,
+   "trash_unused:occupied": 3,
+   "insert_machine:ambiguous_site": 2,
+   "connect:port_already_bound": 10,
+   "replace_run:bad_type": 2,
+   "trash_unused:port_already_bound": 2
+  }
+ },
+ "85%": {
+  "ok": 10,
+  "n": 177,
+  "fails": {
+   "connect:bad_type": 5,
+   "connect:target_already_fed": 26,
+   "replace_run:precondition_failed": 44,
+   "connect:ambiguous_port": 3,
+   "connect:endpoint_not_a_port": 13,
+   "connect:unknown_field": 1,
+   "connect:occupied": 56,
+   "trash_unused:occupied": 3,
+   "insert_machine:ambiguous_site": 2,
+   "connect:port_already_bound": 10,
+   "replace_run:bad_type": 2,
+   "trash_unused:port_already_bound": 2
+  }
+ },
+ "70%": {
+  "ok": 10,
+  "n": 177,
+  "fails": {
+   "connect:bad_type": 5,
+   "connect:target_already_fed": 26,
+   "replace_run:precondition_failed": 44,
+   "connect:ambiguous_port": 3,
+   "connect:endpoint_not_a_port": 13,
+   "connect:unknown_field": 1,
+   "connect:occupied": 56,
+   "trash_unused:occupied": 3,
+   "insert_machine:ambiguous_site": 2,
+   "connect:port_already_bound": 10,
+   "replace_run:bad_type": 2,
+   "trash_unused:port_already_bound": 2
+  }
+ },
+ "55%": {
+  "ok": 9,
+  "n": 177,
+  "fails": {
+   "connect:bad_type": 5,
+   "connect:target_already_fed": 26,
+   "replace_run:precondition_failed": 45,
+   "connect:ambiguous_port": 3,
+   "connect:endpoint_not_a_port": 14,
+   "connect:unknown_field": 1,
+   "connect:occupied": 56,
+   "trash_unused:occupied": 3,
+   "insert_machine:ambiguous_site": 2,
+   "connect:port_already_bound": 10,
+   "replace_run:bad_type": 2,
+   "trash_unused:port_already_bound": 1
+  }
+ },
+ "40%": {
+  "ok": 9,
+  "n": 177,
+  "fails": {
+   "connect:bad_type": 5,
+   "connect:target_already_fed": 26,
+   "replace_run:precondition_failed": 45,
+   "connect:ambiguous_port": 3,
+   "connect:endpoint_not_a_port": 14,
+   "connect:unknown_field": 1,
+   "connect:occupied": 56,
+   "trash_unused:occupied": 3,
+   "insert_machine:ambiguous_site": 2,
+   "connect:port_already_bound": 10,
+   "replace_run:bad_type": 2,
+   "trash_unused:port_already_bound": 1
+  }
+ }
+}

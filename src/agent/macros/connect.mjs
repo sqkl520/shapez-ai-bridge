@@ -891,10 +891,54 @@ export function connect(a, b, c, d) {
        hub 有 16 个入口时这是必须的（否则一个口被占就永远连不上）。全部被占才报 target_already_fed。 */
     const fedFree = [];
     for (const pt of toPorts) {
+        /* ★ 2026-11-02：目标的接收槽长在**源机器自己身上** ⇒ 立刻拒，并说清楚 ★
+         *
+         * 实测（`.tmpverify/ab-density/b7.mjs`，六轮 178 个计划）：
+         * 142 次 `occupied` 里 **64 次（45%）** 是这个形状 ——
+         *
+         *   balancer(-8,-3) 占 (-8,-3) 和 (-7,-3)
+         *   → belt(-6,-3) 的 acceptor 落点是 (-7,-3)  ← **balancer 自己的第二格**
+         *
+         * 模型想做「把 balancer 的 secondary 接到 6 格外的带子」，
+         * 但那条带的输入端就长在 balancer 身上。货会绕回源头。
+         *
+         * 宏原来会走到 `fits` 那一步才报 `occupied`，错误信息是
+         * 「第一处冲突在 -8,-3（balancer）—— 机器永远不会被覆盖」。
+         * 那句话技术上对，但**没说出真正的问题**：
+         * 不是路被挡了，是**目标本身就在源机上**。
+         *
+         * 这个检查是 O(1)，放在这里零成本。它把 45% 的 occupied 变成一条
+         * 模型读完就知道该换目标的诊断。
+         *
+         * ⚠️ **要查的是 `pt.cell`（货的落点），不是 `pt.slot`（端口所在格）**。
+         * 实测这个端口对：
+         *   `pt.slot = [-6,-3]`（belt 自己所在的格）
+         *   `pt.cell = [-7,-3]`（**货进入的落点** —— balancer 的第二格）
+         * 查 `slot` 永远匹配不上；查 `cell` 才是「货会不会落回源机器」。 */
+        if (world && pt.cell) {
+            const landRec = world.cells.get(key(pt.cell[0], pt.cell[1]));
+            if (landRec && fe.uid !== undefined && landRec.uid === fe.uid) {
+                continue;   // 这个 to 口的落点在源机器上 —— 丢掉它，别整单失败
+            }
+        }
         if (world && portFedKind(world, pt) && !opts.rebind) continue;
         fedFree.push(pt);
     }
     if (!fedFree.length) {
+        /* 全部被丢掉时，区分「被供料」和「长在源机上」—— 两者修法完全不同 */
+        const onSelf = toPorts.filter(pt => {
+            if (!world || !pt.cell) return false;
+            const r = world.cells.get(key(pt.cell[0], pt.cell[1]));
+            return r && fe.uid !== undefined && r.uid === fe.uid;
+        });
+        if (onSelf.length === toPorts.length) {
+            return failure({
+                code: "to_port_on_source", field: "to.port",
+                message: `to 的接收槽就长在 from 自己身上（${describePort(spf.port)} 的货会绕回同一台机器）`,
+                hint: "换一个 to 目标 —— 找一个接收槽不在 from 占地内的实体；或换 from 的另一个端口。",
+                detail: { fromUid: fe.uid, toUid: spt.port && spt.port.uid, onSelf: onSelf.length },
+            });
+        }
         return failure({
             code: "target_already_fed", field: "to.port",
             message: `to 的${toPorts.length > 1 ? `全部 ${toPorts.length} 个` : ""}端口都已经有供料方`,
