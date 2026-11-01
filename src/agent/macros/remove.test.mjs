@@ -604,6 +604,31 @@ t("负例：belt 路径「只有一侧有邻居证据」→ 拒绝而不是猜�
     ok(/不猜|3 种/.test(r.error.message + r.error.hint), `诊断要说明「不猜」：${r.error.message} | ${r.error.hint}`);
 });
 
+t("★ 单侧证据的 hint 必须是**动作**（2026-11-02 改写，HINT-AB-RESULT.md）", () => {
+    /* 原来的 hint 是「把 region 缩到『两侧都有可参照邻居』的那几格」——
+     * 要求模型自己判断「哪几格两侧都有邻居」，而 **prompt 里没有这个信息**。
+     *
+     * 实测（38 条多轮样本）：它是最高频的 hint（18/38），但模型读完仍然改不对。
+     *
+     * 现在改成给出**可执行的动作**（把哪个 uids 去掉 / 改用哪个模式），
+     * 并把宏已经算出来的邻居证据写成句柄。
+     *
+     * 判据：模型读完能不能**不推理**就写出一个不同的调用。 */
+    const noUpstream = ENTITIES.filter(e => e.uid !== UID.b4_12);
+    const r = replaceRun({ region: [4, -13, 4, -13], building: "belt" }, { entities: noUpstream });
+    eq(r.ok, false);
+
+    const hint = String(r.error.hint || "");
+    /* ① 必须给出动作 */
+    ok(/把这个 uids 从 region 里去掉|改用 replace_run/.test(hint),
+        `hint 必须给出可执行的动作，实际：${hint}`);
+    /* ② 必须说清是哪一侧的证据（模型据此判断能不能补救） */
+    ok(/只有一侧|两侧都/.test(hint), `hint 必须说明邻居证据的完整度，实际：${hint}`);
+    /* ③ 不许出现坐标（契约 V4） */
+    ok(!/\(\s*-?\d{1,4}\s*,\s*-?\d{1,4}\s*\)/.test(hint),
+        `hint 里不许有坐标形态，实际：${hint}`);
+});
+
 t("契约原义：把某格的 rv 人为改坏 → 报 rv-drift 并按邻居解出正确值（这是本路径的用途）", () => {
     // (5,-13) 原本 rv=0 向上；改成 rv=2（右弯）模拟被游戏重算坏
     const broken = ENTITIES.map(e => e.uid === UID.b5_13 ? { ...e, rotation_variant: 2, code: 3 } : e);
