@@ -441,7 +441,23 @@ export function describeEntity(e, obs, items = null, table = null) {
     });
     const bits = [`${h} ${type}`];
     if (inParts.length) bits.push(`输入=${inParts.join("/")}`);
-    if (outParts.length) bits.push(`输出=${outParts.join("/")}`);
+    /* ⚠️ 输出槽的写法必须点明「port 参数该填什么」。
+     *
+     * 原来这里只渲染 `输出=top:primary(→B22)/top:secondary(→无)`。
+     * 实测（`EXPERIENCE-AB-RESULT.md`）：模型照着这个写
+     * `{"outlet":{"$ref":"L1","port":"top:secondary"}}`，而宏的 `port`
+     * 只接受 `primary|secondary|left|right|quad0..3|auto`（`contract.mjs:1373`），
+     * **`top:` 前缀会让它报 `bad_type`**。
+     *
+     * 45 条样本里出现 9 次这个写法（A2 6 次 / B2 3 次 / B2+C 0 次），
+     * 全部在宏层被拒。这不是玩法错误，是**描述格式与参数格式不一致**。
+     *
+     * 修法：方位保留（它对规划有用），但把 role 单独标成 `port=...`，
+     * 让「哪个是方位、哪个是要填的值」不再混淆。 */
+    if (outParts.length) {
+        bits.push(`输出=${outParts.join("/")}`);
+        bits.push(`port=${s.outputs.map(sl => sl.role).join("|")}`);
+    }
     if (!inParts.length && !outParts.length) bits.push("无槽位");
     return bits.join(" ");
 }

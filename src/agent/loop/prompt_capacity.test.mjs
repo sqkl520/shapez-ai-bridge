@@ -93,13 +93,33 @@ test("A3 渲染出的 CAPACITY 段能回答「瓶颈在哪」", () => {
     assert.match(cap, /72% of supply is stuck here/);
 });
 
-test("A4 渲染出的 CAPACITY 段能比较「加机器 vs 升级」", () => {
+test("A4 渲染出的 CAPACITY 段能比较「加机器 vs 升级」—— 但**只提做得到的**", () => {
     const p = promptFor(L4_LIVE);
     const cap = p.blocks.s3_capacity;
     assert.match(cap, /options:/, "必须给出可选项");
     assert.match(cap, /add 3 cutter \(1→4\)/, "加到吃满供给要 3 台");
-    assert.match(cap, /processors T1/, "升级这条路要出现");
-    assert.match(cap, /0\.75\/s/, "升完 processors T1 是 0.5×1.5=0.75");
+
+    /* ⚠️ 这条断言在 2026-11-02 反过来了，原因是实测发现 prompt 在教模型做不存在的动作。
+     *
+     * 原来断言 `processors T1` 必须出现 —— 那时 `capacityFor` 确实算出了这条路
+     * （`0.5 × 1.5 = 0.75/s`），渲染成 `processors T1 (×1→×1.5) ⇒ 0.75/s — ready now`。
+     *
+     * 但 loop 的执行面只有 6 个宏，**没有任何一个能买升级**
+     * （`MACRO_NAMES` 见 `contract.mjs:1413`；`upgrade` RPC 存在但没接进宏 ABI，
+     *  详见 `research/ai-plan/UPGRADE-MACRO-FEASIBILITY.md`）。
+     * 于是模型会照着 prompt 写 `{"macro":"upgrade"}`，被 `LLM_UNKNOWN_MACRO` 拒掉
+     * —— 浪费一轮预算，而且日志会记成"模型答错了"，掩盖真正的原因。
+     *
+     * 现在显式断言**反面**：在 `upgrade` 宏接进执行面之前，这条路不许出现。
+     * 等宏做好了（`canBuyUpgrade` 改成 true），把这条改回去。 */
+    assert.doesNotMatch(cap, /processors T\d/, "upgrade 宏接入前不得提议买升级");
+    assert.doesNotMatch(cap, /buy /i, "upgrade 宏接入前不得出现 buy 动作");
+
+    /* 但**数据**仍然要算对 —— 只是不往 prompt 里写。
+       这一条保证 `capacityFor` 的策略答案没被削弱，将来接宏时不用重修。 */
+    const { options } = capacityFor(L4_LIVE);
+    assert.ok(options.upgrade, "capacityFor 仍应算出升级这条路");
+    assert.equal(options.upgrade.capacityAfter, 0.75, "升完 processors T1 是 0.5×1.5=0.75");
 });
 
 test("A5 「machinesToSaturate」与供给自洽（不是一个拍出来的数）", () => {
