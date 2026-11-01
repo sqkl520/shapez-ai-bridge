@@ -773,9 +773,54 @@ t("硬指标②：任意两台相邻机器（机器当障碍）× gap≤8，成�
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * target 的接收槽长在源实体自己身上 —— 单列一个错误码
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * 实测（`.tmpverify/ab-density/b7.mjs`，六轮 178 个计划）：
+ * 142 次 `occupied` 里 **64 次（45%）** 是「to 的接收槽落点正好在 from 的占地内」。
+ *
+ * 原来它走到 `fits` 才报 `occupied`，错误信息是「第一处冲突在 -8,-3（balancer）
+ * —— 机器永远不会被覆盖」。技术上对，但**没说清真正的问题**：
+ * 不是路被挡了，是目标本身就在源机器上，货会绕回源头。
+ *
+ * 判据用 `pt.cell`（落点）而不是 `pt.slot`（端口所在格）——
+ * 实测：`slot=[-6,-3]` 是 belt 自己的格，
+ * `cell=[-7,-3]` 才是货的落点，才是 balancer 的第二格。
+ */
+t("★ target 的接收槽长在源实体身上 → to_port_on_source（不是 occupied）", () => {
+    assert.ok(live, "读不到 live-L4-entities.json");
+    const bal = live.find(e => e.uid === 10035);
+    const belt = live.find(e => e.uid === 10027);
+    assert.ok(bal && bal.type === "balancer", "夹具变了：10035 不是 balancer");
+    assert.ok(belt && belt.type === "belt", "夹具变了：10027 不是 belt");
+
+    const r = connect(
+        { from: { uid: 10035, port: "secondary" }, to: { uid: 10027 } },
+        { entities: live },
+    );
+    assert.equal(r.ok, false, "这一对应当被拒（目标接收槽长在源机器上）");
+    eq(r.error.code, "to_port_on_source",
+        `错误码必须是 to_port_on_source，实际 ${r.error.code}：${r.error.message}`);
+    assert.match(r.error.hint, /换一个 to 目标|换 from/,
+        `hint 必须给出可执行的动作，实际：${r.error.hint}`);
+});
+
+t("对照：离得远的目标不会报 to_port_on_source", () => {
+    assert.ok(live, "读不到 live-L4-entities.json");
+    const far = live.find(e => e.type === "belt" && Math.abs(e.x + 8) + Math.abs(e.y + 3) > 12);
+    assert.ok(far, "找不到远处的 belt");
+    const r = connect(
+        { from: { uid: 10035, port: "secondary" }, to: { uid: far.uid } },
+        { entities: live },
+    );
+    if (!r.ok) {
+        assert.notEqual(r.error.code, "to_port_on_source",
+            `远处的目标不该报 to_port_on_source（实际 ${r.error.code}）`);
+    }
+});
+/* ══════════════════════════════════════════════════════════════════════════
  * 报告
  * ══════════════════════════════════════════════════════════════════════════ */
-
 const red = s => `\x1b[31m${s}\x1b[0m`, green = s => `\x1b[32m${s}\x1b[0m`;
 for (const [st, name, msg] of results) {
     if (st === "ok") console.log(`${green("✓")} ${name}`);

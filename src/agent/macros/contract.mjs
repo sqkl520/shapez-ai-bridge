@@ -133,6 +133,12 @@ export const ERROR_CODES = Object.freeze({
     ambiguous_site: "落点能对应多个合法摆法（或反解出的端口不唯一），必须显式消歧",
     port_already_bound: "源端口已经有接收方；再连一条会让旧的饿死",
     target_already_fed: "目标端口已经有供料方",
+    /* 2026-11-02 新增。实测（`.tmpverify/ab-density/b7.mjs`，六轮 178 个计划）：
+       142 次 `occupied` 里 64 次（45%）是「to 的接收槽长在 from 自己身上」——
+       模型的意图（接远处的带子）没错，但那条带的输入端就在源机器占地内。
+       原来它会走到 `fits` 才报 `occupied`，错误信息说的是「机器不可覆盖」，
+       **没说清真正的问题**。单列一个码，模型才知道该换目标而不是换开关。 */
+    to_port_on_source: "目标的接收槽长在源实体自己身上（货会绕回同一台机器）",
     no_path: "在现有障碍下找不到合法路径（不是参数错，是几何不可行）",
     occupied: "目标格被不可替换的建筑占着",
     blocked_by_machine: "footprint 覆盖到机器（宏只替换带子，绝不删机器）",
