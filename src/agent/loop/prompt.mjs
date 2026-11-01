@@ -1664,6 +1664,33 @@ function renderLastRound(lastRound) {
         lines.push(`verify: ${parts.join("; ")}`);
     }
     if (codes.length) lines.push(`codes: ${[...new Set(codes)].slice(0, 10).join(", ")}`);
+    /* ★ 2026-11-02：把上一轮**为什么失败**说出来 ★
+     *
+     * 原来 `LAST ROUND` 只说「round 2: calls [connect]; codes: MACRO_REFUSED」。
+     * 模型知道上一轮用了 connect、失败了，但**不知道失败的原因和修法** ——
+     * 于是它只能猜（实测：它常常重写一个几乎一样的计划）。
+     *
+     * `lastRound.failures` 由 `loop.mjs` 在 `settleFailure` 时填，每条形如
+     * `{ macro, code, hint }`。`hint` 是宏**已经算出的解法**
+     * （见 `MACRO_REFUSED` 的 `hint: e.hint`）。
+     *
+     * 这与「把 hint 渲染进 DIAGNOSIS」是两条不同的通路：
+     *   · DIAGNOSIS 的 hint 说明**这一轮的世界诊断**该怎么修
+     *   · LAST ROUND 的失败说明**上一轮那个计划**为什么不行
+     * 模型两者都需要：前者告诉它做什么，后者告诉它别再做什么。
+     *
+     * 截 2 条 × 每条 100 字符：预算紧，而且第 3 条之后的信息量急剧下降。 */
+    const fails = Array.isArray(lastRound.failures) ? lastRound.failures : [];
+    if (fails.length) {
+        lines.push("previous failures:");
+        for (const f of fails.slice(0, 2)) {
+            const mac = f && f.macro ? String(f.macro) : "?";
+            const code = f && f.code ? String(f.code) : "?";
+            const hint = f && f.hint ? clip(sanitize(String(f.hint)).text.trim(), 100) : "";
+            lines.push(`  · ${mac} → ${code}${hint ? `: ${hint}` : ""}`);
+        }
+        if (fails.length > 2) lines.push(`  (+${fails.length - 2} more)`);
+    }
     if (lastRound.decision || lastRound.verdict) lines.push(`decision: ${lastRound.decision || lastRound.verdict}`);
     return sanitize(lines.join("\n")).text;
 }
