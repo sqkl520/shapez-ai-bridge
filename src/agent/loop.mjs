@@ -1742,6 +1742,23 @@ export async function runLoop(opts = {}) {
                         budget: {
                             rounds_left: budgetLeft().rounds, llm_calls_left: budgetLeft().llm_calls,
                             tx_left: budgetLeft().tx, ticks_left: budgetLeft().ticks, wall_ms_left: budgetLeft().wall_ms,
+                            /* ★ 必须显式传预算上限，否则真实大存档上 CAPACITY 段整段消失 ★
+                             *
+                             * `PROMPT_RULES.PROMPT_TOKENS_MAX = 2800` ⇒ targetChars = min(2800×3.5, 12000)
+                             * = **9800 字符**，那是按 37 条带子的小场景调出来的值。
+                             * 实测（`research/ai-plan/PROMPT-BUDGET-DEFECT.md`）：
+                             *
+                             *   L4-obs.json（真实存档，181 实体 / 163 带子 / 7 条诊断）
+                             *     默认     → 9895 字符，belts 0/163，CAPACITY **dropped-for-budget**
+                             *     16000/4600 → 10593 字符，belts 12/163，CAPACITY **存在**
+                             *
+                             * 分配顺序（`prompt.mjs:1706`）是「先定带子、余量才给 CAPACITY」，
+                             * 所以预算不够时**第一个死的是 CAPACITY** —— 恰好是信息量最大的一段。
+                             *
+                             * `system` 段逐字节不变（实测），只有 `user` 变长。16000/4600 是饱和点，
+                             * 再高不涨（`STATE_BELTS_MAX = 12` 是独立上限）。 */
+                            in_chars_max: 16000,
+                            prompt_tokens_max: 4600,
                         },
                     });
                 } catch (e) {
