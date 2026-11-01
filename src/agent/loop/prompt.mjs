@@ -1523,6 +1523,40 @@ function renderDiagnoses(diagnoses) {
         if (Array.isArray(ev.stream_handles) && ev.stream_handles.length) {
             line += `; the stream itself runs through ${ev.stream_handles.slice(0, 3).join(",")} (context only, not the region)`;
         }
+        /* ★ 把 `hint` 交给模型 ★
+         *
+         * ## 为什么这条比前面所有修复都值钱
+         *
+         * `MACRO_REFUSED` 诊断里带着 `hint`（`loop.mjs:1232` 的 `hint: e.hint || null`），
+         * 而那个 hint 是宏**已经算出的解法**。以 `connect:occupied` 为例
+         * （`connect.mjs:987-993`）：
+         *
+         *   「有 N 条走法只需要覆盖既有带子（最少 M 格）就能通 —— 传 opts.allow_replace=true 即可」
+         *
+         * —— 宏枚举了几千条走法，发现它们**只差一个开关**。这句话到了诊断里，
+         * 却从来没到过 prompt。
+         *
+         * 实测（`CONNECT-OCCUPIED-DIAGNOSIS.md`，7 个唯一失败调用）：
+         *   · 4/7 是端口落点被占死（与路径无关，换端口即可）
+         *   · 3/7 只差 `allow_replace:true`，宏已枚举出 89~1045 条合法折线
+         *   · **0/7 需要更好的布线**
+         *
+         * 也就是说 `connect.mjs:966` 那句「要绕开需要阶段 3 的布线」是**写死的兜底文案**，
+         * 在这批样本上一次都不成立。真正的问题是这句话没被换掉、也没被送出去。
+         *
+         * ## 措辞纪律
+         *
+         * hint 是宏写的，**不含坐标**（`connect.mjs` 的 hint 只出现格数、开关名、句柄）。
+         * 但它是**自由文本**，所以仍然过 `sanitize`，与其它段同一套清洗 ——
+         * 不能因为「我们自己写的」就跳过。
+         *
+         * 截 180 字符：`connect` 的 hint 有两句（第一句给解法、第二句说自交走法救不了），
+         * 180 够覆盖第一句 + 半句补充。整段超过预算时宁可截断也不整条丢 ——
+         * **解法的一部分 > 一点没有**。 */
+        if (typeof d.hint === "string" && d.hint.trim()) {
+            const h = clip(sanitize(d.hint).text.trim(), 180);
+            if (h) line += `; hint: ${h}`;
+        }
         if (cands.length) line += `; candidates ${cands.join(",")}`;
         /* 超上限被压掉的条数：必须说出来，否则模型以为「诊断就这些」 */
         if (num(ev.suppressed) !== null && ev.suppressed > 0) {
