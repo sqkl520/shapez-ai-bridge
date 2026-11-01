@@ -433,7 +433,17 @@ export function describeEntity(e, obs, items = null, table = null) {
     }
     const inParts = s.inputs.map(sl => {
         const other = handleAt(tbl, sl.cell);
-        return `${sl.dir}(${other ? "←" + other : "←无"})`;
+        /* ⚠️ 输入槽也要标 role，理由与下面输出槽那段完全一样。
+         *
+         * 原来这里渲染 `输入=bottom(←B100)` —— 只给了方位，没给 role。
+         * 实测（`AB-REAL-SAVE-RESULT.md`，30 条真实存档样本）：
+         * 模型照着写 `{"to":{"$ref":"C1","port":"bottom"}}`，
+         * 而宏的 port 只认角色名：`to.port="bottom" 不是合法角色`（候选是 `primary`）。
+         * 这是 `connect` 失败的主因之一（30 条里 4 次 `bad_type`）。
+         *
+         * 注意 cutter 的**输入** role 是 `primary`、**输出** role 才是 `left|right` ——
+         * 两边同名不同义，所以必须分开标，不能只标一边。 */
+        return `${sl.dir}:${sl.role}(${other ? "←" + other : "←无"})`;
     });
     const outParts = s.outputs.map(sl => {
         const other = handleAt(tbl, sl.cell);
@@ -457,6 +467,12 @@ export function describeEntity(e, obs, items = null, table = null) {
     if (outParts.length) {
         bits.push(`输出=${outParts.join("/")}`);
         bits.push(`port=${s.outputs.map(sl => sl.role).join("|")}`);
+    }
+    /* 输入角色的合法值单独给一份。`port=` 这个名字在两边都出现，
+       但**角色集合不同**（cutter 输入只有 primary，输出是 left|right），
+       所以不能合并成一行，否则模型会拿输出角色去填输入端口。 */
+    if (inParts.length && s.inputs.some(sl => sl.role)) {
+        bits.push(`in.port=${[...new Set(s.inputs.map(sl => sl.role).filter(Boolean))].join("|")}`);
     }
     if (!inParts.length && !outParts.length) bits.push("无槽位");
     return bits.join(" ");

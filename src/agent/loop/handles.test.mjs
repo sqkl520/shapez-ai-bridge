@@ -254,7 +254,20 @@ ok(l4.goal.requirement.shape === "RuRu----" && l5.goal.requirement.shape === "Cu
     /* 机器：输入/输出带方位与 role */
     const cut = l5.entities.find(e => e.type === "cutter" && e.uid === 10036);
     const cs = describeEntity(cut, l5, l5items);
-    ok(/^C\d+ cutter 输入=bottom\(←/.test(cs), `cutter 短语含 input 方位，实得：${cs}`, cs);
+    /* ⚠️ 这个断言在 2026-11-02 改过：原来是 `输入=bottom\(←`，只要求方位。
+     *
+     * 实测（`AB-REAL-SAVE-RESULT.md`，30 条真实存档样本）发现模型照着只带方位的
+     * desc 写 `{"to":{"$ref":"C1","port":"bottom"}}`，而宏只认角色名
+     * （`to.port="bottom" 不是合法角色`，候选是 `primary`）——
+     * 30 条里 4 次 `connect:bad_type`。
+     *
+     * 所以 desc 现在同时给方位和角色：`输入=bottom:primary(←B97)`，
+     * 并在末尾补 `in.port=primary` 告诉它**参数该填什么**。
+     * 这条断言因此改为要求「方位 + 角色」都在。 */
+    ok(/^C\d+ cutter 输入=bottom:primary\(←/.test(cs),
+        `cutter 短语含 input 方位与角色（模型要照着填 port），实得：${cs}`, cs);
+    ok(/in\.port=primary/.test(cs),
+        `cutter 输入端口角色单独标出（与输出的 left|right 不同名），实得：${cs}`, cs);
     ok(/输出=top:left\(→/.test(cs) && /top:right\(→/.test(cs), `cutter 两个输出都列出，实得：${cs}`, cs);
 
     /* hub：压缩成入口数 + 已接，不能把 16 个入口全列出来（会吃光 S3 预算） */
