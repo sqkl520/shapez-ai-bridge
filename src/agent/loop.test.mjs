@@ -530,6 +530,54 @@ console.log("\n── 5b. 动作不同不算 stall ──");
     cleanup(dir);
 }
 /* ══════════════════════════════════════════════════════════════════════════
+ * 5c. ★ goal 与世界不一致 ⇒ GOAL_MISMATCH（2026-11-02，真机踩出来的）
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `diagnose(obs, …, goal, …)` 用 `goal` 判「有没有产线在造它」。
+ * 传错 goal ⇒ 它看错对象 ⇒ 诊断可能变空、也可能全是无关的。
+ *
+ * 真机实测（`LIVE-MULTIROUND-RESULT.md`）：我的 runner 硬编码
+ * `goal='RuRu----'`，而世界已经升到 level 5（目标 `Cu----Cu`）。
+ * loop 报 `NO_DIAGNOSIS`，那句「这是 loop 的缺陷」把人引向错误方向 ——
+ * 真实原因是调用方传错了。
+ */
+console.log(String.fromCharCode(10) + "── 5c. goal 与世界不一致 ──");
+{
+    const dir = tmpRoot();
+    const g = l4Game();          // 世界目标是 RuRu----
+    const res = await runLoop({
+        reader: g.reader(),
+        goal: "Cu----Cu",        // ← 故意传错
+        llmClient: new ScriptedClient([{ say: "x", calls: [] }]),
+        mode: "mock", runDir: dir, game: g,
+    });
+    eq(res.outcome, "halt", "应当 halt");
+    eq(res.reason, "GOAL_MISMATCH", `reason 应当是 GOAL_MISMATCH，实际 ${res.reason}`);
+    eq(res.llm_calls, 0, "还没问 LLM 就该停");
+    const dg = transcriptOf(res).find(r => r.kind === "diagnose");
+    ok(dg, "要有一条 diagnose");
+    const d = dg.data.diagnoses[0];
+    ok(/Cu----Cu/.test(d.observed) && /RuRu----/.test(d.observed),
+        `诊断要同时说出两个值，实际：${d.observed}`);
+    ok(/不要硬编码/.test(d.hint || ""), `hint 要指出正确做法，实际：${d.hint}`);
+    cleanup(dir);
+}
+
+console.log(String.fromCharCode(10) + "── 5d. goal 一致时不报 GOAL_MISMATCH（对照）──");
+{
+    const dir = tmpRoot();
+    const g = l4Game();
+    const res = await runLoop({
+        reader: g.reader(),
+        goal: "RuRu----",        // ← 正确
+        llmClient: new ScriptedClient([{ say: "nothing", calls: [] }]),
+        mode: "mock", runDir: dir, game: g,
+        budget: { LLM_CALLS_MAX: 1, ROUNDS_MAX: 1 },
+    });
+    ok(res.reason !== "GOAL_MISMATCH", `不该报 GOAL_MISMATCH，实际 ${res.reason}`);
+    cleanup(dir);
+}
+/* ══════════════════════════════════════════════════════════════════════════
  * 6. 预算：LLM_CALLS_MAX=2 → 恰好 2 次 propose 后 halt
  * ══════════════════════════════════════════════════════════════════════════ */
 

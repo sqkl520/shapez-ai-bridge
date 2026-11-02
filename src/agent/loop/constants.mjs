@@ -123,6 +123,10 @@ export const DIAG_CODES = Object.freeze({
 
     /* ── meta ── */
     NO_DIAGNOSIS: "diagnose() produced nothing — treated as a loop bug",
+    /* 2026-11-02：调用方传的 goal 与世界的当前目标不一致。
+     * 真机踩过：runner 硬编码 goal='RuRu----'，而世界已经升到 level 5（Cu----Cu）。
+     * diagnose() 用 goal 判「有没有在造它」⇒ 传错就返回空 ⇒ 看起来像「世界很健康」。 */
+    GOAL_MISMATCH: "the goal passed to runLoop differs from obs.goal.requirement.shape",
     NO_PROGRESS: "same fingerprint with the same action",
     NO_PROGRESS_3X: "same fingerprint three times",
     NO_WORLD_CHANGE: "tx succeeded but the world hash did not change",
@@ -383,6 +387,7 @@ export const RETRIEVAL_TABLE = Object.freeze({
 
     /* ── meta：一律 halt / 人工 ── */
     NO_DIAGNOSIS: cand([]),
+    GOAL_MISMATCH: cand([]),           // 调用方 bug，换宏没用
     NO_PROGRESS: cand([]),
     NO_PROGRESS_3X: cand([]),
     NO_WORLD_CHANGE: cand([]),
