@@ -1686,6 +1686,17 @@ function renderLastRound(lastRound) {
         for (const f of fails.slice(0, 2)) {
             const mac = f && f.macro ? String(f.macro) : "?";
             const code = f && f.code ? String(f.code) : "?";
+            /* `unverified` = 那个调用**根本没被检验**（前面某个调用先失败了）。
+             *
+             * 这个区分很重要：`unverified` 的宏**不必换**（它可能本来是对的），
+             * 而带真错误码的那个**必须换**。
+             *
+             * 上一版把所有宏都挂上同一个 hint，会让模型以为整批都坏了 ⇒ 整批重写。
+             * 红队（`REDTEAM-PARTIAL-APPLY.md` §Q4.1）指出这是真 bug。 */
+            if (code === "unverified") {
+                lines.push(`  · ${mac} → not reached (an earlier call failed first)`);
+                continue;
+            }
             const hint = f && f.hint ? clip(sanitize(String(f.hint)).text.trim(), 100) : "";
             lines.push(`  · ${mac} → ${code}${hint ? `: ${hint}` : ""}`);
         }

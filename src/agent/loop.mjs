@@ -1268,6 +1268,17 @@ export function buildTxPlan(llmPlan, obs, items, handles) {
                 evidence: {
                     index: i, macro: c.macro, macro_code: e.code || null, field: e.field || null,
                     handles: [`${c.macro}@${e.code || "?"}`],
+                    /* ★ 2026-11-02：把「第几个 / 共几个」**结构化**，别只写在 observed 字符串里 ★
+                     *
+                     * 红队（`REDTEAM-PARTIAL-APPLY.md` §Q4.1）指出：
+                     * `observed` 里已经写了 `[call N/M]`，但那是**字符串**，
+                     * 下游要拿它得解析 —— 而 `failures` 那边又不知道第几个失败的，
+                     * 只好把同一个 hint 复制给每个宏（那是我引入的一个真 bug）。
+                     *
+                     * 结构化之后：`failures` 能只给**真正失败的那个**宏挂 hint，
+                     * 其余的标 `unverified`（它们根本没被检验，不是「也失败了」）。 */
+                    call_index: i,
+                    call_total: Array.isArray(res.calls) ? res.calls.length : 1,
                 },
                 hint: e.hint || null,
                 candidates: ["connect", "remove_run", "insert_machine", "trash_unused", "replace_run", "extend_line"],
@@ -1904,26 +1915,28 @@ export async function runLoop(opts = {}) {
                     st.lastPlanSummary = {
                         round: roundNo, calls: st.lastMacros.slice(),
                         verify: { checks: [], codes: [p.diagnosis.code] }, decision: "plan_rejected",
-                        /* ★ 2026-11-02：把失败原因和 hint 带到下一轮 ★
+                        /* ★ 2026-11-02 修：只给**真正失败的那个**宏挂 hint ★
                          *
-                         * `renderLastRound` 会把它渲染成
-                         *   `previous failures: · connect → occupied: <hint>`
+                         * 红队（`REDTEAM-PARTIAL-APPLY.md` §Q4.1）指出我上一版
+                         * 把 `p.diagnosis.hint` 复制给了**每一个**宏 ——
+                         * 那会让模型以为 4 个调用都撞了同一个错，而实际只有第 N 个。
                          *
-                         * 原来下一轮只知道「用了 connect、失败了」，不知道**为什么**。
-                         * 实测（`ONE-CALL-EXPERIMENT.md` 的多轮实验）：
-                         * 模型常常重写一个几乎一样的计划。
+                         * 现在直接用 `evidence.call_index`（本轮刚结构化的）：
+                         *   · 第 `call_index` 个 → 带 code + hint（它真的失败了）
+                         *   · 其余           → 标 `unverified`，不给 hint
+                         *     （它们**根本没被检验**，不是「也失败了」）
                          *
-                         * `hint` 是宏**已经算出的解法**（`MACRO_REFUSED` 的 `hint: e.hint`），
-                         * 它比 `message` 更适合给模型看。
-                         *
-                         * 这里取 `macros` 里**所有**调用 —— plan 阶段被拒时不知道是第几个失败的
-                         * （`p.diagnosis.observed` 里有 `call N/M`，但那要解析字符串）。
-                         * 一条诊断配上一组宏已经够用：模型知道「这些宏里有坏的」。 */
-                        failures: st.lastMacros.map(m => ({
-                            macro: m,
-                            code: p.diagnosis.code,
-                            hint: p.diagnosis.hint || null,
-                        })),
+                         * 这个区分很重要：`unverified` 的宏下一轮**不必换**，
+                         * 而失败的那个**必须换**。混在一起会让模型整批重写。 */
+                        failures: (() => {
+                            const ev = (p.diagnosis && p.diagnosis.evidence) || {};
+                            const failIdx = typeof ev.call_index === "number" ? ev.call_index : -1;
+                            return st.lastMacros.map((m, k) => (
+                                k === failIdx
+                                    ? { macro: m, code: p.diagnosis.code, hint: p.diagnosis.hint || null }
+                                    : { macro: m, code: "unverified", hint: null }
+                            ));
+                        })(),
                     };
                     tr.write("repair_decide", roundNo, {
                         phase: "plan",
