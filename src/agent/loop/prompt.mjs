@@ -447,7 +447,45 @@ function renderCard(name) {
         const v = lv();
         if (v) lines.push(`legal values: ${v}`);
     }
+    /* ★ 条件必填的参数：`?` 会骗人 ★
+     *
+     * 真机实测（2026-11-03）：模型三轮都写了 `insert_machine` **不带 facing**，
+     * 因为 `params:` 行里是 `facing:Face?` —— 那个 `?` 表示 `spec.required === false`。
+     * 但 `paramRules.facing.requiredWhen` 说「machine 有输出槽且可旋转 ⇒ 必填」，
+     * 结果三轮全被 `ambiguous_site` 拒（`miner 有 1 个输出槽且可旋转 ⇒ facing 必填`）。
+     *
+     * 也就是说：**prompt 把「条件必填」渲染成了「可选」**，模型照着信了。
+     * 这一行把那条规则原话搬上去，成本 ~90 字符，只对真有条件规则的宏出现。
+     *
+     * 为什么不是改 `?` 的渲染逻辑：`required:false` 对 trash 这类机器**确实**是可选，
+     * 把 `facing` 全局标成必填会让 trash 的调用方多写一个无意义的字段。
+     * 条件性必须条件着说。 */
+    const ruleLines = conditionalParamHint(spec);
+    if (ruleLines) lines.push(ruleLines);
     return lines.join("\n");
+}
+
+/**
+ * 把 `spec.paramRules` 里「条件必填」的那几条渲染成一行。
+ *
+ * @returns {string|null} 没有任何条件必填规则 ⇒ null（不占预算）
+ */
+function conditionalParamHint(spec) {
+    const rules = spec && spec.paramRules;
+    if (!rules || typeof rules !== "object") return null;
+    const bits = [];
+    for (const [param, r] of Object.entries(rules)) {
+        if (!r || typeof r !== "object") continue;
+        // 只挑「有时必填」的：requiredWhen 存在 且 该参数在 params 里标的是非必填
+        const decl = (spec.params || []).find(p => p.name === param);
+        if (!decl || decl.required === true) continue;
+        if (typeof r.missingCode !== "string" || !r.missingCode) continue;
+        const when = String(r.requiredWhen || "").trim();
+        if (!when) continue;
+        bits.push(`${param} is REQUIRED when ${sanitize(when).text.trim()} (else ${r.missingCode})`);
+    }
+    if (!bits.length) return null;
+    return `required when: ${bits.join("; ")}`;
 }
 
 /**
@@ -635,7 +673,7 @@ function referencedHandles(diagnoses) {
  * 机器表：诊断点名的机器**排前面**（否则 20 台机器的上限会在真实存档上把真正的
  * subject 挤掉 —— L5 有 21 台机器，截到 20 台时排最后的那台正好可能是 cutter）。
  */
-function renderMachines(tbl, diagnoses, obs = null, goalShape = null) {
+function renderMachines(tbl, diagnoses, obs = null, goalShape = null, opts = {}) {
     const all = [...tbl.byHandle.values()].filter(e => !isBeltType(e.type) && e.type !== "hub");
     const ref = referencedHandles(diagnoses);
     const rank = h => { const i = ref.indexOf(h); return i < 0 ? ref.length : i; };
@@ -664,9 +702,55 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null) {
         lines.push("(`(→X)` = TAKEN; `(→无)` = free = USE THIS ONE for connect)");
     }
     if (!all.length) lines.push("(none)");
+    /* 矿格表：`obs.resources` 是 [x,y,kind] 三元组。只在有数据时建 ——
+       没有它就不知道矿机脚下是什么，也就不能给矿机加标注（绝不猜）。 */
+    const oreAt = oreMapOf(obs);
+    /* 位置索引：`normalizeHandles` 产出的元素**只有** handle/type/variant/uid/desc，
+     * **没有 x/y**（它的职责是「句柄 → 身份」，位置不属于身份）。
+     * 而矿机标注要用世界坐标，所以这里按 uid 从 obs 回查一次。
+     *
+     * ⚠️ 踩过：直接写 `e.x`/`e.y` 会全是 undefined，于是**每一台矿机都被标成「没矿」**
+     *    —— 包括脚下明明有钌的那三台。这种"全错"比不标更糟：它会让模型去拆掉
+     *    本来正常的矿机。 */
+    const posByUid = new Map();
+    if (oreAt) {
+        for (const e of (obs && obs.entities) || []) {
+            if (e && Number.isInteger(e.uid) && Number.isInteger(e.x) && Number.isInteger(e.y)) {
+                posByUid.set(e.uid, e);
+            }
+        }
+    }
     for (const e of shown) {
-        lines.push(`${e.handle} ${e.type}${e.variant && e.variant !== "default" ? `(${e.variant})` : ""}`
-            + (e.desc ? renderDesc(e.handle, e.type, e.desc) : ""));
+        let line = `${e.handle} ${e.type}${e.variant && e.variant !== "default" ? `(${e.variant})` : ""}`
+            + (e.desc ? renderDesc(e.handle, e.type, e.desc) : "");
+        /* ★ 矿机：**只标出「脚下没有矿」的** ★
+         *
+         * 实测（2026-11-03 真机）：接在**铜切割机**上的那台矿机 `M1 @(4,-16)`
+         * 脚下根本没有矿（7×7 邻域内一格都没有），而 prompt 里它只是平平地写着
+         * `M1 miner 输出=top:out(→C2)` —— 模型完全看不出这是一台**永久零产出**的机器。
+         * 于是它反复去「修通」那条永远跑不起来的线。
+         *
+         * ## 为什么**不**标「在采什么」
+         *
+         * 第一版对有矿的也写 `[mining RuRuRuRu]`。代价立刻显形：
+         * L4 冷启动夹具有 8 台矿机，8 条标注把 prompt 从 4400 涨到 5098，
+         * **把 CAPACITY 段整个挤掉了**（`capacity_unavailable: dropped-for-budget`）。
+         * 而 CAPACITY 是实测 p≈5e-7 的信息源（见 `AB-PROMPT-RESULT.md`），
+         * 优先级远高于「这台矿机在采什么」。
+         *
+         * 信息价值也不对等：
+         *   · 「在采 Ru」是**正常状态**，模型不需要被提醒；
+         *   · 「没矿」是**故障状态**，而且它会让下游整条线永远零产出 —— 必须说。
+         *
+         * 所以只标异常的一侧。正常的一台都不加，省下的字符全留给 CAPACITY。
+         * 「整体有哪些矿、目标矿在哪」由下面那行 `target ore …` 统一交代。 */
+        if (e.type === "miner" && oreAt) {
+            const ent = posByUid.get(e.uid);
+            if (ent && !oreAt.get(`${ent.x},${ent.y}`)) {
+                line += "  [⚠ NO ORE under this miner — it will never produce anything]";
+            }
+        }
+        lines.push(line);
     }
     if (all.length > shown.length) lines.push(`(+${all.length - shown.length} more machines not shown)`);
 
@@ -685,10 +769,72 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null) {
      *
      * 只在**有资源数据**时渲染（`obs.resources` 不给就整段消失，
      * 与 CAPACITY/RECIPE 同一条纪律：拿不到数据就不说，绝不猜）。
-     */
-    const resLine = renderGoalResource(obs, goalShape);
-    if (resLine) lines.push(resLine);
+     *
+     * ## 预算：机器多时自动降级成紧凑式
+     *
+     * L4 冷启动夹具有 8 台矿机，`s3_machines` 就 1716 字符，加一条完整式
+     * （~110 字符）会把 prompt 顶到 5009，**把 CAPACITY 整段挤掉**
+     * （`capacity_unavailable: dropped-for-budget`）。CAPACITY 是实测 p≈5e-7
+     * 的信息源，优先级高于「目标矿有几格、多远」的细节。
+     *
+     * 所以机器行越多越要省：超过 6 台就给紧凑式（只留「有没有 + 主矿种」）。
+     * 判断放在这里而不是调用方，是因为只有这里知道 `shown` 有多长。
+     *
+     * ⚠️ **这是"缓解"不是"解决"**：L4 夹具上 `target ore` 只有在**没有**它时
+     * 才能让 room ≥ 120（测出来是 112 vs 120，差 8 个字符）。也就是说在那种
+     * 「机器极多 + 带子名额用满」的极端世界里，这行仍然会把 CAPACITY 顶掉。
+     *
+     * 但那不是这条信息的问题 —— 是那个夹具本来就贴着上限（基线 5352 字符，
+     * CAPACITY 只剩 115 字符余量）。真要彻底解决得让 CAPACITY 先占位、
+     * 资源行让位，而那是另一件事（要改 `compose` 的顺序契约，
+     * 牵动 `prompt_capacity.test.mjs` 的一整套断言）。这里先做无争议的一半。 */
+    const resCompact = shown.length > 6;
+    if (opts.includeResource !== false) {
+        const resLine = renderGoalResource(obs, goalShape, { compact: resCompact });
+        if (resLine) {
+            lines.push(resLine);
+            /* ★ 告诉模型「怎么引用一格矿」 ★
+             *
+             * 真机实测（2026-11-03）：模型正确诊断出「接在切割机上的矿机脚下没有矿」，
+             * 并在 say 里直接说出了缺什么 ——「no ore-patch handle is exposed」。
+             * 它想放新矿机到铜矿上，但矿格不是实体、没有句柄，
+             * 于是只能猜（r1 猜了别的格子）或写不合法形态（r2 用 `{at:{uid:M1}}` 被拒）。
+             *
+             * `$ore` 就是补这个洞的。但不写出来模型不知道它存在。
+             *
+             * ## 为什么它是**可选**的（`opts.includeOreHint`）
+             *
+             * 这条提示 ~120 字符。L4 冷启动夹具（17 台机器 + 带子名额用满）
+             * 在加了它之后从 4460 涨到 4508，又要把 CAPACITY 顶掉。
+             * 所以调用方在预算紧张时会把这条也撤掉 —— 但**只撤提示，不撤 `$ore` 能力**
+             * （算子照旧可用，只是模型没被告知）。 */
+            if (opts.includeOreHint !== false
+                && /target ore [A-Z][a-z] IS on the map/.test(resLine)) {
+                lines.push('(`{"$ore":"Cu"}` anywhere a cell is expected = the nearest Cu ore tile — use it as insert_machine.at)');
+            }
+        }
+    }
     return lines.join("\n");
+}
+
+/**
+ * `obs.resources` → Map("x,y" → kind)。没有资源数据时返回 null。
+ *
+ * 单独抽出来是因为「矿机脚下是什么」和「目标矿在哪」两处都要用，
+ * 而两者的**缺失语义必须一致**：拿不到就返回 null，让调用方整段跳过，
+ * 绝不返回空 Map 假装「哪里都没矿」。
+ */
+function oreMapOf(obs) {
+    const list = obs && Array.isArray(obs.resources) ? obs.resources : null;
+    if (!list || !list.length) return null;
+    const m = new Map();
+    for (const r of list) {
+        if (!Array.isArray(r) || r.length < 3) continue;
+        const [x, y, kind] = r;
+        if (!Number.isInteger(x) || !Number.isInteger(y)) continue;
+        m.set(`${x},${y}`, kind);
+    }
+    return m.size ? m : null;
 }
 
 /**
@@ -698,9 +844,12 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null) {
  * @param {string} goalShape 目标形状串（如 `Cu----Cu`）
  * @returns {string|null} 没有资源数据 / 目标不是纯色形状 ⇒ null（整段不出现）
  */
-function renderGoalResource(obs, goalShape) {
+function renderGoalResource(obs, goalShape, opts = {}) {
     const list = obs && Array.isArray(obs.resources) ? obs.resources : null;
     if (!list || !list.length) return null;
+    /* 紧凑模式：只给「有没有」+ 最主要的那个矿种，不带远近档位。
+     * 用在 MACHINES 段已经吃掉大部分预算的场合（见 renderMachines 的调法）。 */
+    const compactForm = opts.compact === true;
 
     /* 目标颜色 = 形状串里第一个两字母色号（`Cu`/`Ru`/`Rb`…）。
      * 用「首字母大写 + 小写」这个形状本身，而不是抄一张色表 ——
@@ -737,7 +886,17 @@ function renderGoalResource(obs, goalShape) {
          *    （`prompt.test.mjs` 的「同一份渲染里坐标正则 0 命中」）。
          *    第一版写了 `(nearest 20,5; bbox …)`，直接把那条测试打红。
          *    模型本来也不许用坐标下指令（只能用句柄），给了坐标只会诱发幻觉。
-         *    给「有没有 / 多少格 / 远近档位」就够它判断该不该往那个方向找。 */
+         *    给「有没有 / 多少格 / 远近档位」就够它判断该不该往那个方向找。
+         *
+         * 紧凑模式只给最主要的那个矿种（格数最多的），丢掉远近档位。
+         * 用在 MACHINES 段已经吃掉大部分预算的场合 —— 那里「有铜」这个事实
+         * 本身就是关键，具体几格、多远是次要的。 */
+        if (compactForm) {
+            const top = targetKinds
+                .map(k => [k, byKind.get(k)])
+                .sort((a, b) => b[1].count - a[1].count)[0];
+            return `⇒ target ore ${color} IS on the map: ${top[0]}×${top[1].count}`;
+        }
         const parts = targetKinds.map(k => {
             const e = byKind.get(k);
             return `${k}×${e.count} (${withinBand(e.nearestD)})`;
@@ -747,6 +906,9 @@ function renderGoalResource(obs, goalShape) {
 
     /* 没有目标矿：把地图上实际有的列出来 —— 这就是「为什么你在造别的东西」的答案 */
     const have = present.slice(0, 4).join(", ");
+    if (compactForm) {
+        return `⇒ target ore ${color} is NOT in the scanned area (found: ${have || "none"})`;
+    }
     return `⇒ target ore ${color} is NOT in the scanned area (resources found: ${have || "none"})`
         + ` — no miner can ever produce ${color} here; check for a ${color} patch or a different route`;
 }
@@ -1919,7 +2081,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         ? (r && typeof r.reason === "string" && r.reason ? r.reason : (r && r.ok === true ? "empty recipe" : "unavailable"))
         : null;
     const s3Hub = renderHub(tbl);
-    const s3Machines = renderMachines(tbl, diagList, obs, goalShape);
+    let s3Machines = renderMachines(tbl, diagList, obs, goalShape);
     const s3Production = renderProduction(production, goalShape);
     const s3Budget = renderBudget(budget);
     const s4 = renderDiagnoses(diagList);
@@ -2000,8 +2162,53 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
 
     /* ── 余量全部给 CAPACITY（不给带子动刀子） ── */
     let capacityDowngraded = false;
+    let resourceDroppedForCapacity = false;
+    let oreHintDroppedForCapacity = false;
     if (capacityInfo) {
-        const room = targetChars - (s1.length + user.length) - 2;   // 2 = 插入段后的空行
+        /* ★ CAPACITY 优先于「目标矿在哪」那行 ★
+         *
+         * 实测（L4 冷启动夹具，8 台矿机 + 12 条带子名额用满）：
+         *   不带资源行时 room = 120，CAPACITY 刚好塞得进；
+         *   带上资源行后 room = 112 < 120，CAPACITY **整段消失**。
+         *
+         * 差 8 个字符就丢掉一段 p≈5e-7 的信息源，这是错的优先级。
+         * 所以：先按现状算 room；不够就**把资源行撤掉再算一次**。
+         *
+         * 为什么不是相反（让 CAPACITY 让位）：CAPACITY 是实测有效的信号，
+         * 资源行是这一轮新加的、还没验证过效果。预算紧时保旧的、撤新的 ——
+         * 「加一段新信息永远不许让已有信息变少」这条纪律在这里同样适用。 */
+        let room = targetChars - (s1.length + user.length) - 2;
+        if (room < 120) {
+            /* 退一步，**按价值从低到高撤**：
+             *   ① 先撤 `$ore` 用法提示（~120 字符，只是"告诉模型有这个算子"，
+             *      撤掉后算子本身仍可用，模型自己想到照样能用）
+             *   ② 还不够才撤整条资源行（那是事实信息，价值更高）
+             *
+             * 为什么是这个顺序：提示是**教学**，资源行是**事实**。
+             * 预算紧时先牺牲教学。 */
+            const noHint = renderMachines(tbl, diagList, obs, goalShape, { includeOreHint: false });
+            if (noHint !== s3Machines) {
+                const savedHint = s3Machines.length - noHint.length;
+                if (room + savedHint >= 120) {
+                    s3Machines = noHint;
+                    user = compose(s3Belts, null);
+                    room = targetChars - (s1.length + user.length) - 2;
+                    oreHintDroppedForCapacity = true;
+                }
+            }
+            if (room < 120) {
+                const withoutRes = renderMachines(tbl, diagList, obs, goalShape, { includeResource: false });
+                if (withoutRes !== s3Machines) {
+                    const saved = s3Machines.length - withoutRes.length;
+                    if (room + saved >= 120) {
+                        s3Machines = withoutRes;
+                        user = compose(s3Belts, null);
+                        room = targetChars - (s1.length + user.length) - 2;
+                        resourceDroppedForCapacity = true;
+                    }
+                }
+            }
+        }
         try {
             if (room >= 120) {
                 /* 先试 full，塞不下再退 short，还塞不下就不出现 —— 每一级都**显式**挑。 */
@@ -2091,6 +2298,8 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
          * 「数据不可信」/「没什么可说」/「预算不够被丢掉」是三种完全不同的情况，
          * 混成一个 null 会让事后排查（和测试）分不清「功能没触发」和「功能坏了」。 */
         s3_capacity: s3Capacity,
+        resource_dropped_for_capacity: resourceDroppedForCapacity,
+        ore_hint_dropped_for_capacity: oreHintDroppedForCapacity,
         capacity_unavailable: capacityUnavailable,
         capacity_bottleneck: capacityNote,
         capacity_downgraded: capacityDowngraded,

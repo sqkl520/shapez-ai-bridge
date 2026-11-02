@@ -78,6 +78,25 @@ export const COORD_SOURCES = Object.freeze({
     OBS_REFS: "$uids",
     DERIVED_BBOX: "$bbox_of",
     DERIVED_PATH: "$path_of",
+    /* ★ `$ore` —— 按矿种取一格矿点 ★
+     *
+     * 真机实测（2026-11-03，level 5 / 目标 `Cu----Cu`）：模型三轮都**正确诊断**了
+     * 「接在切割机上的那台矿机脚下没有矿」，并在 say 里直接说出了缺什么：
+     *
+     *   > "no ore-patch handle is exposed"
+     *   > "no listed handle exposes the Cu patch"
+     *
+     * 它想放一台新矿机到铜矿上，但**矿格不是实体、没有句柄**，`insert_machine.at`
+     * 只接受 `{cell}` / `[x,y]`，而模型不许写坐标。于是它只能猜（r1 猜了 `B7` 的格），
+     * 或者退回 `{at:{uid:M1}}` 那种不合法形态（r2 被 `LLM_ARGS: unknown_field` 拒）。
+     *
+     * `$ore` 补的就是这一个洞：`{"$ore":"Cu"}` → `{cell:[x,y]}`（该矿种离 hub 最近的一格）。
+     * 它和 `$ref` 的 `asCell` 形态产出同一个类型，所以 `insert_machine.at` 不用改。
+     *
+     * 只允许**矿种前缀**（`Cu` / `Ru` / `Rb`…），不接受完整形状串 ——
+     * 资源层的键是 `CuCuCuCu` 这种，但让模型写全串没有收益，反而容易写错。
+     * 解析时按前缀匹配（`Cu` 命中 `CuCuCuCu`），多种同色矿取格数最多的那个。 */
+    ORE: "$ore",
 });
 
 /** 算子 → 它产生的 provenance 前缀。注意 `$ref` 两种形态都是 `obs:uid=`。 */
@@ -86,7 +105,11 @@ export const PROVENANCE_PREFIX = Object.freeze({
     MACRO: "macro:",
     COMPUTED: "computed:bbox_of[",
     COMPUTED_PATH: "computed:path_of[",
+    /* `$ore` 的产物同样是「一格地」，但它来自资源层而不是实体表。
+     * 单独一个前缀，让审计能区分「这格是矿」和「这格是实体」。 */
+    ORE: "ore:",
 });
+
 
 /**
  * provenance 标签的**唯一**合法形态（v2 §4 的审计口径 / v1 §2.4 的正则）。
@@ -104,7 +127,7 @@ export const PROVENANCE_PREFIX = Object.freeze({
  * 按 v1 字面实现，`assertProvenance` 会对所有宏溯源判红（＝宏放的机器永远无法溯源）。
  * 这里把前缀放宽成 `[\w-]+(?::[\w-]+)*@`，即「宏名，可带冒号分段，最后跟 @」。
  */
-export const PROVENANCE_RE = /^(?:obs:uid=\d+|macro:[\w-]+(?::[\w-]+)*@[^|]+|computed:(?:bbox|path)_of\[.+?\])$/;
+export const PROVENANCE_RE = /^(?:obs:uid=\d+|macro:[\w-]+(?::[\w-]+)*@[^|]+|computed:(?:bbox|path)_of\[.+?\]|ore:[A-Z][a-z]@-?\d+,-?\d+)$/;
 
 /**
  * `computed:path_of[…]` 的**专属**前缀。单独导出是因为「重算 + 判连续」
@@ -159,8 +182,11 @@ export function assertNoHumanCoords(llmPlan, handles = null) {
             return;
         }
         if (isObj(node)) {
-            if ("asCell" in node && !("$ref" in node)) {
-                add(pj(path, "asCell"), "AS_CELL_SCOPE", "asCell 只能出现在 $ref 里", node.asCell);
+            /* `asCell` 是「这一格地」的标记，`$ref` 与 `$ore` 都产出「一格地」，
+             * 所以两者都允许带它。别的算子（`$uids`/`$bbox_of`/`$path_of`）
+             * 产出的不是单格，带 asCell 没有意义 ⇒ 照旧报错。 */
+            if ("asCell" in node && !("$ref" in node) && !("$ore" in node)) {
+                add(pj(path, "asCell"), "AS_CELL_SCOPE", "asCell 只能出现在 $ref / $ore 里", node.asCell);
             }
             for (const [k, v] of Object.entries(node)) {
                 const p = pj(path, k);
@@ -215,6 +241,14 @@ function checkRefShape(opKey, v, path, add) {
     if (opKey === "$ref") {
         if (typeof v !== "string" || !HANDLE_RE.test(v)) {
             add(path, "REF_SHAPE", `$ref 的值必须是句柄字符串（如 "B7"），实得 ${JSON.stringify(v)}`, v);
+        }
+        return;
+    }
+    /* `$ore` 的值是**矿种前缀**（`Cu`），不是句柄 —— 它压根不是数组。
+     * 形状校验放在 `resolveNode` 里（那里能同时判前缀格式与「地图上有没有」）。 */
+    if (opKey === "$ore") {
+        if (typeof v !== "string" || !/^[A-Z][a-z]$/.test(v)) {
+            add(path, "REF_SHAPE", `$ore 的值必须是两字母矿种前缀（如 "Cu"），实得 ${JSON.stringify(v)}`, v);
         }
         return;
     }
@@ -276,6 +310,59 @@ export function argKindOf(macro, path) {
  *            calls:Array<{macro:string, args:object, provenance:Object<string,string|string[]>}>,
  *            violations:Array<{path:string, rule:string, reason:string, value:any}>}}
  */
+/* ══════════════════════════════════════════════════════════════════════════
+ * `$ore` 的解析：矿种前缀 → 离 hub 最近的那一格矿
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 找「该矿种离 hub 最近的一格」。
+ *
+ * @param {object} obs 世界快照（要 `resources`，可选 `hub`）
+ * @param {string} prefix 两字母矿种前缀，如 `"Cu"`
+ * @returns {{cell:[number,number], kind:string, count:number}|null}
+ *   没数据 / 没有该矿种 ⇒ null（调用方据此报 ORE_NOT_FOUND，绝不返回假坐标）
+ */
+export function nearestOreCell(obs, prefix) {
+    const list = obs && Array.isArray(obs.resources) ? obs.resources : null;
+    if (!list || !list.length) return null;
+
+    /* hub 位置：obs.hub 的 x/y 是左上角，4×4。用它的中心当"远"的基准，
+       比用原点更准（hub 未必正好在原点，实测 L5 世界在 (-2,-2)）。 */
+    const h = obs && obs.hub;
+    const hx = h && Number.isFinite(h.x) ? h.x + ((Number.isFinite(h.w) ? h.w : 4) - 1) / 2 : 0;
+    const hy = h && Number.isFinite(h.y) ? h.y + ((Number.isFinite(h.h) ? h.h : 4) - 1) / 2 : 0;
+
+    let best = null;
+    const counts = new Map();
+    for (const r of list) {
+        if (!Array.isArray(r) || r.length < 3) continue;
+        const [x, y, kind] = r;
+        if (!Number.isInteger(x) || !Number.isInteger(y)) continue;
+        if (typeof kind !== "string" || !kind.startsWith(prefix)) continue;
+        counts.set(kind, (counts.get(kind) || 0) + 1);
+        /* 曼哈顿距离：和 `renderGoalResource` 的远近档位同一个口径
+           （那边为了「不许出现坐标」只输出档位，这里要真选一格，所以算真距离）。 */
+        const d = Math.abs(x - hx) + Math.abs(y - hy);
+        if (!best || d < best.d) best = { cell: [x, y], kind, d };
+    }
+    if (!best) return null;
+
+    /* 同色有多种矿时，优先用格数最多的那种矿的最近格 ——
+     * 但上面已经取了全局最近格，这里只在"最近格属于一个很小的矿"时提醒调用方。
+     * 不做重选：矿机放哪一格都能挖，最近的就是最好的。 */
+    return { cell: best.cell, kind: best.kind, count: counts.get(best.kind) || 0 };
+}
+
+/**
+ * 把「LLM 写的 `$ore`」解析成 `{cell:[x,y]}`。
+ * 只做一件事，所以单独导出便于测试。
+ */
+export function resolveOreRef(node, obs) {
+    const raw = node && node.$ore;
+    if (typeof raw !== "string" || !/^[A-Z][a-z]$/.test(raw)) return null;
+    return nearestOreCell(obs, raw);
+}
+
 export function resolveRefs(llmPlan, handles, obs) {
     const violations = [];
     const calls = [];
@@ -363,6 +450,35 @@ export function resolveRefs(llmPlan, handles, obs) {
                     add(path, "V5", `$bbox_of 无法计算：${e.message}`, list);
                     return null;
                 }
+            }
+            if ("$ore" in node) {
+                /* `$ore` → `{cell:[x,y]}`：该矿种离 hub 最近的一格。
+                 *
+                 * 只允许 `at` 这类「一格地」的参数（与 `$ref` 的 `asCell` 同一类）。
+                 * 契约上走的是 coordClass === "site"，和 `$ref+asCell` 一样。
+                 *
+                 * ⚠️ **不要**把它扩成 region / cell[]：矿脉是不规则形状，
+                 * 一段矿的「矩形」会框进大量非矿格（和 `$bbox_of` 的老坑同型）。
+                 * 模型要的是「在哪一格放矿机」，一格就够。 */
+                const raw = node.$ore;
+                if (typeof raw !== "string" || !/^[A-Z][a-z]$/.test(raw)) {
+                    add(path, "REF_SHAPE",
+                        `$ore 的值必须是两字母矿种前缀（如 "Cu"），实得 ${JSON.stringify(raw)}`, raw);
+                    return null;
+                }
+                const hit = nearestOreCell(obs, raw);
+                if (!hit) {
+                    add(path, "ORE_NOT_FOUND",
+                        `地图上没有 "${raw}" 这种矿（扫描区域内）—— 放矿机上去也不会产出`, raw);
+                    return null;
+                }
+                /* 附加键：与 `$ref` 一致，只放行 asCell（进 site 参数时用） */
+                const bad = Object.keys(node).filter(k => k !== "$ore" && k !== "asCell" && k !== "port");
+                if (bad.length) {
+                    add(path, "REF_SHAPE", `$ore 只允许 asCell / port 两个附加键，多出：${bad.join(",")}`, bad);
+                }
+                const tag = `${PROVENANCE_PREFIX.ORE}${raw}@${hit.cell[0]},${hit.cell[1]}`;
+                return { value: { cell: hit.cell }, prov: [[path, tag]] };
             }
             if ("$path_of" in node) {
                 /* `$path_of` 的投影**必须**按目标参数的声明类型决定（见文件头的裁决）：
@@ -480,7 +596,35 @@ export function getPath(obj, path) {
  */
 function checkTag(tag, value, { obs, knownTokens, opLike = null }) {
     if (typeof tag !== "string" || !PROVENANCE_RE.test(tag)) {
-        return { ok: false, why: `provenance 形态非法：${JSON.stringify(tag)}（只允许 obs:uid=N / macro:<token> / computed:bbox_of[…] / computed:path_of[…]）` };
+        return { ok: false, why: `provenance 形态非法：${JSON.stringify(tag)}（只允许 obs:uid=N / macro:<token> / computed:bbox_of[…] / computed:path_of[…] / ore:<色>@x,y）` };
+    }
+    /* ★ `$ore` 的溯源：**用当前 obs 重算**，不是信任标签里写的坐标 ★
+     *
+     * 和 `computed:bbox_of[…]` 同一条纪律：标签只是「我是怎么算出来的」的记录，
+     * 真值必须能从 obs 重新算出来并且相等。否则世界一变（矿被挖空、换了存档），
+     * 旧标签就会指向一个现在已经不是矿的格子 —— 而落盘的矿机不会产出任何东西。
+     *
+     * 重算 = 再调一次 `nearestOreCell`。它只看 obs.resources 和 hub，纯函数。 */
+    if (tag.startsWith(PROVENANCE_PREFIX.ORE)) {
+        const m = /^ore:([A-Z][a-z])@(-?\d+),(-?\d+)$/.exec(tag);
+        if (!m) return { ok: false, why: `ore 标签解析失败：${JSON.stringify(tag)}` };
+        const [, color, tx, ty] = m;
+        const now = nearestOreCell(obs, color);
+        if (!now) {
+            return { ok: false, why: `obs 里现在没有 ${color} 这种矿（标签说在 ${tx},${ty}）—— 世界变了或矿已被挖空` };
+        }
+        if (now.cell[0] !== Number(tx) || now.cell[1] !== Number(ty)) {
+            return {
+                ok: false,
+                why: `$ore 的重算结果不一致：标签说 ${tx},${ty}，按当前 obs 重算是 ${now.cell[0]},${now.cell[1]}`,
+            };
+        }
+        if (isObj(value) && Array.isArray(value.cell)) {
+            if (value.cell[0] !== now.cell[0] || value.cell[1] !== now.cell[1]) {
+                return { ok: false, why: `$ore 的落点与重算不符：值 ${JSON.stringify(value.cell)} vs 重算 ${JSON.stringify(now.cell)}` };
+            }
+        }
+        return { ok: true, why: null };
     }
     if (tag.startsWith(PROVENANCE_PREFIX.OBS)) {
         const uid = Number(tag.slice(PROVENANCE_PREFIX.OBS.length));
