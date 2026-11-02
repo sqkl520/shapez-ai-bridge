@@ -311,26 +311,65 @@ export function argKindOf(macro, path) {
  *            violations:Array<{path:string, rule:string, reason:string, value:any}>}}
  */
 /* ══════════════════════════════════════════════════════════════════════════
- * `$ore` 的解析：矿种前缀 → 离 hub 最近的那一格矿
+ * `$ore` 的解析：矿种前缀 → 一格矿（尽量选「接线最短」的那格）
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * 找「该矿种离 hub 最近的一格」。
+ * 找一格该矿种的矿。
  *
- * @param {object} obs 世界快照（要 `resources`，可选 `hub`）
+ * ## 选格判据：**离最近的处理机器**，不是离 hub
+ *
+ * 第一版选的是「离 hub 中心最近的一格」。真机实测（2026-11-03）立刻暴露了问题：
+ *
+ *   · hub 在 (-2,-2)，铜矿最近格是 **(-9,3)**（距 hub 11 格）—— 选它；
+ *   · 但已有的 cutter/rotater 链在 **(4,-17)/(5,-18)**；
+ *   · (-9,3) → cutter 的曼哈顿距离是 **33 格**。
+ *
+ * 矿机放上去确实在挖铜，但它是个**孤岛**：周围 3×3 全空，没有带子接它的输出，
+ * 而模型下一步要 `connect` 一条 33 格的路 —— 那既贵又容易撞机器。
+ *
+ * 正确的判据是「离现有的处理机器最近」：矿机要么直接喂给某台机器，
+ * 要么只走很短一段带子。hub 不是参照物 —— 矿机从不直接连 hub。
+ *
+ * ## 参照物的选取
+ *
+ * `obs.entities` 里「吃形状的机器」= cutter / rotater / stacker / mixer / painter。
+ * 全都没有时退回 hub（空世界的冷启动场景）。
+ *
+ * @param {object} obs 世界快照（要 `resources`；可选 `entities` / `hub`）
  * @param {string} prefix 两字母矿种前缀，如 `"Cu"`
- * @returns {{cell:[number,number], kind:string, count:number}|null}
+ * @returns {{cell:[number,number], kind:string, count:number, to:number}|null}
  *   没数据 / 没有该矿种 ⇒ null（调用方据此报 ORE_NOT_FOUND，绝不返回假坐标）
  */
 export function nearestOreCell(obs, prefix) {
     const list = obs && Array.isArray(obs.resources) ? obs.resources : null;
     if (!list || !list.length) return null;
 
-    /* hub 位置：obs.hub 的 x/y 是左上角，4×4。用它的中心当"远"的基准，
-       比用原点更准（hub 未必正好在原点，实测 L5 世界在 (-2,-2)）。 */
-    const h = obs && obs.hub;
-    const hx = h && Number.isFinite(h.x) ? h.x + ((Number.isFinite(h.w) ? h.w : 4) - 1) / 2 : 0;
-    const hy = h && Number.isFinite(h.y) ? h.y + ((Number.isFinite(h.h) ? h.h : 4) - 1) / 2 : 0;
+    /* 参照点：所有「吃形状的机器」的位置。矿机的合理位置是**靠近它们**。 */
+    const CONSUMERS = new Set(["cutter", "rotater", "stacker", "mixer", "painter", "hub"]);
+    const anchors = [];
+    for (const e of (obs && obs.entities) || []) {
+        if (!e || !CONSUMERS.has(e.type)) continue;
+        if (!Number.isInteger(e.x) || !Number.isInteger(e.y)) continue;
+        anchors.push([e.x, e.y]);
+    }
+    /* 一台机器都没有（全新世界）⇒ 退回 hub 中心。 */
+    if (!anchors.length) {
+        const h = obs && obs.hub;
+        const hx = h && Number.isFinite(h.x) ? h.x + ((Number.isFinite(h.w) ? h.w : 4) - 1) / 2 : 0;
+        const hy = h && Number.isFinite(h.y) ? h.y + ((Number.isFinite(h.h) ? h.h : 4) - 1) / 2 : 0;
+        anchors.push([hx, hy]);
+    }
+
+    /** 一格到最近参照点的曼哈顿距离。 */
+    const distToNearest = (x, y) => {
+        let m = Infinity;
+        for (const [ax, ay] of anchors) {
+            const d = Math.abs(x - ax) + Math.abs(y - ay);
+            if (d < m) m = d;
+        }
+        return m;
+    };
 
     let best = null;
     const counts = new Map();
@@ -340,17 +379,15 @@ export function nearestOreCell(obs, prefix) {
         if (!Number.isInteger(x) || !Number.isInteger(y)) continue;
         if (typeof kind !== "string" || !kind.startsWith(prefix)) continue;
         counts.set(kind, (counts.get(kind) || 0) + 1);
-        /* 曼哈顿距离：和 `renderGoalResource` 的远近档位同一个口径
-           （那边为了「不许出现坐标」只输出档位，这里要真选一格，所以算真距离）。 */
-        const d = Math.abs(x - hx) + Math.abs(y - hy);
+        const d = distToNearest(x, y);
         if (!best || d < best.d) best = { cell: [x, y], kind, d };
     }
     if (!best) return null;
 
-    /* 同色有多种矿时，优先用格数最多的那种矿的最近格 ——
-     * 但上面已经取了全局最近格，这里只在"最近格属于一个很小的矿"时提醒调用方。
-     * 不做重选：矿机放哪一格都能挖，最近的就是最好的。 */
-    return { cell: best.cell, kind: best.kind, count: counts.get(best.kind) || 0 };
+    /* 同色多种矿时，`counts` 只用于回报「这种矿有多少格」——
+       不在「最近」和「最多」之间做加权取舍：矿机放在哪一格都能挖，
+       接线距离是唯一有实际后果的判据。 */
+    return { cell: best.cell, kind: best.kind, count: counts.get(best.kind) || 0, to: best.d };
 }
 
 /**

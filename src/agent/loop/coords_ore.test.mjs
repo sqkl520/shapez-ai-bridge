@@ -74,8 +74,8 @@ check("O4 无 resources ⇒ null", () => {
     assert(nearestOreCell(mkObs([]), "Cu") === null);
 });
 
-/* ── O5：hub 不在原点时，距离按 hub 中心算 ── */
-check("O5 hub 偏移时按 hub 中心算距离", () => {
+/* ── O5：没有处理机器时退回 hub 中心 ── */
+check("O5 没有机器时按 hub 中心算距离", () => {
     /* hub 在 (100,100) 4×4 ⇒ 中心 (101.5,101.5) */
     const obs = {
         entities: [],
@@ -154,6 +154,46 @@ check("O10 $ore 在算子白名单里（不报 V6）", () => {
     );
     assert(!r.violations.some(v => v.rule === "V6"),
         `不该报 V6（未知算子），实际 ${JSON.stringify(r.violations.map(x => x.rule))}`);
+});
+
+/* ── O11：★ 新判据 ★ 选「离处理机器最近」的矿，而不是离 hub 最近 ──
+ *
+ * 真机实测（2026-11-03）：第一版按 hub 选，选中 (-9,3)；但产线机器在 (4,-17)，
+ * 距离 33 格 —— 矿机放上去是个孤岛，模型要 connect 一条 33 格的路。
+ * 正确的参照是「吃形状的机器」：矿机要么直接喂给某台，要么只走短带子。
+ */
+check("O11 优先选离 cutter 近的矿（不是离 hub 近的）", () => {
+    const obs = {
+        entities: [
+            { uid: 1, type: "cutter", x: 100, y: 100 },
+        ],
+        hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+        resources: [
+            [2, 2, "CuCuCuCu"],        // 离 hub 近（约 2 格），离 cutter 很远（196 格）
+            [101, 100, "CuCuCuCu"],    // 离 cutter 近（1 格）
+        ],
+    };
+    const r = nearestOreCell(obs, "Cu");
+    assert(r.cell[0] === 101 && r.cell[1] === 100,
+        `应选靠近 cutter 的那格，实际 ${JSON.stringify(r.cell)}`);
+    assert(r.to === 1, `到最近机器应为 1 格，实际 ${r.to}`);
+});
+
+/* ── O12：多台机器时取「到最近那台」的距离 ── */
+check("O12 多个处理机器时取最近的那个", () => {
+    const obs = {
+        entities: [
+            { uid: 1, type: "cutter", x: 0, y: 0 },
+            { uid: 2, type: "painter", x: 50, y: 50 },
+        ],
+        resources: [
+            [49, 50, "CuCuCuCu"],   // 到 painter 1 格、到 cutter 99 格 ⇒ 应选它
+            [10, 10, "CuCuCuCu"],   // 到 cutter 20 格
+        ],
+    };
+    const r = nearestOreCell(obs, "Cu");
+    assert(r.cell[0] === 49 && r.cell[1] === 50,
+        `应选靠近 painter 的那格，实际 ${JSON.stringify(r.cell)}`);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
