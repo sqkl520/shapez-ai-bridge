@@ -277,6 +277,20 @@ export function fingerprintOf(diagnoses) {
     return sha256(rows.join("\n"));
 }
 
+/**
+ * 带子类的 building 名 —— 「产物可撤销」判据的一半。
+ *
+ * 为什么单列一份而不是从 `planToTxOps.mjs` 的 `BELT_KINDS` 导入：
+ * 那个常量是模块私有的，而且它的语义是「翻译时按带子处理」。
+ * 这里的语义是「这类产物能被 `remove_run` 删掉」。**两者现在是同一个集合，
+ * 但将来可能分叉**（比如加了 wire 类建筑）。分开写，各带理由。
+ *
+ * `remove_run` 的能力边界（`remove.mjs`）：「选集里有 N 个非带子实体（整单拒绝）」——
+ * 所以只有带子/proto 隧道能删。机器和垃圾桶没有对应的删除宏。
+ */
+const REVERSIBLE_BUILDINGS = new Set(["belt", "underground_belt"]);
+const isBeltBuilding = b => REVERSIBLE_BUILDINGS.has(String(b));
+
 /** 动作集指纹：同一 fp 下「换了动作没有」的机器判据（v1 §1.6 的 actionSetHash）。 */
 export function actionSetHash(macros) {
     const list = (Array.isArray(macros) ? macros : []).map(String).sort();
@@ -1167,7 +1181,7 @@ export function verifyMacroTokenCoords(txPlan) {
  * @returns {{ok:true, txPlan, calls, resolved, provenance:{tagged,untagged}, warnings:string[]}
  *         | {ok:false, code, diagnosis, stage}}
  */
-export function buildTxPlan(llmPlan, obs, items, handles) {
+export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
     const o = unwrapObs(obs);
 
     /* ① L-A：原始 LLM JSON 里不许有字面坐标 */
@@ -1187,6 +1201,8 @@ export function buildTxPlan(llmPlan, obs, items, handles) {
 
     /* ③ 逐条 macro：先过契约校验（结构错误 = LLM_ARGS），再调**真宏** */
     const executed = [];
+    /* partial 模式下收集失败（见 ③b）；非 partial 模式恒为空。 */
+    const macroFailures = [];
     for (let i = 0; i < res.calls.length; i++) {
         const c = res.calls[i];
         if (!MACRO_NAMES.includes(c.macro)) {
@@ -1225,6 +1241,22 @@ export function buildTxPlan(llmPlan, obs, items, handles) {
         }
         if (!r || r.ok !== true) {
             const e = (r && r.error) || {};
+            /* ★ partial 模式：失败不立刻拒，记下来继续跑后面的 ★
+             *
+             * 「部分执行」的前提是知道**哪些能成**。如果第一个失败就 return，
+             * 后面那 3 个本来能成的调用永远不会被尝试 —— 那就不是部分执行了。
+             *
+             * 只收集失败，继续循环。循环结束后由 ③b 决定提交哪些。
+             * 非 partial 模式完全走原来的路径（立刻 reject），行为不变。 */
+            if (opts && opts.partial === true) {
+                macroFailures.push({
+                    index: i, macro: c.macro,
+                    code: e.code || null,
+                    hint: e.hint || null,
+                    message: e.message || (r && r.reason) || null,
+                });
+                continue;
+            }
             /* ★ 2026-11-02：`observed` 里带上「第几个调用失败 / 共几个」 ★
              *
              * 原来只说「connect 返回 ok:false（occupied: …）」。模型不知道：
@@ -1295,6 +1327,95 @@ export function buildTxPlan(llmPlan, obs, items, handles) {
             });
         }
         executed.push({ macro: c.macro, args: c.args, provenance: c.provenance, result: r });
+    }
+
+    /* ③b ★ 部分执行（partial）：只留「成功 **且** 产物可撤销」的调用 ★
+     *
+     * ## 为什么是「可撤销」而不只是「成功」
+     *
+     * 红队（`REDTEAM-PARTIAL-APPLY.md`）用实测证明「提交全部成功子集」会假绿：
+     *
+     *   · 52% 的样本里「成功的那一半」是 `trash_unused` —— 它把 `DEAD_END` 的出口封死，
+     *     症状消失但问题没解决
+     *   · **trash / 机器一旦落盘不可撤销**：`remove_run` 只处理带子
+     *     （`remove.mjs`「选集里有 N 个非带子实体（整单拒绝）」），
+     *     6 个宏里没有一个能删机器
+     *   · 提交全部成功子集 = 88 次不可逆写入，而只有 45% 是真目标动作
+     *
+     * 我测了按「产物可撤销」筛选的变体（`.tmpverify/redteam-partial/reversible.mjs`，177 条）：
+     *
+     *   A 全有或全无   提交 3.4%   目标动作  6   不可逆  5
+     *   B 全部成功子集 提交 71.8%  目标动作 57   不可逆 88   ← 红队否掉的
+     *   **E 可撤销子集 提交 30.5%  目标动作 54   不可逆  0**  ← 这个
+     *
+     * E 的提交率不如 B，但**目标动作密度 100%**（54/54 全是真目标动作），
+     * 而且**一次不可逆都没有**。拿 41 个百分点的提交率换 88 次不可逆写入，
+     * 这个交换是对的。
+     *
+     * ## 判据：看**产物**，不看宏名
+     *
+     * 一个调用可撤销 ⇔ 它产生的所有 op 都是「place 带子」或「delete 带子」。
+     * 这两类都能用 `remove_run` / `place` 复原。机器和垃圾桶不能。
+     *
+     * 这个判据从**宏的真实返回值**推，不猜 —— 所以 `replace_run` 的 belt 模式
+     * 自动算可撤销、机器模式自动算不可逆，不需要一张「宏名 → 可撤销」的表。
+     *
+     * ## 默认关闭
+     *
+     * `opts.partial !== true` 时完全走原来的「全有或全无」路径。
+     * 这不是渐进开关，是**两套语义**：现有 336 条测试全部断言前者。
+     */
+    const partialMode = !!(opts && opts.partial === true);
+    /* 被跳过的调用明细（partial 模式之外恒为空）。
+       宏失败的先放进来 —— 它们是被跳过的第一批。 */
+    const skippedAll = macroFailures.map(f => ({
+        macro: f.macro, reason: "macro_failed", code: f.code, hint: f.hint,
+    }));
+    if (partialMode && executed.length < res.calls.length) {
+        const reversible = [];
+        const skipped = [];
+        for (let i = 0; i < executed.length; i++) {
+            const ex = executed[i];
+            /* 单条翻译，看它产生什么 op。`planToTxOps` 对单条调用的开销很小，
+               而且这一步**不落盘**，只是推演。 */
+            const solo = planToTxOps([ex], { obs: o, items, namedUids: collectNamedUids([ex], o, handles) });
+            const ops = (solo && solo.ok === true) ? solo.ops : null;
+            const rev = Array.isArray(ops) && ops.length > 0 && ops.every(op =>
+                (op.op === "delete") || (op.op === "place" && isBeltBuilding(op.building)));
+            if (rev) reversible.push(ex);
+            else {
+                const rec = {
+                    macro: ex.macro,
+                    reason: ops ? "irreversible" : "not_translatable",
+                    ops: ops ? ops.length : 0,
+                };
+                skipped.push(rec);
+                skippedAll.push(rec);
+            }
+        }
+        if (reversible.length) {
+            executed.length = 0;
+            executed.push(...reversible);
+        } else {
+            /* 一条可撤销的都没有 ⇒ 退回「全有或全无」的拒绝语义，
+               不要拿「不可逆写入」去凑一个部分执行。 */
+            /* ⚠️ `evidence.skipped` 必须用 **`skippedAll`**（含宏失败的），
+             * 不是局部的 `skipped`（只有「不可撤销」的那批）。
+             *
+             * 实测（`partial_apply.test.mjs` P4）：用 `skipped` 会漏掉
+             * 「宏自己失败」的那条，下游只看到 `irreversible` ——
+             * 模型会以为「我写的都能成，只是不能撤销」，而实际有一条根本没成。
+             * 两种原因的修法完全不同（一个换参数、一个换策略）。 */
+            return reject("NO_REVERSIBLE_CALL", {
+                layer: "plan", stage: "partial",
+                expected: "至少一条产物可撤销的调用",
+                observed: `${res.calls.length} 个调用里 0 条可撤销`
+                    + `（${skippedAll.map(s => s.macro + ":" + s.reason).join(", ")}）`,
+                evidence: { skipped: skippedAll },
+                hint: "这些调用只能放机器/垃圾桶，没有一条能靠 remove_run 撤销。"
+                    + "换一条只涉及带子的修法（connect / extend_line / replace_run 的 belt 模式）。",
+            });
+        }
     }
 
     /* ④ 翻译成一次 tx 的 ops（含 deriveFlows）
@@ -1386,6 +1507,23 @@ export function buildTxPlan(llmPlan, obs, items, handles) {
         resolved: res,
         provenance: { tagged: withProv.tagged, untagged: withProv.untagged.length },
         warnings: (txPlan.warnings || []).map(w => w && w.code).filter(Boolean),
+        /* ★ partial 标记 + 被跳过的明细 ★
+         *
+         * `partial: true` 意味着**这个计划没有完整执行** —— 有调用被跳过。
+         *
+         * ⚠️ 下游**必须**把它当「不算完全成功」：
+         *   · `strictVerdict` 要加一条 `noPartialApply`（ok:false 且**不带 skipped**，
+         *     否则 `classifyChecks` 第一句 `if (c.skipped) continue` 会把它吞掉 ——
+         *     红队 `REDTEAM-PARTIAL-APPLY.md` 的 `holes.mjs` 实测过这个坑）
+         *   · `world_state` 仍然是 `"applied"`（世界真的变了），但 `partial` 要单列
+         *
+         * `skipped` 里每条的 `reason`：
+         *   · `macro_failed`   —— 宏自己返回 ok:false（带 code / hint）
+         *   · `irreversible`   —— 宏成功了，但产物是机器/垃圾桶，撤销不了
+         *   · `not_translatable` —— 单条翻译成 op 失败（几乎不该发生，防御性分支）
+         */
+        partial: partialMode && (skippedAll.length > 0),
+        skipped: skippedAll,
     };
 }
 

@@ -382,6 +382,43 @@ export function strictVerdict(report, { mode, goalShape, flowsProvided, hasMachi
         why.push(`UNDECLARED_DESTRUCTION：${undeclared.length} 个实体消失了且不在 destroys 里（${undeclared.slice(0, 8).join(", ")}）`);
     }
 
+    /* 8. ★ 部分执行：**不是成功** ★（2026-11-02，partial 模式）
+     *
+     * `buildTxPlan(..., {partial:true})` 会跳过失败的/不可撤销的调用，只提交一个子集。
+     * 那个子集本身可能全绿 —— L1/L2/L3/L4 都在验它，而它确实做成了。
+     *
+     * **但「计划的一部分做成了」不等于「计划达成了」。**
+     *
+     * 红队（`REDTEAM-PARTIAL-APPLY.md`）用真实样本证明过：模型说的第一件事
+     *（「喂 cutter，把产出送进 hub」）从未执行，而 L1/L2/V-obs-flow 全绿。
+     * 只要 hub 在收货，`phaseTwoVerdict` 就会给 `achieved: true`。
+     *
+     * ## 判据从哪来
+     *
+     * 从 `report.partial` / `report.skipped` 读（由 `runLoop` 从 `buildTxPlan` 的返回值
+     * 传进 `verifyRuntime` 的输入）。不新增参数 —— 那样会改签名、影响所有调用点。
+     *
+     * ## ⚠️ 这一条**绝不能**带 `skipped: true`
+     *
+     * 红队实测（`holes.mjs`）：
+     *   · `{name:"P-partial", ok:false}`                → strict.ok=false, achieved=false ✔
+     *   · `{name:"P-partial", ok:false, skipped:true}`  → strict.ok=true,  achieved=true  ✗
+     *
+     * 因为 `classifyChecks`（`offline_boundary.mjs:63`）第一句就是
+     * `if (c.skipped) continue;`。本项目所有「有意跳过」的 check 都带 skipped:true，
+     * 实现者照抄邻居就会踩中。
+     *
+     * 这里**不加到 report.checks**，直接进 `why` —— 绕开 `classifyChecks` 的
+     * skipped 过滤，也就绕开了那个坑。 */
+    if (report.partial === true) {
+        const sk = Array.isArray(report.skipped) ? report.skipped : [];
+        const detail = sk.length
+            ? `：${sk.slice(0, 4).map(s => `${s.macro}(${s.reason})`).join(", ")}${sk.length > 4 ? ` 等 ${sk.length} 条` : ""}`
+            : "";
+        why.push(`PARTIAL_APPLY：计划没有完整执行，${sk.length} 个调用被跳过${detail}`
+            + ` —— 做成了子集不等于达成了计划`);
+    }
+
     return { ok: why.length === 0, why };
 }
 
@@ -574,7 +611,23 @@ export async function verifyRound({
     /* 纯删除轮：L1 能验「声明的删除真的发生了」，但 L3 必然不可判定（verifyRuntime 只在有
        placements 时读 debug_items）。这不是缺陷，是诚实：拆完的那一轮本来就没有可验的货流。 */
     const strict = strictVerdict(
-        { ...report, checks, uidDiff },
+        {
+            ...report, checks, uidDiff,
+            /* ★ 2026-11-02：把 partial 透传给 strictVerdict ★
+             *
+             * `txPlan.partial` 由 `buildTxPlan(..., {partial:true})` 设置
+             * （`loop.mjs` 的 ③b 段）。这里是它到达判据层的唯一通道。
+             *
+             * **不传的后果**：部分执行会被判成完全成功。
+             * 红队 `REDTEAM-PARTIAL-APPLY.md` 用真实样本证明过 ——
+             * 模型说的第一件事（喂 cutter）从未执行，而 L1/L2/V-obs-flow 全绿，
+             * `phaseTwoVerdict` 照样给 `achieved: true`。
+             *
+             * ⚠️ `partial` 为 false 时这两个字段是 `false` / `[]`，
+             * 与「没有 partial」等价 —— 现有 345 条测试不受影响。 */
+            partial: txPlan.partial === true,
+            skipped: Array.isArray(txPlan.skipped) ? txPlan.skipped : [],
+        },
         {
             mode,
             goalShape,
