@@ -63,6 +63,18 @@ export const DIAG_CODES = Object.freeze({
     /* ── plan / macro ── */
     MACRO_REFUSED: "a macro returned ok:false",
     MACRO_HALF_DONE: "macro returned ok:true but cells_placed !== cells_planned",
+    /* 2026-11-02：`partial` 模式下「一条可撤销的调用都没有」。
+     *
+     * 为什么单列而不是复用 `MACRO_REFUSED`：
+     *   · `MACRO_REFUSED` = 某个宏自己说不行（**模型**该换那个宏）
+     *   · `NO_REVERSIBLE_CALL` = 宏可能都成功了，但它们只产机器/垃圾桶，
+     *     落盘就撤不回来（**策略**该换一类修法）
+     *
+     * 两者给模型的 hint 完全不同，混成一个码会让它以为「换个参数」就行。
+     * 实测依据：`.tmpverify/redteam-partial/reversible.mjs`（177 条样本）——
+     * 「提交全部成功子集」会带来 88 次不可逆写入，其中大头是 `trash_unused`
+     * 把 `DEAD_END` 出口封死。 */
+    NO_REVERSIBLE_CALL: "partial mode found no call whose output can be undone",
     PLAN_REJECTED: "planToTxOps rejected the merged plan",
     COORD_PROVENANCE: "a coordinate had no valid provenance tag",
     PATH_NOT_RECT: "a $path_of selection does not fill its own bounding box, so the region parameter cannot express it",
@@ -217,6 +229,21 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["extend_line", 1],
     ]),
     MACRO_HALF_DONE: cand([]),        // INTERNAL：半成是事务/实现 bug，重试只会重复半成
+    /* 2026-11-02（partial 模式）：所有调用都只产机器/垃圾桶，落盘撤不回来。
+     *
+     * 该推的宏：**只产带子的那些**（connect / extend_line / replace_run 的 belt 模式）——
+     * 它们能用 `remove_run` 撤销。
+     *
+     * ⚠️ **故意不推 `insert_machine` / `trash_unused`** ——
+     * 推它们等于「再试一次同一条走不通的路」。这正是这个码想避免的。
+     * 这也是它和 `MACRO_REFUSED` 的候选表**最重要的区别**：
+     * 后者照常推 insert_machine（因为那个宏本身可能没问题，只是参数错了）。 */
+    NO_REVERSIBLE_CALL: cand([
+        ["connect", 5],
+        ["extend_line", 4],
+        ["replace_run", 3],
+        ["remove_run", 2],
+    ]),
     PLAN_REJECTED: cand([
         ["remove_run", 4],
         ["insert_machine", 3],
