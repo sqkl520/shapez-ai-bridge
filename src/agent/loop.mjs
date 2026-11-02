@@ -1907,6 +1907,41 @@ export async function runLoop(opts = {}) {
                 break;
             }
 
+            /* ★ 2026-11-02：每轮都查「goal 与世界一致吗」★
+             *
+             * `diagnose(obs, …, goal, …)` 用 `goal` 判「有没有产线在造它」。
+             * 传错 goal ⇒ 它以为旧目标在正常生产 ⇒ 诊断可能变空、也可能全是无关的。
+             *
+             * 真机踩过（`LIVE-MULTIROUND-RESULT.md`）：runner 硬编码
+             * `goal='RuRu----'`，而世界已经升到 level 5（目标 `Cu----Cu`）。
+             * loop 报 `NO_DIAGNOSIS`，而真实原因是调用方传错了 ——
+             * 那句「这是 loop 的缺陷」把人引向了错误的方向。
+             *
+             * 检查放在**每轮的轮首**（不是只在空诊断时）：
+             * 因为传错 goal 也可能产出**非空但无关**的诊断，
+             * 那比空诊断更危险（模型会照着无关的诊断去改）。
+             *
+             * `obs.goal.requirement.shape` 读不到时**不报**（离线夹具可能没有这个字段）。
+             */
+            {
+                const obsGoal = ob.obs && ob.obs.goal && ob.obs.goal.requirement
+                    && ob.obs.goal.requirement.shape;
+                if (typeof obsGoal === "string" && obsGoal && obsGoal !== goal) {
+                    const d = mkDiag("GOAL_MISMATCH", {
+                        layer: "meta",
+                        expected: `goal 与世界的当前目标一致（世界是 "${obsGoal}"）`,
+                        observed: `调用方传的是 "${goal}"，而世界当前目标是 "${obsGoal}"`,
+                        evidence: { passed_goal: goal, world_goal: obsGoal },
+                        hint: "goal 要从 obs.goal.requirement.shape 读，不要硬编码 ——"
+                            + " 世界会升级，目标形状跟着变。传错 goal 会让 diagnose() 看错对象。",
+                    });
+                    tr.write("diagnose", roundNo, { codes: [d.code], fingerprint: fingerprintOf([d]), diagnoses: [d] });
+                    st.diagnoses = [d];
+                    outcome = "halt"; reason = "GOAL_MISMATCH";
+                    break;
+                }
+            }
+
             let diagnoses = diagnose(ob.obs, ob.items, ob.production, st.lastReport, goal, st.handles, { recipe: st.recipe });
             /* 观测面的问题（items/production 不可用）与业务诊断并列；它们不导致 halt。 */
             for (const p of ob.problems) if (!diagnoses.some(d => d.code === p.code && d.layer === p.layer)) diagnoses.push(p);
