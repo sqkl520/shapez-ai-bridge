@@ -459,6 +459,125 @@ console.log("\n── R13. destroys 必须 ⊆ 指名句柄 ──");
     }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * R13 豁免：connect(allow_replace) 显式覆盖的带子
+ *
+ * 实测冲突（2026-11-03 真机，level 5 / 目标 Cu----Cu）：
+ *   prompt 告诉模型 `allow_replace` = 「是否允许覆盖路径上的既有带子」，
+ *   模型照做传 `{"allow_replace": true}`，想把 rotater 输出直连 hub。
+ *   但 R13 只认 `$ref`/`$uids`/`$path_of` 点名的 uid，而被覆盖的带子
+ *   是**路径推演的产物**，从来没被点名过 ⇒ 三轮全部 R13 拒绝，0 次执行。
+ *
+ * R13 原本要拦的是另一回事：`$bbox_of` 的矩形误框（点 B69/B81/B82，
+ * 矩形顺带框进没点名的 B70）。那和「模型明确授权覆盖这条路径」不是一类。
+ *
+ * ⚠️ 这里**合成** connect 的 MacroResult，而不是真跑 connect：
+ *    真机那个世界里 9 个候选端点的 connect 全部失败在前置条件
+ *    （port_already_bound ×4 / ambiguous_port ×3 / endpoint_not_a_port ×1 / occupied ×1），
+ *    夹具里也没有「路径压到带子」的组合。R13 只吃 `result.cells` 与 obs，
+ *    合成输入能精确覆盖要测的分支，且不构造假世界。
+ * ══════════════════════════════════════════════════════════════════════════ */
+console.log("\n── R13 豁免：connect(allow_replace) 显式覆盖 ──");
+{
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+    const FakeGame = (await import("../fake_game.mjs")).default;
+    const { buildHandles } = await import("./handles.mjs");
+    const { replaceRun } = await import("../macros/remove.mjs");
+
+    const g = FakeGame.fromFiles(path.join(REPO, "test/fixtures/saves/L4-obs.json"), null, { goal: "RuRu----" });
+    const obs = g.observe({ max_entities: 50000, include_resources: true });
+    const H = buildHandles(obs, g.debugItems());
+    const items = g.debugItems();
+
+    /* 挑 3 条真实带子当「被覆盖的带子」，并找一个「不点名」的 from/to */
+    const belts = obs.entities.filter(e => e.type === "belt").slice(0, 3);
+    ok(belts.length === 3, "（前置）夹具里至少有 3 条带子", belts.length);
+    const fromUid = obs.entities.find(e => e.type === "miner").uid;
+    const toUid = obs.entities.find(e => e.type === "hub").uid;
+    const coveredUids = belts.map(b => b.uid);
+
+    /* 合成一个 connect 的 MacroResult：cells 落在那些带子上，allow_replace 打开。
+     * planToTxOps 里的 `connectDestroysFromObs(result.cells ∩ obs)` 正是靠这个
+     * 把 covered 的 uid 算进 derived。
+     *
+     * ⚠️ 每个 cell 必须带 `rotation` 与 `rotationVariant` —— 否则先撞 R10
+     *    （`belt@(x,y) 缺 rotationVariant`），根本走不到 R13。
+     *    真 connect 的 cells 就带这两个字段，所以这不是"编数据"，是补齐契约。 */
+    const synthConnect = {
+        ok: true, macro: "connect",
+        cells: belts.map(b => ({
+            x: b.x, y: b.y,
+            building: "belt",
+            rotation: Number.isInteger(b.rotation) ? b.rotation : 0,
+            rotationVariant: Number.isInteger(b.rotationVariant) ? b.rotationVariant : 0,
+            code: Number.isInteger(b.code) ? b.code : 1,
+        })),
+        cells_planned: belts.length, cells_placed: belts.length,
+        first_mismatch: null,
+        changed: { placed: [], removed_uids: [] },   // ← 宏不自报销毁（红队 #6 的真实形态）
+        warnings: [{ code: "replacing-belts", detail: `will overwrite ${belts.length} belts` }],
+        reason: "ok",
+    };
+
+    /* ⑥ allow_replace 授权 ⇒ 被覆盖的带子不算「未点名删除」⇒ 必须通过 */
+    {
+        const txp = planToTxOps(
+            [{ macro: "connect", args: { from: { uid: fromUid }, to: { hub: { entry: 0 } }, opts: { allow_replace: true } }, result: synthConnect, provenance: {} }],
+            { obs, handles: H, items, namedUids: [fromUid, toUid] },
+        );
+        ok(txp.ok, "connect(allow_replace) 覆盖的带子不算「未点名删除」⇒ 通过",
+            txp.ok ? "" : (txp.error.detail || txp.error.observed));
+        ok((txp.warnings || []).some(w => w.code === "DESTROYS_DERIVED"),
+            "但必须留 DESTROYS_DERIVED 警告，逐格列明覆盖了哪些带子（审计可见）",
+            (txp.warnings || []).map(w => w.code));
+        const dw = (txp.warnings || []).find(w => w.code === "DESTROYS_DERIVED");
+        if (dw) {
+            ok(coveredUids.every(u => (dw.derived_uids || []).includes(u)),
+                "警告里列出了全部被覆盖的 uid", { want: coveredUids, got: dw.derived_uids });
+        }
+    }
+
+    /* ⑦ ★ 对照 ★ 豁免不得放宽到别处：replace_run 的矩形误框照旧被拒 */
+    {
+        const rr = replaceRun(
+            { region: [4, -14, 5, -13], building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+            { entities: obs.entities },
+        );
+        ok(rr.ok, "（前置）replace_run 宏成功", rr.error);
+        const txp = planToTxOps(
+            [{ macro: "replace_run", args: {}, result: rr, provenance: {} }],
+            { obs, handles: H, items, namedUids: [10143, 10209, 10149] },
+        );
+        ok(!txp.ok, "★ replace_run 的矩形误框**仍然被拒** —— 豁免没有放宽到别处",
+            txp.ok ? "却被放行了，说明豁免范围写太宽" : "");
+        /* reject() 把 rule/kind 放在 error 顶层（不是 error.evidence 里） */
+        ok(txp.error && txp.error.rule === "R13" && txp.error.kind === "destroys_not_named",
+            "拒绝仍是 R13 / destroys_not_named",
+            txp.error && { rule: txp.error.rule, kind: txp.error.kind });
+    }
+
+    /* ⑧ 混合：一部分来自 allow_replace、一部分**既不点名也不是覆盖** ⇒ 必须拒。
+     * 这是「豁免会不会被滥用」的关键：只要还夹着来路不明的删除，就得拦。 */
+    {
+        const strangerUid = obs.entities.find(e => e.type === "belt" && !coveredUids.includes(e.uid)).uid;
+        const synthWithExtra = {
+            ...synthConnect,
+            changed: { placed: [], removed_uids: [strangerUid] },   // 宏自报删了一条没点名的带子
+        };
+        const txp = planToTxOps(
+            [{ macro: "connect", args: { from: { uid: fromUid }, to: { hub: { entry: 0 } }, opts: { allow_replace: true } }, result: synthWithExtra, provenance: {} }],
+            { obs, handles: H, items, namedUids: [fromUid, toUid] },
+        );
+        ok(!txp.ok, "夹带了「既没点名、也不是覆盖」的删除 ⇒ 必须拒",
+            txp.ok ? "被放行了 —— 豁免把 allow_replace 当成了万能通行证" : "");
+        const extra = txp.error && txp.error.detail && txp.error.detail.extra;
+        ok(Array.isArray(extra) && extra.includes(strangerUid),
+            "拒绝证据里点名了那条来路不明的 uid", { want: strangerUid, got: extra });
+    }
+}
+
 
 /* ═══════════ 汇总 ═══════════ */
 

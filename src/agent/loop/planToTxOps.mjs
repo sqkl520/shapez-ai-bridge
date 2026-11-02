@@ -832,17 +832,42 @@ export function planToTxOps(calls, ctx = {}) {
     const named = ctx.namedUids instanceof Set ? ctx.namedUids
         : Array.isArray(ctx.namedUids) ? new Set(ctx.namedUids) : null;
     if (named && named.size && deleteUids.length) {
-        const extra = deleteUids.filter(u => !named.has(u));
+        /* ★ 豁免：`connect(allow_replace:true)` 显式授权覆盖的带子 ★
+         *
+         * 为什么必须豁免 —— 这是两个都正确的东西在打架，实测（2026-11-03 真机）：
+         *
+         *   · prompt 里 `allow_replace` 的描述是「路上的开关：是否允许覆盖路径上的既有带子」，
+         *     模型照做，传 `{"allow_replace": true}` 想把 rotater 输出直连 hub；
+         *   · R13 只认 `$ref`/`$uids`/`$path_of` 指名的 uid，而**被覆盖的带子从来
+         *     没被点名过** —— 它是路径推演的产物。于是三轮全部 R13 拒绝
+         *     （`kind: destroys_not_named`），一次都没执行成。
+         *
+         * R13 要拦的是 `$bbox_of` 的**矩形误框**：点了 B69/B81/B82，矩形却顺带框进
+         * 没点名的 B70，删错了对象而宏回 ok:true。那和「模型明确说覆盖这条路径」
+         * 是两回事 —— 后者的删除范围由 `cells[]` 唯一决定，不是矩形猜的。
+         *
+         * 判据收紧到「只豁免 connect 且 allow_replace 为真所贡献的那部分」：
+         * `derived` 正是 `connectDestroysFromObs()` 按 `cells[] ∩ obs` 补算出来的，
+         * 只可能来自开了 allow_replace 的 connect（见该函数与 :646-660）。
+         * 其余来源（自报销毁、$bbox_of 的 replace_run）照旧受 R13 管。
+         *
+         * 注意：这不放宽安全边界 —— 覆盖格在 `derived` 里逐格列明并进 warnings
+         * （`DESTROYS_DERIVED`），审计仍然看得见「这次到底覆盖了哪些带子」。 */
+        const allowedByReplace = new Set(derived.map(d => d.uid));
+        const extra = deleteUids.filter(u => !named.has(u) && !allowedByReplace.has(u));
         if (extra.length) {
             const who = extra.map(u => {
                 const e = entByUid.get(u);
                 return e ? `${u}@(${e.x},${e.y})` : String(u);
             }).join(", ");
+            const replaced = deleteUids.length - extra.length;
             return reject(
                 "R13", "destroys_not_named",
-                `计划要删除 ${deleteUids.length} 个实体，其中 ${extra.length} 个**不在 LLM 指名的句柄里**：${who}。`
+                `计划要删除 ${deleteUids.length} 个实体，其中 ${extra.length} 个**既不在 LLM 指名的句柄里、`
+                + `也不是 connect(allow_replace) 显式覆盖的带子**：${who}。`
+                + (replaced > 0 ? `（另有 ${replaced} 个是通过点名或 allow_replace 授权的，不计入）` : "")
                 + `这通常是 $bbox_of 的矩形顺带框进了没点名的格子 —— 宏会"成功"但删错对象。`,
-                { deleted: deleteUids, extra, named: [...named] },
+                { deleted: deleteUids, extra, named: [...named], allowed_by_replace: [...allowedByReplace] },
             );
         }
     } else if (deleteUids.length) {

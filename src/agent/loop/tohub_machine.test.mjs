@@ -377,10 +377,25 @@ test("E. 回归：belt 名额用满、prompt 字符数没有变差", () => {
      *
      * 这三个数是**新的实测基线**，不是「调到测试通过为止」：
      * 上调后如果哪天又变长，仍然会红。 */
+    /* ⚠️ 2026-11-03：`capacity` 夹具的上限 3400 → 3460（+60）。
+     *
+     * 原因是 MACHINES 段新增了一行「目标矿在哪」（`renderGoalResource`）：
+     * 真机实测（level 5 / 目标 `Cu----Cu`）时，4 台矿机脚下全是钌、铜矿在 53 格外，
+     * 而 prompt 一个字都没说 —— 模型三轮都在修那条不可能产出铜的钌线。
+     *
+     * 这个夹具自带 3 格钌矿，所以它会真渲染出
+     * `⇒ target ore Ru IS on the map: RuRuRuRu×3 (near hub)`（+60 字符）。
+     *
+     * 为什么这是**值得的**成本，而不是「调到测试通过为止」：
+     *   · 它只在**有 resources 数据**时出现（L4 / half 两个夹具没有，所以它们没变）；
+     *   · 它是 MACHINES 段的一部分，不是独立段 —— 语义上属于「这些机器在干什么」；
+     *   · 换来的是「模型第一次知道目标颜色有没有矿」这个之前完全缺失的事实。
+     *
+     * 上调后如果哪天又变长，仍然会红。 */
     const cases = [
         { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4400 },
         { name: "half", obs: HALF_OBS, tbl: HALF_TABLE, maxChars: 3400 },
-        { name: "capacity", obs: SCENARIO_OBS, tbl: SCENARIO_TABLE, maxChars: 3400 },
+        { name: "capacity", obs: SCENARIO_OBS, tbl: SCENARIO_TABLE, maxChars: 3460 },
     ];
     for (const c of cases) {
         const p = buildPrompt({
