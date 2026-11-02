@@ -224,7 +224,7 @@ function provenanceOfOp(op, calls, txp, idx) {
         "RETRIEVAL_TABLE 里出现的宏全部在 MACRO_NAMES 里", all.filter(m => !MACRO_NAMES.includes(m)));
     ok(!all.includes("build_line"),
         "build_line 不在检索表里（它不是 v1 白名单成员）");
-    ok(MACRO_NAMES.length === 6, "白名单恰好 6 个（contract.mjs 的断言）", MACRO_NAMES.length);
+    ok(MACRO_NAMES.length === 7, "白名单恰好 7 个（contract.mjs 的断言）", MACRO_NAMES.length);
 }
 
 /* ═════════ ⑤ provenance 不能是伪证：改了坐标，标签必须跟着红 ═════════

@@ -132,6 +132,10 @@ export const DIAG_CODES = Object.freeze({
      * 但它只能靠 `$ore` 指名矿点 —— 若那个颜色真的没有，必须明说，
      * 否则它会一直重试一个物理上不可能的动作。 */
     ORE_NOT_FOUND: "an $ore reference names a mineral that is not on the map",
+    /* 2026-11-03：`insert_machine` 想放的地方被另一台机器占着（机器永不让位）。
+     * 真机踩过：接在铜切割机上的矿机脚下没矿、还占着 cutter 的输入口，
+     * 而 `insert_machine` 报 blocked_by_machine —— 这时唯一的修法是 remove_machine。 */
+    BLOCKED_BY_MACHINE: "a machine is in the way and machines never yield (need remove_machine)",
     NO_PROGRESS: "same fingerprint with the same action",
     NO_PROGRESS_3X: "same fingerprint three times",
     NO_WORLD_CHANGE: "tx succeeded but the world hash did not change",
@@ -367,6 +371,23 @@ export const RETRIEVAL_TABLE = Object.freeze({
     RAW_MATERIAL_MISSING: cand([
         ["insert_machine", 9],        // 只有「放一台矿机」能修
         ["connect", 3],
+    ]),
+    /* ★ 2026-11-03：RAW_MATERIAL_MISSING 的第二种修法 ★
+     *
+     * 真机实测（level 5 / Cu----Cu）把两条路都堵死了：
+     *   · 接在铜切割机上的矿机脚下没有矿（永久零产出），而且**占着 cutter 的输入口**；
+     *   · `insert_machine` 在那一格报 blocked_by_machine（机器永不让位）；
+     *   · `connect` 的路径被 trash/rotater 挡死，删掉 trash 之后还是撞 rotater。
+     *
+     * 也就是说光「放一台矿机」不够 —— 得先把挡路的那台拆掉。
+     * `remove_machine` 就是为此加的（hub 不可删、正在供料的需显式放行）。
+     *
+     * 权重给 7 而不是更高：先试 insert_machine（原位不动，代价小），
+     * 它报 blocked_by_machine 之后下一轮自然会轮到这条。 */
+    BLOCKED_BY_MACHINE: cand([
+        ["remove_machine", 8],
+        ["replace_run", 5],
+        ["insert_machine", 3],
     ]),
 
     /* ── 语义层（P-a） ──

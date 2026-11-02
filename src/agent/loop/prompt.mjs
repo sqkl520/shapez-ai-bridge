@@ -316,6 +316,7 @@ const MACRO_EXAMPLES = Object.freeze({
     connect: { macro: "connect", args: { from: { $ref: "B7" }, to: { $ref: "C1", port: "left" } } },
     insert_machine: { macro: "insert_machine", args: { at: { $ref: "B7", asCell: true }, facing: "top", machine: "cutter" } },
     remove_run: { macro: "remove_run", args: { uids: { $uids: ["B7", "B8", "B9"] } } },
+    remove_machine: { macro: "remove_machine", args: { uids: { $uids: ["M1"] } } },
     extend_line: { macro: "extend_line", args: { from: { $ref: "B7" }, len: 4, dir: "right" } },
     replace_run: {
         macro: "replace_run",

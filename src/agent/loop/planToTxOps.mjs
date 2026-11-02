@@ -43,7 +43,7 @@ const BELT_KINDS = new Set(["belt", "underground_belt"]);
  *  这里要的是「翻译器认识哪几种返回形状」，不是「ABI 里有哪些宏」—— 两者会分叉，
  *  分叉时必须显式报错（`UNKNOWN_MACRO_SHAPE`），不能静默跳过。 */
 const PLACE_MACROS = new Set(["insert_machine", "replace_run", "connect", "extend_line", "trash_unused"]);
-const REMOVE_MACROS = new Set(["remove_run", "replace_run"]);
+const REMOVE_MACROS = new Set(["remove_run", "remove_machine", "replace_run"]);
 
 const MAX_OPS = 2000;              // = mod 的硬限（shapez-ai-bridge.js:3258）
 const MAX_PLACES = 1200;
@@ -215,8 +215,10 @@ function collectPlaces(c, tplFor) {
         return { places };
     }
 
-    if (macro === "remove_run") {
-        /* 纯删除宏：没有 place，只有 destroys（已由 R3 收走 changed.removed_uids / removed_uids）。 */
+    if (macro === "remove_run" || macro === "remove_machine") {
+        /* 纯删除宏：没有 place，只有 destroys（已由 R3 收走 changed.removed_uids / removed_uids）。
+         * `remove_machine` 与 `remove_run` 在这层是同一个形态 —— 差别只在宏内部
+         * 允许什么类型（机器 vs 带子、hub 不可删），planToTxOps 不需要重复那份规则。 */
         return { places };
     }
 
