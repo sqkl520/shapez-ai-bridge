@@ -62,7 +62,7 @@ console.log("\n── 0. 接口 ──");
 {
     const base = new LLMClient();
     await rejects(() => base.propose({ system: "", user: "" }), "LLMClient.propose 是抽象的", e => /abstract/.test(e.message));
-    eq(LLM_MACRO_WHITELIST.length, 6, "白名单恰好 6 个宏");
+    eq(LLM_MACRO_WHITELIST.length, 7, "白名单恰好 7 个宏（remove_machine 于 2026-11-03 加入）");
     ok(LLM_MACRO_WHITELIST.every((n, i) => n === MACRO_NAMES[i]), "白名单逐项等于 MACRO_NAMES（不是抄的第二份）");
     ok(!LLM_MACRO_WHITELIST.includes("build_line"), "build_line 不在白名单");
     ok(Object.isFrozen(LLM_PLAN_ERRORS), "错误码表被冻结");

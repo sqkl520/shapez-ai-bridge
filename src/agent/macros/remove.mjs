@@ -2019,10 +2019,217 @@ export function trashUnused(a, b) {
     }, warnings);
 }
 
+/* ==========================================================================
+ * remove_machine -- 删掉一台机器（hub 除外）
+ *
+ * ## 为什么需要这个宏
+ *
+ * 真机实测（2026-11-03，level 5 / 目标 Cu----Cu）：
+ *
+ *   · 世界里有 4 台矿机，接在**铜切割机**上的那台 @(4,-16) 脚下**没有矿**
+ *     （7x7 邻域一格都没有）=> 它永久零产出，整条铜线因此从来没跑起来；
+ *   · 它同时**占着 cutter 的输入口**（cutter 在 (4,-17)，输入槽朝下）；
+ *   · 模型想放新矿机到铜矿上、再把铜接进 cutter，但：
+ *       - insert_machine 在那一格报 blocked_by_machine（机器永不让位）；
+ *       - connect 的路径被 trash @(3,-18) 和 rotater @(5,-18) 挡住，
+ *         而且**删掉 trash 之后还是撞 rotater** -- 整片产线堵死；
+ *       - 把 max_cells 提到 3000 也一样：connect 在**第一处冲突就放弃**，
+ *         它不做绕路搜索（CONNECT-OCCUPIED-DIAGNOSIS.md）。
+ *
+ * 也就是说：**没有任何宏能移除一台挡路的机器**，而这一步是这个 level 的必经之路。
+ * remove_run 明确只处理带子（"要删机器是另一个动作"），但那个"另一个动作"
+ * 一直没被实现出来。
+ *
+ * ## 与 remove_run 的差异（都是有意的）
+ *
+ *   remove_run      : 只允许带子；有连通性检查；报 orphaned outputs / starved belts
+ *   remove_machine  : 只允许机器；无连通性检查；报 starved 下游机器；hub 永不可删
+ *
+ * ## 安全边界
+ *
+ * · **hub 永远不可删** -- 它是目标计数的唯一去处，删了这一局就废了；
+ * · 只接受 uid（不接受坐标）-- 与 remove_run 的 uids 通道同一口径；
+ * · 若这台机器**正在给下游供料**，默认拒绝并说清楚会饿死谁。
+ *   要拆就得显式传 opts.allow_unwired=true。
+ *
+ * @param {object|Array} a  {uids, opts?} 或 uid 数组
+ * @param {object} [b]      ctx {entities}
+ */
+
+/** 可以删的机器种类（hub 与带子都不在此列，各走各的规则）。 */
+const REMOVABLE_MACHINE_TYPES = new Set([
+    "miner", "cutter", "rotater", "stacker", "mixer", "painter", "balancer", "trash",
+]);
+
+export function removeMachine(a, b) {
+    const A = "remove_machine";
+    let args, ctx;
+    if (Array.isArray(a)) {
+        args = { uids: a, opts: isObj(b) ? b : undefined };
+        ctx = {};
+    } else if (isObj(a)) {
+        args = a; ctx = b || {};
+    } else {
+        return failure(A, {
+            code: "bad_type", field: null,
+            message: A + " 的入参必须是 {uids, opts?} 或一个 uid 数组",
+            hint: "uid 来自 obs.entities[].uid，例如 remove_machine({uids:[10553]})。",
+        });
+    }
+    // 位置形态：removeMachine({uids}, ctx)
+    if (isObj(b) && Array.isArray(b.entities)) ctx = b;
+
+    const uids = args && Array.isArray(args.uids) ? args.uids : null;
+    const opts = (args && isObj(args.opts)) ? args.opts : {};
+    if (!uids || !uids.length) {
+        return failure(A, {
+            code: "missing_field", field: "uids",
+            message: A + " 需要非空的 uids 数组",
+            hint: "先 obs 拿到机器的 uid；hub 的 uid 不可删。",
+        });
+    }
+    for (const u of uids) {
+        if (!Number.isInteger(u) || u <= 0) {
+            return failure(A, {
+                code: "bad_type", field: "uids",
+                message: "uids 里只能是正整数 uid，实得 " + JSON.stringify(u),
+            });
+        }
+    }
+
+    const spec = loadSpec();
+    const c0 = ctxOf(ctx, spec);
+    if (!c0) {
+        return failure(A, {
+            code: "precondition_failed", field: null,
+            message: A + " 需要 ctx.entities（obs 的实体表）才能把 uid 解析成机器",
+            hint: "先 obs，再把 {entities} 作为第二个参数传进来；本宏不读世界、也不猜。",
+        });
+    }
+
+    /* -- 解析选集：每一条都必须是一台**可删的机器** -- */
+    const picked = [];   // {uid, cell, rec, type}
+    const bad = [];
+    for (const uid of uids) {
+        const rec = c0.world.byUid.get(uid);
+        if (!rec) { bad.push({ uid, why: "不在当前世界（obs 过期或已被删）" }); continue; }
+        if (rec.type === "hub") { bad.push({ uid, why: "hub 不可删", immutable: true, cell: cellOf(rec) }); continue; }
+        if (rec.type === "belt" || rec.type === "underground_belt") {
+            bad.push({ uid, why: "解析到 " + rec.type + "（带子请用 remove_run）", cell: cellOf(rec) });
+            continue;
+        }
+        if (!REMOVABLE_MACHINE_TYPES.has(rec.type)) {
+            bad.push({ uid, why: "类型 " + rec.type + " 不在可删清单里", cell: cellOf(rec) });
+            continue;
+        }
+        picked.push({ uid, cell: cellOf(rec), rec, type: rec.type });
+    }
+
+    if (bad.length) {
+        const immutable = bad.filter(x => x.immutable);
+        if (immutable.length) {
+            return failure(A, {
+                code: "immutable", field: "uids",
+                message: "选集里有 hub（uid=" + immutable.map(x => x.uid).join(",") + "）-- hub 永不可删",
+                hint: "hub 是目标计数的唯一去处。删了它这一局就终结了。",
+                detail: { offending: immutable },
+            });
+        }
+        const belts = bad.filter(x => /带子请用 remove_run/.test(x.why));
+        if (belts.length) {
+            return failure(A, {
+                code: "not_a_machine", field: "uids",
+                message: "选集里有 " + belts.length + " 个是带子（本宏只删机器）",
+                hint: "第一个：uid=" + belts[0].uid + " " + belts[0].why + "。整单拒绝，不「尽量删」。",
+                detail: { offending: belts.slice(0, 5) },
+            });
+        }
+        const missing = bad.filter(x => /不在当前世界/.test(x.why));
+        if (missing.length) {
+            return failure(A, {
+                code: "endpoint_not_found", field: "uids",
+                message: missing.length + "/" + bad.length + " 个 uid 在当前世界不存在：" + missing.slice(0, 5).map(x => x.uid).join(", "),
+                hint: "重新 obs 再用**新的** uid 重写选集；uid 不会复活，同坐标可能已经是别的东西。",
+                candidates: missing.slice(0, 5).map(x => x.uid),
+            });
+        }
+        return failure(A, {
+            code: "precondition_failed", field: "uids",
+            message: "选集有 " + bad.length + " 个无法解析的项",
+            hint: "先 obs 再重选。",
+            detail: { bad: bad.slice(0, 8) },
+        });
+    }
+
+    /* -- 拓扑后果：拆掉它们会让谁断供？ --
+     *
+     * ⚠️ `analyzeRemoval` 在这里用不上：它第一行就是 `const b = ctx.belts.get(uid)`
+     *    然后 `if (!b) continue` —— 它只处理**带子**的删除。机器要单独判。
+     *
+     * 直接用现成的 `outLinkOfPort(q, ctx)`：它就是这个语义的既有实现
+     * （输出口这一格上连了什么：带子 / 紧贴的机器 / 隧道）。重复实现一遍
+     * 端口几何只会多一个错的地方 —— 上面第一次尝试就写错了（用了 `q.outCell`，
+     * 那个字段不存在；又自己算 `q.cell + DIRV[q.face]`，而 `outLinkOfPort`
+     * 早就把「accept 的 cell 是从哪格收货」这条规则处理掉了）。
+     *
+     * 只报**机器**被饿死；连到带子的情况由 `remove_run` 的
+     * starved-belt 负责 —— 这里不重复报告同一条链。 */
+    const removedUidSet = new Set(picked.map(p => p.uid));
+    const starved = [];
+    for (const p of picked) {
+        const m = c0.machines && c0.machines.get(p.uid);
+        if (!m) continue;
+        for (const q of (m.eject || [])) {
+            let link = null;
+            try { link = outLinkOfPort(q, c0); } catch { link = null; }
+            if (!link || link.type !== "machine") continue;
+            if (!link.uid || link.uid === p.uid) continue;
+            if (removedUidSet.has(link.uid)) continue;   // 一起删的不算「饿死」
+            starved.push({ machine: p.uid, feeds: link.uid, cell: q.cell });
+        }
+    }
+
+    /* 默认拒绝对"正在供料"的机器下手 -- 那等于悄悄剪断下游。 */
+    if (starved.length && opts.allow_unwired !== true) {
+        return failure(A, {
+            code: "would_starve",
+            field: "uids",
+            message: "要删的 " + picked.length + " 台机器里有 " + new Set(starved.map(s => s.machine)).size
+                + " 台正在给下游供料，删了会饿死 " + new Set(starved.map(s => s.feeds)).size + " 个下游",
+            hint: "先接好替代供料，或确认确实要拆时传 opts.allow_unwired=true。"
+                + "本宏宁可失败，也不静默剪断别人的上游。",
+            detail: { starved: starved.slice(0, 8) },
+        });
+    }
+
+    /* -- 成功：返回删除计划（本宏零写操作，落盘由 tx 执行） -- */
+    const removed = picked.map(p => ({ uid: p.uid, type: p.type, cell: p.cell, origin: p.cell }));
+    return {
+        ok: true, macro: A,
+        cells_planned: picked.length, cells_placed: picked.length,
+        first_mismatch: null,
+        changed: { added_uids: [], removed_uids: picked.map(p => p.uid) },
+        warnings: (starved.length && opts.allow_unwired === true)
+            ? [{
+                code: "starves_downstream", severity: "warn", macro: A,
+                what: "显式允许拆掉正在供料的机器，" + new Set(starved.map(s => s.feeds)).size + " 个下游会断供",
+                action: "确认这是有意的；接好替代供料后再拆更安全。",
+            }]
+            : [],
+        error: null,
+        dry_run: opts.dry_run !== false,
+        planned_only: true,
+        reason: "ok",
+        removed, placed: [], kept: [], would_disconnect: [],
+        consequences: { orphaned_outputs: [], starved_belts: [], starved_machines: [], opaque: [] },
+    };
+}
+
 /* ═══════════════════════════════ 6. 宏注册（供 MCP / loop 层按名调用） ═══════════════════════════════ */
 
 export const MACRO_IMPLS = Object.freeze({
     remove_run: removeRun,
+    remove_machine: removeMachine,
     replace_run: replaceRun,
     trash_unused: trashUnused,
 });

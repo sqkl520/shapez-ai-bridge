@@ -57,7 +57,7 @@ import { makeClient, parseLlmPlan, MockExhausted } from "./loop/llm.mjs";
 import { buildPrompt } from "./loop/prompt.mjs";
 import { classifyChecks, phaseTwoVerdict } from "./loop/offline_boundary.mjs";
 
-import { MACRO_IMPLS, replaceRun, removeRun, trashUnused } from "./macros/remove.mjs";
+import { MACRO_IMPLS, replaceRun, removeRun, removeMachine, trashUnused } from "./macros/remove.mjs";
 import { insertMachine, extendLine } from "./macros/place.mjs";
 import { connect } from "./macros/connect.mjs";
 import { validateMacroCall, MACRO_NAMES } from "./macros/contract.mjs";
@@ -94,6 +94,7 @@ const LLM_FIXTURES = path.join(REPO, "test/fixtures/llm");
  */
 const MACRO_FNS = Object.freeze({
     remove_run: removeRun,
+    remove_machine: removeMachine,
     replace_run: replaceRun,
     trash_unused: trashUnused,
     insert_machine: insertMachine,
@@ -1313,7 +1314,17 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                     call_total: Array.isArray(res.calls) ? res.calls.length : 1,
                 },
                 hint: e.hint || null,
-                candidates: ["connect", "remove_run", "insert_machine", "trash_unused", "replace_run", "extend_line"],
+                /* ★ `blocked_by_machine` ⇒ 把 remove_machine 排到最前 ★
+                 *
+                 * 真机实测（2026-11-03）：`insert_machine` 在「那格被一台无矿矿机占着」
+                 * 时只会说 blocked_by_machine，而模型接着试 connect（被 trash 挡死）、
+                 * 再试 insert_machine（还是 blocked）—— 三轮全废。
+                 *
+                 * 候选列表原来恒为那 6 个，`remove_machine` 压根不在里面，
+                 * 所以模型**从来看不到**唯一能解这一步的宏。 */
+                candidates: (e.code === "blocked_by_machine")
+                    ? ["remove_machine", "replace_run", "insert_machine", "connect", "remove_run", "trash_unused"]
+                    : ["connect", "remove_run", "insert_machine", "trash_unused", "replace_run", "extend_line"],
             });
         }
         const planned = r.cells_planned;

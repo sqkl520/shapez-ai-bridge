@@ -143,6 +143,19 @@ export const ERROR_CODES = Object.freeze({
     occupied: "目标格被不可替换的建筑占着",
     blocked_by_machine: "footprint 覆盖到机器（宏只替换带子，绝不删机器）",
     not_a_run: "选择里含非带子实体（本宏只处理带子）",
+    /* ── remove_machine 的三个专属码（2026-11-03） ──
+     *
+     * 加这个宏的直接原因：真机实测发现**没有任何宏能移除一台挡路的机器**。
+     * 接在铜切割机上的矿机脚下没有矿（永久零产出）且占着 cutter 的输入口，
+     * 而 insert_machine 报 blocked_by_machine、connect 的路径被 trash/rotater 挡死。
+     *
+     * 三个码各自对应一种「不该删」的理由，分开而不是合并成 precondition_failed：
+     *   · immutable        —— hub 永不可删（删了这一局就终结）
+     *   · not_a_machine    —— 那是带子，应该走 remove_run
+     *   · would_starve     —— 它正在给下游供料，删了会饿死别人 */
+    immutable: "目标是 hub —— 永不可删",
+    not_a_machine: "选集里含带子（本宏只处理机器，带子请用 remove_run）",
+    would_starve: "要删的机器正在给下游供料，删了会饿死它们（需 opts.allow_unwired=true）",
     run_not_contiguous: "给的带子不连成一段（通常是选集错了）",
     unsupported_building: "该 building 在本宏的 v1 支持矩阵之外",
     out_of_scope: "超出 v1 范围（多层 / 隧道 / wire / 旋转机器的某一面）",
@@ -272,6 +285,11 @@ export const WARNING_CODES = Object.freeze({
         severity: "warn", macro: "insert_machine",
         what: "被替换带子的下游原本从它接货，而本机在该方向没有输出槽 ⇒ 下游断供",
         action: "同上：换落点或连带改下游。",
+    },
+    starves_downstream: {
+        severity: "warn", macro: "remove_machine",
+        what: "显式传了 opts.allow_unwired=true，拆掉了正在给下游供料的机器 ⇒ 那些下游会断供",
+        action: "这是调用方**明确承认**的后果（默认会被 would_starve 拒掉）。接好替代供料后本警告自然消失。",
     },
     rotation_not_live_verified: {
         severity: "warn", macro: "insert_machine / extend_line",
@@ -1297,6 +1315,34 @@ export const MACRO_SPECS = Object.freeze({
         ],
     },
 
+    remove_machine: {
+        name: "remove_machine",
+        summary: "删掉一台机器（按 uid）；hub 永不可删。用于移除挡路的废机器。",
+        params: [
+            { name: "uids", type: "Uid[]", required: true, coordClass: "endpoint", description: "要删的机器 uid（来自 obs）。只接受机器：带子请用 remove_run，hub 永不可删。" },
+            { name: "opts.allow_unwired", type: "boolean", required: false, description: "这台机器正在给下游供料时，是否仍允许拆。默认 false（会报 would_starve 并点名会饿死谁）。" },
+            { name: "opts.dry_run", type: "boolean", required: false, description: "只报告不执行。" },
+        ],
+        preconditions: [
+            "每个 uid 都解析到一台**机器**（miner/cutter/rotater/stacker/mixer/painter/balancer/trash）。带子 → not_a_machine；hub → immutable。整单拒绝，不「尽量删」。",
+            "若某台正在给下游供料，且没传 opts.allow_unwired=true → would_starve（点名会饿死谁）。",
+            "每台机器都能被 serialize 快照（tx）；否则 tx_unavailable —— 不可恢复的删除一律不做。",
+        ],
+        whenNotToUse: [
+            "要删带子时用 remove_run：本宏只动机器，带上混着机器会整单拒绝。",
+            "想让机器换位置时不要「先删再放」两步：中间态会留下断线。若只是换落点，直接 insert_machine（它会处理 footprint 内的带子）。",
+            "不确定那台机器在干什么时不要删：先看 obs 的 MACHINES 段与「它正喂着谁」；默认的 would_starve 就是为此设的。",
+        ],
+        returns: "MacroResult + {removed:[{uid,type,cell,origin}]}；失败时 removed 为空数组（不是字段缺失）。",
+        lowerOps: ["obs", "delete{uid}", "tx"],
+        sideEffects: ["销毁机器实体", "它的下游可能断供（如实报告）"],
+        invariants: [
+            "删除集合与声明集合**逐 uid 相等**。",
+            "tx 失败时零删除（不存在「删了一半」）。",
+            "hub 永远不会出现在 removed 里。",
+        ],
+    },
+
     extend_line: {
         name: "extend_line",
         summary: "从一段带子的末端（或机器输出口）沿 dir 再接 len 格，首格由 from 的出口算。",
@@ -1507,10 +1553,65 @@ export function getMacroSpec(name) {
 }
 
 /** 各宏的入参校验器（实现方必须经由这里，不允许自己解构 args）。 */
+/**
+ * `remove_machine` 的校验器。
+ *
+ * 形状比 remove_run 简单得多：只有 uids（必填）+ opts。
+ * **不提供 cells 通道** —— 机器是 2×1/1×1，一个坐标可能落在 footprint 的
+ * 非 origin 格上，「这一格指的是哪台机器」就有了歧义。uid 没有这个问题。
+ *
+ * 注意这里**不判**「是不是机器」「是不是 hub」—— 那需要世界快照（obs），
+ * 属于宏的前置条件（`removeMachine` 里用 ctx.entities 判）。
+ * 校验器只管参数形状，这样纯函数、可离线测。
+ *
+ * @param {object} args
+ * @returns {{ok:true, value:{uids:number[], opts:object}} | {ok:false, error:object}}
+ */
+export function validateRemoveMachineArgs(args) {
+    const A = "remove_machine";
+    if (!isObj(args)) return fail("bad_type", null, `${A} 的入参必须是对象`);
+    const unk = rejectUnknownKeys(args, ["uids", "opts"], A);
+    if (unk) return unk;
+
+    if (args.uids === undefined) {
+        return fail("missing_field", "uids", `${A} 需要 uids`,
+            "uid 来自 obs.entities[].uid。hub 的 uid 不可删。");
+    }
+    if (!Array.isArray(args.uids) || args.uids.length === 0) {
+        return fail("bad_type", "uids", `${A}.uids 必须是非空数组`);
+    }
+    if (!args.uids.every(u => isInt(u) && u > 0)) {
+        return fail("bad_type", "uids", `${A}.uids 必须全是正整数 uid`,
+            "uid 来自 obs；不要用坐标（机器 footprint 会让坐标有歧义）。");
+    }
+    // 去重：同一台机器写两次是调用方 bug，静默去重会掩盖它
+    if (new Set(args.uids).size !== args.uids.length) {
+        return fail("bad_type", "uids", `${A}.uids 里有重复 uid`,
+            "重复通常是拼接选集时的 bug；去重后再写。");
+    }
+
+    let opts = {};
+    if (args.opts !== undefined) {
+        if (!isObj(args.opts)) return fail("bad_type", "opts", `${A}.opts 必须是对象`);
+        const ounk = rejectUnknownKeys(args.opts, ["allow_unwired", "dry_run"], `${A}.opts`);
+        if (ounk) return ounk;
+        if (args.opts.allow_unwired !== undefined && typeof args.opts.allow_unwired !== "boolean") {
+            return fail("bad_type", "opts.allow_unwired", `${A}.opts.allow_unwired 必须是 boolean`);
+        }
+        if (args.opts.dry_run !== undefined && typeof args.opts.dry_run !== "boolean") {
+            return fail("bad_type", "opts.dry_run", `${A}.opts.dry_run 必须是 boolean`);
+        }
+        opts = { ...args.opts };
+    }
+
+    return { ok: true, value: { uids: [...args.uids], opts } };
+}
+
 export const MACRO_VALIDATORS = Object.freeze({
     connect: validateConnectArgs,
     insert_machine: validateInsertMachineArgs,
     remove_run: validateRemoveRunArgs,
+    remove_machine: validateRemoveMachineArgs,
     extend_line: validateExtendLineArgs,
     replace_run: validateReplaceRunArgs,
     trash_unused: validateTrashUnusedArgs,
@@ -2258,7 +2359,7 @@ if (isMain) {
     t("lint：connect 带 x/y 报红", !lintNoBareCoords("connect", { from: { uid: 1 }, to: { uid: 2 }, x: 3 }).ok);
     t("lint：合法调用为绿", lintNoBareCoords("connect", { from: { uid: 1 }, to: { uid: 2 } }).ok);
     t("lint：remove_run 的 cells 是契约点名，放行", lintNoBareCoords("remove_run", { cells: [[0, 0]] }).ok);
-    t("宏名齐全", MACRO_NAMES.length === 6);
+    t("宏名齐全", MACRO_NAMES.length === 7);
     t("insert_machine `{cell}` 形态归一", (() => {
         const r = V(validateInsertMachineArgs, { at: { cell: [4, -13] }, facing: "top", machine: "cutter" });
         return r.ok && r.value.at.kind === "any-cell" && r.value.at.cell[0] === 4;

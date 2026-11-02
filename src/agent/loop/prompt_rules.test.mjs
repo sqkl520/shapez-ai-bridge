@@ -98,7 +98,7 @@ export function parseRules(system) {
 const RULES_BEFORE = Object.freeze([
     "1. Output RAW JSON only: no markdown fence, no prose before/after, no comments, no trailing commas.",
     "2. calls must be an array with 1 to 6 entries. An empty calls array is rejected as a failed plan.",
-    "3. The ONLY allowed macro names are: connect, insert_machine, remove_run, extend_line, replace_run, trash_unused.\n"
+    "3. The ONLY allowed macro names are: connect, insert_machine, remove_run, remove_machine, extend_line, replace_run, trash_unused.\n"
         + "   Never emit build_line, paste_blueprint, or any other name: they are not part of this loop.",
     "4. NEVER output coordinates, positions, rotations, rotation variants, angles, or uids.\n"
         + "   No x/y numbers. No arrays of two or four numbers. Refer to existing things ONLY by handle.",

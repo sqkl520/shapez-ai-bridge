@@ -381,7 +381,7 @@ t("硬伤 3：真实返回值里所有 warning 都过 validateMacroResult（闭�
 
 t("每个宏的校验器都挂在 MACRO_VALIDATORS 上，且与 MACRO_SPECS 一一对应", () => {
     eq(Object.keys(MACRO_VALIDATORS).sort(), [...MACRO_NAMES].sort());
-    eq(MACRO_NAMES.length, 6);
+    eq(MACRO_NAMES.length, 7);
 });
 
 t("每个校验器都拒绝未知参数（含裸坐标键），且错误码是 unknown_field", () => {
@@ -389,6 +389,7 @@ t("每个校验器都拒绝未知参数（含裸坐标键），且错误码是 u
         connect: { from: { uid: 1 }, to: { uid: 2 } },
         insert_machine: { at: [0, 0], facing: "top", machine: "cutter" },
         remove_run: { uids: [1] },
+        remove_machine: { uids: [1] },
         extend_line: { from: { uid: 1 }, len: 2 },
         replace_run: { region: [0, 0, 1, 1], building: "belt" },
         trash_unused: { outlet: { uid: 1 } },
@@ -531,6 +532,12 @@ const WHEN_NOT_TO_USE_ANCHORS = Object.freeze({
         ["清一大片区域", ["would-disconnect"]],
         ["不确定某格是什么", ["not_a_run"]],
     ],
+    remove_machine: [
+        ["删带子", ["not_a_machine"]],
+        ["先删再放", ["would_starve"]],
+        ["不确定那台机器在干什么", ["would_starve"]],
+    ],
+
     extend_line: [
         ["具体的东西", ["terminal_orphaned"]],
         ["拐两个弯", ["precondition_failed"]],

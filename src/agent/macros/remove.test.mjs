@@ -787,10 +787,12 @@ t("L4 可表达性：三个宏的公开参数**没有一个裸坐标**（lintNoB
     }
 });
 
-t("注册表：三个宏都在 MACRO_IMPLS 里，且都能被按名调用", () => {
-    eq(Object.keys(MACRO_IMPLS).sort(), ["remove_run", "replace_run", "trash_unused"]);
+t("注册表：四个宏都在 MACRO_IMPLS 里，且都能被按名调用", () => {
+    eq(Object.keys(MACRO_IMPLS).sort(), ["remove_machine", "remove_run", "replace_run", "trash_unused"]);
     eq(MACRO_IMPLS.remove_run({ uids: [UID.b4_13] }, CTX).ok, true);
     eq(MACRO_IMPLS.trash_unused({ outlet: { uid: UID.cu_deadend } }, CTX).ok, true);
+    /* remove_machine 在同一个注册表里；具体行为另有专测（见文件末尾的段）。 */
+    eq(typeof MACRO_IMPLS.remove_machine, "function");
 });
 
 t("每个失败返回都带 hint（可执行的下一步，不是只说「失败了」）", () => {

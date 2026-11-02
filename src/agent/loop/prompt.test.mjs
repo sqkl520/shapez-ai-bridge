@@ -133,7 +133,7 @@ console.log("\n── 0. 返回形状与常量 ──");
        两条『上限』说的是不同的事，合并会让其中一条防线永不触发 —— 这里只钉这一条口径。 */
     eq(PROMPT_RULES.CALLS_MAX, 6, "calls 上限是 6（**不是** BUDGET.LLM_CALLS_MAX=8，两者说的是不同的事）");
     ok(MACRO_WHITELIST.every(n => MACRO_NAMES.includes(n)), "MACRO_WHITELIST ⊆ MACRO_NAMES");
-    eq(MACRO_WHITELIST.length, 6, "白名单 6 个");
+    eq(MACRO_WHITELIST.length, 7, "白名单 7 个（$ore 时代的 remove_machine 于 2026-11-03 加入）");
 }
 
 /* ═══════════════════ 1. S1 内容与字节稳定 ═══════════════════ */
