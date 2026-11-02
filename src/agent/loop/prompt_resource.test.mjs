@@ -19,6 +19,7 @@
  *    拿不到数据就不说，绝不猜一个默认值。
  */
 import { buildPrompt } from "./prompt.mjs";
+import { buildHandles } from "./handles.mjs";
 
 let pass = 0, fail = 0;
 const check = (name, fn) => {
@@ -120,4 +121,110 @@ check("R7 同色多种矿（CuCuCuCu + CuCu----）都列出", () => {
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
+if (fail > 0) process.exit(1);
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 矿机标注：脚下有没有矿
+ *
+ * 实测（2026-11-03 真机）：接在**铜切割机**上的那台矿机 `M1 @(4,-16)`
+ * 脚下根本没有矿（7×7 邻域内一格都没有），而 prompt 里它只是平平地写着
+ * `M1 miner 输出=top:out(→C2)` —— 模型完全看不出这是一台**永久零产出**的机器。
+ * 于是它反复去「修通」那条永远跑不起来的线。
+ *
+ * ⚠️ 第一版实现写了 `e.x` / `e.y`，而那些字段在 `normalizeHandles` 的产物里
+ *    是 **undefined**（它只保留 handle/type/variant/uid/desc，位置不属于身份）。
+ *    结果是**每一台矿机都被标成「没矿」** —— 包括脚下明明有钌的那三台。
+ *    这种"全错"比不标更糟，所以下面 D2 专门钉住「有矿的必须说 mining」。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+const mkMinerObs = (goal, miners, resources) => ({
+    goal: { level: 5, requirement: { shape: goal, required: 170, delivered: 0, progress: 0 } },
+    entities: miners.map(m => ({ uid: m.uid, type: "miner", x: m.x, y: m.y, r: 0, rotation_variant: 0, variant: "default", code: 7 })),
+    hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+    resources,
+});
+
+function minerSection(obs) {
+    const r = buildPrompt({
+        goal: obs.goal.requirement.shape, obs,
+        handles: buildHandles(obs, null),
+        diagnoses: [], candidates: ["connect"], lastRound: null,
+        budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+    });
+    return r.blocks.s3_machines;
+}
+
+/* ── D1：★ 核心 ★ 没矿的矿机必须被标出来 ── */
+check("D1 脚下无矿的矿机被标 NO ORE", () => {
+    const obs = mkMinerObs("Cu----Cu",
+        [{ uid: 1, x: 4, y: -16 }],
+        [[2, -6, "RuRuRuRu"]]);
+    const s = minerSection(obs);
+    assert(/NO ORE under this miner/.test(s), `应标出无矿，实际：\n${s}`);
+});
+
+/* ── D2：★ 回归 ★ 有矿的矿机**不加**标注（那是正常状态，不值得花字符） ──
+ *
+ * 第一版对有矿的也写 `[mining RuRuRuRu]`。代价立刻显形：L4 冷启动夹具有
+ * 8 台矿机，8 条标注把 prompt 顶到 5098，**把 CAPACITY 段整个挤掉**。
+ * 而 CAPACITY 是实测 p≈5e-7 的信息源，「这台矿机在采什么」不是。
+ *
+ * 信息价值也不对等：「在采 Ru」是正常状态，「没矿」是故障状态且会让
+ * 下游永远零产出 —— 只标异常的那一侧。 */
+check("D2 有矿的矿机不加标注（省字符给 CAPACITY）", () => {
+    const obs = mkMinerObs("Cu----Cu",
+        [{ uid: 1, x: 2, y: -6 }, { uid: 2, x: 3, y: -6 }],
+        [[2, -6, "RuRuRuRu"], [3, -6, "RuRuRuRu"]]);
+    const s = minerSection(obs);
+    assert(!/NO ORE/.test(s), "有矿的矿机不该被标没矿，实际：" + s);
+    assert(s.indexOf("[mining ") < 0, "有矿的正常矿机不该加标注，实际：" + s);
+});
+
+/* ── D3：混在一起时只有异常的那台被标（这是真机的形态） ── */
+check("D3 一台无矿 + 三台有矿 ⇒ 只标那一台", () => {
+    const obs = mkMinerObs("Cu----Cu",
+        [{ uid: 1, x: 4, y: -16 }, { uid: 2, x: 2, y: -6 }, { uid: 3, x: 3, y: -6 }, { uid: 4, x: 4, y: -6 }],
+        [[2, -6, "RuRuRuRu"], [3, -6, "RuRuRuRu"], [4, -6, "RuRuRuRu"]]);
+    const s = minerSection(obs);
+    const noOre = (s.match(/NO ORE/g) || []).length;
+    assert(noOre === 1, `应恰好 1 台被标无矿，实际 ${noOre}：` + s);
+});
+
+/* ── D4：没有 resources 数据 ⇒ 一个字都不加（不猜） ── */
+check("D4 无 resources 时矿机不加任何标注", () => {
+    const obs = mkMinerObs("Cu----Cu", [{ uid: 1, x: 4, y: -16 }], undefined);
+    delete obs.resources;
+    const s = minerSection(obs);
+    assert(!/NO ORE/.test(s), "无数据时不该说没矿");
+    assert(!/\[mining /.test(s), "无数据时不该说在采什么");
+});
+
+/* ── D4b：无 resources 时矿机行一个方括号都不能有 ──
+ *
+ * 与 D4 的区别：D4 只查「没有 NO ORE / 没有 [mining」，这一条查**整行有没有方括号**，
+ * 能挡住「以后有人在无数据分支里加了个别的标注」这种回归。
+ *
+ * ⚠️ 诚实说明：这一条**抓不到**「去掉 `&& oreAt`」那个变异 —— 因为
+ * `oreMapOf` 返回 null 后 `kind` 恒为 undefined，加不加 `&& oreAt`
+ * 行为完全一样。那不是真变异，是等价代码。留着这条是因为它守的是另一件事。 */
+check("D4b 无 resources 时矿机行不带任何方括号标注", () => {
+    const obs = mkMinerObs("Cu----Cu", [{ uid: 1, x: 4, y: -16 }], undefined);
+    delete obs.resources;
+    const s = minerSection(obs);
+    const minerLine = s.split("\n").find(l => /^M\d/.test(l));
+    assert(minerLine, "应有矿机行");
+    assert(!/\[/.test(minerLine), `无数据时矿机行不该有方括号标注，实际：${minerLine}`);
+});
+
+/* ── D5：矿机标注不得破坏坐标契约 ── */
+check("D5 矿机标注不含坐标数字", () => {
+    const obs = mkMinerObs("Cu----Cu",
+        [{ uid: 1, x: -55, y: -8 }, { uid: 2, x: 4, y: -16 }],
+        [[-55, -8, "CuCuCuCu"]]);
+    const s = minerSection(obs);
+    const m = /-?\d{1,4}\s*,\s*-?\d{1,4}/.exec(s);
+    assert(!m, `不该出现坐标形态，命中：${m && m[0]}\n${s}`);
+});
+
+console.log(`\n[after D] ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

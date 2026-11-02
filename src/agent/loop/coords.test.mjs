@@ -57,7 +57,8 @@ ok(H.every(Boolean), "L4 的三个 uid 都拿到了句柄", H);
     ok(Object.isFrozen(COORD_SOURCES), "COORD_SOURCES 冻结");
     jEq(COORD_SOURCES, {
         OBS_REF: "$ref", OBS_REFS: "$uids", DERIVED_BBOX: "$bbox_of", DERIVED_PATH: "$path_of",
-    }, "COORD_SOURCES 只有四种算子（唯一闭集）");
+        ORE: "$ore",
+    }, "COORD_SOURCES 是唯一闭集（$ore 于 2026-11-03 加入：模型能指名一格矿而不用写坐标）");
     ok(COORD_KEYS.includes("at") && COORD_KEYS.includes("region"), "V3 键清单含 at/region");
     ok(!COORD_KEYS.includes("len"), "V3 键清单**不含** len（len 是格数，不是坐标）");
     ok(!COORD_KEYS.includes("max_cells"), "V3 键清单不含 max_cells");

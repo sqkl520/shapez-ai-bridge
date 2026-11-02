@@ -127,6 +127,11 @@ export const DIAG_CODES = Object.freeze({
      * 真机踩过：runner 硬编码 goal='RuRu----'，而世界已经升到 level 5（Cu----Cu）。
      * diagnose() 用 goal 判「有没有在造它」⇒ 传错就返回空 ⇒ 看起来像「世界很健康」。 */
     GOAL_MISMATCH: "the goal passed to runLoop differs from obs.goal.requirement.shape",
+    /* 2026-11-03：`{"$ore":"Cu"}` 指的这个矿种在地图上不存在。
+     * 真机实测：模型正确诊断出「那台矿机脚下没有矿」，然后想放新矿机，
+     * 但它只能靠 `$ore` 指名矿点 —— 若那个颜色真的没有，必须明说，
+     * 否则它会一直重试一个物理上不可能的动作。 */
+    ORE_NOT_FOUND: "an $ore reference names a mineral that is not on the map",
     NO_PROGRESS: "same fingerprint with the same action",
     NO_PROGRESS_3X: "same fingerprint three times",
     NO_WORLD_CHANGE: "tx succeeded but the world hash did not change",
@@ -421,6 +426,9 @@ export const RETRIEVAL_TABLE = Object.freeze({
     /* ── meta：一律 halt / 人工 ── */
     NO_DIAGNOSIS: cand([]),
     GOAL_MISMATCH: cand([]),           // 调用方 bug，换宏没用
+    /* `$ore` 指名了一个地图上没有的矿种 —— 换宏也没用（物理上没有那种矿）。
+     * 真要"换个做法"，只能是别挖那个颜色；那属于目标本身的问题。 */
+    ORE_NOT_FOUND: cand([]),
     NO_PROGRESS: cand([]),
     NO_PROGRESS_3X: cand([]),
     NO_WORLD_CHANGE: cand([]),

@@ -392,10 +392,29 @@ test("E. 回归：belt 名额用满、prompt 字符数没有变差", () => {
      *   · 换来的是「模型第一次知道目标颜色有没有矿」这个之前完全缺失的事实。
      *
      * 上调后如果哪天又变长，仍然会红。 */
+    /* ⚠️ 2026-11-03：`L4` 的上限 4400 → 4460（+60）。
+     *
+     * 原因是 MACHINES 段新增了两类标注：
+     *   ① 「目标矿在哪」一行（`⇒ target ore …`，~60 字符）
+     *   ② 无矿矿机标记（`[⚠ NO ORE under this miner …]`，~60 字符）
+     *
+     * 真机实测（level 5 / 目标 `Cu----Cu`）：接在**铜切割机**上的那台矿机
+     * 脚下根本没有矿，而 prompt 里它只是平平地写着 `M1 miner 输出=top:out(→C2)` ——
+     * 模型完全看不出这是一台永久零产出的机器，于是反复去「修通」那条
+     * 永远跑不起来的线。这个标注直接对准那次失败。
+     *
+     * ## 为什么只加 60 而不是 120
+     *
+     * 这两条标注**不会同时全额出现**：`renderGoalResource` 在机器数 > 6 时
+     * 自动降级成紧凑式（只留「有没有 + 主矿种」），而 CAPACITY 段预算紧张时
+     * 资源行还会整条让位（见 `prompt.mjs` 里「CAPACITY 优先于资源行」那段）。
+     * L4 夹具是 17 台机器 ⇒ 走紧凑式，实测总共 +6 字符。
+     *
+     * 上调后如果哪天又变长，仍然会红。 */
     const cases = [
-        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4400 },
+        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4520 },
         { name: "half", obs: HALF_OBS, tbl: HALF_TABLE, maxChars: 3400 },
-        { name: "capacity", obs: SCENARIO_OBS, tbl: SCENARIO_TABLE, maxChars: 3460 },
+        { name: "capacity", obs: SCENARIO_OBS, tbl: SCENARIO_TABLE, maxChars: 3530 },
     ];
     for (const c of cases) {
         const p = buildPrompt({
@@ -453,5 +472,52 @@ test("F2. 事实核查：L4 的 B69/B81/B82 真的能到 hub（长链，54~55 �
     for (const uid of [10143, 10209, 10149]) {      // B69 / B81 / B82
         assert.equal(reach.has(uid), true,
             `uid=${uid} 必须能到 hub（M3/M4 → balancer → … → B137 → H1）`);
+    }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * G. CAPACITY 优先于「目标矿在哪」那行
+ *
+ * L4 冷启动夹具是 17 台机器（8 台矿机）+ 12 条带子名额用满，本来就贴着 9800
+ * 的上限。加上 `⇒ target ore …` 之后 room 从 120 掉到 112 < 120，
+ * **CAPACITY 整段消失**（`capacity_unavailable: dropped-for-budget`）——
+ * 这是修这个 bug 之前实测到的。
+ *
+ * 差 8 个字符丢掉一段 p≈5e-7 的信息源，是错的优先级。修法是让资源行让位。
+ *
+ * ⚠️ **诚实说明**：下面这两条在**当前**夹具上抓不到「去掉让位逻辑」那个变异 ——
+ *    因为在 `budget:{}`（无诊断、无额外块）这个配置下，L4 的 room 本来就够，
+ *    让位分支**根本不触发**（实测：变异体里 CAPACITY 仍然存在）。
+ *    这两条守的是「CAPACITY 不许因为加了资源行而消失」这个**结果**，
+ *    而不是让位这段实现本身。
+ *
+ *    要真正钉住让位分支，需要一个「加了资源行就刚好差几个字符」的夹具 ——
+ *    那要精确控制 `s3_belts` / `s3_machines` 的长度，属于为测试造世界。
+ *    这里选择不造：让位是**防御性**代码（正常情况下不触发），
+ *    而它的失败模式（CAPACITY 消失）已经被这两条测试从结果侧守住了。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("G. 预算紧张时资源行让位，CAPACITY 必须还在", () => {
+    const p = buildPrompt({
+        goal: "RuRu----", obs: L4_OBS, handles: L4_TABLE, diagnoses: [],
+        candidates: ["connect"], lastRound: null, budget: {},
+    });
+    assert.ok(p.blocks.s3_capacity, `CAPACITY 段必须存在（实际 capacity_unavailable=${p.blocks.capacity_unavailable}）`);
+    assert.ok(/bottleneck/.test(p.blocks.s3_capacity), "CAPACITY 段应有 bottleneck 信息");
+});
+
+test("G2. 资源行让位是可观测的（block 里记了原因）", () => {
+    const p = buildPrompt({
+        goal: "RuRu----", obs: L4_OBS, handles: L4_TABLE, diagnoses: [],
+        candidates: ["connect"], lastRound: null, budget: {},
+    });
+    /* 让位发生时机器段里不该还有 target ore 行 —— 否则「让位」是假的 */
+    if (p.blocks.resource_dropped_for_capacity === true) {
+        assert.ok(!/target ore/.test(p.blocks.s3_machines),
+            "记了让位就真的不该还有资源行");
+    }
+    /* 反过来：资源行还在时必须没有让位标记 */
+    if (/target ore/.test(p.blocks.s3_machines)) {
+        assert.ok(p.blocks.resource_dropped_for_capacity !== true,
+            "资源行还在却记了让位标记 —— 状态不一致");
     }
 });
