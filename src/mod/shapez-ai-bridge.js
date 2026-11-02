@@ -166,9 +166,119 @@ class Mod extends shapez.Mod {
 
     init() {
         this.log("mod initialized; bridge url =", this.settings.ws_url, "; game version:", this.gameVersion());
+        this.installRafWatchdog();
         this.installLogCapture();
         this.hookGameLifecycle();
         this.connect();
+    }
+
+    /**
+     * 给 `requestAnimationFrame` 装一个「不兑现就降级」的看门狗。
+     *
+     * ## 它修的是什么
+     *
+     * 真机上 `load_save` / `new_game` 会偶发**永久**卡在
+     * 「状态切到 InGameState，但 root 永远为空」，`debug_app_state` 显示
+     * `ingame_stage === ""`，且恢复窗口（`ShowWindow(SW_RESTORE)`、
+     * 置顶、改尺寸、最大化）全都救不回来。实测三次，每次都只能重启游戏。
+     *
+     * 查源码定死了根因：
+     *
+     *   · `states/ingame.js:onEnter()` 的最后一行是
+     *       `this.asyncChannel.watch(waitNextFrame()).then(() => this.stage3CreateCore())`
+     *     —— 加载链的**第一环**就是等帧。
+     *   · `core/utils.js:296` 的 `waitNextFrame()` 是**两层 `requestAnimationFrame`**。
+     *   · `core/state_manager.js:119` 的 `moveToState()` 也有一处 `waitNextFrame()`。
+     *
+     * 于是：整条加载链完全依赖 rAF 兑现。而 Chromium 在窗口被判定不可见/被遮挡/
+     * 被最小化时会把 rAF **掐到 0Hz**（不是变慢，是彻底不派发）。一旦发生，
+     * `stage3CreateCore` 永远不会被调用，`this.stage` 就停在构造函数里的 `""`
+     * （`states/ingame.js:64`）—— 症状与「加载崩溃」一模一样，成因却完全不同。
+     *
+     * 这解释了此前所有失败的恢复尝试：窗口操作能把窗口变回来，但**已经挂死的
+     * 那个 rAF 回调不会被补发** —— rAF 不排队重放。所以只能从源头保证
+     * 「即使不可见，帧回调也会来」。
+     *
+     * ## 做法
+     *
+     * 包一层 `window.requestAnimationFrame`：照常向浏览器注册；
+     * 若在 `graceMs` 内没被回调，就**另外**用 `setTimeout` 再补一次
+     * （`setTimeout` 不受可见性节流，实测最小化时仍以 1Hz 兑现）。
+     * 回调加了 once 闸门，谁先到用谁，不会重复执行。
+     *
+     * ⚠️ 只影响**加载链需要的「帧到了」这个事实**，不改游戏的渲染逻辑：
+     * 正常可见时浏览器几乎总在 grace 内回调，垫片从不触发；不可见时游戏本来
+     * 就不画（`shouldRender()` 返回 false），补帧也不会让它画，只是让状态机前进。
+     *
+     * 做成幂等的（`_rafWatchdogInstalled`），重复 init 不会套娃。
+     */
+    installRafWatchdog() {
+        if (this._rafWatchdogInstalled) return;
+        this._rafWatchdogInstalled = true;
+        this._rafStats = { registered: 0, native: 0, fallback: 0 };
+
+        /** 拿到「浏览器多久没给帧」的判据：不可见时用更短的宽限，尽快补帧。 */
+        const graceMs = () => {
+            try {
+                return document.hidden ? 120 : 400;
+            } catch (e) {
+                return 400;
+            }
+        };
+
+        const nativeRaf = window.requestAnimationFrame
+            ? window.requestAnimationFrame.bind(window)
+            : null;
+        const nativeCancel = window.cancelAnimationFrame
+            ? window.cancelAnimationFrame.bind(window)
+            : null;
+
+        if (!nativeRaf) {
+            this.warn("requestAnimationFrame 不可用，跳过看门狗");
+            return;
+        }
+
+        const self = this;
+
+        window.requestAnimationFrame = function (callback) {
+            const stats = self._rafStats;
+            stats.registered += 1;
+
+            let settled = false;
+            let nativeId = null;
+            let timerId = null;
+
+            const fire = source => {
+                if (settled) return;
+                settled = true;
+                if (timerId !== null) { clearTimeout(timerId); timerId = null; }
+                // 原生帧已经跑了就别再 cancel 它（有些实现里 cancel 已执行的 id 会告警）
+                if (source !== "native" && nativeId !== null && nativeCancel) {
+                    try { nativeCancel(nativeId); } catch (e) { /* 忽略 */ }
+                }
+                stats[source] += 1;
+                // rAF 回调的入参是 DOMHighResTimeStamp；补帧时给一个等价的时间戳
+                try {
+                    callback(performance.now());
+                } catch (e) {
+                    // 与原生行为一致：回调抛错不能打断垫片本身
+                    console.error(e);
+                }
+            };
+
+            try {
+                nativeId = nativeRaf(() => fire("native"));
+            } catch (e) {
+                nativeId = null;
+            }
+
+            timerId = setTimeout(() => fire("fallback"), graceMs());
+
+            // 返回值只用来说明「这一帧」，调用方若拿它去 cancel 就走原生路径
+            return nativeId !== null ? nativeId : -1;
+        };
+
+        this.log("rAF 看门狗已装上（不可见时用定时器补帧，避免加载链卡死）");
     }
 
     /**
@@ -550,6 +660,9 @@ class Mod extends shapez.Mod {
                     break;
                 case "debug_app_state":
                     result = this.debugAppState();
+                    break;
+                case "debug_frame_alive":
+                    result = await this.debugFrameAlive(params || {});
                     break;
                 case "debug_entity_roundtrip":
                     this.assertWritable("debug_entity_roundtrip");
@@ -4310,6 +4423,100 @@ class Mod extends shapez.Mod {
                     ? !!st.loadingOverlay.isAttached() : null;
             }
         } catch (e) { /* 忽略 */ }
+        return out;
+    }
+
+    /**
+     * 探测「事件循环 / 渲染帧还活着吗」。
+     *
+     * 为什么需要它：真机上 `load_save` / `new_game` 偶发卡死在
+     * 「状态切到了 InGameState，但 root 永远为空」，而 `debug_app_state` 只能看到
+     * `ingame_stage === ""`，看不出**为什么**停在第一步。
+     *
+     * 源码定死了那个第一步是什么：`states/ingame.js:onEnter()` 的最后一行是
+     *
+     *     this.asyncChannel.watch(waitNextFrame()).then(() => this.stage3CreateCore())
+     *
+     * 而 `waitNextFrame()`（`core/utils.js:296`）是 **`requestAnimationFrame` 套两层**。
+     * 也就是说：整个加载链的推进**完全依赖 rAF 兑现**。一旦 rAF 停掉
+     * （窗口被最小化 / 判定为不可见 / 被节流），`stage3CreateCore` 永远不会被调用，
+     * `this.stage` 就停在构造函数里的 `""`（`states/ingame.js:64`），
+     * 症状与「加载崩溃」一模一样，但成因完全不同 —— 后者需要重启，前者只需让 rAF 复跑。
+     *
+     * 所以这里分别测三种心跳，把「事件循环死了」和「只有 rAF 停了」分开：
+     *   · `setTimeout(0)`  —— 宏任务。活着 ⇒ JS 主线程没死，RPC 能回包本身也证明了这点。
+     *   · `queueMicrotask` —— 微任务。
+     *   · `requestAnimationFrame` —— **关键**。它不兑现就是加载卡死的直接原因。
+     * 顺带读 `document.visibilityState` / `hidden` —— 这是 Chromium 掐 rAF 的判据，
+     * 与游戏自己的 `app.pageVisible` 是两条独立来源（后者只在 visibilitychange
+     * 事件里更新，若事件漏了就会一直停在旧值）。
+     *
+     * params:
+     *   timeout_ms  每个探测的等待上限（默认 1500）
+     */
+    async debugFrameAlive(p) {
+        const timeoutMs = Number(p.timeout_ms) > 0 ? Number(p.timeout_ms) : 1500;
+        const probe = fn => new Promise(resolve => {
+            let done = false;
+            const timer = setTimeout(() => {
+                if (!done) { done = true; resolve({ fired: false }); }
+            }, timeoutMs);
+            try {
+                fn(() => {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(timer);
+                    resolve({ fired: true });
+                });
+            } catch (e) {
+                if (!done) {
+                    done = true;
+                    clearTimeout(timer);
+                    resolve({ fired: false, error: String(e && e.message ? e.message : e) });
+                }
+            }
+        });
+
+        const out = { mod_version: "0.1.0", timeout_ms: timeoutMs };
+        const t0 = Date.now();
+        out.microtask = await probe(cb => queueMicrotask(cb));
+        out.macrotask = await probe(cb => setTimeout(cb, 0));
+        // 注意：这里走的是**被看门狗包过的** rAF。所以 raf.fired 为真有两种可能：
+        // 浏览器正常派发，或垫片用定时器补的。下面 raf_stats 的增量能区分两者。
+        const before = this._rafStats ? { ...this._rafStats } : null;
+        out.raf = await probe(cb => window.requestAnimationFrame(cb));
+        out.raf_stats = this._rafStats ? { ...this._rafStats } : null;
+        out.raf_stats_delta = before && this._rafStats
+            ? {
+                registered: this._rafStats.registered - before.registered,
+                native: this._rafStats.native - before.native,
+                fallback: this._rafStats.fallback - before.fallback,
+            }
+            : null;
+        out.probe_ms = Date.now() - t0;
+        try {
+            out.document_visibility = document.visibilityState;
+            out.document_hidden = !!document.hidden;
+            out.has_focus = typeof document.hasFocus === "function" ? !!document.hasFocus() : null;
+        } catch (e) { out.document_error = String(e && e.message ? e.message : e); }
+        out.app_page_visible = !!(this.app && this.app.pageVisible);
+        out.app_focused = !!(this.app && this.app.focused);
+        try {
+            const st = this.app && this.app.stateMgr && this.app.stateMgr.currentState;
+            out.state_key = st && st.getKey ? st.getKey() : null;
+            out.ingame_stage = st && st.stage !== undefined ? String(st.stage) : null;
+        } catch (e) { /* 忽略 */ }
+        // 判定：把「能不能自愈」直接写进结果，省得调用方各自解释
+        if (!out.raf.fired && out.macrotask.fired) {
+            out.verdict = "raf_stalled";
+            out.diagnosis = "宏任务正常但 requestAnimationFrame 不兑现 —— 加载链卡在 ingame.js:onEnter 的 waitNextFrame()。放行渲染（恢复窗口/取消遮挡）即可继续，不必重启。";
+        } else if (out.raf.fired) {
+            out.verdict = "alive";
+            out.diagnosis = "rAF 正常兑现，卡死原因不在渲染帧。";
+        } else {
+            out.verdict = "loop_dead";
+            out.diagnosis = "连宏任务都不兑现 —— JS 主线程被占死或进程已挂，只能重启。";
+        }
         return out;
     }
 
