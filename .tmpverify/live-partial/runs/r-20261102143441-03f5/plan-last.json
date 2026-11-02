@@ -1,0 +1,10 @@
+{
+ "round": 1,
+ "calls": [
+  "connect"
+ ],
+ "verify": {
+  "checks": []
+ },
+ "decision": "tx_unavailable"
+}

@@ -1,0 +1,78 @@
+{
+ "reason": "BUDGET_ROUNDS",
+ "at_round": 1,
+ "fingerprint": "sha256:e2493f23a7a23ef936eb213c768de9e13975edc6443d05e8891ea5467740ac19",
+ "remaining_budget": {
+  "rounds": 0,
+  "llm_calls": 0,
+  "tx": 0,
+  "ticks": 21600,
+  "wall_ms": 892994
+ },
+ "diagnoses": [
+  {
+   "code": "NO_PRODUCTION",
+   "layer": "L4",
+   "severity": "blocker",
+   "subject": {
+    "handle": "H1",
+    "type": "hub",
+    "uid": 10000
+   },
+   "expected": "有产线在造 RuRu----",
+   "observed": "窗口内 RuRu---- 产出 0（delivered 0/70）",
+   "evidence": {
+    "handles": [
+     "H1"
+    ],
+    "uids": [
+     10000
+    ],
+    "stage": "initial",
+    "goal": "RuRu----"
+   },
+   "candidates": [
+    "connect",
+    "insert_machine",
+    "trash_unused"
+   ],
+   "hint": "首轮没有 report：这是「目标形状没有产线在造」的初始诊断，不是对某条 check 的复述。"
+  },
+  {
+   "code": "DEAD_END",
+   "layer": "L2",
+   "severity": "blocker",
+   "subject": {
+    "handle": "B34",
+    "type": "belt",
+    "uid": 10538
+   },
+   "expected": "带子出口有接收方",
+   "observed": "出口方向 bottom 的那一格上没有实体（货会堆在这里）",
+   "evidence": {
+    "handles": [
+     "B34"
+    ],
+    "uids": [
+     10538
+    ],
+    "tier": 2,
+    "cells": [
+     [
+      1,
+      -5
+     ]
+    ]
+   },
+   "candidates": [
+    "trash_unused",
+    "extend_line",
+    "connect"
+   ]
+  }
+ ],
+ "next_actions": [
+  "检查目标形状是否有产线在造（cutter/rotater 链），再决定 replace_run 的 region"
+ ],
+ "world_state": "applied"
+}

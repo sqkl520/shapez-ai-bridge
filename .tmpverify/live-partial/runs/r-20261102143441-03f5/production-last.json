@@ -1,0 +1,31 @@
+{
+ "window_seconds": 60,
+ "slice_seconds": 10,
+ "slices_returned": 6,
+ "produced_total": {},
+ "produced_per_sec": {},
+ "delivered_total": {},
+ "delivered_per_sec": {},
+ "stored_delta": {
+  "CuCuCuCu": 0,
+  "----CuCu": 0,
+  "RuRuRuRu": 0,
+  "----RuRu": 0
+ },
+ "produced_slices": [
+  {},
+  {},
+  {},
+  {},
+  {},
+  {}
+ ],
+ "delivered_slices": [
+  {},
+  {},
+  {},
+  {},
+  {},
+  {}
+ ]
+}

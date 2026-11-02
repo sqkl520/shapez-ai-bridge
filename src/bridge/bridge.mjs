@@ -434,8 +434,29 @@ async function snapshotSave(p) {
         throw rpcError(2003, "save_now did not return internal_id", "Check game logs; the save interface may not be ready");
     }
     const src = path.join(SAVES_DIR, `savegame-${internalId}.bin`);
+    /* ★ 2026-11-02：`save_now` 是**异步写盘**的，检查前要等它落盘 ★
+     *
+     * 实测（真机 loop 的 guard 里）：`save_now` 返回 ok 且 internal_id 正确，
+     * 但紧接着 `fs.existsSync` 得到 false ⇒
+     *   `savegame file not found: …\savegame-7c93b3dd….bin`
+     * 而那个文件实际上是存在的（3178 字节，mtime 就是那一刻）。
+     *
+     * 根因：游戏的 `saveNow()` 走 `Savegame.writeAsync()`，返回 Promise 但
+     * 桥接这边只等了 RPC 回包，没等文件系统 flush。文件小的时候通常来得及，
+     * 一旦世界大一点（或磁盘忙）就会输给竞态。
+     *
+     * 修法：轮询等待（最多 5 秒，50ms 一次）。比固定 sleep 好 ——
+     * 正常情况下第一次就能过，慢的时候也不会误报。
+     *
+     * ⚠️ 只**等**，不重试 `save_now` 本身 —— 那个可能触发第二次写盘。 */
+    let waited = 0;
+    while (!fs.existsSync(src) && waited < 5000) {
+        await new Promise(r => setTimeout(r, 50));
+        waited += 50;
+    }
     if (!fs.existsSync(src)) {
-        throw rpcError(2003, `savegame file not found: ${src}`, "The bridge and the game must run on the same machine/user account");
+        throw rpcError(2003, `savegame file not found after ${waited}ms: ${src}`,
+            "The bridge and the game must run on the same machine/user account, and save_now must have flushed");
     }
     const ts = new Date();
     const stamp =

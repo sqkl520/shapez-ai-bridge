@@ -1,0 +1,34 @@
+{
+ "reason": "INTERNAL",
+ "at_round": 1,
+ "fingerprint": "sha256:15ce07717ea275db003ffc9d2c438c94d02f6c59359a2137b0886187c30f5010",
+ "remaining_budget": {
+  "rounds": 0,
+  "llm_calls": 0,
+  "tx": 0,
+  "ticks": 24000,
+  "wall_ms": 898197
+ },
+ "diagnoses": [
+  {
+   "code": "TX_UNAVAILABLE",
+   "layer": "tx",
+   "severity": "blocker",
+   "subject": {
+    "handle": null,
+    "type": null
+   },
+   "expected": "一次 tx 返回",
+   "observed": "tx 抛异常：snapshot_save: mod_error: savegame file not found: C:\\Users\\Administrator\\AppData\\Roaming\\shapez.io\\saves\\savegame-7c93b3dd9e949c561e5aa529974973b18c856b45.bin",
+   "evidence": {
+    "handles": [],
+    "uids": [],
+    "stage": "apply"
+   }
+  }
+ ],
+ "next_actions": [
+  "读 transcript.jsonl 与 verify-last.json 定位首个红项"
+ ],
+ "world_state": "untouched"
+}

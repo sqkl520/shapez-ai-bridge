@@ -1,0 +1,616 @@
+{
+ "protocol": 1,
+ "mod_version": "0.1.0",
+ "game_version": "1.5.6",
+ "in_game": true,
+ "tick": 86490.52393199591,
+ "paused": false,
+ "speed": "regular",
+ "layer": "regular",
+ "camera": {
+  "x": 18.2356,
+  "y": -42.9577,
+  "zoom": 1.3157
+ },
+ "region": [
+  -2,
+  -19,
+  5,
+  -2
+ ],
+ "entities": [
+  {
+   "uid": 10000,
+   "type": "hub",
+   "x": -2,
+   "y": -2,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 26,
+   "layer": "regular"
+  },
+  {
+   "uid": 10505,
+   "type": "miner",
+   "x": 2,
+   "y": -6,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 7,
+   "layer": "regular"
+  },
+  {
+   "uid": 10506,
+   "type": "miner",
+   "x": 3,
+   "y": -6,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 7,
+   "layer": "regular"
+  },
+  {
+   "uid": 10507,
+   "type": "miner",
+   "x": 4,
+   "y": -6,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 7,
+   "layer": "regular"
+  },
+  {
+   "uid": 10508,
+   "type": "balancer",
+   "x": 2,
+   "y": -8,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 4,
+   "layer": "regular"
+  },
+  {
+   "uid": 10509,
+   "type": "balancer",
+   "x": 3,
+   "y": -10,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 4,
+   "layer": "regular"
+  },
+  {
+   "uid": 10510,
+   "type": "cutter",
+   "x": 4,
+   "y": -17,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 9,
+   "layer": "regular"
+  },
+  {
+   "uid": 10511,
+   "type": "trash",
+   "x": 3,
+   "y": -18,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 20,
+   "layer": "regular"
+  },
+  {
+   "uid": 10512,
+   "type": "belt",
+   "x": 2,
+   "y": -7,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10513,
+   "type": "belt",
+   "x": 3,
+   "y": -7,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10514,
+   "type": "belt",
+   "x": 4,
+   "y": -7,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10515,
+   "type": "belt",
+   "x": 4,
+   "y": -8,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10516,
+   "type": "belt",
+   "x": 4,
+   "y": -9,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10517,
+   "type": "belt",
+   "x": 3,
+   "y": -11,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10518,
+   "type": "belt",
+   "x": 3,
+   "y": -12,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10519,
+   "type": "belt",
+   "x": 3,
+   "y": -13,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10520,
+   "type": "belt",
+   "x": 3,
+   "y": -14,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10521,
+   "type": "belt",
+   "x": 4,
+   "y": -16,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10522,
+   "type": "belt",
+   "x": 5,
+   "y": -18,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10523,
+   "type": "belt",
+   "x": 4,
+   "y": -19,
+   "r": 270,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10524,
+   "type": "belt",
+   "x": 3,
+   "y": -19,
+   "r": 270,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10525,
+   "type": "belt",
+   "x": 2,
+   "y": -19,
+   "r": 270,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10526,
+   "type": "belt",
+   "x": 1,
+   "y": -18,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10527,
+   "type": "belt",
+   "x": 1,
+   "y": -17,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10528,
+   "type": "belt",
+   "x": 1,
+   "y": -16,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10529,
+   "type": "belt",
+   "x": 1,
+   "y": -15,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10530,
+   "type": "belt",
+   "x": 1,
+   "y": -14,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10531,
+   "type": "belt",
+   "x": 1,
+   "y": -13,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10532,
+   "type": "belt",
+   "x": 1,
+   "y": -12,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10533,
+   "type": "belt",
+   "x": 1,
+   "y": -11,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10534,
+   "type": "belt",
+   "x": 1,
+   "y": -10,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10535,
+   "type": "belt",
+   "x": 1,
+   "y": -9,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10536,
+   "type": "belt",
+   "x": 1,
+   "y": -8,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10537,
+   "type": "belt",
+   "x": 1,
+   "y": -7,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10538,
+   "type": "belt",
+   "x": 1,
+   "y": -6,
+   "r": 180,
+   "variant": "default",
+   "rotation_variant": 0,
+   "code": 1,
+   "layer": "regular"
+  },
+  {
+   "uid": 10542,
+   "type": "belt",
+   "x": 2,
+   "y": -9,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 2,
+   "code": 3,
+   "layer": "regular"
+  },
+  {
+   "uid": 10543,
+   "type": "belt",
+   "x": 3,
+   "y": -9,
+   "r": 90,
+   "variant": "default",
+   "rotation_variant": 1,
+   "code": 2,
+   "layer": "regular"
+  },
+  {
+   "uid": 10544,
+   "type": "belt",
+   "x": 3,
+   "y": -15,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 2,
+   "code": 3,
+   "layer": "regular"
+  },
+  {
+   "uid": 10545,
+   "type": "belt",
+   "x": 4,
+   "y": -15,
+   "r": 90,
+   "variant": "default",
+   "rotation_variant": 1,
+   "code": 2,
+   "layer": "regular"
+  },
+  {
+   "uid": 10546,
+   "type": "belt",
+   "x": 5,
+   "y": -19,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 1,
+   "code": 2,
+   "layer": "regular"
+  },
+  {
+   "uid": 10547,
+   "type": "belt",
+   "x": 1,
+   "y": -19,
+   "r": 270,
+   "variant": "default",
+   "rotation_variant": 1,
+   "code": 2,
+   "layer": "regular"
+  },
+  {
+   "uid": 10548,
+   "type": "belt",
+   "x": 4,
+   "y": -18,
+   "r": 0,
+   "variant": "default",
+   "rotation_variant": 1,
+   "code": 2,
+   "layer": "regular"
+  }
+ ],
+ "entity_count": 42,
+ "truncated": false,
+ "stats": {
+  "total": 42,
+  "by_type": {
+   "hub": 1,
+   "miner": 3,
+   "balancer": 2,
+   "cutter": 1,
+   "trash": 1,
+   "belt": 34
+  }
+ },
+ "hub": {
+  "stored_shapes": {
+   "CuCuCuCu": 12,
+   "----CuCu": 686,
+   "RuRuRuRu": 2016,
+   "----RuRu": 4575
+  },
+  "has_free_paste": false,
+  "blueprint_shape_key": "CbCbCbRb:CwCwCwCw"
+ },
+ "goal": {
+  "level": 4,
+  "requirement": {
+   "shape": "RuRu----",
+   "required": 70,
+   "delivered": 0,
+   "progress": 0,
+   "throughput_only": false
+  },
+  "upgrade_levels": {
+   "belt": 1,
+   "miner": 1,
+   "processors": 0,
+   "painting": 0
+  }
+ },
+ "resources": [
+  [
+   2,
+   -8,
+   "RuRuRuRu"
+  ],
+  [
+   2,
+   -7,
+   "RuRuRuRu"
+  ],
+  [
+   2,
+   -6,
+   "RuRuRuRu"
+  ],
+  [
+   3,
+   -10,
+   "RuRuRuRu"
+  ],
+  [
+   3,
+   -9,
+   "RuRuRuRu"
+  ],
+  [
+   3,
+   -8,
+   "RuRuRuRu"
+  ],
+  [
+   3,
+   -7,
+   "RuRuRuRu"
+  ],
+  [
+   3,
+   -6,
+   "RuRuRuRu"
+  ],
+  [
+   3,
+   -5,
+   "RuRuRuRu"
+  ],
+  [
+   4,
+   -10,
+   "RuRuRuRu"
+  ],
+  [
+   4,
+   -9,
+   "RuRuRuRu"
+  ],
+  [
+   4,
+   -8,
+   "RuRuRuRu"
+  ],
+  [
+   4,
+   -7,
+   "RuRuRuRu"
+  ],
+  [
+   4,
+   -6,
+   "RuRuRuRu"
+  ],
+  [
+   5,
+   -10,
+   "RuRuRuRu"
+  ],
+  [
+   5,
+   -9,
+   "RuRuRuRu"
+  ],
+  [
+   5,
+   -8,
+   "RuRuRuRu"
+  ],
+  [
+   5,
+   -7,
+   "RuRuRuRu"
+  ]
+ ]
+}

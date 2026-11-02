@@ -1,0 +1,857 @@
+{
+ "belts": [
+  {
+   "cell": [
+    2,
+    -7
+   ],
+   "path": 0,
+   "idx": 0,
+   "pos": 0.37,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    2,
+    -7
+   ],
+   "path": 0,
+   "idx": 1,
+   "pos": 1,
+   "spacing_to_next": 0,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -7
+   ],
+   "path": 1,
+   "idx": 0,
+   "pos": 0.37,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -7
+   ],
+   "path": 1,
+   "idx": 1,
+   "pos": 1,
+   "spacing_to_next": 0,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    4,
+    -7
+   ],
+   "path": 2,
+   "idx": 0,
+   "pos": 0.479,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    4,
+    -8
+   ],
+   "path": 2,
+   "idx": 1,
+   "pos": 1.109,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    4,
+    -8
+   ],
+   "path": 2,
+   "idx": 2,
+   "pos": 1.739,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    4,
+    -9
+   ],
+   "path": 2,
+   "idx": 3,
+   "pos": 2.369,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    4,
+    -9
+   ],
+   "path": 2,
+   "idx": 4,
+   "pos": 2.999,
+   "spacing_to_next": 0,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -11
+   ],
+   "path": 3,
+   "idx": 0,
+   "pos": 0.26,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -11
+   ],
+   "path": 3,
+   "idx": 1,
+   "pos": 0.89,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -12
+   ],
+   "path": 3,
+   "idx": 2,
+   "pos": 1.52,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -13
+   ],
+   "path": 3,
+   "idx": 3,
+   "pos": 2.15,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -13
+   ],
+   "path": 3,
+   "idx": 4,
+   "pos": 2.78,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -14
+   ],
+   "path": 3,
+   "idx": 5,
+   "pos": 3.41,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -15
+   ],
+   "path": 3,
+   "idx": 6,
+   "pos": 4.04,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -15
+   ],
+   "path": 3,
+   "idx": 7,
+   "pos": 4.67,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    4,
+    -15
+   ],
+   "path": 3,
+   "idx": 8,
+   "pos": 5.3,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    4,
+    -16
+   ],
+   "path": 3,
+   "idx": 9,
+   "pos": 5.93,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    4,
+    -16
+   ],
+   "path": 3,
+   "idx": 10,
+   "pos": 6.56,
+   "spacing_to_next": 0,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    2,
+    -9
+   ],
+   "path": 4,
+   "idx": 0,
+   "pos": 0.3,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -9
+   ],
+   "path": 4,
+   "idx": 1,
+   "pos": 0.93,
+   "spacing_to_next": 0.63,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    3,
+    -9
+   ],
+   "path": 4,
+   "idx": 2,
+   "pos": 1.56,
+   "spacing_to_next": 0,
+   "item": "RuRuRuRu"
+  },
+  {
+   "cell": [
+    5,
+    -18
+   ],
+   "path": 5,
+   "idx": 0,
+   "pos": 0.29,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    5,
+    -18
+   ],
+   "path": 5,
+   "idx": 1,
+   "pos": 0.92,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    5,
+    -19
+   ],
+   "path": 5,
+   "idx": 2,
+   "pos": 1.55,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    4,
+    -19
+   ],
+   "path": 5,
+   "idx": 3,
+   "pos": 2.18,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    3,
+    -19
+   ],
+   "path": 5,
+   "idx": 4,
+   "pos": 2.81,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    3,
+    -19
+   ],
+   "path": 5,
+   "idx": 5,
+   "pos": 3.44,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    2,
+    -19
+   ],
+   "path": 5,
+   "idx": 6,
+   "pos": 4.07,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    2,
+    -19
+   ],
+   "path": 5,
+   "idx": 7,
+   "pos": 4.7,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -19
+   ],
+   "path": 5,
+   "idx": 8,
+   "pos": 5.33,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -18
+   ],
+   "path": 5,
+   "idx": 9,
+   "pos": 5.96,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -17
+   ],
+   "path": 5,
+   "idx": 10,
+   "pos": 6.59,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -17
+   ],
+   "path": 5,
+   "idx": 11,
+   "pos": 7.22,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -16
+   ],
+   "path": 5,
+   "idx": 12,
+   "pos": 7.85,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -16
+   ],
+   "path": 5,
+   "idx": 13,
+   "pos": 8.48,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -15
+   ],
+   "path": 5,
+   "idx": 14,
+   "pos": 9.11,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -14
+   ],
+   "path": 5,
+   "idx": 15,
+   "pos": 9.74,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -14
+   ],
+   "path": 5,
+   "idx": 16,
+   "pos": 10.37,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -13
+   ],
+   "path": 5,
+   "idx": 17,
+   "pos": 11,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -12
+   ],
+   "path": 5,
+   "idx": 18,
+   "pos": 11.63,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -12
+   ],
+   "path": 5,
+   "idx": 19,
+   "pos": 12.26,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -11
+   ],
+   "path": 5,
+   "idx": 20,
+   "pos": 12.89,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -11
+   ],
+   "path": 5,
+   "idx": 21,
+   "pos": 13.52,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -10
+   ],
+   "path": 5,
+   "idx": 22,
+   "pos": 14.15,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -9
+   ],
+   "path": 5,
+   "idx": 23,
+   "pos": 14.78,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -9
+   ],
+   "path": 5,
+   "idx": 24,
+   "pos": 15.41,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -8
+   ],
+   "path": 5,
+   "idx": 25,
+   "pos": 16.04,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -7
+   ],
+   "path": 5,
+   "idx": 26,
+   "pos": 16.67,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -7
+   ],
+   "path": 5,
+   "idx": 27,
+   "pos": 17.3,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -6
+   ],
+   "path": 5,
+   "idx": 28,
+   "pos": 17.93,
+   "spacing_to_next": 0.63,
+   "item": "RuRu----"
+  },
+  {
+   "cell": [
+    1,
+    -6
+   ],
+   "path": 5,
+   "idx": 29,
+   "pos": 18.56,
+   "spacing_to_next": 0,
+   "item": "RuRu----"
+  }
+ ],
+ "ejectors": [
+  {
+   "cell": [
+    2,
+    -6
+   ],
+   "slot": 0,
+   "item": "RuRuRuRu",
+   "progress": 1
+  },
+  {
+   "cell": [
+    3,
+    -6
+   ],
+   "slot": 0,
+   "item": "RuRuRuRu",
+   "progress": 1
+  },
+  {
+   "cell": [
+    4,
+    -6
+   ],
+   "slot": 0,
+   "item": "RuRuRuRu",
+   "progress": 1
+  },
+  {
+   "cell": [
+    2,
+    -8
+   ],
+   "slot": 0,
+   "item": "RuRuRuRu",
+   "progress": 1
+  },
+  {
+   "cell": [
+    2,
+    -8
+   ],
+   "slot": 1,
+   "item": "RuRuRuRu",
+   "progress": 1
+  },
+  {
+   "cell": [
+    3,
+    -10
+   ],
+   "slot": 0,
+   "item": "RuRuRuRu",
+   "progress": 1
+  },
+  {
+   "cell": [
+    3,
+    -10
+   ],
+   "slot": 1,
+   "item": "RuRuRuRu",
+   "progress": 1
+  },
+  {
+   "cell": [
+    4,
+    -17
+   ],
+   "slot": 1,
+   "item": "RuRu----",
+   "progress": 1
+  }
+ ],
+ "underground": [],
+ "pending": [],
+ "pathCount": 7,
+ "truncatedPaths": false,
+ "paths": [
+  {
+   "cells": [
+    [
+     2,
+     -7
+    ]
+   ],
+   "itemsOnPath": 2,
+   "spacingToFirstItem": 0.37,
+   "boundAcceptor": "yes"
+  },
+  {
+   "cells": [
+    [
+     3,
+     -7
+    ]
+   ],
+   "itemsOnPath": 2,
+   "spacingToFirstItem": 0.37,
+   "boundAcceptor": "yes"
+  },
+  {
+   "cells": [
+    [
+     4,
+     -7
+    ],
+    [
+     4,
+     -8
+    ],
+    [
+     4,
+     -9
+    ]
+   ],
+   "itemsOnPath": 5,
+   "spacingToFirstItem": 0.479,
+   "boundAcceptor": "yes"
+  },
+  {
+   "cells": [
+    [
+     3,
+     -11
+    ],
+    [
+     3,
+     -12
+    ],
+    [
+     3,
+     -13
+    ],
+    [
+     3,
+     -14
+    ],
+    [
+     3,
+     -15
+    ],
+    [
+     4,
+     -15
+    ],
+    [
+     4,
+     -16
+    ]
+   ],
+   "itemsOnPath": 11,
+   "spacingToFirstItem": 0.26,
+   "boundAcceptor": "yes"
+  },
+  {
+   "cells": [
+    [
+     2,
+     -9
+    ],
+    [
+     3,
+     -9
+    ]
+   ],
+   "itemsOnPath": 3,
+   "spacingToFirstItem": 0.3,
+   "boundAcceptor": "yes"
+  },
+  {
+   "cells": [
+    [
+     5,
+     -18
+    ],
+    [
+     5,
+     -19
+    ],
+    [
+     4,
+     -19
+    ],
+    [
+     3,
+     -19
+    ],
+    [
+     2,
+     -19
+    ],
+    [
+     1,
+     -19
+    ],
+    [
+     1,
+     -18
+    ],
+    [
+     1,
+     -17
+    ],
+    [
+     1,
+     -16
+    ],
+    [
+     1,
+     -15
+    ],
+    [
+     1,
+     -14
+    ],
+    [
+     1,
+     -13
+    ],
+    [
+     1,
+     -12
+    ],
+    [
+     1,
+     -11
+    ],
+    [
+     1,
+     -10
+    ],
+    [
+     1,
+     -9
+    ],
+    [
+     1,
+     -8
+    ],
+    [
+     1,
+     -7
+    ],
+    [
+     1,
+     -6
+    ]
+   ],
+   "itemsOnPath": 30,
+   "spacingToFirstItem": 0.29,
+   "boundAcceptor": null
+  },
+  {
+   "cells": [
+    [
+     4,
+     -18
+    ]
+   ],
+   "itemsOnPath": 0,
+   "spacingToFirstItem": 0.78,
+   "boundAcceptor": "yes"
+  }
+ ],
+ "counts": {
+  "belts": 53,
+  "ejectors": 8,
+  "pending": 0
+ }
+}

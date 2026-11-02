@@ -1,0 +1,88 @@
+{
+ "ok": true,
+ "op": "tx",
+ "applied": 3,
+ "requested": 3,
+ "rolled_back": false,
+ "dry_run": false,
+ "aborted": false,
+ "failures": [],
+ "diff": {
+  "added": [
+   10549,
+   10550,
+   10551
+  ],
+  "removed": [],
+  "modified": []
+ },
+ "net": null,
+ "verify": null,
+ "rollback": null,
+ "results": [
+  {
+   "index": 0,
+   "op": "place",
+   "ok": true,
+   "uid": 10549,
+   "applied": 1
+  },
+  {
+   "index": 1,
+   "op": "place",
+   "ok": true,
+   "uid": 10550,
+   "applied": 1
+  },
+  {
+   "index": 2,
+   "op": "place",
+   "ok": true,
+   "uid": 10551,
+   "applied": 1
+  }
+ ],
+ "belt": {
+  "paths_before": 7,
+  "paths_after": 7,
+  "items_before": 53,
+  "items_after": 53,
+  "health_problems_before": [],
+  "health_problems_after": [],
+  "repair": "none",
+  "items_lost_to_repair": 0
+ },
+ "snapshot": {
+  "entities": 42,
+  "next_uid": 10549,
+  "skipped_no_static_map": 0,
+  "skipped_uids": []
+ },
+ "boundaries": {
+  "time": {
+   "reversible": false,
+   "tick_start": 86784.92393192736,
+   "tick_end": 86784.92393192736,
+   "tick_advance": 0
+  },
+  "third_party_systems": {
+   "note": "rollback itself mutates the world: BeltSystem recomputes neighbour rv on entityAdded/entityDestroyed",
+   "belt_paths_recomputed": "none"
+  },
+  "non_removable": {
+   "covered": false,
+   "types": [
+    "hub",
+    "block",
+    "constant_producer",
+    "goal_acceptor"
+   ],
+   "note": "getIsRemovable() is editor-only for these; delete returns 2002 and the tx rolls back"
+  },
+  "non_serialized_state": {
+   "note": "Belt.assignedPath / BeltPath.items / Wire networks / ItemProcessor queues are not in the entity schema; items on belts may be lost"
+  }
+ },
+ "tick": 86784.92393192736,
+ "duration_ms": 11.400000005960464
+}
