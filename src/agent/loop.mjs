@@ -1371,9 +1371,30 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
     const skippedAll = macroFailures.map(f => ({
         macro: f.macro, reason: "macro_failed", code: f.code, hint: f.hint,
     }));
-    if (partialMode && executed.length < res.calls.length) {
+    /* ★ 2026-11-02 修：筛选条件不能再带 `executed.length < res.calls.length` ★
+     *
+     * 上一版写的是 `if (partialMode && executed.length < res.calls.length)` ——
+     * 「只有存在失败调用时才筛可撤销性」。
+     *
+     * 那有个真漏洞（A/B 实测抓到，`.tmpverify/live-multiround/ab-partial.mjs`）：
+     * 一个**全部成功**的计划（比如单条 `insert_machine`）会跳过筛选 ⇒
+     * 直接提交 `place:cutter` ⇒ **不可逆写入**，而 `partial` 标记还是 false。
+     *
+     * 实测：真机 level 5 跑 `insert_machine`，`partial:false`、`skipped:[]`、
+     * ops=`delete:, place:cutter` —— 按可撤销判据是 `false`，但它被提交了。
+     *
+     * 「可撤销」是**这个模式的硬约束**，与「有没有失败调用」无关：
+     *   · 有失败 ⇒ 跳过失败的 + 跳过不可撤销的
+     *   · 全成功 ⇒ 仍然要跳过不可撤销的（它们落盘就撤不回来）
+     *
+     * 所以条件只剩 `partialMode`。 */
+    if (partialMode) {
         const reversible = [];
-        const skipped = [];
+        /* ⚠️ 这里的 `skipped` 是**局部的**（只装「不可撤销」那批），
+         * 最后**不直接**写进 `skippedAll` —— 因为 (a) 分支要把它整个回滚。
+         * 之前直接往 `skippedAll` push，导致「全成功但都不可撤销」时
+         * `skippedAll.length > 0` ⇒ `partial` 被算成 true ⇒ 完整执行被标成部分执行。 */
+        const skippedLocal = [];
         for (let i = 0; i < executed.length; i++) {
             const ex = executed[i];
             /* 单条翻译，看它产生什么 op。`planToTxOps` 对单条调用的开销很小，
@@ -1384,37 +1405,64 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                 (op.op === "delete") || (op.op === "place" && isBeltBuilding(op.building)));
             if (rev) reversible.push(ex);
             else {
-                const rec = {
+                skippedLocal.push({
                     macro: ex.macro,
                     reason: ops ? "irreversible" : "not_translatable",
                     ops: ops ? ops.length : 0,
-                };
-                skipped.push(rec);
-                skippedAll.push(rec);
+                });
             }
         }
         if (reversible.length) {
             executed.length = 0;
             executed.push(...reversible);
+            /* 只有真的跳过了东西，才把它们记进 skippedAll（会影响 partial 标记）。 */
+            skippedAll.push(...skippedLocal);
         } else {
-            /* 一条可撤销的都没有 ⇒ 退回「全有或全无」的拒绝语义，
-               不要拿「不可逆写入」去凑一个部分执行。 */
-            /* ⚠️ `evidence.skipped` 必须用 **`skippedAll`**（含宏失败的），
-             * 不是局部的 `skipped`（只有「不可撤销」的那批）。
+            /* 一条可撤销的都没有 —— 分两种情况，处理方式**不同**：
              *
-             * 实测（`partial_apply.test.mjs` P4）：用 `skipped` 会漏掉
-             * 「宏自己失败」的那条，下游只看到 `irreversible` ——
-             * 模型会以为「我写的都能成，只是不能撤销」，而实际有一条根本没成。
-             * 两种原因的修法完全不同（一个换参数、一个换策略）。 */
-            return reject("NO_REVERSIBLE_CALL", {
-                layer: "plan", stage: "partial",
-                expected: "至少一条产物可撤销的调用",
-                observed: `${res.calls.length} 个调用里 0 条可撤销`
-                    + `（${skippedAll.map(s => s.macro + ":" + s.reason).join(", ")}）`,
-                evidence: { skipped: skippedAll },
-                hint: "这些调用只能放机器/垃圾桶，没有一条能靠 remove_run 撤销。"
-                    + "换一条只涉及带子的修法（connect / extend_line / replace_run 的 belt 模式）。",
-            });
+             * (a) **全部调用都成功**，只是产物都不可撤销（典型：单条 `insert_machine`）
+             *     ⇒ **退回「全有或全无」**：提交全部，`partial:false`。
+             *
+             *     理由：这个计划是**完整**的 —— 模型就是想加一台机器，而那台机器
+             *     确实能加上。「不可撤销」并不使这个计划变错，只意味着
+             *     *如果后续出问题* 不能靠 remove_run 撤回。
+             *
+             *     ⚠️ 如果这里直接拒，模型就**永远无法加机器** —— 那比
+             *     「加了撤不回来」严重得多。而 `insert_machine` 是产能修复的主力宏。
+             *
+             * (b) **有调用失败，剩下的都不可撤销**
+             *     ⇒ 拒绝（`NO_REVERSIBLE_CALL`）。因为提交一个「不完整且不可撤销」
+             *     的子集，既没达成计划、又撤不回来 —— 那是最糟的组合。
+             *
+             * 这个区分是 A/B 实测逼出来的（`.tmpverify/live-multiround/ab-partial.mjs`）：
+             * 真机 level 5 的 round 1 是单条 `insert_machine`，全部成功但我上一版
+             * 因为它不可撤销就拒了 —— 而那正是模型唯一能做的修法。 */
+            const anyFailed = macroFailures.length > 0;
+            if (!anyFailed) {
+                /* (a) 全部成功：完整提交，不算 partial。
+                   `executed` 原样保留（上面没动过它）。 */
+            } else {
+                /* (b) 有失败：拒绝。
+                 *
+                 * ⚠️ `evidence.skipped` 必须**同时**含两类：
+                 *   · `macro_failed`（宏自己失败的）
+                 *   · `irreversible`（宏成功但产物不可撤销的，在 `skippedLocal` 里）
+                 *
+                 * 上一版只用了 `skippedAll`，而它那时还没装 `skippedLocal`
+                 * （那批只在 `reversible.length > 0` 的分支才 push）——
+                 * 于是诊断里只有 `macro_failed`，模型不知道那些成功的也不能用。
+                 * 实测被 `partial_apply.test.mjs` P4 抓到。 */
+                const allSkipped = [...skippedAll, ...skippedLocal];
+                return reject("NO_REVERSIBLE_CALL", {
+                    layer: "plan", stage: "partial",
+                    expected: "至少一条产物可撤销的调用",
+                    observed: `${res.calls.length} 个调用里 0 条可撤销`
+                        + `（${allSkipped.map(s => s.macro + ":" + s.reason).join(", ")}）`,
+                    evidence: { skipped: allSkipped },
+                    hint: "这些调用只能放机器/垃圾桶，没有一条能靠 remove_run 撤销。"
+                        + "换一条只涉及带子的修法（connect / extend_line / replace_run 的 belt 模式）。",
+                });
+            }
         }
     }
 
@@ -2093,8 +2141,13 @@ export async function runLoop(opts = {}) {
                  * 再加一个会让调用方多记一个名字。而 `budget` 本来就是「这次 run 的
                  * 行为参数」的容器（它已经含 LLM_CALLS_MAX / ROUNDS_MAX 等）。
                  *
-                 * **默认 `false`** —— 不传就是原来的全有或全无。
-                 * 这样现有 347 条测试与真机行为完全不变。 */
+                 * **默认 `true`（2026-11-02 起）** —— `BUDGET.PARTIAL_APPLY: true`。
+                 * 理由与风险见 `constants.mjs` 里那段的完整说明。
+                 * 想关掉：`budget: { PARTIAL_APPLY: false }`。
+                 *
+                 * ⚠️ 这条注释上一版写的是「默认 false，现有测试与真机行为完全不变」——
+                 * 那是在还没决定打开时写的。现在打开了，所以真机行为**确实变了**：
+                 * 部分执行会提交、判据会判 `PARTIAL_APPLY`。 */
                 const partialApply = budget.PARTIAL_APPLY === true;
                 const p = buildTxPlan(parsed.plan, ob.obs, ob.items, st.handles, { partial: partialApply });
                 if (!p.ok) {

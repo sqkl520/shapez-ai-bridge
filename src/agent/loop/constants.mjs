@@ -169,6 +169,39 @@ export const BUDGET = Object.freeze({
     TICKS_MAX: 24000,        // ⚠️ 见上方说明：≈400s@60tick/s，且需分片 ≤20000
     WALL_MS_MAX: 15 * 60_000,
     SAME_FINGERPRINT_MAX: 2, // v2 §4：同 fp 第 2 次必须换动作；第 3 次 halt
+    /* ★ 2026-11-02：部分执行，**默认开** ★
+     *
+     * `buildTxPlan(..., {partial:true})` 会跳过失败的/不可撤销的调用，
+     * 只提交「成功且产物可撤销」的那个子集。
+     *
+     * ## 为什么开
+     *
+     * 全有或全无的实测代价（`FIVE-ROUNDS-FINAL.md`，五轮 148 条）：
+     *   `calls≥4` 时执行率 **0/82**。一条宏失败，整轮 0 op。
+     *
+     * 方案 E 的实测（`.tmpverify/redteam-partial/e2e.mjs`，178 条）：
+     *   提交 1 (0.6%) → 31 (17.4%)，不可逆 place 1 → 1（没涨）。
+     *
+     * ## 为什么是「可撤销」而不是「全部成功子集」
+     *
+     * 红队 `REDTEAM-PARTIAL-APPLY.md` 用实测否掉了后者：
+     * 88 次不可逆写入（大头是 `trash_unused` 把 `DEAD_END` 出口封死），
+     * 而只有 45% 是真目标动作。方案 E 的目标动作密度是 **100%**（54/54）。
+     *
+     * ## 判据层已经接上
+     *
+     * `strictVerdict` 的 `PARTIAL_APPLY` 会让 `achieved` 变 false ——
+     * 真机验证过（`PARTIAL-LIVE-VERIFIED.md`）：
+     * 部分执行落盘了（42→45 实体），但 `achieved: false`，假绿被挡住。
+     *
+     * ## 「永远 partial」的风险已排除
+     *
+     * 真机多轮（`LIVE-MULTIROUND-RESULT.md`）：第 1 轮就是 `partial=false`。
+     * 而且 `NO_REVERSIBLE_CALL` 被拒之后，模型**换了修法**
+     *（`replace_run` → `connect`）。
+     *
+     * 想关掉就传 `budget: { PARTIAL_APPLY: false }`。 */
+    PARTIAL_APPLY: true,
     LLM_IN_CHARS_MAX: 12000,
     LLM_OUT_CHARS_MAX: 4000,
     PROMPT_STATE_BELTS_MAX: 12,

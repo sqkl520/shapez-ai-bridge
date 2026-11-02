@@ -223,3 +223,88 @@ test("P10 对照：partial 为 false / 缺省时，同一份全绿 report 仍然
     assert.equal(strictVerdict(mk({ partial: false, skipped: [{ macro: "x", reason: "y" }] }), opts).ok, true,
         "partial:false 时 skipped 不该影响判据");
 });
+
+/* ═══════════ 4. 默认值：runLoop 里 partial 是开的 ═══════════
+ *
+ * 2026-11-02 起 `BUDGET.PARTIAL_APPLY` 默认 `true`。
+ * 这条测试钉住「默认确实开着」——否则改常量时没人会注意到行为变了。
+ */
+test("P11 `BUDGET.PARTIAL_APPLY` 默认是 true", async () => {
+    const { BUDGET } = await import("./constants.mjs");
+    assert.equal(BUDGET.PARTIAL_APPLY, true,
+        "默认应当开 —— 见 constants.mjs 里那段完整理由");
+});
+
+test("P12 `budget: {PARTIAL_APPLY:false}` 能关掉（runLoop 真的读了它）", async () => {
+    const { runLoop } = await import("../loop.mjs");
+    const { default: FakeGame } = await import("../fake_game.mjs");
+    const os = await import("node:os");
+
+    const mk = async (budget) => {
+        const g = FakeGame.fromFiles(
+            path.join(REPO, "test/fixtures/saves/L4-obs.json"),
+            path.join(REPO, "test/fixtures/saves/L5-items.json"),
+            { goal: "RuRu----" },
+        );
+        /* 一个会部分执行的计划：M1→C1 失败，B83→H1 成功且可撤销 */
+        const plan = { say: "x", calls: [
+            { macro: "connect", args: { from: { $ref: "M1" }, to: { $ref: "C1", port: "primary" } }, why: "fails" },
+            { macro: "connect", args: { from: { $ref: "B83" }, to: { $ref: "H1" } }, why: "ok" },
+        ] };
+        const client = { async propose() { return { text: JSON.stringify(plan), usage: null, raw: null }; } };
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "p12-"));
+        try {
+            const res = await runLoop({
+                reader: g.reader(), goal: "RuRu----", llmClient: client, mode: "mock",
+                runDir: dir, game: g, budget: { ROUNDS_MAX: 1, LLM_CALLS_MAX: 1, ...budget },
+            });
+            const rows = fs.readFileSync(path.join(dir, res.run_id, "transcript.jsonl"), "utf8")
+                .trim().split(String.fromCharCode(10)).map(JSON.parse);
+            const planRow = rows.find(r => r.kind === "plan");
+            return { res, planRow };
+        } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { } }
+    };
+
+    const on = await mk({});
+    assert.ok(on.planRow, "默认应当有 plan 行");
+    if (on.planRow.data.ok) {
+        assert.equal(on.planRow.data.partial, true,
+            "默认（PARTIAL_APPLY 未传）应当是 partial —— 这次计划有一条被跳过");
+    }
+
+    const off = await mk({ PARTIAL_APPLY: false });
+    assert.ok(off.planRow, "关掉时也应当有 plan 行");
+    /* 关掉 ⇒ 宏失败立刻拒，plan 行 ok:false */
+    assert.equal(off.planRow.data.ok, false,
+        "PARTIAL_APPLY:false 时应当整单被拒（全有或全无）");
+});
+
+/* ═══════════ 5. ★ 全成功但都不可撤销 ⇒ 完整提交（不是拒绝，也不是 partial）═══════════
+ *
+ * 这条是**真机 A/B 逼出来的**（`.tmpverify/live-multiround/ab-partial.mjs`）：
+ * 真机 level 5 的 round 1 是单条 `insert_machine`，全部成功但产物是不可撤销的机器。
+ *
+ * 我上一版因为它不可撤销就拒了 —— 但那是模型**唯一能做的修法**。
+ * 如果这里拒，模型就永远无法加机器，而 `insert_machine` 是产能修复的主力宏。
+ *
+ * 正确语义：
+ *   (a) 全部成功 + 都不可撤销 ⇒ **完整提交，partial:false**（计划是完整的，只是撤不回来）
+ *   (b) 有失败 + 剩下的都不可撤销 ⇒ 拒绝（不完整且撤不回来 = 最糟组合）
+ */
+test("P13 ★ 全部成功但都不可撤销 ⇒ 完整提交，partial:false（不是拒绝）", () => {
+    const p = buildTxPlan(plan(OK_CUTTER), OBS, null, handles, { partial: true });
+    assert.equal(p.ok, true,
+        `单条 insert_machine 应当被提交（否则模型永远无法加机器），实际 ${p.diagnosis && p.diagnosis.code}`);
+    assert.equal(p.partial, false,
+        "全部成功 ⇒ partial 必须是 false（它是完整执行，只是产物撤不回来）");
+    assert.deepEqual(p.skipped, [], "skipped 应当是空的");
+    /* ops 里应当真的有那个 cutter —— 证明它没被静默跳过 */
+    assert.ok(p.txPlan.ops.some(o => o.op === "place" && o.building === "cutter"),
+        `提交的 ops 里要有 cutter，实际 ${JSON.stringify(p.txPlan.ops.map(o => o.op + ":" + (o.building || "")))}`);
+});
+
+test("P14 对照：有失败 + 剩下不可撤销 ⇒ 仍然拒绝（P4 的语义没被改坏）", () => {
+    const p = buildTxPlan(plan(FAIL_M1, OK_CUTTER), OBS, null, handles, { partial: true });
+    assert.equal(p.ok, false, "应当拒");
+    assert.equal(p.diagnosis.code, "NO_REVERSIBLE_CALL");
+});
