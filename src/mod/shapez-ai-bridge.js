@@ -530,6 +530,9 @@ class Mod extends shapez.Mod {
                 case "repair_save":
                     result = await this.repairSave(params || {});
                     break;
+                case "rebuild_saveindex":
+                    result = await this.rebuildSaveIndex(params || {});
+                    break;
                 case "debug_speed_registry":
                     result = this.debugSpeedRegistry();
                     break;
@@ -4836,6 +4839,172 @@ class Mod extends shapez.Mod {
         }
         this.log("savegame repaired:", id, backupName);
         return { ok: true, op: "repair_save", ...report, changed: true, backup: backupName };
+    }
+
+    /**
+     * 重建存档索引（`savegames.bin`）—— 让游戏重新「看见」磁盘上已有的存档。
+     *
+     * ## 为什么需要这个
+     *
+     * 实测（2026-11-01）：`savegames.bin` 被截断成 127 字节的空索引
+     * （`{"version":1002,"savegames":[]}`），而磁盘上 7 个 `savegame-*.bin` **全部完好**
+     * （离线解码：目标世界 lv4、用户存档 lv11 都能正常解开）。
+     *
+     * 于是：`list_saves` 返回空数组、`load_save` 报 `2002 no savegame`、
+     * `in_game` 永远是 false —— 真机闭环完全起不来。
+     *
+     * 根因链（`recon/upstream-full/src/js/savegame/savegame_manager.js`）：
+     *   · `getSavegamesMetaData()` 直接返回 `this.currentData.savegames`（:75-77）
+     *   · `initialize()` 读完立刻 `updateAfterSavegamesChanged()` **回写**（:226-235）
+     *   ⇒ 读到一次空，就把空写回去，`.backup` 也被覆盖成空。自我强化。
+     *
+     * ## 约束（这是玩家的数据）
+     *
+     *   · **只加不删**：磁盘上有什么写什么，不编造也不遗漏
+     *   · **写前备份**：`savegames.bin` → `savegames.bin.pre-rebuild-<ts>`
+     *   · **`dry_run` 默认开**：第一次调用只报告，不动手
+     *   · **只写 `savegames.bin` 这一个文件**：绝不碰 `savegame-*.bin`
+     *   · **用户存档只读**：元数据从文件名 + 离线解码得到
+     *
+     * ## 和 `repair_save` 的关系
+     *
+     * 那条修的是**单个存档文件**内部的速度字段；这条修的是**索引**。
+     * 两者都用同一套写入模式（`compressObject → JSON → computeCrc + salt → compressX64`），
+     * 因为那正是游戏自己的 `ReadWriteProxy.serializeObject` 做的三件事。
+     *
+     * params: { ids: string[], dry_run?: boolean }
+     *
+     * ⚠️ **`ids` 是必需的**，因为游戏的 `StorageInterface`（`platform/storage.js`）
+     * 只有 `readFileAsync` / `writeFileAsync` / `deleteFileAsync`，**没有列目录 API**。
+     * 所以 mod 无法自己发现「磁盘上有哪些存档」——必须由调用方给。
+     *
+     * 调用方从哪里拿 id？从文件名：`%APPDATA%/shapez.io/saves/savegame-<40hex>.bin`。
+     * `.tmpverify/saveindex/build.mjs` 就是这么扫的。
+     *
+     * 这个设计反而更安全：**索引里会出现哪些存档，由调用方显式决定**，
+     * mod 不会去猜、不会编造。
+     */
+    async rebuildSaveIndex(p) {
+        this.assertWritable("rebuild_saveindex");
+        const shapez = /** @type {any} */ (window).shapez;
+        const mgr = this.app.savegameMgr;
+
+        const ids = Array.isArray(p.ids) ? p.ids.filter(x => typeof x === "string" && /^[0-9a-f]{40}$/.test(x)) : [];
+        if (!ids.length) {
+            throw this.rpcError(2001, "invalid_action",
+                "rebuild_saveindex 需要 ids（40 位 hex 的 internal_id 数组）",
+                "游戏的 StorageInterface 没有列目录 API，mod 无法自己发现磁盘上的存档；"
+                + "从 %APPDATA%/shapez.io/saves/savegame-<id>.bin 的文件名取");
+        }
+
+        /* ── 1. 读当前索引（判断要不要重建） ── */
+        const before = (mgr.getSavegamesMetaData() || []).slice();
+        const beforeIds = before.map(m => m.internalId);
+
+        /* ── 2. 读每个存档的元数据 ──
+         *
+         * `level` / `version` 从存档内容解出来（`decompressX64` → `decompressObject`）。
+         * 读不出来的条目**跳过并报告**，不猜 —— 猜错的 level 会让主菜单显示错的存档。 */
+        const entries = [];
+        const skipped = [];
+        for (const id of ids) {
+            const filename = "savegame-" + id + ".bin";
+            let raw;
+            try {
+                raw = await this.app.storage.readFileAsync(filename);
+            } catch (e) {
+                skipped.push({ internal_id: id, reason: "read_failed: " + e });
+                continue;
+            }
+            if (raw === "file_not_found" || raw === null || raw === undefined) {
+                skipped.push({ internal_id: id, reason: "file_not_found" });
+                continue;
+            }
+            const text = typeof raw === "string" ? raw : String(raw);
+            try {
+                const decompressed = shapez.decompressX64(text.substr(1));
+                if (!decompressed) throw new Error("decompression failed");
+                const jsonString = decompressed.substr(40);          // 跳过 40 字符 checksum
+                const parsed = JSON.parse(jsonString);
+                const decoded = shapez.decompressObject(parsed);
+                const level = decoded && decoded.dump && decoded.dump.hubGoals
+                    ? decoded.dump.hubGoals.level : null;
+                entries.push({
+                    internalId: id,
+                    level: typeof level === "number" ? level : null,
+                    version: decoded && typeof decoded.version === "number" ? decoded.version : null,
+                    /* `lastUpdate` 用 `Date.now()` —— 游戏只按它排序，不显示具体时间。
+                       拿不到真实 mtime（storage 不给），用同一个值不改变功能。 */
+                    lastUpdate: Date.now(),
+                });
+            } catch (e) {
+                skipped.push({ internal_id: id, reason: "decode_failed: " + e });
+            }
+        }
+
+        /* ── 4. 组 payload 并按游戏的方式序列化 ── */
+        const payload = {
+            version: typeof mgr.getCurrentVersion === "function" ? mgr.getCurrentVersion() : 1002,
+            savegames: entries,
+        };
+        const recompressed = shapez.compressObject(payload);
+        const newJson = JSON.stringify(recompressed);
+        const newChecksum = shapez.computeCrc(newJson + this.savegameSalt());
+        const out = shapez.compressionPrefix + shapez.compressX64(newChecksum + newJson);
+
+        const report = {
+            op: "rebuild_saveindex",
+            index_before: { count: before.length, ids: beforeIds.map(x => String(x).slice(0, 8)) },
+            requested: ids.length,
+            rebuilt: entries.length,
+            skipped,
+            levels: entries.map(e => ({ id: e.internalId.slice(0, 8), level: e.level })),
+            bytes_after: out.length,
+        };
+
+        /* ── 5. 什么都不改的情况也要如实报告 ──
+         * 索引已经和磁盘一致 ⇒ 不写（避免无谓地改玩家文件）。 */
+        const sameSet = before.length === entries.length
+            && beforeIds.slice().sort().join(",") === entries.map(e => e.internalId).sort().join(",");
+        if (sameSet) {
+            return { ok: true, ...report, dry_run: p.dry_run !== false, changed: false,
+                reason: "索引已经和磁盘一致，不需要重建" };
+        }
+
+        /* `dry_run` **默认开**（`!== false`）—— 这是玩家的文件，
+           必须显式传 `dry_run: false` 才真的写。 */
+        if (p.dry_run !== false) {
+            return { ok: true, ...report, dry_run: true, changed: false,
+                hint: "确认无误后传 dry_run:false 才会真的写" };
+        }
+
+        /* ── 6. 备份然后写 ── */
+        const idxName = "savegames.bin";
+        let oldText = null;
+        try { oldText = await this.app.storage.readFileAsync(idxName); } catch (e) { oldText = null; }
+
+        let backupName = null;
+        if (oldText !== null && oldText !== undefined) {
+            backupName = idxName + ".pre-rebuild-" + new Date().toISOString().replace(/[:.]/g, "-");
+            try {
+                await this.app.storage.writeFileAsync(backupName, oldText);
+            } catch (e) {
+                throw this.rpcError(2003, "mod_error", "failed to write backup before rebuild: " + e);
+            }
+        }
+
+        try {
+            await this.app.storage.writeFileAsync(idxName, out);
+        } catch (e) {
+            throw this.rpcError(2003, "mod_error", "failed to write rebuilt saveindex: " + e);
+        }
+
+        this.log("saveindex rebuilt:", entries.length, "entries from", ids.length, "requested");
+        return {
+            ok: true, ...report,
+            dry_run: false, changed: true, backup: backupName,
+            hint: "播完（或重开游戏）之后 list_saves 应当能列出这些存档",
+        };
     }
 
     /** 存档校验用的 salt（config.info.file，与 read_write_proxy 同源）。 */
