@@ -1473,7 +1473,32 @@ class Mod extends shapez.Mod {
         out.goal = this.goalSnapshot(root);
 
         if (req.include_resources) {
-            out.resources = this.resourceSnapshot(root, effectiveRegion, req.max_resources);
+            /* ★ 资源扫描范围**不能**跟实体 bbox 走 ★
+             *
+             * 实测（2026-11-03，level 5 / 目标 `Cu----Cu`）：
+             *   · 实体 bbox 只有 hub 附近一小片，落在里面的资源是 18 格**钌**；
+             *   · 而这一关要的是**铜**，铜矿在 53 格外（bbox [-40,-40,23,10]）。
+             *
+             * 用实体的 `effectiveRegion` 去扫矿，结果是「模型只看见脚边那 18 格钌」——
+             * 于是它判断「这条钌线该修通」，三轮都在这条线上打转，
+             * 而目标要的铜矿它从头到尾不知道在哪。
+             *
+             * 现在改成：**实体 bbox ∪ 一个够大的找矿区**。取两者的并集，
+             * 既保留「现场有哪些矿」（诊断原料线要用），又保证「远处有没有目标矿」
+             * 这个信息不会因为 bbox 恰好没框到而消失。
+             *
+             * 半径 64 的依据：`map.getChunk()` 按 chunk(16) 对齐，±64 = 4×4 个 chunk，
+             * 覆盖到实测铜矿 bbox 的两端（x -40..23, y -40..10）还留有余量；
+             * 再大只是白扫（`maxResources` 上限本来就会截断）。
+             */
+            const R = 64;
+            const base = Array.isArray(effectiveRegion) ? effectiveRegion : [-R, -R, R, R];
+            const resRegion = [
+                Math.min(base[0], -R), Math.min(base[1], -R),
+                Math.max(base[2], R), Math.max(base[3], R),
+            ];
+            out.resources = this.resourceSnapshot(root, resRegion, req.max_resources);
+            out.resources_region = resRegion;
         }
 
         return out;

@@ -635,7 +635,7 @@ function referencedHandles(diagnoses) {
  * 机器表：诊断点名的机器**排前面**（否则 20 台机器的上限会在真实存档上把真正的
  * subject 挤掉 —— L5 有 21 台机器，截到 20 台时排最后的那台正好可能是 cutter）。
  */
-function renderMachines(tbl, diagnoses) {
+function renderMachines(tbl, diagnoses, obs = null, goalShape = null) {
     const all = [...tbl.byHandle.values()].filter(e => !isBeltType(e.type) && e.type !== "hub");
     const ref = referencedHandles(diagnoses);
     const rank = h => { const i = ref.indexOf(h); return i < 0 ? ref.length : i; };
@@ -669,7 +669,100 @@ function renderMachines(tbl, diagnoses) {
             + (e.desc ? renderDesc(e.handle, e.type, e.desc) : ""));
     }
     if (all.length > shown.length) lines.push(`(+${all.length - shown.length} more machines not shown)`);
+
+    /* ★ 目标原料在地图上的位置 ★
+     *
+     * 实测（2026-11-03 真机，level 5 / 目标 `Cu----Cu`）：
+     *   · 世界里有 4 台矿机，脚下全是**钌**（`resources` 里 18 格 `RuRuRuRu`）；
+     *   · 目标要**铜**，铜矿在 53 格外（`[20,5]` 一带）；
+     *   · 而 prompt **从头到尾没有一个字**说铜在哪。
+     *
+     * 于是模型三轮都在修那条钌线的堵塞 —— 它的推理每次都对（"the rotater's
+     * output never lands at the hub"），但**物理上不可能产出铜**。
+     *
+     * 这一段只陈述一个事实：目标颜色有没有矿、在哪、离 hub 多远。
+     * 不猜原因、不给修法 —— 那仍然是模型和诊断的事。
+     *
+     * 只在**有资源数据**时渲染（`obs.resources` 不给就整段消失，
+     * 与 CAPACITY/RECIPE 同一条纪律：拿不到数据就不说，绝不猜）。
+     */
+    const resLine = renderGoalResource(obs, goalShape);
+    if (resLine) lines.push(resLine);
     return lines.join("\n");
+}
+
+/**
+ * 「目标颜色有没有矿、在哪」—— 一行。
+ *
+ * @param {object} tbl   normalizeHandles 的产物（要 `obs`）
+ * @param {string} goalShape 目标形状串（如 `Cu----Cu`）
+ * @returns {string|null} 没有资源数据 / 目标不是纯色形状 ⇒ null（整段不出现）
+ */
+function renderGoalResource(obs, goalShape) {
+    const list = obs && Array.isArray(obs.resources) ? obs.resources : null;
+    if (!list || !list.length) return null;
+
+    /* 目标颜色 = 形状串里第一个两字母色号（`Cu`/`Ru`/`Rb`…）。
+     * 用「首字母大写 + 小写」这个形状本身，而不是抄一张色表 ——
+     * 色表会随游戏版本变，而形状串的写法是稳定的。 */
+    const m = /^([A-Z][a-z])/.exec(String(goalShape || ""));
+    if (!m) return null;
+    const color = m[1];
+
+    /* 按矿种聚合（resources 是 [x,y,kind] 三元组） */
+    const byKind = new Map();
+    for (const r of list) {
+        if (!Array.isArray(r) || r.length < 3) continue;
+        const [x, y, kind] = r;
+        if (!Number.isInteger(x) || !Number.isInteger(y)) continue;
+        const e = byKind.get(kind) || { count: 0, minX: x, maxX: x, minY: y, maxY: y, nearest: null, nearestD: Infinity };
+        e.count++;
+        if (x < e.minX) e.minX = x;
+        if (x > e.maxX) e.maxX = x;
+        if (y < e.minY) e.minY = y;
+        if (y > e.maxY) e.maxY = y;
+        /* 到原点的曼哈顿距离当「远近」的代理：hub 就在原点附近，
+         * 用欧氏距离在这里没有额外信息量，反而多一次 sqrt。 */
+        const d = Math.abs(x) + Math.abs(y);
+        if (d < e.nearestD) { e.nearestD = d; e.nearest = [x, y]; }
+        byKind.set(kind, e);
+    }
+
+    /* 目标矿：`Cu` → kind 形如 `CuCuCuCu` */
+    const targetKinds = [...byKind.keys()].filter(k => String(k).startsWith(color));
+    const present = [...byKind.keys()];
+
+    if (targetKinds.length) {
+        /* ⚠️ **不渲染坐标**：prompt 有一条硬契约「坐标 0 命中」
+         *    （`prompt.test.mjs` 的「同一份渲染里坐标正则 0 命中」）。
+         *    第一版写了 `(nearest 20,5; bbox …)`，直接把那条测试打红。
+         *    模型本来也不许用坐标下指令（只能用句柄），给了坐标只会诱发幻觉。
+         *    给「有没有 / 多少格 / 远近档位」就够它判断该不该往那个方向找。 */
+        const parts = targetKinds.map(k => {
+            const e = byKind.get(k);
+            return `${k}×${e.count} (${withinBand(e.nearestD)})`;
+        });
+        return `⇒ target ore ${color} IS on the map: ${parts.join("; ")}`;
+    }
+
+    /* 没有目标矿：把地图上实际有的列出来 —— 这就是「为什么你在造别的东西」的答案 */
+    const have = present.slice(0, 4).join(", ");
+    return `⇒ target ore ${color} is NOT in the scanned area (resources found: ${have || "none"})`
+        + ` — no miner can ever produce ${color} here; check for a ${color} patch or a different route`;
+}
+
+/**
+ * 把「到原点的曼哈顿距离」压成档位。
+ *
+ * 为什么不用数字：prompt 不许出现坐标（见上面 renderGoalResource 的注释），
+ * 而「22 格」这种数字与坐标在正则上无法区分，且对模型没有额外决策价值 ——
+ * 它只需要知道「就在旁边 / 要走一段 / 很远」。
+ */
+function withinBand(dist) {
+    if (!Number.isFinite(dist)) return "far";
+    if (dist <= 8) return "near hub";
+    if (dist <= 24) return "a short run from hub";
+    return "far from hub";
 }
 
 /**
@@ -1267,7 +1360,7 @@ function renderBelts(tbl, selection, shownCount, omittedByBudget) {
  *   `observeProduction`：window_seconds / produced_total / produced_per_sec /
  *   delivered_* / stored_delta / *_slices），或 null（没读到）。
  */
-function renderProduction(production) {
+function renderProduction(production, goalShape = null) {
     const p = production;
     if (!p || typeof p !== "object" || Array.isArray(p)) {
         return "## PRODUCTION\nunavailable (production not read) — decide from the diagnosis, do not assume anything is running";
@@ -1288,6 +1381,36 @@ function renderProduction(production) {
         lines.push(json === "{}"
             ? "no data (production returned an empty object) — throughput is UNKNOWN, not zero; check the diagnosis"
             : json);
+    }
+
+    /* ★ 把「产的不是目标」这句直接说出来 ★
+     *
+     * 真机实测（2026-11-03，level 5 / 目标 `Cu----Cu`）：
+     *
+     *   ## GOAL      shape: Cu----Cu
+     *   ## PRODUCTION  produced RuRuRuRu: 105 / rate RuRuRuRu: 1.767
+     *
+     * 两段挨着，但**没有一句话说它们矛盾**。模型得自己把两个形状串做颜色+形状
+     * 对比才能发现「整条线在造别的颜色」。它没发现 —— 三轮都在修钌传送带的堵塞，
+     * 而一条铜都没产（post-run `production` 里 `CuCuCuCu`/`----CuCu` 全是 0）。
+     *
+     * 这一步只做**陈述**，不做推理：目标形状不是当前产物的成员时，
+     * 直接把两边都摆出来并点名。不猜原因、不给修法 —— 那是模型和诊断的事。
+     *
+     * 只在**确有产出**时才说（totals 非空）。没产出时 「produced 空」本身
+     * 已经说明问题，再补一句「产的不是目标」只是噪音。
+     */
+    const goal = typeof goalShape === "string" ? goalShape.trim() : "";
+    if (goal && totals.length) {
+        const producedNames = totals.map(([k]) => String(k));
+        if (!producedNames.includes(goal)) {
+            lines.push(
+                `⇒ WARNING: nothing above IS the goal shape (${sanitize(goal).text}). `
+                + `The line is making ${producedNames.slice(0, 3).map(s => sanitize(s).text).join(", ")}, `
+                + `which is a DIFFERENT shape — fixing a jam on it will not produce the goal. `
+                + `Check the RECIPE above and whether a miner is on the right color.`
+            );
+        }
     }
     return lines.join("\n");
 }
@@ -1796,8 +1919,8 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         ? (r && typeof r.reason === "string" && r.reason ? r.reason : (r && r.ok === true ? "empty recipe" : "unavailable"))
         : null;
     const s3Hub = renderHub(tbl);
-    const s3Machines = renderMachines(tbl, diagList);
-    const s3Production = renderProduction(production);
+    const s3Machines = renderMachines(tbl, diagList, obs, goalShape);
+    const s3Production = renderProduction(production, goalShape);
     const s3Budget = renderBudget(budget);
     const s4 = renderDiagnoses(diagList);
     const s5 = renderLastRound(lastRound);
