@@ -211,3 +211,44 @@ test("H10 failures 超过 2 条时折叠（预算纪律）", () => {
     assert.ok(p.blocks.S5.includes("+2 more"),
         `4 条时应显示 2 条 + 折叠 2 条，实际：${p.blocks.S5}`);
 });
+
+/* ═══════════ 7. `unverified` vs 真失败 ═══════════
+ *
+ * 红队（`REDTEAM-PARTIAL-APPLY.md` §Q4.1）指出我上一版把同一个 hint
+ * 复制给了每一个宏 —— 那会让模型以为 4 个调用都撞了同一个错。
+ *
+ * 正确区分：
+ *   · 真正失败的那个 → 带 code + hint（**必须换**）
+ *   · 其余           → `unverified`（**根本没被检验**，可能本来是对的）
+ */
+test("H11 `unverified` 渲染成 not reached，且不带 hint", () => {
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"], budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: {
+            round: 1, calls: ["connect", "trash_unused"], decision: "plan_rejected",
+            failures: [
+                { macro: "connect", code: "MACRO_REFUSED", hint: "确实要抢过来就传 opts.rebind=true" },
+                { macro: "trash_unused", code: "unverified", hint: null },
+            ],
+        },
+    });
+    const s5 = p.blocks.S5;
+    assert.match(s5, /not reached/, `unverified 要渲染成 not reached，实际：${s5}`);
+    /* 关键：unverified 那条**不许**带 hint（带了就等于说「它也错了」） */
+    const line = s5.split(String.fromCharCode(10)).find(l => l.includes("trash_unused"));
+    assert.ok(line, "要有一行 trash_unused");
+    assert.doesNotMatch(line, /rebind/, `unverified 不能带别的宏的 hint，实际：${line}`);
+});
+
+test("H12 真失败的那条仍然带 hint（对照，防止改坏）", () => {
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"], budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: {
+            round: 1, calls: ["connect"], decision: "plan_rejected",
+            failures: [{ macro: "connect", code: "MACRO_REFUSED", hint: "确实要抢过来就传 opts.rebind=true" }],
+        },
+    });
+    assert.match(p.blocks.S5, /rebind/, "真失败的 hint 必须还在");
+});
