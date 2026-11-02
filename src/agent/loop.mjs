@@ -1502,7 +1502,20 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
 
     return {
         ok: true,
-        txPlan: { ...txPlan, ops: withProv.ops },
+        /* ⚠️ `partial` / `skipped` 必须**同时**放在 `txPlan` 里：
+         *
+         * `verifyRound({txPlan: planned.txPlan, ...})` 传的是这一层
+         * （`loop.mjs:2248`），而 `verifyRound` 再从 `txPlan.partial` 读出来
+         * 传给 `strictVerdict`（`verify.mjs` 的 ⑤ 段）。
+         *
+         * 只放在外层 `planned.partial` 的话，判据层永远看不到 ⇒ 部分执行被算成成功。
+         * 这正是红队警告的那个假绿。 */
+        txPlan: {
+            ...txPlan,
+            ops: withProv.ops,
+            partial: partialMode && skippedAll.length > 0,
+            skipped: skippedAll,
+        },
         calls: executed,
         resolved: res,
         provenance: { tagged: withProv.tagged, untagged: withProv.untagged.length },
@@ -2038,7 +2051,17 @@ export async function runLoop(opts = {}) {
                 }
 
                 /* ④ plan（零写入） */
-                const p = buildTxPlan(parsed.plan, ob.obs, ob.items, st.handles);
+                /* ★ partial 由 `budget.PARTIAL_APPLY` 控制（2026-11-02）★
+                 *
+                 * 为什么走 budget 而不是加一个新参数：
+                 * `runLoop` 的 opts 已经有一堆开关（dryRun / apply / recipeSpawn…），
+                 * 再加一个会让调用方多记一个名字。而 `budget` 本来就是「这次 run 的
+                 * 行为参数」的容器（它已经含 LLM_CALLS_MAX / ROUNDS_MAX 等）。
+                 *
+                 * **默认 `false`** —— 不传就是原来的全有或全无。
+                 * 这样现有 347 条测试与真机行为完全不变。 */
+                const partialApply = budget.PARTIAL_APPLY === true;
+                const p = buildTxPlan(parsed.plan, ob.obs, ob.items, st.handles, { partial: partialApply });
                 if (!p.ok) {
                     tr.write("plan", roundNo, {
                         ok: false, rejected: p.diagnosis, stage: p.stage,
@@ -2100,6 +2123,15 @@ export async function runLoop(opts = {}) {
                 ok: true, rejected: null, stage: "ok",
                 calls: planned.calls.map(c => c.macro),
                 provenance: planned.provenance,
+                /* ★ partial 明细（2026-11-02）★
+                 *
+                 * `partial:true` 意味着**这个计划没有被完整执行**。
+                 * 事后读 transcript 的人必须能看到「哪些被跳过了」，
+                 * 否则「提交了 3 个 op」和「原计划有 5 个调用」这两件事分不开。 */
+                partial: planned.partial === true,
+                skipped: planned.partial === true
+                    ? (planned.skipped || []).map(s => ({ macro: s.macro, reason: s.reason }))
+                    : [],
                 tx_plan: {
                     ops: planned.txPlan.ops.length,
                     destroys: planned.txPlan.destroys,
