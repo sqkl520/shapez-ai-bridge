@@ -3448,12 +3448,39 @@ class Mod extends shapez.Mod {
 
         this._txDepth = 1;
         try {
-            for (let i = 0; i < ops.length; ++i) {
-                const op = ops[i];
-                try {
-                    const res = await this.performAction(op);
-                    applied++;
-                    appliedResults.push({ index: i, op: op.op, ok: true, result: res });
+            /* ★ 整个 tx 必须跑在 immutable 语义下 ★
+             *
+             * 上游 `systems/belt.js:165-190`：放置/删除带子之后，belt 系统会
+             * `computeOptimalDirectionAndRotationVariantAtTile()` **按邻居重算**
+             * 每一格的 `rotation` / `rotationVariant`，除非
+             *
+             *     root.immutableOperationRunning === true
+             *
+             * 也就是说：`tx` 里传了精确的 `rotationVariant`，落盘后会被游戏
+             * **按邻居覆盖掉**。实测（2026-11-03）：
+             *
+             *   宏算出 r=0 rv=0（entry=bottom，正确）
+             *   planToTxOps 生成 {"op":"place","r":0,"rotationVariant":0}（正确）
+             *   落盘后读回 **r=180** —— 游戏按邻居重算覆盖了
+             *
+             * 而这个事实早就写在 `AI-CONTROL-STATUS.md:36` 和
+             * `CONTRACT-MACROS.md:511` 里（"place{r:90} 得到 code=1 直带"）。
+             *
+             * `runGuarded` 本来就在本文件里（它同时管 bulk 与 immutable、
+             * 且**不嵌套**——上游 logic.js:190 对重入是 assert 失败）。
+             * `paste_blueprint` 早就走了这条路（:4266），只有 `tx` 漏了。
+             *
+             * 为什么之前没暴露：绝大多数 tx 是「放带子/删带子」，而游戏
+             * 按邻居重算出来的方向**通常**和我们要的一致（都是顺着已有链路）。
+             * 只有在「刻意把某格扭成非自然方向」时才会输 —— 也就是修
+             * BELT_HANDOFF_REJECTED 这种场景。 */
+            await this.runGuarded(root, async () => {
+                for (let i = 0; i < ops.length; ++i) {
+                    const op = ops[i];
+                    try {
+                        const res = await this.performAction(op);
+                        applied++;
+                        appliedResults.push({ index: i, op: op.op, ok: true, result: res });
                 } catch (e) {
                     const code = e && e.__rpcError ? e.__rpcError.code : 2003;
                     failures.push({
@@ -3475,6 +3502,7 @@ class Mod extends shapez.Mod {
                     break;
                 }
             }
+            });
         } finally {
             this._txDepth = 0;
         }
