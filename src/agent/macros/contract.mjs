@@ -925,6 +925,34 @@ export function validateExtendLineArgs(args) {
     for (const k of Object.keys(opts)) {
         if (!["dry_run"].includes(k)) return fail("unknown_field", `opts.${k}`, `${A}.opts 不认识 '${k}'`);
     }
+    /* opts.facing：显式指定这条带子的方向。
+     *
+     * 真机实测（2026-11-03）：4 处 BELT_HANDOFF_REJECTED，模型每次都用 replace_run
+     * 去修方向错的那条带子，每次都失败 —— 因为只有一侧邻居时另一侧是三选一，
+     * 宏不猜。而这就是「修一条方向错的带子」唯一的表达方式。
+     *
+     * 形态："top" 或 {entry?, exit?}。这是 choice（选一个面），不是坐标。
+     * 只在 belt 模式生效（机器模式的朝向由 footprint 反解，不走这条）。 */
+    if (opts.facing !== undefined) {
+        const F = ["top", "right", "bottom", "left"];
+        const f = opts.facing;
+        if (typeof f === "string") {
+            if (!F.includes(f)) return fail("bad_type", "opts.facing", `opts.facing 必须是 ${F.join("/")}，实得 ${JSON.stringify(f)}`);
+        } else if (isObj(f)) {
+            for (const kk of ["entry", "exit"]) {
+                if (f[kk] !== undefined && !F.includes(f[kk])) {
+                    return fail("bad_type", `opts.facing.${kk}`, `opts.facing.${kk} 必须是 ${F.join("/")}`);
+                }
+            }
+            const extra = Object.keys(f).filter(kk => !["entry", "exit"].includes(kk));
+            if (extra.length) return fail("unknown_field", `opts.facing.${extra[0]}`, `opts.facing 只认 entry / exit`);
+            if (f.entry === undefined && f.exit === undefined) {
+                return fail("missing_field", "opts.facing", "opts.facing 是对象时必须给 entry 或 exit");
+            }
+        } else {
+            return fail("bad_type", "opts.facing", "opts.facing 必须是字符串或 {entry?, exit?}");
+        }
+    }
 
     return ok({
         from: from.value,
@@ -1056,10 +1084,19 @@ export function validateReplaceRunArgs(args) {
     const opts = args.opts === undefined ? {} : args.opts;
     if (!isObj(opts)) return fail("bad_type", "opts", `${A}.opts 必须是对象`);
     for (const k of Object.keys(opts)) {
-        if (!["dry_run"].includes(k)) return fail("unknown_field", `opts.${k}`, `${A}.opts 不认识 '${k}'`);
+        if (!["dry_run", "facing"].includes(k)) return fail("unknown_field", `opts.${k}`, `${A}.opts 不认识 '${k}'`);
     }
     if (opts.dry_run !== undefined && typeof opts.dry_run !== "boolean") {
         return fail("bad_type", "opts.dry_run", "opts.dry_run 必须是布尔");
+    }
+    /* `opts.facing` 只对 belt 模式有意义 —— 机器模式的朝向由 footprint 反解
+     * （`place.mjs` 的 `facing` 参数），两条路径的语义不同，混用会让调用方
+     * 以为「给了朝向就会照做」。放在这里而不是 opts 白名单那段：`beltOnly`
+     * 要等 specs 归一之后才知道。 */
+    if (opts.facing !== undefined && !beltOnly) {
+        return fail("bad_type", "opts.facing",
+            "opts.facing 只在 building 为 belt 时有意义",
+            "机器模式的朝向由 footprint 反解，用 insert_machine 的 facing 参数。");
     }
     return ok({
         region: [args.region[0], args.region[1], args.region[2], args.region[3]],
@@ -1070,6 +1107,7 @@ export function validateReplaceRunArgs(args) {
         mode: beltOnly ? "belt" : "machines",
         opts: {
             dry_run: opts.dry_run === true,
+            ...(opts.facing !== undefined ? { facing: opts.facing } : {}),
         },
     });
 }
@@ -1384,6 +1422,7 @@ export const MACRO_SPECS = Object.freeze({
         params: [
             { name: "region", type: "BBox", required: true, coordClass: "endpoint", description: "闭区间包围盒 [x0,y0,x1,y1]，取 obs 里**已被选中那几条带子**的 min/max 坐标。它不是算出来的落点（见 COORD_CLASSES 的 v2 裁定）。校验按模式不同：belt 模式要求每格都是带子；机器模式允许空格、不许机器。" },
             { name: "building", type: "string|{kind,variant}|Array", required: true, description: "目标建筑。\"belt\" = 原位换带（修 rv）；机器名或 [{kind,variant,port?,confirm_waste?}] = 展开 footprint 换机器；数组里**恰好 1 台主动机器** + 若干 trash，trash **必须点名 port**。" },
+            { name: "opts.facing", type: "Face|{entry?,exit?}", required: false, description: "**显式指定带子方向**（只 belt 模式）：字符串=出口朝哪；或 {entry,exit} 表达转弯。不给则按邻居反解，反解不出会拒。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只报告不执行。（本宏零写操作：返回值的 dry_run 恒 true，这个开关只进 requested_dry_run。）" },
         ],
         preconditions: [

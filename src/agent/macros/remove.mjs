@@ -1175,6 +1175,8 @@ export function replaceRun(a, b) {
 
     /* ══════════ 路径 A：building:"belt"（契约原义：按邻居反解 rv） ══════════ */
     if (specs.length === 1 && specs[0].kind === "belt") {
+        /* 显式方向（可选）：见下面 opts.facing 那段注释 */
+        const bopts = (probe && probe.value && probe.value.opts) || {};
         const replaced = [];
         const mismatched = [];
         for (const b of regionBelts.slice().sort((x, y) => byYX([x.x, x.y], [y.x, y.y]))) {
@@ -1189,7 +1191,97 @@ export function replaceRun(a, b) {
                两侧都未知 ⇒ 无法反解，如实报 precondition_failed（不猜）。 */
             let { entry, exit } = neighborFaces(b, c0);
             let want = null;
-            if (entry && exit && entry !== exit) want = solveTurn(entry, exit);
+
+            /* Explicit direction: when the caller knows the answer, do not force
+             * neighbor-inference.
+             *
+             * Measured on the live world (2026-11-03): of 4 BELT_HANDOFF_REJECTED
+             * sites, the model tried replace_run on EVERY one and failed each time:
+             *
+             *   (1,-17) neighbor evidence is insufficient (entry top / exit unknown)
+             *
+             * Widening the region to [1,-18 .. 1,-16] does not help either -- as long
+             * as that one cell is INCLUDED, it fails. The guard itself is correct (with
+             * only one side known, the other side has 3 valid answers, so it is a
+             * three-way choice, not a unique one; guessing is wrong). But it makes
+             * "fix one belt whose direction is wrong" impossible -- and that is exactly
+             * what the model is doing.
+             *
+             * IMPORTANT: this belt's OWN recorded rv cannot be used as input. entry/exit
+             * are DERIVED from rv, so feeding it back is using corrupt data to attest
+             * itself (that is the very bug this path exists to fix). So the caller must
+             * supply it explicitly, and only on this path.
+             *
+             * Form: opts.facing = "top" (exit face) or {entry:"left", exit:"top"}.
+             * This is a CHOICE (pick a face), not a coordinate -- does not violate V4. */
+            if (bopts.facing !== undefined) {
+                const FACE_IDX = { top: 0, right: 1, bottom: 2, left: 3 };
+                const FACE_NAME = { top: 0, right: 1, bottom: 2, left: 3 };
+                const spec = bopts.facing;
+                let en = null, ex = null;
+                if (typeof spec === "string") {
+                    if (!(spec in FACE_IDX)) {
+                        return failure(A, {
+                            code: "bad_type", field: "opts.facing",
+                            message: "opts.facing string form must be top/right/bottom/left, got " + JSON.stringify(spec),
+                        });
+                    }
+                    /* 字符串形态 = 「出口朝这个面」。带子的 entry 永远是 exit 的对面 ——
+                     * belt-rules 里没有任何 entry===exit 的合法形态（那是「直穿」，
+                     * 不是带子）。所以 entry 由 exit 反推，不是照抄。 */
+                    ex = FACE_IDX[spec];
+                    en = (ex + 2) % 4;
+                } else if (isObj(spec)) {
+                    if (spec.exit !== undefined) {
+                        if (!(spec.exit in FACE_IDX)) {
+                            return failure(A, {
+                                code: "bad_type", field: "opts.facing.exit",
+                                message: "opts.facing.exit must be top/right/bottom/left, got " + JSON.stringify(spec.exit),
+                            });
+                        }
+                        ex = FACE_IDX[spec.exit];
+                    }
+                    if (spec.entry !== undefined) {
+                        if (!(spec.entry in FACE_IDX)) {
+                            return failure(A, {
+                                code: "bad_type", field: "opts.facing.entry",
+                                message: "opts.facing.entry must be top/right/bottom/left, got " + JSON.stringify(spec.entry),
+                            });
+                        }
+                        en = FACE_IDX[spec.entry];
+                    }
+                } else {
+                    return failure(A, {
+                        code: "bad_type", field: "opts.facing",
+                        message: "opts.facing must be a string or {entry?, exit?}, got " + JSON.stringify(spec),
+                    });
+                }
+                /* Only entry given => exit is its opposite (straight belt);
+                 * only exit given => entry is its opposite. Both given => solve the turn.
+                 *
+                 * NOTE: solveTurn() returns null when inDir === outDir -- a belt cannot
+                 * "pass straight through" in that encoding. So the straight case must be
+                 * found with beltEntry/beltExit directly, not via solveTurn. */
+                if (en !== null && ex === null) ex = (en + 2) % 4;
+                if (ex !== null && en === null) en = (ex + 2) % 4;
+                let turn = null;
+                for (let rot = 0; rot < 360 && !turn; rot += 90) {
+                    for (const rv of [0, 1, 2]) {
+                        /* beltEntry/beltExit 返回**方向名**（"top"/"right"/...），不是 0..3 ——
+                         * 拿数字比会永远不等。用同一张 FACE 表把名字换回来。 */
+                        if (FACE_NAME[beltEntry(rv, rot)] === en && FACE_NAME[beltExit(rv, rot)] === ex) { turn = { rotation: rot, rotationVariant: rv }; break; }
+                    }
+                }
+                if (!turn) {
+                    return failure(A, {
+                        code: "bad_type", field: "opts.facing",
+                        message: "opts.facing entry=" + en + " / exit=" + ex + " does not solve to a legal belt form",
+                        hint: "entry == exit means straight; different means one turn. Both must be faces 0..3.",
+                    });
+                }
+                want = turn;
+            }
+            if (!want && entry && exit && entry !== exit) want = solveTurn(entry, exit);
             /* 只有一侧有独立证据时**不猜**：另一侧可以在 3 个方向里任取一个让 solveTurn 成立，
                那是「三选一」而不是唯一解。用本格自己的 rv 去填等于拿坏数据自证 ——
                正是这条路径要修的病。如实报错，让调用方显式给 rv（paste_blueprint）。 */
