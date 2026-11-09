@@ -56,7 +56,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // 唯一方向权威 —— 本文件**不得**再写任何方向旋转逻辑
-import { ORDER, OPP, DIRV, beltEntry, beltExit, solveTurn, beltCode } from "../../ai/belt-rules.mjs";
+import { ORDER, OPP, DIRV, beltEntry, beltExit, solveTurn, beltCode, rotateLocal } from "../../ai/belt-rules.mjs";
 import { hubEntriesWorld, templateByBuildingVariant } from "../../ai/op-templates.mjs";
 import { validateConnectArgs, validateMacroResult } from "./contract.mjs";
 
@@ -212,7 +212,40 @@ function portSlots(rec, spec) {
     }
     const v = variantOf(spec, rec.type, rec.variant);
     if (!v) return null;
-    return { ejectors: v.ejectors, acceptors: v.acceptors };
+
+    /* ★ r≠0 的机器：spec 里的 ejectors/acceptors 是 **(r=0, rv=0) 的快照** ★
+     *
+     * 这份数据来自静态 JSON（machine-spec），只有 tile+dir，**不含旋转**。
+     * 原来这里直接把快照原样返回，所以 r≠0 的机器端口全错 ——
+     * 调用方（`machinePorts`）发现对不上，干脆在 r≠0 时返回空端口表。
+     *
+     * 真机后果（2026-11-09，L6）：铜线 `CuCuCuCu → cut → rotate → Cu----Cu`
+     * 直达 hub，缺最后那道 cut右。要补的 cutter 只能插在这条**往下流**的线上
+     * ⇒ 需要 r=180 ⇒ 端口表为空 ⇒ `replace_run` 永远报「输入槽没有供料方」。
+     * level 6 的 `Cu270` 一件都产不出来。
+     *
+     * 修法：按旋转规则（与游戏 `rotateFastMultipleOf90` 一致，y 向下）转 tile 与 dir。
+     *   r=90  : (dx,dy) → (-dy,dx)
+     *   r=180 : (dx,dy) → (-dx,-dy)
+     *   r=270 : (dx,dy) → (dy,-dx)
+     * 方向用既有的 `rotateLocal`（belt-rules 的唯一真值）。 */
+    const r = rec.r || 0;
+    if (r === 0) return { ejectors: v.ejectors, acceptors: v.acceptors };
+
+    const rotCell = ([dx, dy]) => {
+        switch (((r % 360) + 360) % 360) {
+            case 90: return [-dy, dx];
+            case 180: return [-dx, -dy];
+            case 270: return [dy, -dx];
+            default: return [dx, dy];
+        }
+    };
+    const rotList = (list) => (Array.isArray(list) ? list : []).map(s => ({
+        ...s,
+        tile: rotCell(s.tile || [0, 0]),
+        dir: rotateLocal(s.dir, r),
+    }));
+    return { ejectors: rotList(v.ejectors), acceptors: rotList(v.acceptors) };
 }
 
 /**
@@ -233,13 +266,9 @@ function portSlots(rec, spec) {
  */
 export function portsOf(rec, spec) {
     const out = { eject: [], accept: [] };
-    /* r≠0 只对**机器**是限制（槽位偏移需 origin 位移表）。
-       带子的方向由 `(rotation_variant, r)` 共同决定，任何 r 都合法 ——
-       拦在这里会让 r≠0 的带子拿不到任何 eject/accept 端点，
-       于是一个正确的 `connect` 被拒成 `endpoint_not_a_port`。
-       实测：半成品世界里断点是 r=180 的带子，整个修复动作因此做不到。 */
-    const ROTATION_FREE = new Set(["belt", "underground_belt"]);
-    if (rec.r !== 0 && !ROTATION_FREE.has(rec.type)) return out;   // v1：加工机器只处理 r=0
+    /* r≠0 的机器**可以**有端口 —— 见 `portSlots` 里的旋转推导。
+       这里原有一条 `if (rec.r !== 0 && !ROTATION_FREE.has(rec.type)) return out;`
+       把加工机器的 r≠0 一律当"无端口"，那等于禁止一切旋转的加工机器。 */
 
     if (rec.type === "hub") {
         // hub 入口表**只**来自 op-templates.hubEntriesWorld（裁决 K1）—— 索引顺序也是它定的

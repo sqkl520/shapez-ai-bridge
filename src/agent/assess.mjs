@@ -75,8 +75,57 @@ export function isRawShape(shape, knownMinerals) {
 }
 
 /** 某形状还差多少（关卡目标） */
+/**
+ * 从**任意形态**的 obs 里取出升级等级与 hub 库存。
+ *
+ * ## 为什么需要这个（2026-11-09 在真机 level 6 上崩掉）
+ *
+ * 升级等级在**两个不同位置**：
+ *   · 真机 `obs`（mod 原样返回）  → `obs.goal.upgrade_levels` + `obs.hub.stored_shapes`
+ *   · `obsForAssess()` 归一化之后 → `obs.upgrades` + `obs.stored`
+ *
+ * `assess()` / `capacityOf()` 吃的是**原始** obs，但内部各函数却按归一化形态读
+ * ⇒ `obs.upgrades[line]` 抛 `TypeError: Cannot read properties of undefined`。
+ *
+ * 它没被早发现，是因为 `capacityFor()` 走 `obsForAssess` 先归一化了 ——
+ * 那条路把 bug 挡住了。只有直接调 `assess(rawObs)` 才炸。
+ *
+ * 现在所有读点都走这一个函数，与 `obsForAssess` 同一口径 ——
+ * **不在两处写两套真值**（本项目因为"两份真值"出过至少 3 次事故）。
+ */
+function levelsAndStored(obs) {
+    const o = obs || {};
+    const goal = o.goal || {};
+    const hub = o.hub || {};
+    return {
+        up: o.upgrades || goal.upgrade_levels || {},
+        stored: o.stored || hub.stored_shapes || {},
+        /* 目标形状在原始 obs 里是 `goal.requirement.shape`，归一化后是 `goal.shape`。
+           这里一并给出，免得每个调用点自己判断。 */
+        req: (goal.shape ? goal : (goal.requirement || null)),
+    };
+}
+
+/**
+ * 矿格列表。两种 obs 形态都读：
+ *   · 归一化后 → `obs.oreCells` = `[{x,y,kind}]`
+ *   · 真机原样 → `obs.resources` = `[[x,y,kind], …]`（mod 的 `observeResources` 格式）
+ *
+ * 这是「矿机压在矿上还是空转」的**唯一**数据源。读错形态的后果不是崩，
+ * 而是**静默判成"全部矿机都空转"** —— 那会让模型去挪一堆本来没问题的矿机。
+ */
+function oreCellsOf(obs) {
+    const o = obs || {};
+    if (Array.isArray(o.oreCells) && o.oreCells.length) return o.oreCells;
+    const raw = Array.isArray(o.resources) ? o.resources : [];
+    return raw
+        .filter(r => Array.isArray(r) && r.length >= 3)
+        .map(r => ({ x: r[0], y: r[1], kind: r[2] }));
+}
+
 function goalGap(obs) {
-    const g = obs.goal;
+    const { stored, req } = levelsAndStored(obs);
+    const g = req;
     if (!g || !g.shape) return null;
     return {
         shape: g.shape,
@@ -84,22 +133,34 @@ function goalGap(obs) {
         delivered: g.delivered || 0,
         remaining: Math.max(0, (g.required || 0) - (g.delivered || 0)),
         // 关卡进度读的是 stored[shape]（hub_goals.js:150-165），与升级共用同一个池
-        stored: obs.stored[g.shape] || 0,
+        stored: stored[g.shape] || 0,
     };
 }
 
 /** 各升级线离下一档还差什么 */
 function upgradeGaps(obs) {
+    /* ⚠️ 升级等级在**两个不同位置**：
+     *   · 真机 `obs`（mod 原样返回）  → `obs.goal.upgrade_levels`
+     *   · `obsForAssess()` 归一化之后 → `obs.upgrades`
+     *
+     * 这里原本只读 `obs.upgrades`，于是 `assess()` 直接吃真机 obs 时
+     * `obs.upgrades` 是 undefined ⇒ `obs.upgrades[line]` 抛 TypeError
+     * （2026-11-09 在真机 level 6 上实测崩掉）。
+     * `capacityFor()` 走 `obsForAssess` 所以没暴露，它掩盖了这个 bug。
+     *
+     * 两种形态都读，与 `obsForAssess` 同一口径 —— 不在两处写两套真值。 */
+    const up = (obs && obs.upgrades) || (obs && obs.goal && obs.goal.upgrade_levels) || {};
+    const stored = (obs && obs.stored) || (obs && obs.hub && obs.hub.stored_shapes) || {};
     const out = [];
     for (const [line, tiers] of Object.entries(UPGRADES)) {
-        const lvl = obs.upgrades[line] || 0;
+        const lvl = up[line] || 0;
         const next = tiers.find(t => t.tier === lvl + 1);
         if (!next) continue;                          // 已满或未登记
         const missing = next.required.map(req => ({
             shape: req.shape,
             amount: req.amount,
-            have: obs.stored[req.shape] || 0,
-            short: Math.max(0, req.amount - (obs.stored[req.shape] || 0)),
+            have: stored[req.shape] || 0,
+            short: Math.max(0, req.amount - (stored[req.shape] || 0)),
         }));
         out.push({
             line, tier: lvl + 1,
@@ -117,14 +178,16 @@ function upgradeGaps(obs) {
  * 这是这一轮我最缺的东西 —— 我一直不知道"1 台矿机"意味着什么。
  */
 function throughput(obs) {
-    const miners = obs.entities.filter(e => e.type === "miner");
-    const perBelt = machinesForOneBelt("miner", obs.upgrades);
-    const beltSpeed = RATES.beltPerSec * UPGRADE_MULTIPLIERS[Math.min(obs.upgrades.belt || 0, 7)];
-    const minerSpeed = RATES.minerPerSec * UPGRADE_MULTIPLIERS[Math.min(obs.upgrades.miner || 0, 7)];
+    const miners = (Array.isArray(obs.entities) ? obs.entities : []).filter(e => e.type === "miner");
+    /* 与 upgradeGaps 同口径：两种 obs 形态都读（见那里的注释）。 */
+    const up = (obs && obs.upgrades) || (obs && obs.goal && obs.goal.upgrade_levels) || {};
+    const perBelt = machinesForOneBelt("miner", up);
+    const beltSpeed = RATES.beltPerSec * UPGRADE_MULTIPLIERS[Math.min(up.belt || 0, 7)];
+    const minerSpeed = RATES.minerPerSec * UPGRADE_MULTIPLIERS[Math.min(up.miner || 0, 7)];
     const total = miners.length * minerSpeed;
 
     // 每台矿机压着什么矿
-    const oreAt = new Map(obs.oreCells.map(c => [`${c.x},${c.y}`, c.kind]));
+    const oreAt = new Map(oreCellsOf(obs).map(c => [`${c.x},${c.y}`, c.kind]));
     const mining = miners.map(m => ({
         at: [m.x, m.y],
         onOre: oreAt.get(`${m.x},${m.y}`) || null,
@@ -178,9 +241,9 @@ function throughput(obs) {
  * @returns {object} 见下面 return 的点
  */
 export function capacityOf(obs) {
-    const levels = obs.upgrades || {};
+    const levels = (obs && obs.upgrades) || (obs && obs.goal && obs.goal.upgrade_levels) || {};
     const entities = Array.isArray(obs.entities) ? obs.entities : [];
-    const oreCells = Array.isArray(obs.oreCells) ? obs.oreCells : [];
+    const oreCells = oreCellsOf(obs);
 
     const minerRate = machineRatePerSec("miner", levels);
     const beltRate = RATES.beltPerSec * UPGRADE_MULTIPLIERS[Math.min(levels.belt | 0, UPGRADE_MULTIPLIERS.length - 1)];
@@ -311,10 +374,10 @@ export function capacityOf(obs) {
 /** 矿点利用率：周边有多少矿格，用了几格 */
 function oreUtilization(obs) {
     const counts = {};
-    for (const c of obs.oreCells) counts[c.kind] = (counts[c.kind] || 0) + 1;
+    for (const c of oreCellsOf(obs)) counts[c.kind] = (counts[c.kind] || 0) + 1;
     const used = {};
-    for (const m of obs.entities.filter(e => e.type === "miner")) {
-        const k = obs.oreCells.find(c => c.x === m.x && c.y === m.y);
+    for (const m of (Array.isArray(obs.entities) ? obs.entities : []).filter(e => e.type === "miner")) {
+        const k = oreCellsOf(obs).find(c => c.x === m.x && c.y === m.y);
         if (k) used[k.kind] = (used[k.kind] || 0) + 1;
     }
     return Object.keys(counts).sort().map(kind => ({
@@ -625,8 +688,25 @@ export function assess(obs) {
 function describe(g) {
     const parts = [];
     const t = g.throughput;
-    parts.push(`${t.minerCount} 台矿机，合计 ${t.totalPerSec}/s(`);
-    parts[parts.length - 1] = `${t.minerCount} 台矿机合计 ${t.totalPerSec}/s`;
+
+    /* ★ 瓶颈优先 ★
+     *
+     * 原来这一段只说「几台矿机、喂满几条带、哪些矿没用」，**从不提瓶颈是哪个机器** ——
+     * 而 `capacity.bottleneckDetail` 明明算得好好的（「3 台 cutter 只能处理 1.50/s，
+     * 38% 的产出堵在这里」），却不进摘要。
+     *
+     * 这是用户最需要看到的一句话：他的抱怨是「明明有可以快捷提高产能的方法却没有用」。
+     * 摘要里没有瓶颈，模型和人都得自己从 capacity 对象里翻 —— 而摘要存在的意义
+     * 恰恰是"一眼看完"。把它放第一位。 */
+    const cap = g.capacity;
+    if (cap && cap.bottleneck && cap.bottleneck !== "none") {
+        const m = cap.bottleneckMachine || cap.bottleneck;
+        const util = Number.isFinite(cap.utilization)
+            ? `，利用率 ${Math.round(cap.utilization * 100)}%` : "";
+        parts.push(`瓶颈 ${m}${util}`);
+    }
+
+    parts.push(`${t.minerCount} 台矿机合计 ${t.totalPerSec}/s`);
     parts.push(`只喂满 ${t.beltsFed} 条带`);
     const low = g.oreUtilization.filter(u => u.available >= 4 && u.utilization < 0.5);
     if (low.length) parts.push(`闲置矿簇：${low.map(u => `${u.kind} ${u.used}/${u.available}`).join(" ")}`);

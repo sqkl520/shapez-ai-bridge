@@ -162,11 +162,13 @@ export function makeContext(world, entities, spec = loadSpec()) {
             continue;
         }
         if (rec.type === "underground_belt") continue;   // 隧道：不透明节点，不参与链接推导
-        if (rec.r !== 0) {
-            /* portsOf 对 r≠0 返回空表（v1 决策 D1）。这里显式登记，而不是当成"没有端口" */
-            machines.set(rec.uid, { rec, eject: [], accept: [], rotatedOutOfScope: true });
-            continue;
-        }
+        /* ⚠️ r≠0 的机器**有**端口 —— `portsOf` 已经从 spec 快照按 r 旋转出来了
+           （见 connect.mjs#portSlots 的注释）。
+           这里原来有一条 `if (rec.r !== 0) { …空表…; continue; }`，
+           是同一件事的**第二份**判断：`connect.mjs` 那边修了，这里没修，
+           于是 r=180 的 cutter 在推演里永远「输入槽没有供料方」，
+           而 `replace_run` 报的错是 `precondition_failed`，人看不出真原因。
+           本项目因为「同一判据在两处各写一遍」出过不止一次事故 —— 删掉这份。 */
         let pp;
         try { pp = portsOf(rec, spec); } catch { pp = { eject: [], accept: [] }; }
         const eject = pp.eject.map(q => ({ ...q, uid: rec.uid, type: rec.type, kind: "eject" }));
@@ -696,11 +698,58 @@ function rotationForFlow(tpl, flow) {
 }
 
 /** 模板槽位的世界格：origin + tile + DIRV[dir] */
-const portCellOf = (origin, q) => [origin[0] + q.cell[0] + DIRV[q.dir][0], origin[1] + q.cell[1] + DIRV[q.dir][1]];
+/**
+ * 模板槽位的世界格：`origin + rotate(localCell) + DIRV[rotate(dir)]`。
+ *
+ * ⚠️ 必须处理旋转。第一版是 `origin + q.cell + DIRV[q.dir]` —— 只对 r=0 成立。
+ * 放开 r≠0 之后，r=180 的 cutter 输入槽会被算到**相反的方向**，
+ * 于是推演里「没有人喂这台机器」，永远选不出合法落点。
+ *
+ * 旋转规则与游戏 `Vector.rotateFastMultipleOf90` 一致（y 向下）：
+ *   r=0   : (dx, dy) → ( dx,  dy)
+ *   r=90  : (dx, dy) → (-dy,  dx)
+ *   r=180 : (dx, dy) → (-dx, -dy)
+ *   r=270 : (dx, dy) → ( dy, -dx)
+ */
+const rotate90 = ([dx, dy], deg) => {
+    const s = ((deg % 360) + 360) % 360;
+    switch (s) {
+        case 90: return [-dy, dx];
+        case 180: return [-dx, -dy];
+        case 270: return [dy, -dx];
+        default: return [dx, dy];
+    }
+};
 
-function footprintAt(origin, [w, h]) {
+const portCellOf = (origin, q, rot = 0) => {
+    const [lx, ly] = rotate90(q.cell, rot);
+    const [dx, dy] = DIRV[rotateLocal(q.dir, rot)];
+    return [origin[0] + lx + dx, origin[1] + ly + dy];
+};
+
+/**
+ * 机器在 `origin` 处、朝向 `rot` 时**实际占哪几格**。
+ *
+ * ⚠️ 必须处理旋转 —— 2026-11-09 真机踩到的：
+ *
+ * 2×1 的 cutter 原来不论 r 是多少都按 `[origin+(0..w-1, 0..h-1)]` 展开，即**向右**。
+ * 但 r=180 时它在世界里是**向左**展开的（`origin` 那一格 + 左边一格）。
+ *
+ * 后果链条（不是崩，是静默）：
+ *   · footprint 画错 ⇒ 机身占了 `origin` 和 `origin+(1,0)`，而真正的第二格在 `origin+(-1,0)`
+ *   · 输入槽按 `portCellOf`（那个**是**转了的）算出 `origin+(0,-1)`，与机身对不上
+ *   · 游戏里货喷向 `origin`，机器第二格却在另一边 ⇒ 货堵在输入槽上不动
+ *   · 表现出来是「hub 里目标形状 0 个，而中间产物暴涨」——
+ *     真机实测：`----CuCu` 从 852 涨到 1480，`Cu------` 恒为 0
+ *
+ * 旋转规则与 `portCellOf` 的 `rotate90` 同一份（y 向下）。
+ */
+function footprintAt(origin, [w, h], rot = 0) {
     const out = [];
-    for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) out.push([origin[0] + dx, origin[1] + dy]);
+    for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) {
+        const [rx, ry] = rotate90([dx, dy], rot);
+        out.push([origin[0] + rx, origin[1] + ry]);
+    }
     return out;
 }
 
@@ -715,8 +764,8 @@ function footprintAt(origin, [w, h]) {
  *   · 输出槽对着 region 内的带子                  +0  （可能就是要让位给 trash）
  * footprint 压到机器 → 整条候选作废（宏永不删机器）。
  */
-function scoreOrigin(origin, tpl, region, ctx) {
-    const cells = footprintAt(origin, [tpl.__w, tpl.__h]);
+function scoreOrigin(origin, tpl, region, ctx, rot = 0) {
+    const cells = footprintAt(origin, [tpl.__w, tpl.__h], rot);
     for (const c of cells) {
         if (!inRegion(region, c)) return { invalid: true, why: `footprint 越出 region：${JSON.stringify(c)}`, cell: c };
         const occ = ctx.world.cells.get(keyOf(c));
@@ -728,7 +777,7 @@ function scoreOrigin(origin, tpl, region, ctx) {
     }
     let score = 0;
     for (const q of tpl.inputs || []) {
-        const c = portCellOf(origin, q);
+        const c = portCellOf(origin, q, rot);
         const occ = ctx.world.cells.get(keyOf(c));
         if (!occ) { score -= 6; continue; }
         const rec = ctx.world.byUid.get(occ.uid);
@@ -740,7 +789,7 @@ function scoreOrigin(origin, tpl, region, ctx) {
         else score += 2;      // 紧贴机器（0 格连接）：允许，交给后验
     }
     for (const q of tpl.outputs || []) {
-        const c = portCellOf(origin, q);
+        const c = portCellOf(origin, q, rot);
         const occ = ctx.world.cells.get(keyOf(c));
         if (!occ) continue;
         const rec = ctx.world.byUid.get(occ.uid);
@@ -773,21 +822,53 @@ function scoreOrigin(origin, tpl, region, ctx) {
  *
  * @returns {{placed:Array, removed:Array, kept:Array, conflicts:Array}}
  */
-function planForOrigin(origin, primary, trashSpecs, region, ctx, spec) {
+/**
+ * @param {number} rot 这台主动机器需要的世界朝向（`rotationForFlow` 的结果）。
+ *
+ * ⚠️ `rot` 必须是参数，不能写死 0 —— 2026-11-09 真机实测踩到的：
+ * 放开 r≠0 之后，这里的 `rotation: 0` 让**槽位推演**按 0 度建模，
+ * 于是 r=180 的 cutter 在推演里输入槽朝错方向，报
+ * 「输入槽 primary 在计划执行后没有任何供料方」——
+ * 而物理上货正好从上方喂进来。放开 r≠0 却不改这里 = 半放开：
+ * 不报 `out_of_scope` 了，但永远选不出合法落点。
+ */
+function planForOrigin(origin, primary, trashSpecs, region, ctx, spec, rot = 0) {
     const [w, h] = [primary.tpl.__w, primary.tpl.__h];
     const placed = [{
         kind: primary.kind, variant: primary.variant, uid: null,
-        origin: [origin[0], origin[1]], rotation: 0,
-        cells: footprintAt(origin, [w, h]),
+        origin: [origin[0], origin[1]], rotation: rot,
+        cells: footprintAt(origin, [w, h], rot),
+        /* ⚠️ 每个端口给**两个**格，语义不同（与 `connect.mjs#machinePorts` 同一口径）：
+         *   slot = 机器自己那一格（槽位所在）
+         *   cell = 货的落点 = slot + DIRV[face]
+         *
+         * 原来只给了 `cell`。加上 `slot` 是为了让返回值自描述 ——
+         * 调用方/日志看到 `cell` 时不必再自己减 DIRV 才能知道槽在哪一格。
+         *
+         * 注意 `cutFeeds` 的接力判定用的是 **`cell`**，那是**对的**：
+         * 「这条带子的出口喷向某格，机器在那个方向上正好有个从该格收货的槽」
+         * ⇒ 要比较的是货的落点（`cell`），不是槽格（`slot`）。
+         * 用 slot 去比会永远判不上（真机连续竖直线上实测过），
+         * 那会把一条合法接力报成「货被机身吃掉」。 */
         ports: [
-            ...(primary.tpl.inputs || []).map(q => ({
-                kind: "accept", role: q.role, index: q.index || 0,
-                cell: portCellOf(origin, q), face: rotateLocal(q.dir, 0),
-            })),
-            ...(primary.tpl.outputs || []).map(q => ({
-                kind: "eject", role: q.role, index: q.index || 0,
-                cell: portCellOf(origin, q), face: rotateLocal(q.dir, 0),
-            })),
+            ...(primary.tpl.inputs || []).map(q => {
+                const cell = portCellOf(origin, q, rot);
+                const face = rotateLocal(q.dir, rot);
+                return {
+                    kind: "accept", role: q.role, index: q.index || 0,
+                    slot: [cell[0] - DIRV[face][0], cell[1] - DIRV[face][1]],
+                    cell, face,
+                };
+            }),
+            ...(primary.tpl.outputs || []).map(q => {
+                const cell = portCellOf(origin, q, rot);
+                const face = rotateLocal(q.dir, rot);
+                return {
+                    kind: "eject", role: q.role, index: q.index || 0,
+                    slot: [cell[0] - DIRV[face][0], cell[1] - DIRV[face][1]],
+                    cell, face,
+                };
+            }),
         ],
     }];
 
@@ -807,7 +888,7 @@ function planForOrigin(origin, primary, trashSpecs, region, ctx, spec) {
             });
             continue;
         }
-        const target = portCellOf(origin, hit[0]);
+        const target = portCellOf(origin, hit[0], rot);
         if (!inRegion(region, target)) {
             conflicts.push({
                 cell: target, what: "trash-outside-region",
@@ -888,7 +969,10 @@ function planForOrigin(origin, primary, trashSpecs, region, ctx, spec) {
     for (const p of placed) {
         post.push({
             uid: synthUid(p), type: p.kind, variant: p.variant,
-            x: p.origin[0], y: p.origin[1], r: 0, rotation_variant: 0, layer: "regular",
+            x: p.origin[0], y: p.origin[1],
+            /* ⚠️ 必须用 `p.rotation`：写死 0 会让 r=180 的机器在推演里
+               端口全朝错方向 —— 「输入槽没有供料方」就是这么来的。 */
+            r: p.rotation || 0, rotation_variant: 0, layer: "regular",
         });
     }
     const c1 = makeContext(worldFrom(post, spec), post, spec);
@@ -1070,6 +1154,13 @@ export function replaceRun(a, b) {
     if (isObj(a) && (a.region !== undefined || a.building !== undefined)) { args = a; ctx = b || {}; }
     else if (Array.isArray(a) && isObj(b) && b.building !== undefined) { args = b; ctx = arguments[2] || {}; }
     else { args = { region: a, building: b }; ctx = arguments[2] || {}; }
+
+    /* ⚠️ `warnings` 必须在这里就声明。
+     * 两条路径（belt 模式 / 机器模式）各有一份自己的数组，但机器模式里
+     * 「r≠0 的槽位未验证」那条警告出现在分支内部、比原来的局部声明更靠前 ——
+     * 局部声明会让它变成 TDZ 报错（`Cannot access 'warnings' before initialization`），
+     * 而且是**运行时才炸**，语法检查看不出来。 */
+    const macroWarnings = [];
 
     /* 用契约校验器校验 region / opts / 未知键（building 强制成 "belt" 只为复用检查） */
     const probe = validateReplaceRunArgs({ ...args, building: "belt" });
@@ -1464,13 +1555,36 @@ export function replaceRun(a, b) {
             detail: { flow, inputs: primary.tpl.inputs, outputs: primary.tpl.outputs },
         });
     }
+    /* ★ 2026-11-09：放开 r≠0 ★
+     *
+     * 原来的行为：流向需要转机器时直接拒（`out_of_scope`）。理由是
+     * 「旋转机器的槽位换算仍是 observed 级假设」（CAPABILITY_ASSUMPTIONS.rotated_machine_slots）。
+     *
+     * 那个假设在真游戏里被验证了 —— 实测（L6 真机，2026-11-09）：
+     *   `place cutter r=180 rv=0` → 游戏原样保留 r=180
+     *   从上方 `place belt r=180 rv=0` 喂进去 → 游戏没报错、没改方向
+     *   与 `insert_machine({at,facing:'bottom'})` 算出的槽位（in=上、out=下方两格）一致
+     *
+     * 而且 `insert_machine` 早就在放 r≠0 的机器了 —— 它一直支持 `facing`，
+     * 只有 `replace_run` 这一条路被这条限制卡住。同一个仓库里两套口径。
+     *
+     * 真机上的代价（放开前）：铜线 `CuCuCuCu → cut → rotate → Cu----Cu` 直达 hub，
+     * 缺最后那道 cut右；要补一台 cutter 只能插在这条**往下流**的线上，
+     * 于是需要 r=180，于是被拒 —— level 6 的 `Cu------` 270 个一件都产不出来。
+     *
+     * ## 放开的代价必须被支付
+     *
+     * 「r≠0 的槽位是 observed 级假设」这句话仍然成立 —— 只是在真机上又观测了一次。
+     * 所以**必须**把验证做进返回值（见下面 `expected_code` 与 `ports`）：
+     * 落地后调用方要读回 code 与槽位邻接逐条比对，不等即 verification_failed。
+     * 这正是 `rotation_not_live_verified` 那条警告要求的纪律。 */
     if (rot !== 0) {
-        return failure(A, {
-            code: "out_of_scope", field: "building",
-            message: `${primary.kind} 在流向 "${flow}" 下需要 rotation=${rot}，v1 只放 r=0 的机器`,
-            hint: "旋转机器的槽位换算仍是 observed 级假设（contract.CAPABILITY_ASSUMPTIONS.rotated_machine_slots）；"
-                + "改为把 region/流向安排成 r=0，或人工规划 + tx 并读回自证。",
-            detail: { flow, rotation: rot },
+        macroWarnings.push({
+            code: "rotation_not_live_verified",
+            detail: `${primary.kind} 按流向 "${flow}" 需要 rotation=${rot}；`
+                + "r≠0 的槽位几何仍是 observed 级结论（2026-11-09 在 L6 真机复验过一次）。",
+            hint: "落地后必须用 obs/debug_items 读回槽位邻接并逐条比对 wiring；"
+                + "任一 mismatch 即回滚并报 verification_failed。",
         });
     }
 
@@ -1521,9 +1635,9 @@ export function replaceRun(a, b) {
     const cands = [];
     for (let y = region[1]; y + h - 1 <= region[3]; y++) {
         for (let x = region[0]; x + w - 1 <= region[2]; x++) {
-            const sc = scoreOrigin([x, y], primary.tpl, region, c0);
+            const sc = scoreOrigin([x, y], primary.tpl, region, c0, rot);
             if (sc.invalid) continue;
-            const plan = planForOrigin([x, y], primary, trashSpecs, region, c0, spec);
+            const plan = planForOrigin([x, y], primary, trashSpecs, region, c0, spec, rot);
             cands.push({ origin: [x, y], score: sc.score, plan });
         }
     }
@@ -1619,7 +1733,7 @@ export function replaceRun(a, b) {
         opaque: [],
     };
 
-    const warnings = [];
+    const warnings = [...macroWarnings];
     if (primary.tpl.verifiedOnLive === false) {
         warnings.push({
             code: "variant-unverified",
