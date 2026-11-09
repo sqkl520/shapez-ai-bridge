@@ -835,6 +835,103 @@ t("对照：离得远的目标不会报 to_port_on_source", () => {
     }
 });
 /* ══════════════════════════════════════════════════════════════════════════
+ * 5b. ★ r≠0 的机器端口（2026-11-09 真机踩出来的）★
+ *
+ * 原来 `machinePorts()` 第一句是：
+ *     if (rec.r !== 0 && !ROTATION_FREE.has(rec.type)) return out;   // 加工机器只处理 r=0
+ * 于是任何旋转过的加工机器**端口表为空**。后果不是崩，是静默：
+ * `replace_run` 推演时看不到输入槽有供料，永远报
+ * 「输入槽 primary 在计划执行后没有任何供料方」——
+ * 而物理上货正好从那个方向喂进来。
+ *
+ * 真机现场（L6）：铜线 `CuCuCuCu → cut → rotate → Cu----Cu` 直达 hub，
+ * 缺最后那道 cut右；要补的 cutter 只能插在这条**往下流**的线上 ⇒ 需要 r=180。
+ * 于是 level 6 的 `Cu270` 一件都产不出来，`0/270`。
+ *
+ * 这个修复要同时成立三件事，缺一个就静默失效：
+ *   ① `portSlots()` 按 r 旋转 spec 快照（spec 里只有 r=0 的 tile+dir）
+ *   ② `machinePorts()` 不再对 r≠0 短路返回空表
+ *   ③ `replace_run` 推演时合成的实体带 `r: p.rotation`，不是写死 0
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 一台 r=180 的 cutter @ (0,0) */
+const ROT_CUTTER = [{ uid: 1, type: "cutter", x: 0, y: 0, r: 180, rotation_variant: 0, layer: "regular" }];
+
+t("R180-1 r=180 的 cutter 必须有端口表（不再是空表）", () => {
+    const w = buildWorld(ROT_CUTTER, SPEC);
+    const p = portsOf(w.byUid.get(1), SPEC);
+    assert.ok(p, "portsOf 必须返回端口表");
+    const n = (p.eject || []).length + (p.accept || []).length;
+    assert.ok(n > 0, `r=180 的 cutter 端口数必须 >0，实际 ${n}（空表 = 静默失效）`);
+});
+
+t("R180-2 r=180 的 cutter：输入面朝上（货从上方来）", () => {
+    /* cutter 模板：输入 cell=[0,0] dir=bottom（局部帧货从下方来）。
+       转 180° 后货从世界坐标的**上方**来。
+       这是本修复的几何核心 —— 算反了就等于没修。 */
+    const w = buildWorld(ROT_CUTTER, SPEC);
+    const p = portsOf(w.byUid.get(1), SPEC);
+    const prim = (p.accept || []).find(a => a.role === "primary");
+    assert.ok(prim, `必须有 primary 输入槽，实际 ${JSON.stringify(p.accept)}`);
+    assert.equal(prim.face, "top",
+        `r=180 时输入面朝 top，实际 ${prim.face}`);
+});
+
+t("R180-3 r=180 的 cutter：两个输出都在下方", () => {
+    const w = buildWorld(ROT_CUTTER, SPEC);
+    const p = portsOf(w.byUid.get(1), SPEC);
+    const outs = p.eject || [];
+    assert.equal(outs.length, 2, `cutter 有 2 个输出槽，实际 ${outs.length}`);
+    for (const o of outs) {
+        assert.equal(o.face, "bottom",
+            `r=180 时输出面朝 bottom，${o.role} 实际 ${o.face}`);
+    }
+});
+
+t("R180-4 ★ 上游带子的 exit 与旋转后输入面的 OPP 一致（这正是真机上断掉的那一格）", () => {
+    /* 真机场景：`-1,-10` 的带子 exit=bottom（往下喷），
+       目标 cutter 在 `-1,-9` r=180，其输入面 face=top。
+       `inLinkOfPort` 判的是 `belt.exit === OPP[q.face]`，即 `bottom === OPP[top] === bottom` ✓。
+       这条测试钉的正是「两者必须能配上」——
+       旋转算错时它们配不上，于是报「没有供料方」而人看不出为什么。 */
+    const ents = [
+        { uid: 1, type: "cutter", x: -1, y: -9, r: 180, rotation_variant: 0, layer: "regular" },
+        { uid: 2, type: "belt", x: -1, y: -10, r: 180, rotation_variant: 0, layer: "regular" },
+    ];
+    const w = buildWorld(ents, SPEC);
+    const p = portsOf(w.byUid.get(1), SPEC);
+    const prim = (p.accept || []).find(a => a.role === "primary");
+    assert.ok(prim);
+    /* 带子 r=180 rv=0 ⇒ exit = beltExit(0,180) = bottom */
+    assert.equal(beltExit(0, 180), "bottom", "前置：这条带子确实往下喷");
+    assert.equal(beltExit(0, 180), OPP[prim.face],
+        `上游 exit(${beltExit(0, 180)}) 必须等于 OPP[输入面](${OPP[prim.face]})，否则推演判「没有供料方」`);
+});
+
+t("R180-5 r=0 的机器端口与修复前逐字节相同（不许改坏旧路径）", () => {
+    const w0 = buildWorld([{ uid: 1, type: "cutter", x: 0, y: 0, r: 0, rotation_variant: 0, layer: "regular" }], SPEC);
+    const p0 = portsOf(w0.byUid.get(1), SPEC);
+    const prim = (p0.accept || []).find(a => a.role === "primary");
+    assert.equal(prim.face, "bottom", "r=0 时输入面仍朝 bottom（模板原值）");
+    for (const o of p0.eject || []) {
+        assert.equal(o.face, "top", `r=0 时输出面仍朝 top，${o.role} 实际 ${o.face}`);
+    }
+});
+
+t("R180-6 r=90 与 r=270 也各有端口，且方向互不相同", () => {
+    const faces = {};
+    for (const r of [90, 270]) {
+        const w = buildWorld([{ uid: 1, type: "cutter", x: 0, y: 0, r, rotation_variant: 0, layer: "regular" }], SPEC);
+        const p = portsOf(w.byUid.get(1), SPEC);
+        const prim = (p.accept || []).find(a => a.role === "primary");
+        assert.ok(prim, `r=${r} 必须有 primary 输入槽`);
+        faces[r] = prim.face;
+    }
+    assert.notEqual(faces[90], faces[270], `r=90 与 r=270 的输入面必须不同，实际 ${JSON.stringify(faces)}`);
+    assert.notEqual(faces[90], "bottom", "r=90 的输入面不该还是模板原值");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
  * 报告
  * ══════════════════════════════════════════════════════════════════════════ */
 const red = s => `\x1b[31m${s}\x1b[0m`, green = s => `\x1b[32m${s}\x1b[0m`;

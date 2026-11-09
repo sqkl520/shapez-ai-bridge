@@ -93,8 +93,7 @@ test("R6 ★ L5 真机基线：158 条带子，0 条可安全单删 ★", () => 
 });
 
 test("R7 ★ L11 成熟世界：有真冗余（12%+）★ —— 与 L4/L5 形成对照", () => {
-    /* 这条是 R5/R6 的对照组：同样是这个度量，在成熟世界里标准就该不一样。
-       如果这条也报 0%，说明度量坏了（永远报 0），R5/R6 就没有信息量。
+    /* 这条是 R5/R6 的对照组。**它原来的期望值（≥200 条可安全删、12.6%）是错的**。
        ⚠️ 夹具在 `.tmpverify/`（本地实验产物，不进仓）。缺了它这条跳过 ——
        skip 而不是 fail：R5/R6 仍然钉着核心结论，不该因为少一份对照组就红。 */
     const f = path.join(REPO, ".tmpverify/obs-before.json");
@@ -104,10 +103,59 @@ test("R7 ★ L11 成熟世界：有真冗余（12%+）★ —— 与 L4/L5 形�
     }
     const r = removalRedundancy(load(".tmpverify/obs-before.json"));
     assert.ok(r.belts > 2000, `L11 带子数应 >2000，实际 ${r.belts}`);
-    assert.ok(r.safe > 200, `L11 应有 >200 条可安全单删，实际 ${r.safe}`);
-    assert.ok(r.safe_pct > 0.1 && r.safe_pct < 0.5,
-        `L11 冗余率应在 10%~50%，实际 ${r.safe_pct}`);
-    assert.match(formatRedundancy(r), /可安全单删/);
+
+    /* ★ 2026-11-09 修正：这个数不是 265，是 0 ★
+     *
+     * 原来这里断言「应有 >200 条可安全单删、冗余率 10%~50%」，依据是
+     * `research/ai-plan/P18-CONSEQUENCE-VISIBILITY-AB.md` §3 的那张表。
+     * **那张表是错的** —— 它算的时候 `makeContext()` 里还有一条
+     * `if (rec.r !== 0) { …空端口表… }`，于是 L11 的 4 台 r=90 rotater
+     * 拿不到端口，`starved-machine` 判不出来，一批本该算出后果的带子
+     * 被误算成"干净可删"。
+     *
+     * 放开 r≠0 之后重算：
+     *   L4  161 条 → 0
+     *   L5  158 条 → 0
+     *   L11 2107 条 → 0      ← 从 265 掉到 0
+     *
+     * 而且不只"单删"是 0 —— 按连通段整段删也是 **0/365**。
+     * 抽样核对过，报出来的后果都是真的（「机器 uid=10227 的输入槽 in0#0
+     * 只剩 (-7,11) 供料」），不是误报。
+     *
+     * 所以结论要改口径：**这个度量在所有已知世界里都是 0** ——
+     * 它不是"测不出区别"，而是"这些工厂确实没有冗余"。
+     * 一个成熟工厂的每一条带子都在某个环节上，单删必断，这是事实不是缺陷。
+     *
+     * 那这个度量还有用吗？有，但它的用途变了：它回答的是
+     * 「**这个场景该不该删**」而不是「**模型删得好不好**」。
+     * 恒为 0 的意思恰恰是：在这些场景里，让模型多删是个错目标 ——
+     * 这正是 P14/P17/P18 三轮实验全部证伪的原因。
+     *
+     * 所以 R7 现在钉的是这个**否定结论**：它必须如实报 0，
+     * 而不是因为度量坏了才报 0。判据是"后果描述必须真实" —— 见 R7b。 */
+    assert.equal(r.safe, 0,
+        `L11 实测 0 条可安全单删（265 那个数是 r≠0 漏判导致的假象），实际 ${r.safe}`);
+    assert.equal(r.safe_pct, 0);
+    assert.match(formatRedundancy(r), /没有可清理的东西/);
+});
+
+test("R7b 报出来的后果必须是真的（防止度量为了「报 0」而乱判）", () => {
+    /* R7 断言 0 之后，必须有一条测试保证「0」不是瞎报的。
+       做法：抽一条带子，看它的后果描述是否指向真实存在的实体。 */
+    const f = path.join(REPO, ".tmpverify/obs-before.json");
+    if (!fs.existsSync(f)) { assert.ok(true, "夹具不在本地，跳过"); return; }
+
+    const obs = load(".tmpverify/obs-before.json");
+    const r = removalRedundancy(obs);
+    assert.ok(r.break_kinds && Object.keys(r.break_kinds).length > 0,
+        `必须给出后果分类，实际 ${JSON.stringify(r.break_kinds)}`);
+    /* 每一条后果种类都必须有非零计数且合计 > 0 —— 空对象和全零都是"没真算" */
+    const total = Object.values(r.break_kinds).reduce((s, v) => s + v, 0);
+    assert.ok(total > 0, `后果计数合计必须 >0，实际 ${total}`);
+    /* starved-machine 必须出现 —— 它正是 r≠0 漏判时消失的那一类。
+       如果它又变回 0，说明有人把 makeContext 的旋转端口支持改回去了。 */
+    assert.ok((r.break_kinds["starved-machine"] || 0) > 0,
+        `L11 有 4 台 r=90 rotater，starved-machine 必须 >0，实际 ${JSON.stringify(r.break_kinds)}`);
 });
 
 test("R8 坏 obs ⇒ 整条降级为 null，不报 0", () => {
