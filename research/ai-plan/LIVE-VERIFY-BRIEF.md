@@ -67,7 +67,7 @@ mod 设置: {"ws_url":"ws://127.0.0.1:7777/mod","allow_step":true,"allow_write":
 ```
 endpoint: http://ddns2.keniis.top:3000
 协议:     Anthropic Messages
-key:      <REDACTED-API-KEY>
+key:      ${ANTHROPIC_API_KEY}        ← 密钥不进仓，跑之前从环境变量取
 model:    virtual/opus
 实测:     POST /v1/messages 返回 200，model 回显 "SCNet-Max"，content 有 text
 ```

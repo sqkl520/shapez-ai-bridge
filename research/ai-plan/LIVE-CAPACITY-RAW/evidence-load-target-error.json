@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":1,"error":{"code":2002,"message":"game_rejected: no savegame with internal_id 7c93b3dd9e949c561e5aa529974973b18c856b45","data":{"code_name":"game_rejected","detail":"no savegame with internal_id 7c93b3dd9e949c561e5aa529974973b18c856b45","hint":"Use list_saves to see available ids"}}}

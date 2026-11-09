@@ -92,14 +92,22 @@ async function bridgeUp() {
     }, 8000);
 }
 
-/** 假 mod：连接 /mod，发 hello，自动应答 RPC */
+/** 假 mod：连接 /mod，发 hello，自动应答 RPC。
+ *  额外在 ws 上挂两个诊断字段：
+ *    __wasOpen  —— onopen 是否真的触发过（证明"这条连接曾经是活的"）
+ *    __closeEv  —— 收到的 close 事件 {code, reason}（证明"是桥接关掉它的，不是它自己断的"）
+ *  这两个字段让用例能区分「桥接主动断开」和「连接压根没建立/自己断的」。 */
 function connectFakeMod(hello, responder) {
     return new Promise((resolve, reject) => {
         const ws = new WebSocket(`${WS}/mod`);
+        ws.__wasOpen = false;
+        ws.__closeEv = null;
         ws.onopen = () => {
+            ws.__wasOpen = true;
             ws.send(JSON.stringify({ jsonrpc: "2.0", method: "hello", params: hello }));
             resolve(ws);
         };
+        ws.onclose = ev => { ws.__closeEv = { code: ev.code, reason: ev.reason, wasClean: ev.wasClean }; };
         ws.onerror = e => reject(new Error("fake mod ws error"));
         ws.onmessage = ev => {
             let msg;
@@ -227,12 +235,18 @@ try {
             return code === 1001 || code === 1005;
         }, 4000);
         assert(closed, "connection rejected");
-        // 关键：连上后又掉线，说明是被桥接主动断开。
-        // 注意：早先这里是 `bad.readyState !== 1 || true` —— `|| true` 让断言恒真，
-        // 等于什么都没测。桥接主动断开后，客户端要么已 CLOSED(3) / CLOSING(2)，
-        // 要么仍停在 OPEN(1) 但上面的 rpcHttp 已证明连接被丢弃；后者用 bad.close() 收尾即可。
-        // 这里改成可判假的断言：只要 readyState 是可观测值，就要求它不在 CONNECTING(0)。
-        assert(bad.readyState !== 0, "fake mod must have completed the handshake before being dropped");
+        /* 关键：连上后又掉线，说明是被桥接主动断开。
+           ★ 这里曾经是 `assert(bad.readyState !== 1 || true, "ok")` —— `|| true` 让断言恒真，
+             等于什么都没验证（rpc 拿到 1001 只证明桥接**记下了**拒绝码，不证明它把 socket 掐了）。
+           现在拆成三条都能失败的断言：
+             ① 这条连接确实曾经 OPEN 过（否则"closed"可以靠"从没连上"白拿）；
+             ② 桥接真的关了它 —— 等到 readyState === CLOSED(3)；
+             ③ 客户端收到了 close 事件，**且这发生在用例自己调 bad.close() 之前** ——
+                所以这个关闭只可能来自桥接（这是"主动断开"与"自己收尾"的分界线）。 */
+        assert(bad.__wasOpen === true, "fake mod must have reached OPEN before the bridge dropped it");
+        const dropped = await waitFor(async () => bad.readyState === 3, 3000);
+        assert(dropped, "bridge must close the socket of a protocol-mismatched mod (readyState=" + bad.readyState + ")");
+        assert(bad.__closeEv !== null, "client must observe a close event before we close it ourselves");
         bad.close();
     });
 

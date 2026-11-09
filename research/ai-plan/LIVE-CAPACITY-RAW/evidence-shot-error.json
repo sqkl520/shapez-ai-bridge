@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":1,"error":{"code":1003,"message":"not_in_game: Game world is not loaded (still in menu / loading / no savegame)","data":{"code_name":"not_in_game","detail":"Game world is not loaded (still in menu / loading / no savegame)","hint":"Load or create a savegame in-game first"}}}

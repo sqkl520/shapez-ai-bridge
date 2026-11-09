@@ -5,7 +5,12 @@
 //
 // Spins up a mock bridge (node:http) and drives the MCP server as a child
 // process over stdio, asserting the frozen contract in docs/PROTOCOL.md:
-//   - §9 tool mapping (8 tools, name/arg passthrough, screenshot image content)
+//   - §9 tool mapping (12 tools, name/arg passthrough, screenshot image content)
+//   - read-only tools exposed by the mod but formerly unreachable over MCP
+//     (production / debug_items / world_info / resources)
+//   - obs response_format:'concise' trimming
+//   - error payloads carry an actionable `next` array
+//   - shapez_batch fail-fast semantics (not_executed is explicit)
 //   - §7 error codes surfaced as isError content
 //   - §11.1 bridge HTTP forwarding (POST /rpc, GET /health, GET /status)
 //   - MCP stdio framing: one JSON per stdout line, notifications answered with
@@ -178,11 +183,50 @@ const MOCK_OBS = {
   },
   region: [0, 0, 10, 10],
   entities: [
-    { uid: 10002, type: "miner", x: -7, y: 5, r: 90, variant: "default", code: 7, layer: "regular" },
+    { uid: 10002, type: "miner", x: -7, y: 5, r: 90, variant: "default", rotation_variant: 0, code: 7, layer: "regular" },
+    { uid: 10003, type: "belt", x: -6, y: 5, r: 0, variant: "default", rotation_variant: 0, code: 12, layer: "regular" },
   ],
-  stats: { total: 1, by_type: { miner: 1 } },
+  stats: { total: 2, by_type: { miner: 1, belt: 1 } },
   truncated: false,
-  entity_count: 1,
+  entity_count: 2,
+};
+
+const MOCK_PRODUCTION = {
+  window_seconds: 60,
+  slice_seconds: 10,
+  slices_returned: 6,
+  produced_total: { CuCuCuCu: 120 },
+  produced_per_sec: { CuCuCuCu: 2 },
+  delivered_total: { CuCuCuCu: 100 },
+  delivered_per_sec: { CuCuCuCu: 1.667 },
+  stored_delta: { CuCuCuCu: 20 },
+  produced_slices: [{ CuCuCuCu: 20 }],
+  delivered_slices: [{ CuCuCuCu: 16 }],
+};
+
+const MOCK_ITEMS = {
+  belts: [{ cell: [-6, 5], path: 0, idx: 0, pos: 0.5, spacing_to_next: 0.63, item: "CuCuCuCu" }],
+  ejectors: [],
+  underground: [],
+  pending: [],
+  pathCount: 1,
+  truncatedPaths: false,
+  paths: [{ cells: [[-6, 5]], itemsOnPath: 1, spacingToFirstItem: 0.5, boundAcceptor: [0, 4] }],
+  counts: { belts: 1, ejectors: 0, pending: 0 },
+};
+
+const MOCK_WORLD = {
+  seed: 43391,
+  game_version: "1.5.6",
+  hub: { x: -2, y: -2, w: 4, h: 4, rotation: 0, uid: 1 },
+};
+
+const MOCK_RESOURCES = {
+  region: [-40, -40, 40, 40],
+  total_resource_tiles: 22,
+  resources: [
+    { key: "RuRuRuRu", count: 22, bbox: [-30, 12, -20, 20], runs: [{ y: 20, from: -30, to: -20, len: 11 }] },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -225,6 +269,20 @@ function startMockBridge() {
         switch (method) {
           case "obs":
             return ok(MOCK_OBS);
+          case "production":
+            return ok(MOCK_PRODUCTION);
+          case "debug_items":
+            if (!params || !Array.isArray(params.region) || params.region.length !== 4) {
+              return err(2001, "invalid_action", "region must be [x0,y0,x1,y1]", {
+                code_name: "invalid_action",
+                detail: "region must be [x0,y0,x1,y1]",
+              });
+            }
+            return ok(MOCK_ITEMS);
+          case "world_info":
+            return ok(MOCK_WORLD);
+          case "resources":
+            return ok(MOCK_RESOURCES);
           case "act": {
             const op = params && params.op;
             if (op === "delete") {
@@ -232,6 +290,33 @@ function startMockBridge() {
                 code_name: "game_rejected",
                 detail: { x: params.x, y: params.y, reason: "no_building" },
                 hint: "the tile is empty; check coordinates with shapez_observe",
+              });
+            }
+            if (op === "place" && params.x === 3 && params.y === 4) {
+              // Occupied tile: the mod reports the occupant in its hint prose.
+              return err(2002, "cannot place belt at (3,4)", {
+                code_name: "game_rejected",
+                detail: "Tile occupied by hub (uid 4127, rot 0)",
+              });
+            }
+            if (op === "place" && params.x === 9 && params.y === 9) {
+              return err(2002, "cannot place belt at (9,9)", {
+                code_name: "game_rejected",
+                detail: "Tile occupied by belt (uid 4128, rot 0)",
+              });
+            }
+            if (op === "place" && params.x === 8 && params.y === 8) {
+              // Mod-side hard failure used by the batch tests.
+              return err(2002, "cannot place belt at (8,8)", {
+                code_name: "game_rejected",
+                detail: "Tile occupied by belt (uid 4129, rot 0)",
+              });
+            }
+            if (op === "place" && params.x === 7 && params.y === 7) {
+              // Non-fatal per PROTOCOL.md: batch must keep going.
+              return err(2005, "await exceeded the bridge's budget", {
+                code_name: "await_timeout",
+                hint: "Not an error state: raise timeout_ticks",
               });
             }
             if (op === "export_blueprint") {
@@ -422,14 +507,18 @@ async function run() {
     "shapez_action",
     "shapez_batch",
     "shapez_blueprint",
+    "shapez_items",
     "shapez_load",
     "shapez_observe",
+    "shapez_production",
+    "shapez_resources",
     "shapez_save",
     "shapez_screenshot",
     "shapez_status",
+    "shapez_world",
   ].sort();
   check(
-    "tools/list: exactly 8 tools with expected names",
+    "tools/list: exactly 12 tools with expected names",
     JSON.stringify(toolNames) === JSON.stringify(expectedNames),
     toolNames.join(","),
   );
@@ -488,6 +577,278 @@ async function run() {
     obsReq && JSON.stringify(obsReq.params),
   );
 
+  // --- 6b. shapez_observe response_format --------------------------------
+  {
+    const detailed = await rpc("tools/call", {
+      name: "shapez_observe",
+      arguments: {},
+    });
+    const dOut = parseToolText(detailed);
+    const dEnt = dOut && dOut.entities && dOut.entities[0];
+    check(
+      "observe detailed (default): entity keeps variant/code/layer",
+      dEnt &&
+        dEnt.variant === "default" &&
+        dEnt.code === 7 &&
+        dEnt.rotation_variant === 0 &&
+        dEnt.layer === "regular",
+      dEnt && JSON.stringify(dEnt),
+    );
+    check(
+      "observe detailed: no response_format marker added",
+      dOut && dOut.response_format === undefined,
+      dOut && JSON.stringify(dOut.response_format),
+    );
+    check(
+      "observe detailed: the mod receives no response_format param",
+      lastReceived(mock, "obs") &&
+        lastReceived(mock, "obs").params.response_format === undefined,
+      lastReceived(mock, "obs") && JSON.stringify(lastReceived(mock, "obs").params),
+    );
+    {
+      const lay = await rpc("tools/call", {
+        name: "shapez_observe",
+        arguments: { layer: "all", max_resources: 10 },
+      });
+      check(
+        "observe: layer/max_resources forwarded (formerly unexposed reads)",
+        parseToolText(lay) &&
+          lastReceived(mock, "obs").params.layer === "all" &&
+          lastReceived(mock, "obs").params.max_resources === 10,
+        lastReceived(mock, "obs") && JSON.stringify(lastReceived(mock, "obs").params),
+      );
+    }
+
+    const concise = await rpc("tools/call", {
+      name: "shapez_observe",
+      arguments: { response_format: "concise" },
+    });
+    const cOut = parseToolText(concise);
+    const cEnt = cOut && cOut.entities && cOut.entities[0];
+    check(
+      "observe concise: entity reduced to {uid,type,x,y,r}",
+      cEnt &&
+        JSON.stringify(Object.keys(cEnt).sort()) ===
+          JSON.stringify(["r", "type", "uid", "x", "y"]),
+      cEnt && JSON.stringify(cEnt),
+    );
+    check(
+      "observe concise: rotation r is preserved",
+      cEnt && cEnt.r === 90,
+      cEnt && cEnt.r,
+    );
+    check(
+      "observe concise: response_format echoed, entity_count/stats kept",
+      cOut &&
+        cOut.response_format === "concise" &&
+        cOut.entity_count === 2 &&
+        cOut.stats &&
+        cOut.stats.total === 2,
+      cOut && JSON.stringify({ f: cOut.response_format, n: cOut.entity_count }),
+    );
+    // Measure the actual saving on the fixture (detailed vs concise payload).
+    const dLen = Buffer.byteLength(JSON.stringify(dOut), "utf8");
+    const cLen = Buffer.byteLength(JSON.stringify(cOut), "utf8");
+    check(
+      "observe concise: payload is smaller than detailed",
+      cLen < dLen,
+      `detailed=${dLen}B concise=${cLen}B`,
+    );
+    {
+      const dOnly = JSON.stringify(dOut.entities);
+      const cOnly = JSON.stringify(cOut.entities);
+      // The ~117 B/entity figure in the brief is for the mod's entity object;
+      // assert the per-entity envelope really is the small one.
+      const dPer = Math.round((dOnly.length - 2) / 2);
+      const cPer = Math.round((cOnly.length - 2) / 2);
+      check(
+        "observe concise: per-entity bytes shrink by at least 40%",
+        cPer <= dPer * 0.6,
+        `detailed=${dPer}B concise=${cPer}B per entity`,
+      );
+      check(
+        "observe concise: sub-60B per entity",
+        cPer < 60,
+        `concise=${cPer}B per entity`,
+      );
+    }
+
+    const bad = await rpc("tools/call", {
+      name: "shapez_observe",
+      arguments: { response_format: "tiny" },
+    });
+    check(
+      "observe response_format illegal: -32602",
+      bad.error && bad.error.code === -32602,
+      JSON.stringify(bad.error),
+    );
+    check(
+      "observe response_format illegal: next lists the legal values",
+      bad.error &&
+        bad.error.data &&
+        Array.isArray(bad.error.data.next) &&
+        bad.error.data.next.some((s) => /concise.*detailed|detailed.*concise/.test(String(s))),
+      bad.error && JSON.stringify(bad.error.data),
+    );
+  }
+
+  // --- 6c. shapez_production ---------------------------------------------
+  {
+    const resp = await rpc("tools/call", {
+      name: "shapez_production",
+      arguments: { slices: 3 },
+    });
+    const out = parseToolText(resp);
+    const req = lastReceived(mock, "production");
+    check(
+      "shapez_production: forwards to `production` with slices",
+      req && req.params.slices === 3,
+      req && JSON.stringify(req.params),
+    );
+    check(
+      "shapez_production: result carries per-second rates",
+      out && out.produced_per_sec && out.produced_per_sec.CuCuCuCu === 2,
+      out && JSON.stringify(out && out.produced_per_sec),
+    );
+    const def = await rpc("tools/call", { name: "shapez_production", arguments: {} });
+    check(
+      "shapez_production: no args → empty params (mod default 6 slices)",
+      lastReceived(mock, "production") &&
+        Object.keys(lastReceived(mock, "production").params).length === 0,
+      lastReceived(mock, "production") &&
+        JSON.stringify(lastReceived(mock, "production").params),
+    );
+    check(
+      "shapez_production: no args still returns a result",
+      parseToolText(def) && parseToolText(def).window_seconds === 60,
+    );
+    const bad = await rpc("tools/call", {
+      name: "shapez_production",
+      arguments: { slices: 0 },
+    });
+    check(
+      "shapez_production: slices out of range → -32602 with next",
+      bad.error &&
+        bad.error.code === -32602 &&
+        bad.error.data &&
+        Array.isArray(bad.error.data.next),
+      JSON.stringify(bad.error),
+    );
+  }
+
+  // --- 6d. shapez_items ---------------------------------------------------
+  {
+    const resp = await rpc("tools/call", {
+      name: "shapez_items",
+      arguments: { region: [-10, -10, 10, 10] },
+    });
+    const out = parseToolText(resp);
+    const req = lastReceived(mock, "debug_items");
+    check(
+      "shapez_items: forwards to `debug_items` with region",
+      req && JSON.stringify(req.params.region) === "[-10,-10,10,10]",
+      req && JSON.stringify(req.params),
+    );
+    check(
+      "shapez_items: result exposes boundAcceptor per path",
+      out &&
+        Array.isArray(out.paths) &&
+        out.paths[0] &&
+        JSON.stringify(out.paths[0].boundAcceptor) === "[0,4]",
+      out && JSON.stringify(out && out.paths && out.paths[0]),
+    );
+    check(
+      "shapez_items: belt item + counts present",
+      out && out.belts.length === 1 && out.counts && out.counts.belts === 1,
+      out && JSON.stringify(out && out.counts),
+    );
+    check(
+      "shapez_items: every result entity has uid-free cell coords",
+      out && Array.isArray(out.belts) && Array.isArray(out.belts[0].cell),
+    );
+    const bad = await rpc("tools/call", {
+      name: "shapez_items",
+      arguments: {},
+    });
+    check(
+      "shapez_items: missing region → -32602 with next",
+      bad.error &&
+        bad.error.code === -32602 &&
+        bad.error.data &&
+        bad.error.data.next.length > 0,
+      JSON.stringify(bad.error),
+    );
+  }
+
+  // --- 6e. shapez_world ---------------------------------------------------
+  {
+    const resp = await rpc("tools/call", {
+      name: "shapez_world",
+      arguments: {},
+    });
+    const out = parseToolText(resp);
+    check(
+      "shapez_world: seed + hub forwarded from `world_info`",
+      out && out.seed === 43391 && out.hub && out.hub.w === 4,
+      out && JSON.stringify(out),
+    );
+    check(
+      "shapez_world: sends empty params",
+      lastReceived(mock, "world_info") &&
+        Object.keys(lastReceived(mock, "world_info").params).length === 0,
+      lastReceived(mock, "world_info") &&
+        JSON.stringify(lastReceived(mock, "world_info").params),
+    );
+  }
+
+  // --- 6f. shapez_resources ----------------------------------------------
+  {
+    const resp = await rpc("tools/call", {
+      name: "shapez_resources",
+      arguments: {},
+    });
+    const out = parseToolText(resp);
+    check(
+      "shapez_resources: default call → empty params (mod default region)",
+      lastReceived(mock, "resources") &&
+        Object.keys(lastReceived(mock, "resources").params).length === 0,
+      lastReceived(mock, "resources") &&
+        JSON.stringify(lastReceived(mock, "resources").params),
+    );
+    check(
+      "shapez_resources: aggregated result (count/bbox/runs)",
+      out &&
+        out.resources[0] &&
+        out.resources[0].count === 22 &&
+        Array.isArray(out.resources[0].bbox) &&
+        Array.isArray(out.resources[0].runs),
+      out && JSON.stringify(out && out.resources && out.resources[0]),
+    );
+    const withRegion = await rpc("tools/call", {
+      name: "shapez_resources",
+      arguments: { region: [-5, -5, 5, 5] },
+    });
+    check(
+      "shapez_resources: region forwarded",
+      parseToolText(withRegion) &&
+        JSON.stringify(lastReceived(mock, "resources").params.region) === "[-5,-5,5,5]",
+      lastReceived(mock, "resources") &&
+        JSON.stringify(lastReceived(mock, "resources").params),
+    );
+    const tooBig = await rpc("tools/call", {
+      name: "shapez_resources",
+      arguments: { region: [-300, -300, 300, 300] },
+    });
+    check(
+      "shapez_resources: oversized region → -32602 (40000-tile cap) with next",
+      tooBig.error &&
+        tooBig.error.code === -32602 &&
+        tooBig.error.data &&
+        tooBig.error.data.next.length > 0,
+      JSON.stringify(tooBig.error),
+    );
+  }
+
   // --- 7. shapez_action (happy path, verbatim params) ----------------------
   r = await rpc("tools/call", {
     name: "shapez_action",
@@ -529,6 +890,17 @@ async function run() {
       errOut.hint.length > 0,
     errOut && JSON.stringify(errOut),
   );
+  check(
+    "error text carries a non-empty `next` array",
+    errOut && Array.isArray(errOut.next) && errOut.next.length > 0,
+    errOut && JSON.stringify(errOut.next),
+  );
+  check(
+    "error text `next` names an actionable next call",
+    errOut &&
+      errOut.next.some((s) => /shapez_(observe|action)\b|debug_app_state/.test(String(s))),
+    errOut && JSON.stringify(errOut.next),
+  );
 
   // --- 9. shapez_batch -----------------------------------------------------
   r = await rpc("tools/call", {
@@ -540,6 +912,283 @@ async function run() {
     "shapez_batch: results array of 2",
     batchOut && Array.isArray(batchOut.results) && batchOut.results.length === 2,
   );
+  check(
+    "shapez_batch: all-ok batch reports ok:true, stopped:false",
+    batchOut &&
+      batchOut.ok === true &&
+      batchOut.stopped === false &&
+      batchOut.executed === 2 &&
+      batchOut.requested === 2,
+    batchOut && JSON.stringify({ ok: batchOut.ok, stopped: batchOut.stopped }),
+  );
+  check(
+    "shapez_batch: dispatched through `act` (not the bridge's non-fail-fast batch)",
+    lastReceived(mock, "batch") === null ||
+      lastReceived(mock, "batch").id < lastReceived(mock, "act").id,
+    lastReceived(mock, "batch") && lastReceived(mock, "batch").id,
+  );
+
+  // --- 9a. unknown tool arguments are rejected, not silently dropped -------
+  {
+    const bad = await rpc("tools/call", {
+      name: "shapez_observe",
+      arguments: { maxEntities: 5 },
+    });
+    check(
+      "unknown arg (maxEntities typo): -32602 instead of silent ignore",
+      bad.error && bad.error.code === -32602,
+      JSON.stringify(bad.error),
+    );
+    check(
+      "unknown arg: error names the offending key and the legal ones",
+      bad.error &&
+        bad.error.data &&
+        Array.isArray(bad.error.data.next) &&
+        /maxEntities/.test(bad.error.message) &&
+        bad.error.data.next.some((s) => /max_entities/.test(String(s))),
+      JSON.stringify(bad.error),
+    );
+    const ok = await rpc("tools/call", {
+      name: "shapez_action",
+      arguments: { op: "place", building: "belt", x: 1, y: 2, r: 0 },
+    });
+    check(
+      "shapez_action permits extra op-specific fields (additionalProperties:true)",
+      ok.result && ok.result.isError !== true,
+    );
+  }
+
+  // --- 9b. shapez_batch fail-fast: stops at the first error ----------------
+  {
+    const before = mock.received.length;
+    const resp = await rpc("tools/call", {
+      name: "shapez_batch",
+      arguments: {
+        actions: [
+          { op: "noop" },
+          { op: "place", building: "belt", x: 8, y: 8 },
+          { op: "camera", x: 1, y: 1 },
+          { op: "noop" },
+        ],
+      },
+    });
+    const out = parseToolText(resp);
+    check(
+      "shapez_batch fail-fast: stops after the failing action (2 executed of 4)",
+      out && out.executed === 2 && out.requested === 4 && out.stopped === true,
+      out && JSON.stringify({ executed: out.executed, stopped: out.stopped }),
+    );
+    check(
+      "shapez_batch fail-fast: ok:false, failed_at/failed_op identify the failure",
+      out && out.ok === false && out.failed_at === 1 && out.failed_op === "place",
+      out && JSON.stringify({ ok: out.ok, failed_at: out.failed_at }),
+    );
+    check(
+      "shapez_batch fail-fast: not_executed lists the 2 skipped actions",
+      out &&
+        Array.isArray(out.not_executed) &&
+        out.not_executed.length === 2 &&
+        out.not_executed[0].index === 2 &&
+        out.not_executed[0].op === "camera" &&
+        out.not_executed[1].index === 3,
+      out && JSON.stringify(out.not_executed),
+    );
+    check(
+      "shapez_batch fail-fast: failing result carries its own `next`",
+      out &&
+        out.results[1] &&
+        out.results[1].error &&
+        Array.isArray(out.results[1].error.next) &&
+        out.results[1].error.next.length > 0,
+      out && JSON.stringify(out.results[1] && out.results[1].error),
+    );
+    check(
+      "shapez_batch fail-fast: only 2 act calls hit the bridge",
+      mock.received.slice(before).filter((m) => m.method === "act").length === 2,
+      String(mock.received.slice(before).filter((m) => m.method === "act").length),
+    );
+  }
+
+  // --- 9c. shapez_batch: await_timeout (2005) is not fatal -----------------
+  {
+    const resp = await rpc("tools/call", {
+      name: "shapez_batch",
+      arguments: {
+        actions: [
+          { op: "place", x: 7, y: 7 },
+          { op: "noop" },
+        ],
+      },
+    });
+    const out = parseToolText(resp);
+    check(
+      "shapez_batch: 2005 await_timeout does not stop the run",
+      out &&
+        out.stopped === false &&
+        out.executed === 2 &&
+        out.ok === false &&
+        out.failed === 1,
+      out && JSON.stringify({ stopped: out.stopped, executed: out.executed, ok: out.ok }),
+    );
+  }
+
+  // --- 9d. shapez_batch: continue_on_error:true keeps old semantics --------
+  {
+    const resp = await rpc("tools/call", {
+      name: "shapez_batch",
+      arguments: {
+        actions: [
+          { op: "place", x: 8, y: 8 },
+          { op: "noop" },
+          { op: "camera", x: 2, y: 2 },
+        ],
+        continue_on_error: true,
+      },
+    });
+    const out = parseToolText(resp);
+    check(
+      "shapez_batch continue_on_error: runs all 3, not_executed absent",
+      out &&
+        out.executed === 3 &&
+        out.stopped === false &&
+        out.not_executed === undefined &&
+        out.failed === 1,
+      out && JSON.stringify({ executed: out.executed, failed: out.failed }),
+    );
+  }
+
+  // --- 9e. shapez_batch: malformed action → -32602 with legal ops ----------
+  {
+    const resp = await rpc("tools/call", {
+      name: "shapez_batch",
+      arguments: { actions: [{ op: "noop" }, { nope: 1 }] },
+    });
+    check(
+      "shapez_batch malformed action: -32602",
+      resp.error && resp.error.code === -32602,
+      JSON.stringify(resp.error),
+    );
+    check(
+      "shapez_batch malformed action: error.data.next lists legal ops",
+      resp.error &&
+        resp.error.data &&
+        Array.isArray(resp.error.data.next) &&
+        resp.error.data.next.some((s) => /legal ops: .*place/.test(String(s))),
+      resp.error && JSON.stringify(resp.error.data),
+    );
+  }
+
+  // --- 9f. occupied tile → blocker-like `next` names the occupant ---------
+  {
+    const resp = await rpc("tools/call", {
+      name: "shapez_action",
+      arguments: { op: "place", building: "belt", x: 9, y: 9 },
+    });
+    const out = parseToolText(resp);
+    const joined = out && Array.isArray(out.next) ? out.next.join(" | ") : "";
+    check(
+      "occupied tile: `next` names the occupant (type + uid)",
+      /belt/.test(joined) && /4128/.test(joined),
+      joined,
+    );
+    check(
+      "occupied tile: `next` offers delete at the parsed coordinates",
+      /op:'delete', x:9, y:9/.test(joined),
+      joined,
+    );
+    check(
+      "occupied tile: blocker is structured {uid,type,removable,x,y}",
+      out &&
+        out.blocker &&
+        out.blocker.uid === 4128 &&
+        out.blocker.type === "belt" &&
+        out.blocker.removable === true &&
+        out.blocker.x === 9 &&
+        out.blocker.y === 9,
+      out && JSON.stringify(out.blocker),
+    );
+    check(
+      "occupied tile: `next` includes the inspect-region call",
+      /shapez_observe/.test(joined),
+      joined,
+    );
+  }
+
+  // --- 9g. non-removable blocker (hub) → no delete suggestion --------------
+  {
+    const resp = await rpc("tools/call", {
+      name: "shapez_action",
+      arguments: { op: "place", building: "belt", x: 3, y: 4 },
+    });
+    const out = parseToolText(resp);
+    const joined = out && Array.isArray(out.next) ? out.next.join(" | ") : "";
+    check(
+      "hub blocker: removable=false and no delete suggestion",
+      out &&
+        out.blocker &&
+        out.blocker.removable === false &&
+        !/op:'delete'/.test(joined),
+      joined,
+    );
+  }
+
+  // --- 9h. 1003 not_in_game → next points at debug_app_state ---------------
+  {
+    // A second mock bridge that reports the mod as "not in game".
+    const notInGame = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const q = JSON.parse(body || "{}");
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: q.id,
+            error: {
+              code: 1003,
+              message: "not in game",
+              data: { code_name: "not_in_game", detail: "no root" },
+            },
+          }),
+        );
+      });
+    });
+    await new Promise((res) => notInGame.listen(0, "127.0.0.1", res));
+    const srv2 = startServer(["--url", `http://127.0.0.1:${notInGame.address().port}`]);
+    try {
+      srv2.child.stdin.write(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "shapez_world", arguments: {} },
+        }) + "\n",
+      );
+      const line = await srv2.reader.next(8000);
+      const msg = JSON.parse(line);
+      const text =
+        msg.result && msg.result.content && msg.result.content[0] && msg.result.content[0].text;
+      let parsed = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch {}
+      check(
+        "1003 not_in_game: isError with `next` naming shapez_status",
+        msg.result &&
+          msg.result.isError === true &&
+          parsed &&
+          Array.isArray(parsed.next) &&
+          parsed.next.some((s) => /shapez_status/.test(String(s))),
+        parsed && JSON.stringify(parsed.next),
+      );
+      srv2.child.stdin.end();
+      await waitExit(srv2.child, 5000);
+    } finally {
+      if (srv2.child.exitCode === null) srv2.child.kill();
+      notInGame.close();
+    }
+  }
 
   // --- 10. shapez_screenshot → MCP image content ---------------------------
   r = await rpc("tools/call", {

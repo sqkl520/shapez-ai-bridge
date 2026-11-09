@@ -283,13 +283,14 @@
     "stackPairs": 0,
     "capped": false
    },
-   "ms": 2,
+   "ms": 1,
    "known": 4
   },
   "seed": 43391,
   "level": 3,
   "cutQuadAllowed": false,
   "channelOrder": "asis",
+  "seedWasDefaulted": false,
   "gapTries": 0,
   "gap": {
    "rowGap": 8,

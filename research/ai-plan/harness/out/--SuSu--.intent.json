@@ -1941,13 +1941,14 @@
     "stackPairs": 1592,
     "capped": false
    },
-   "ms": 58,
+   "ms": 19,
    "known": 1647
   },
   "seed": 43391,
   "level": 1,
   "cutQuadAllowed": false,
   "channelOrder": "asis",
+  "seedWasDefaulted": false,
   "gapTries": 0,
   "gap": {
    "rowGap": 8,

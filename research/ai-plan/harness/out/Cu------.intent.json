@@ -881,13 +881,14 @@
     "stackPairs": 48404,
     "capped": false
    },
-   "ms": 947,
+   "ms": 386,
    "known": 45879
   },
   "seed": 43391,
   "level": 6,
   "cutQuadAllowed": false,
   "channelOrder": "asis",
+  "seedWasDefaulted": false,
   "gapTries": 0,
   "gap": {
    "rowGap": 8,
