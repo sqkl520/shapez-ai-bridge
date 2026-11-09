@@ -238,6 +238,26 @@ console.log("\n── 1. 正常路径（真 FakeGame + 真宏 + 真 verify） �
     eq(kinds[kinds.length - 1], "run_end", "★ run_end 是最后一行（可回放）");
     eq(kinds[0], "run_start", "第一行是 run_start");
 
+    /* ★ 删除冗余度要真的出现在 run 的 health 里（P18）★
+     *
+     * 这条接线的失败模式是**静默的**：`worldHealth()` 加个字段、
+     * `loop.mjs` 忘了赋值、或者异常被 catch 吞掉 —— 三种情况测试都不会红，
+     * 但 redundancy 永远是 undefined，而"用冗余率判断该不该删"这件事就没了。
+     *
+     * L4 是零冗余世界（161 条带子、0 条可安全单删），所以这里能钉死一个具体值。 */
+    ok(res.health && typeof res.health === "object", "run 返回里必须有 health");
+    ok(res.health.redundancy && typeof res.health.redundancy === "object",
+        "health 里必须有 redundancy（P18 的接线）", res.health && Object.keys(res.health));
+    /* ⚠️ 161 是 L4 的**初始**带子数。这次 run 用 replace_run 把 3 条带子
+       换成了 cutter + trash，所以收尾时是 158。断言必须用变更后的数 ——
+       这正是"health 是 tx 之后的世界"的一个旁证（写 161 会红）。
+       我要钉的是「安全可删 = 0」这个**结构性**结论，它对 158 和 161 都成立。 */
+    eq(res.health.redundancy.belts, 158, "L4 经过 replace_run 后带子数 = 161-3 = 158");
+    eq(res.health.redundancy.safe, 0, "★ L4 是零冗余世界：0 条可安全单删");
+    eq(res.health.redundancy.safe_pct, 0, "冗余率 0");
+    ok(res.health.redundancy.break_kinds && res.health.redundancy.break_kinds["starved-belt"] > 0,
+        "断开种类要分类计数", res.health.redundancy.break_kinds);
+
     /* 顺序：plan 必须在 apply 之前（否则就是「先写后想」） */
     const iP = kinds.indexOf("plan"), iA = kinds.indexOf("apply"), iV = kinds.indexOf("verify");
     ok(iP < iA && iA < iV, "顺序 plan → apply → verify", { iP, iA, iV });

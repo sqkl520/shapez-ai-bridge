@@ -56,6 +56,17 @@ import { verifyRound, applyVerdict, buildUidMap, worldUidSetHash } from "./loop/
 import { makeClient, parseLlmPlan, MockExhausted } from "./loop/llm.mjs";
 import { buildPrompt } from "./loop/prompt.mjs";
 import { classifyChecks, phaseTwoVerdict } from "./loop/offline_boundary.mjs";
+import {
+    worldHealth, healthDelta, classifyNetEffect, shapeHash,
+    formatHealth, formatDelta, formatNetEffect, formatDeadBySource, NET_EFFECT_LABEL,
+} from "./loop/health.mjs";
+import { removalRedundancy } from "./loop/redundancy.mjs";
+import { decideRollback, netEffectAfterRollback, ROLLBACK_KINDS } from "./loop/rollback.mjs";
+import {
+    loadMemory, saveMemory, extractAttempts, mergeMemory, attemptsForGoal,
+    worldKeyOf, detectGoalChange, worldUpdate, MEMORY_FILE,
+} from "./loop/memory.mjs";
+import { findObsoleteLines, findStoredObsolete, describeObsoleteLine, isSanctionedTeardown } from "./loop/obsolete.mjs";
 
 import { MACRO_IMPLS, replaceRun, removeRun, removeMachine, trashUnused } from "./macros/remove.mjs";
 import { insertMachine, extendLine } from "./macros/place.mjs";
@@ -351,6 +362,62 @@ export function readTranscript(file) {
             throw new Error(`transcript 第 ${i + 1} 行不是合法 JSON：${e.message}`);
         }
     });
+}
+
+/**
+ * `timeline.log` —— **一条人能读的 run 时间线**。
+ *
+ * ## 为什么 transcript.jsonl 不够
+ *
+ * 用户原话：「我觉得，应该需要日志输出，以便检查哪里出问题了」。
+ *
+ * `transcript.jsonl` 每行是一个 kind + 一坨结构化 data，它是**验收的证据**，
+ * 不是**排查的读物**。实际复盘时要做的事是「这轮它干了什么、世界变好还是变坏」，
+ * 而那需要把 5 行 JSON 交叉引用才能拼出来 —— 我上次就是这么干的（现场写 node -e）。
+ *
+ * 所以这里并列写一份纯文本。它**不含任何 transcript 没有的信息**（不新增真值源），
+ * 只是同一批事实的人读投影。写失败绝不影响 run（catch 吞掉）——
+ * 证据的权威副本是 transcript，这一份是给人看的便利。
+ *
+ * 格式（每轮固定 6 行，字段顺序固定，可 `diff` 两次 run）：
+ *
+ * ```
+ * ── r1  L6 Cu------ 0/270  实体 136  带子 120(16 机器)  到hub 71/120 59% · 死 49  带上货 0
+ *    诊断 CHAIN_UNFED×3 BELT_HANDOFF_REJECTED×3 (fp a1b2c3d4)
+ *    模型 connect B12→C1  "rotater 输出没接到 hub"
+ *    tx   applied 6/6
+ *    之后 L6 Cu------ 0/270  实体 136  带子 126(16 机器)  到hub 71/126 56% · 死 55  带上货 0
+ *      ▼ belts_dead 49→55(+6)  ▼ reach_pct 0.59→0.56(-0.03)
+ *    净效果 regressive（改坏了） — 死带子 49→55
+ * ```
+ */
+class Timeline {
+    constructor(dir) {
+        this.file = path.join(dir, "timeline.log");
+        this.lines = [];
+    }
+
+    /** 追加若干行。**任何失败都吞掉**：这不是证据源，不该有能力搞坏一次 run。 */
+    push(...lines) {
+        for (const l of lines) if (typeof l === "string") this.lines.push(l);
+    }
+
+    flush() {
+        try {
+            fs.writeFileSync(this.file, this.lines.join("\n") + "\n", "utf8");
+            return this.file;
+        } catch { return null; }
+    }
+}
+
+/** 把一条 diagnose 行压成「码×次数」。 */
+function diagCounts(diagnoses) {
+    const m = new Map();
+    for (const d of diagnoses || []) {
+        const c = d && d.code ? d.code : "?";
+        m.set(c, (m.get(c) || 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c}×${n}`).join(" ");
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1579,6 +1646,19 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
         resolved: res,
         provenance: { tagged: withProv.tagged, untagged: withProv.untagged.length },
         warnings: (txPlan.warnings || []).map(w => w && w.code).filter(Boolean),
+        /* ★ 宏自己算出来的后果（P17 §6.1）★
+         *
+         * `warnings`（上一行）是 **txPlan** 层的；这里要的是**每个宏的返回值**里那些：
+         * `removal-is-clean` / `would-disconnect` / `rv-drift` …
+         * 它们一直存在、一直没人用 —— 只进了 transcript，从没进过 prompt。
+         *
+         * 保留 `detail`（去掉 `hint`：prompt 里没地方放，而 detail 才是「发生了什么」）。
+         * 这是 renderLastRound 里 `consequences of last round's calls:` 的数据源。 */
+        macro_warnings: executed.flatMap(ex =>
+            ((ex && ex.result && Array.isArray(ex.result.warnings)) ? ex.result.warnings : [])
+                .filter(w => w && w.code)
+                .map(w => ({ macro: ex.macro, code: w.code, detail: w.detail || null }))
+        ),
         /* ★ partial 标记 + 被跳过的明细 ★
          *
          * `partial: true` 意味着**这个计划没有完整执行** —— 有调用被跳过。
@@ -1597,6 +1677,42 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
         partial: partialMode && (skippedAll.length > 0),
         skipped: skippedAll,
     };
+}
+
+/**
+ * `worldHealth()` + 删除冗余度。
+ *
+ * ★ 为什么必须走这个 helper，不许直接调 `worldHealth` ★
+ *
+ * `loop` 里有**三处**建 health 快照：轮首、撤销后、收尾。只在轮首挂
+ * `redundancy` 是不够的 —— 后两处会把 `st.healthNow` 整个覆盖掉，
+ * 于是 `run` 返回的 `health` 里就没有这个字段了。
+ *
+ * 这个 bug 是 `loop.test.mjs` 的端到端断言抓到的（"health 里必须有 redundancy" 红了）。
+ * 它正好演示了本项目的反复教训：**加一个字段时，要数清有几个赋值点**。
+ *
+ * 冗余度是**世界属性**（有几格带子删了不伤下游），与哪一处建的快照无关，
+ * 所以升格成 helper，而不是复制三段 try/catch。
+ *
+ * @param {object} p  同 `worldHealth` 的入参
+ * @returns {object}  health（含 `redundancy`，失败时降级为带 `reason` 的 null 形态）
+ */
+function healthWithRedundancy(p) {
+    const h = worldHealth(p);
+    try {
+        const obs = p && p.obs;
+        const nBelts = (obs && Array.isArray(obs.entities))
+            ? obs.entities.filter(e => e && e.type === "belt").length : 0;
+        h.redundancy = removalRedundancy(obs, nBelts > BUDGET.REDUNDANCY_FULL_MAX
+            ? { sample: BUDGET.REDUNDANCY_SAMPLE }
+            : {});
+    } catch (e) {
+        h.redundancy = {
+            belts: null, safe: null, breaking: null, safe_pct: null, break_kinds: null,
+            reason: `threw: ${e && e.message ? e.message : e}`,
+        };
+    }
+    return h;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1683,13 +1799,62 @@ export async function runLoop(opts = {}) {
     if (!llmClient || typeof llmClient.propose !== "function") throw new TypeError("runLoop: llmClient.propose 必需");
     const mode = opts.mode || "mock";
     if (!MODES.includes(mode)) throw new TypeError(`runLoop: mode "${mode}" 不在 ${MODES.join("|")}`);
-    const goal = typeof opts.goal === "string" ? opts.goal : (opts.goal && (opts.goal.shape || opts.goal.goal));
-    if (!goal || typeof goal !== "string") throw new TypeError("runLoop: goal 形状串必需");
+    /* ★ 当前目标必须可变 ★
+     *
+     * `goal` 是**调用方给的**初始目标；世界可能在 run 中途升级（level 5 → 6），
+     * 那时正确做法是采纳世界的目标继续跑，而不是 halt（halt 等于「赢一局就死机」）。
+     * 但 `opts.goal` 本身不改 —— 调用方传的是「这次 run 想解决什么」，
+     * 而 `curGoal` 是「世界现在要什么」。两者在升级后暂时不同，这是正常的。
+     *
+     * 上一次的名字 `const goal` 让所有下游（diagnose / prompt / 记忆落盘）
+     * 都锁死在旧目标上，那正是用户贴图那次的成因。所以改成 let + 一个
+     * 显式的 `curGoal` 变量，并在每轮轮首刷新。 */
+    const goalInput = typeof opts.goal === "string" ? opts.goal : (opts.goal && (opts.goal.shape || opts.goal.goal));
+    if (!goalInput || typeof goalInput !== "string") throw new TypeError("runLoop: goal 形状串必需");
+    const goal = goalInput;
+    let curGoal = goalInput;
     const budget = { ...BUDGET, ...(opts.budget || {}) };
     const runId = opts.runId || `r-${new Date(t0).toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${crypto.randomBytes(2).toString("hex")}`;
     const runDirRoot = path.resolve(opts.runDir || path.join(REPO, RUN_DIR));
     const runDir = path.join(runDirRoot, runId);
     const tr = new Transcript(runDir, runId);
+    const tl = new Timeline(runDir);
+
+    /* ── 跨 run 记忆 ──
+     *
+     * 记忆放在 `runDirRoot` 下（不是本次 run 的目录里）—— 它是跨 run 的。
+     * 同一个 `--run-dir` 下的多次 run 共享一份记忆；
+     * 换 runDir（换世界/换实验）就自动换记忆，不需要额外参数。
+     *
+     * 读失败 → 空记忆，run 照常跑。没有记忆只是少了一份先验，不是错误。 */
+    const memoryFile = path.resolve(runDirRoot, MEMORY_FILE);
+    const memory = loadMemory(memoryFile);
+    /* 世界身份：真桥走 `world_info`（mod 的 seed），离线夹具用 `fixtureWorldKey`
+       （fixture 文件名 + hub uid）。拿不到就是 "unknown"。
+       这个 key 只在**读记忆时**用一次，不随 tx 变化 —— 见 `worldKeyOf` 的注释。
+       ⚠️ `obs` 必须**显式传入**，不能读 `st.lastObs`：那个引用在循环里每轮都被
+       换掉，闭包里读到的是「当下的世界」而不是「算 key 那一刻的世界」。
+       而 key 必须**一次定死** —— 如果它随世界变（比如退化的 `hubuid|L` 里含
+       关卡号），升级之后 key 就变了，`worlds` 里那条记录永远匹配不上。 */
+    const readWorldKey = async (obs) => {
+        try {
+            if (typeof reader.worldInfo === "function") {
+                const wi = await reader.worldInfo();
+                return worldKeyOf(wi, obs || null);
+            }
+        } catch { /* 读不到就退到 obs 里的 hub uid，不阻塞 run */ }
+        return worldKeyOf(null, obs || null);
+    };
+    /* 本次 run 已经用过的动作集由 `## LAST ROUND` 负责讲；历史段保留硬负例
+       （`attemptsForGoal` 内部按 kind 硬度判），只剔除弱记录。
+       `st` 在下面才声明，但这个函数只在循环里被调用（那时 `st` 已存在）——
+       闭包按调用时求值，不会触发 TDZ。 */
+    const priorAttemptsFor = (gs, world) => attemptsForGoal(memory, gs, {
+        limit: 6,
+        excludeActionSets: (st.roundCalls || []).map(r => r.actionSet),
+        world,
+        worldStrict: true,
+    });
 
     const ctx = {
         reader, llmClient, goal, mode, budget, apply: opts.apply || null, game: opts.game || null,
@@ -1736,12 +1901,63 @@ export async function runLoop(opts = {}) {
          * 否则不可解的目标每轮重跑一次组合爆炸，实测 `CgScCgCg` 单次 1.6s）。
          */
         recipe: null,
+        /**
+         * 上一轮 tx **之后**的世界体检快照（`worldHealth()`）。
+         *
+         * 这是「这一步是好是坏」的基准：本轮 tx 前再拍一张，两张相减就是净效果。
+         * `null` = 还没拍过（首轮），此时不做判定 —— 没有 before 就没有 delta，
+         * 用精心构造的假基准去凑一个 delta 只会得到假结论。
+         */
+        healthBefore: null,
+        /** 上一轮的净效果判定（进 prompt，让模型知道自己上一步干了什么） */
+        lastNetEffect: null,
+        /** 本轮 tx 后的快照（供下一次循环当 before） */
+        healthNow: null,
+        /** 首轮快照（run_end 的累计对比用） */
+        healthFirst: null,
+        /** 每轮判定后的净效果序列（进 run_end，可 grep 出「越改越差」） */
+        netEffects: [],
+        /** 本 run 存过的检查点名（用于 run_end 与调试） */
+        checkpointNames: [],
+        /** 已撤销次数（`decideRollback` 的上限判据） */
+        rolledBack: 0,
+        /** 每次撤销的完整记录 */
+        rollbacks: [],
+        /** 撤销之后的一轮：让 `reverted` 的观感存活一轮（见轮首那段注释） */
+        revertedPending: false,
+        /** 每轮真正执行过的宏（供跨 run 记忆落盘） */
+        roundCalls: [],
+        /**
+         * 本次 run 中途世界升级的记录（`{from,to,level_from,level_to,round}`）。
+         *
+         * 只在第一次检测到时置位。它有两个消费者：
+         *   · `GOAL_CHANGED` 诊断（只报一轮，见 `goalChangedAnnounced`）；
+         *   · `run_end` 的 `goal_changed` 字段（读日志的人据此判断这次 run
+         *     跨了关，从而知道 `goal_delta` 为什么不能直接比）。
+         */
+        goalChanged: null,
+        /** GOAL_CHANGED 是否已经报过（避免每轮都加、吃掉预算） */
+        goalChangedAnnounced: false,
+        /** 上一轮的 txPlan（授权拆除要用它的 `removes`） */
+        lastTxPlan: null,
+        /** 上一轮算出的残线清单（授权拆除的第二判据） */
+        lastObsoleteLines: null,
     };
 
     let outcome = "error";
     let reason = "INTERNAL";
     let verdict = null;
     let lastErr = null;
+    /* 这两个在 finally 里填充、在返回值里要用 —— 所以作用域必须提到 try 之外。 */
+    let savedFiles = [];
+    let runTotal = null;
+    let tlFile = null;
+    /* 记忆保存的结果（进 run_end），在 finally 里填充。 */
+    let memorySaved = false;
+    /* 世界身份：首轮 observe 之后算一次（seed 在一次 run 内不变）。 */
+    let currentWorldKey = null;
+    /* 要写回 `worlds` 的本次世界状态（finally 里由 `worldUpdate` 填充）。 */
+    let worldPatch = {};
 
     const budgetLeft = () => ({
         rounds: budget.ROUNDS_MAX - st.rounds,
@@ -1917,6 +2133,46 @@ export async function runLoop(opts = {}) {
             st.lastObs = ob.obs; st.lastItems = ob.items; st.lastProduction = ob.production;
             st.handles = buildHandles(ob.obs, ob.items);
 
+            /* 世界身份只读一次（seed 不会在一次 run 里变）。读不到就 "unknown"，
+               那仍然按 goal 分组，只是不能跨世界隔离 —— 附加能力，绝不阻塞 run。 */
+            if (currentWorldKey === null) currentWorldKey = await readWorldKey(ob.obs);
+
+            /* ★ 首轮就把「我看到了这个目标」写进记忆，不等 finally ★
+             *
+             * 交叉评审指出的两个洞，都由这一行解决：
+             *
+             *   ① **全新 runDir / 某个世界第一次 run** 时记忆是空的。
+             *      如果这个 run 中途升级，`rememberedGoal` 取不到 ⇒ 判不出
+             *      「是升级」⇒ 退化成 `halt: GOAL_MISMATCH`，本 run 经验全丢。
+             *   ② `worldUpdate` 只在 finally 写，意味着「上次目标」永远是
+             *      **run 结束那一刻**的目标；中途升级的那一段完全不留痕。
+             *
+             * 首轮 observe 之后写一次，此后每轮若目标变了再写 ——
+             * 这样同一次 run 内就有自证能力，不依赖上一次 run。
+             *
+             * 写失败不阻塞：记忆是附加能力。 */
+            if (roundNo === 1) {
+                const seenGoal = (ob.obs.goal && ob.obs.goal.requirement
+                    && typeof ob.obs.goal.requirement.shape === "string")
+                    ? ob.obs.goal.requirement.shape : goal;
+                const seenLevel = Number.isFinite(ob.obs.goal && ob.obs.goal.level) ? ob.obs.goal.level : null;
+                if (seenGoal && seenGoal !== goal) {
+                    /* 首轮目标就与调用方不同 —— 这正是「升级发生在两次 run 之间」的形态。
+                       先写一条「我上次见的是 goal（调用方的）」，再让下面的检测走升级分支；
+                       但如果记忆里**根本没有**这个世界，就不能假定是升级（可能是传错）。 */
+                } else if (seenGoal) {
+                    /* 首轮与调用方一致：立即落盘，供本 run 中途升级时自证。 */
+                    const patch0 = worldUpdate({
+                        mem: memory, world: currentWorldKey, goalShape: seenGoal, level: seenLevel,
+                    });
+                    if (Object.keys(patch0).length) {
+                        saveMemory(memoryFile, mergeMemory(memory, [], patch0));
+                        /* 同步进当前这份 memory —— 否则本 run 后面的检测仍然读不到。 */
+                        Object.assign(memory, mergeMemory(memory, [], patch0));
+                    }
+                }
+            }
+
             /* ── ①b 配方：**每 run 一次**（首轮 observe 之后，因为需要 `obs.goal.level`） ──
              *
              * 为什么在这里：`diagnose` 必须保持纯函数（每轮调用 + 进 fingerprint）。
@@ -1955,6 +2211,232 @@ export async function runLoop(opts = {}) {
                 },
             });
 
+            /* ── ①c 世界体检快照（轮首） ──
+             *
+             * 放在**诊断之前、prompt 之前**，因为它有三个下游：
+             *   1. timeline 的第一行（人读）；
+             *   2. 上一轮 tx 的净效果基准 —— 上一轮 tx 之后拍的那张就是本轮的 before，
+             *      所以「这步是好是坏」必须等**下一次 observe** 才有定论（世界是异步的：
+             *      tx 返回 ok 不代表货已经在流）。这个顺序是刻意的，不是拖沓。
+             *   3. run_end 的累计对比（首轮快照 vs 末轮快照）—— 回答「整次 run 到底改善了没有」。
+             *
+             * 注意它**只读已有数据**，不额外 RPC：obs/items/production 都是 observeOnce
+             * 刚拿到的。加一次读取会让这一段的成本变成两次网络往返。
+             */
+            const healthNow = healthWithRedundancy({
+                obs: ob.obs, items: ob.items, production: ob.production, goalShape: curGoal,
+            });
+            if (st.healthFirst === null) st.healthFirst = healthNow;
+            st.healthNow = healthNow;
+
+            /* 上一轮 tx 的净效果 —— 现在才有 after 可读。
+               ★ 必须在覆盖 `st.healthBefore` **之前**比较 ★
+               先赋值再比较，就是自己比自己，每轮都得到「无变化」——
+               这个错误在第一次端到端跑里立刻现形了（timeline 里连着两条 inert）。 */
+            let roundNetEffect = null;
+            const beforeSnapshot = st.healthBefore;
+            tl.push(`── r${roundNo}  ${formatHealth(healthNow)}`);
+            if (beforeSnapshot) {
+                const dd = healthDelta(beforeSnapshot, healthNow);
+                roundNetEffect = classifyNetEffect(beforeSnapshot, healthNow, dd);
+                st.netEffects.push({ round: roundNo, kind: roundNetEffect.kind, why: roundNetEffect.why });
+                tl.push(`      ${formatDelta(dd)}`);
+                tl.push(`    ${formatNetEffect(roundNetEffect)}`);
+                /* ★ 撤销的观感优先级高于这一轮的 inert ★
+                 *
+                 * 撤销发生时我们把 `healthBefore` 也重置成了「撤销后的世界」，
+                 * 所以紧接的那一轮算出来必然是 `inert`（世界确实没再变）。
+                 * 语义上没错，但对模型是**误导**：它上一轮的改动是被系统撤掉的，
+                 * 不是「什么都没发生」。若照实传 inert，模型会得到
+                 * 「我上一轮什么也没干」的结论 —— 而真相是「你干了，被否了」。
+                 *
+                 * 所以撤销之后的那一轮，`lastNetEffect` 保持 `reverted`
+                 * （它在上一次循环里已经设好），本轮不再覆盖它。
+                 * 时间线仍然如实记 inert —— 读日志的人看得到世界确实没变。 */
+                if (st.revertedPending) {
+                    st.revertedPending = false;       // 只保留一轮，之后恢复正常
+                } else {
+                    st.lastNetEffect = roundNetEffect;
+                }
+            } else {
+                const deadSrc = formatDeadBySource(healthNow);
+                if (deadSrc) tl.push(`    死带子源头 ${deadSrc}`);
+            }
+
+            /* 本轮的 tx 会在这个快照之后发生 ⇒ 它就是**下一轮**的 before。
+               赋值放在比较**之后**，且在 tx 之前（理由见上：tx 之后没有 items 可读，
+               而「带上的货」是判定里唯一能看见「线通了但货没动」的量）。 */
+            st.healthBefore = healthNow;
+
+            /* ── ①d 该不该撤销上一步（**在这里做，不在 verify 之后**）──
+             *
+             * 为什么在这一刻：撤销要用「上一轮 tx 之前」的检查点，而这里已经
+             * 读到了「上一轮 tx 之后」的世界（`healthNow`）—— 两个快照都在手上，
+             * 判定与执行可以一次做完。放到 verify 之后会多一次世界读取。
+             *
+             * 为什么在 `st.healthBefore = healthNow` **之后**：撤销成功后世界回到了
+             * 上一轮之前，所以 `healthBefore` 需要被**重置**成撤销后的世界，
+             * 否则下一轮的净效果会把「撤销」本身算成一次变化。见下面的回填。
+             */
+            if (roundNetEffect && typeof reader.checkpointRestore === "function") {
+                const runTotalNow = (st.healthFirst && beforeSnapshot)
+                    ? classifyNetEffect(st.healthFirst, beforeSnapshot)
+                    : null;
+                /* 「本轮有没有在加东西」——`constructive` 的信号。施工的特征是边拆边建。 */
+                const hadWork = !!(roundNetEffect
+                    && Array.isArray(roundNetEffect.why)
+                    && roundNetEffect.why.some(w => /机器\s*\+\d+|带子\s*\+\d+/.test(String(w))));
+
+                const dec = decideRollback({
+                    netEffect: roundNetEffect,
+                    runTotal: runTotalNow,
+                    prevNetEffect: st.prevNetEffect || null,
+                    mode,
+                    budget,
+                    rolledBackCount: st.rolledBack,
+                    hadWorkThisRound: hadWork,
+                    /* ★ 授权拆除 ★
+                     *
+                     * 用**上一轮**的计划（`st.lastTxPlan`）判断：本轮测的是
+                     * 上一轮 tx 的净效果，所以「它拆了什么」也来自上一轮。
+                     *
+                     * 不传这个的后果（实测确认过的反向激励）：模型照着
+                     * `OBSOLETE_LINE` 去拆残线 → 拆的正是那些能到 hub 的带子
+                     * → 判 regressive → 连续两次被系统撤销。等于「照做就挨打」。 */
+                    sanctionedTeardown: isSanctionedTeardown({
+                        removes: st.lastTxPlan ? st.lastTxPlan.removes : null,
+                        obsoleteLines: st.lastObsoleteLines || null,
+                        levelChanged: !!st.goalChanged,
+                    }),
+                });
+                tl.push(`    撤销判定 ${dec.kind}${dec.rollback ? "（真撤销）" : ""}${dec.dry ? "（离线不执行）" : ""}`
+                    + (dec.why.length ? ` — ${dec.why.slice(0, 2).join("；")}` : ""));
+
+                if (dec.kind === "rolling_back") {
+                    let restored = null;
+                    if (dec.rollback) {
+                        /* 恢复到**上一轮 tx 之前**的检查点。名字是 `r<上一轮轮号>`。 */
+                        const target = st.checkpointNames.length
+                            ? st.checkpointNames[st.checkpointNames.length - 1]
+                            : null;
+                        if (target) {
+                            try {
+                                restored = await reader.checkpointRestore({ name: target, drop_after: false });
+                            } catch (e) {
+                                restored = { ok: false, why: [`restore 抛异常：${e && e.message ? e.message : e}`] };
+                            }
+                        } else {
+                            restored = { ok: false, why: ["没有可用的检查点"] };
+                        }
+                        st.rolledBack++;
+                    }
+                    const after = netEffectAfterRollback(dec, restored);
+                    const rec = {
+                        round: roundNo, decision: dec.kind, dry: !!dec.dry,
+                        target: st.checkpointNames[st.checkpointNames.length - 1] || null,
+                        verified: !!(restored && restored.verified),
+                        reverted: !!(after && after.reverted),
+                        why: (after && after.why) || dec.why,
+                        restore_why: restored && Array.isArray(restored.why) ? restored.why : [],
+                    };
+                    st.rollbacks.push(rec);
+                    tr.write("repair_decide", roundNo, {
+                        phase: "rollback",
+                        action: dec.rollback ? "rolled_back" : "rollback_planned_offline",
+                        reason: dec.kind,
+                        fingerprint: null,
+                        action_set: null,
+                        improved: after ? after.reverted : null,
+                        codes: ["ROLLBACK"],
+                        diagnoses: [],
+                        rollback: rec,
+                    });
+                    tl.push(`    ${after && after.reverted ? "✓ 已撤销，世界回到上一轮之前" : "✗ 撤销未生效"}`
+                        + (rec.restore_why.length ? ` — ${rec.restore_why.slice(0, 2).join("；")}` : ""));
+
+                    if (after && after.reverted) {
+                        /* 撤销成功后：把这一轮的净效果改写掉，并把 before 重置成
+                           「撤销后的世界」—— 否则下一轮会把撤销算成一次变化。 */
+                        const idx = st.netEffects.length - 1;
+                        if (idx >= 0) st.netEffects[idx] = { round: roundNo, kind: "reverted", why: rec.why };
+                        st.revertedThisRound = true;
+
+                        /* ★ 必须重读世界，并把 before 也重置 ★
+                         *
+                         * 撤销把世界退回到了**上一轮 tx 之前**。此刻三份快照各是什么：
+                         *
+                         *   `healthNow`   本轮轮首读的（= 上一轮 tx 之后）→ **已失效**
+                         *   `healthBefore` 本来是「本轮 tx 之前」的基准 →
+                         *                 它现在**也失效了**：它记录的是撤销前的世界
+                         *                 （176 条带子），而世界已经是 179 条了。
+                         *
+                         * 第一次实现只换了 `healthNow`、没换 `healthBefore`，结果下一轮
+                         * 把「撤销」本身算成了一次 `constructive` 变化（实测：
+                         * `177→179(+2) 带子 +2`），时间线上看起来像「模型又加了两条带子」。
+                         * 那是**假的**：世界只是被我们还原了。
+                         *
+                         * 所以两个都要设成撤销后的真实读数。这样下一轮的 delta 是
+                         * 「撤销后的世界 → 下一轮 tx 之后」，语义正确。
+                         *
+                         * 读失败不阻塞：两份都保持旧值，只在时间线里说清「撤销后读不到」。
+                         * 用一份猜测的世界去记账比不记账更糟 —— 那会让下一次判定基于假数据。 */
+                        try {
+                            const ro = unwrapObs(await reader.obs({
+                                max_entities: 50000, layer: "all",
+                                include_stats: true, include_resources: true, max_resources: 20000,
+                            }));
+                            let ri = null;
+                            try { ri = unwrapItems(await reader.debugItems({ region: debugItemsRegion(ro) })); } catch { ri = null; }
+                            const rh = healthWithRedundancy({ obs: ro, items: ri, production: ob.production, goalShape: curGoal });
+                            st.healthNow = rh;
+                            st.healthBefore = rh;          // ← 见上：它同样失效了
+                            st.lastObs = ro;
+                            st.handles = buildHandles(ro, ri);
+                            tl.push(`      撤销后 ${formatHealth(rh)}`);
+                        } catch (e) {
+                            tl.push(`      撤销后（读不到：${String(e && e.message ? e.message : e).slice(0, 60)}）`);
+                        }
+                        /* 撤销后本轮不该再基于「坏世界」的诊断继续走。
+                         * 直接进下一轮：重新 observe、重新诊断，让模型在一个**干净**的
+                         * 世界上重新决策。这也把「撤销」与「补救」分开 ——
+                         * 在同一轮里两件事一起做，会让 transcript 无法分清谁起了作用。 */
+                        st.obs = null;
+                        st.diagnoses = [mkDiag("WORLD_REVERTED", {
+                            layer: "meta",
+                            expected: "改动把世界改坏了，已撤销",
+                            observed: `第 ${roundNo} 轮 regressive，已恢复到该轮之前`,
+                            evidence: { rollback: rec },
+                            hint: "上一轮的改动被撤销了。重新诊断后再决定 —— 不要重复同一个动作。",
+                        })];
+                        tr.write("diagnose", roundNo, {
+                            codes: ["WORLD_REVERTED"], fingerprint: fingerprintOf(st.diagnoses), diagnoses: st.diagnoses,
+                        });
+                        /* ★ 撤销之后给模型看的不是「没有上一步」，而是 `reverted` ★
+                         *
+                         * 置 null 会让下一轮的 prompt 完全没有 `## LAST STEP`（首轮才那样），
+                         * 模型就不知道自己刚才被撤销过 —— 它很可能**再做一遍同样的动作**。
+                         * 实测过这个失败模式：没有反馈时模型连续三轮给同一套宏。
+                         *
+                         * `reverted` 档在 prompt 里说得很明确：「世界已经回到原样，
+                         * 不要试图修复 —— 没东西坏了。换一个动作。」 */
+                        st.prevNetEffect = {
+                            kind: "reverted",
+                            why: (after && after.why) || dec.why,
+                        };
+                        st.lastNetEffect = st.prevNetEffect;
+                        /* 撤销那一轮本身不问 LLM（直接 continue）。所以模型第一次看到
+                           `reverted` 是在**下一轮** —— 那轮的 roundNetEffect 会是 inert
+                           （世界确实没再变）。用这个标记让 reverted 的观感存活一轮，
+                           不被 inert 覆盖。详见轮首那段注释。 */
+                        st.revertedPending = true;
+                        continue;
+                    }
+                }
+                st.prevNetEffect = roundNetEffect;
+            } else if (roundNetEffect) {
+                st.prevNetEffect = roundNetEffect;
+            }
+
             /* ── ② diagnose ── */
             const bad = ob.problems.filter(d => d.code === "OBS_TRUNCATED");
             if (bad.length) {
@@ -1986,24 +2468,154 @@ export async function runLoop(opts = {}) {
                 const obsGoal = ob.obs && ob.obs.goal && ob.obs.goal.requirement
                     && ob.obs.goal.requirement.shape;
                 if (typeof obsGoal === "string" && obsGoal && obsGoal !== goal) {
-                    const d = mkDiag("GOAL_MISMATCH", {
-                        layer: "meta",
-                        expected: `goal 与世界的当前目标一致（世界是 "${obsGoal}"）`,
-                        observed: `调用方传的是 "${goal}"，而世界当前目标是 "${obsGoal}"`,
-                        evidence: { passed_goal: goal, world_goal: obsGoal },
-                        hint: "goal 要从 obs.goal.requirement.shape 读，不要硬编码 ——"
-                            + " 世界会升级，目标形状跟着变。传错 goal 会让 diagnose() 看错对象。",
-                    });
-                    tr.write("diagnose", roundNo, { codes: [d.code], fingerprint: fingerprintOf([d]), diagnoses: [d] });
-                    st.diagnoses = [d];
-                    outcome = "halt"; reason = "GOAL_MISMATCH";
-                    break;
+                    /* ★ 先分清两种完全不同的情况 ★
+                     *
+                     *   (a) 调用方传错了 goal（runner 硬编码）—— 这是**配置错误**，
+                     *       必须 halt：继续跑只会拿错误的诊断改世界。
+                     *   (b) 世界自己在 run 中途升级了 —— 这是**正常进展**，
+                     *       halt 等于「赢了一局就死机」，而且会丢掉本 run 已经
+                     *       收集到的全部经验。
+                     *
+                     * 判据是**两个条件同时成立**：
+                     *
+                     *   ① 记忆里这个世界上次看到的目标 == **调用方传的 goal**；
+                     *   ② 世界现在的目标 != 调用方传的 goal（进这个分支的前提）。
+                     *
+                     * 那说明：调用方没变（还是上次那个目标），是世界自己往前走了 —— 这是升级。
+                     *
+                     * ⚠️ 这里踩过一个坑：最初写成 `remembered.last_goal === obsGoal`
+                     * （记忆里的目标 == 世界现在的目标）。**那个条件恒为假** ——
+                     * 如果记忆里已经是 obsGoal，就根本进不了这个分支（前提是
+                     * `goal !== obsGoal`）。于是升级检测形同不存在，而且不报任何错。
+                     * 正确的对照物是**调用方传的 goal**，不是世界的当前目标。
+                     *
+                     * 记忆读不到 / 这个世界的第一次 run ⇒ 退化为 halt，
+                     * 因为「我们没见过这个目标」与「调用方给错了」无法区分，
+                     * 而误判成升级会让 loop 在错误目标上继续改世界（更危险）。 */
+                    const obsLevel = Number.isFinite(ob.obs.goal.level) ? ob.obs.goal.level : null;
+                    const remembered = memory.worlds && memory.worlds[currentWorldKey || ""]
+                        ? memory.worlds[currentWorldKey] : null;
+                    const rememberedGoal = (remembered && typeof remembered.last_goal === "string")
+                        ? remembered.last_goal.trim() : "";
+                    const callerMatchesHistory = !!rememberedGoal && rememberedGoal === goal;
+                    const selfMoved = callerMatchesHistory && goal !== obsGoal;
+                    if (selfMoved) {
+                        /* 世界升级：采纳新目标，本 run 继续。
+                         *
+                         * 三件事必须同时做，否则会留下不一致的状态：
+                         *   ① `st.recipe` 作废 —— 它是**旧目标**的解法，拿它判
+                         *      `PROCESSOR_REQUIRED` 会给出错误的机器建议；
+                         *   ② 记一条 `GOAL_CHANGED`（不是阻塞诊断，是给模型看的通告）；
+                         *   ③ 把「旧目标」带进 evidence —— 模型据此判断哪些带子作废。 */
+                        st.goalChanged = {
+                            from: remembered.last_goal.trim(), to: obsGoal,
+                            level_from: Number.isFinite(remembered.last_level) ? remembered.last_level : null,
+                            level_to: obsLevel,
+                            round: roundNo,
+                        };
+                        st.recipe = null;                 // 下一段会按新目标重算
+                        curGoal = obsGoal;                // ★ 从这里起，本 run 的目标就是新目标
+                        tl.push(`    ⚠ 世界升级：${st.goalChanged.from} → ${obsGoal}`
+                            + `（L${st.goalChanged.level_from ?? "?"}→L${obsLevel ?? "?"}）—— 配方作废重算`);
+                    } else {
+                        const d = mkDiag("GOAL_MISMATCH", {
+                            layer: "meta",
+                            expected: `goal 与世界的当前目标一致（世界是 "${obsGoal}"）`,
+                            observed: `调用方传的是 "${goal}"，而世界当前目标是 "${obsGoal}"`,
+                            evidence: { passed_goal: goal, world_goal: obsGoal },
+                            hint: "goal 要从 obs.goal.requirement.shape 读，不要硬编码 ——"
+                                + " 世界会升级，目标形状跟着变。传错 goal 会让 diagnose() 看错对象。",
+                        });
+                        tr.write("diagnose", roundNo, { codes: [d.code], fingerprint: fingerprintOf([d]), diagnoses: [d] });
+                        st.diagnoses = [d];
+                        outcome = "halt"; reason = "GOAL_MISMATCH";
+                        break;
+                    }
                 }
             }
 
-            let diagnoses = diagnose(ob.obs, ob.items, ob.production, st.lastReport, goal, st.handles, { recipe: st.recipe });
+            let diagnoses = diagnose(ob.obs, ob.items, ob.production, st.lastReport, curGoal, st.handles, { recipe: st.recipe });
             /* 观测面的问题（items/production 不可用）与业务诊断并列；它们不导致 halt。 */
             for (const p of ob.problems) if (!diagnoses.some(d => d.code === p.code && d.layer === p.layer)) diagnoses.push(p);
+
+            /* ── 残线：在造别的形状 / 或账本里有别的目标的存量 ──
+             *
+             * ★ 两路证据，互补而不是重复 ★
+             *
+             * · `findObsoleteLines`（60 秒产出窗口）—— 「旧线**还活着**」。
+             *   这是**唯一能及时拦住它**的时刻：线还在跑，拆掉损失最小。
+             * · `findStoredObsolete`（`hub.stored_shapes` 累计账本）—— 「旧线**已经停了**」。
+             *   窗口归零之后窗口法一条都报不出来，而用户贴图那次正是这个形态
+             *   （0 条入口带子有货）。账本跨关不清零，是那时的唯一证据。
+             *
+             * 只有前者时，最需要诊断的场景恰恰是盲的 —— 这是交叉评审指出、
+             * 我实测确认过的真缺陷，不是阈值问题。
+             *
+             * 它**不冲突**于 `NO_PRODUCTION`：那条让模型去**建**，这条让它先**拆**。
+             * 动作方向相反的两件事合成一条，模型会在两者间摇摆。 */
+            /* 传 `recipe`：配方闭包里的形状是**必经的中间产物**，不是残线。
+               真机实测（2026-11-09，目标 Cu------）：不传会报出 `----CuCu`，
+               而它是 mine→cut 的中间形态 —— 报成残线会让模型去拆一条正常工作的链。 */
+            const residualWindow = findObsoleteLines(ob.production, curGoal, { recipe: st.recipe });
+            const residualStored = findStoredObsolete({
+                hub: ob.obs && ob.obs.hub, goalShape: curGoal, recipe: st.recipe,
+                /* ★ 只有确认换过关才认账本证据 ★
+                 * `stored_shapes` 里有**所有更早关卡**的遗留物（L4 上就有
+                 * CuCuCuCu / ----CuCu）。不要求「确实换关」的话，每个世界都有残线证据 ⇒
+                 * 授权拆除恒成立 ⇒ 回滚永不触发（实测把 E11 打红了）。 */
+                levelChanged: !!st.goalChanged,
+            });
+            /* 合并成一张「该拆的线」清单（供 prompt 与授权拆除共用）。
+               同一形状只留一条：窗口证据优先（它是活的，更紧迫）。 */
+            const residual = [...residualWindow];
+            const seenShape = new Set(residual.map(r => r.shape));
+            for (const s of residualStored) {
+                if (!seenShape.has(s.shape)) { residual.push(s); seenShape.add(s.shape); }
+            }
+            /* 只在**换关那一轮**把窗口证据变成诊断。
+             *
+             * 为什么不每轮都报：残线在拆掉之前每轮都存在，每轮一条诊断会
+             * 吃掉预算、还会稀释真正重要的那几条。而「换关」是它第一次
+             * 值得被点名的时刻 —— 那时模型最容易继续在旧线上修。 */
+            if (st.goalChanged && residualWindow.length) {
+                for (const line of residualWindow) {
+                    diagnoses.push(mkDiag("OBSOLETE_LINE", {
+                        layer: "L4",
+                        expected: `产线在造目标形状 ${curGoal}`,
+                        observed: describeObsoleteLine(line, curGoal),
+                        evidence: {
+                            shape: line.shape, produced: line.produced, delivered: line.delivered,
+                            share: line.share, ratio: line.ratio, goal: curGoal,
+                        },
+                        hint: "这条线服务的是别的形状。要么把它拆掉腾出空间，要么改道让它产出目标；"
+                            + "在它上面继续修堵塞不会有产出。",
+                        candidates: ["remove_run", "trash_unused", "replace_run"],
+                    }));
+                }
+            }
+
+            /* ── 换关通告：本次 run 中途世界升级了 ──
+             *
+             * 只在**刚发生的那一轮**加一次（`st.goalChanged` 已置位且本轮首次）。
+             * 它的作用是把「目标换了」这件事明确摆到模型面前 —— 光靠
+             * `PRODUCTION` 段那句「产的不是目标」不够，因为模型会以为那只是暂时的。 */
+            if (st.goalChanged && !st.goalChangedAnnounced) {
+                st.goalChangedAnnounced = true;
+                diagnoses.push(mkDiag("GOAL_CHANGED", {
+                    layer: "L4",
+                    expected: `本次 run 的目标是 ${goal}`,
+                    observed: `世界从 ${st.goalChanged.from} 升到了 ${st.goalChanged.to}`
+                        + `（level ${st.goalChanged.level_from ?? "?"} → ${st.goalChanged.level_to ?? "?"}）`,
+                    evidence: {
+                        from: st.goalChanged.from, to: st.goalChanged.to,
+                        level_from: st.goalChanged.level_from, level_to: st.goalChanged.level_to,
+                        round: st.goalChanged.round,
+                    },
+                    hint: "目标换了，配方已按新目标重算。服务旧目标的那条线现在是残线 ——"
+                        + "先拆它，或者把它改道；不要继续在旧线上修。",
+                    candidates: ["remove_run", "replace_run", "connect"],
+                }));
+            }
 
             if (!diagnoses.length) {
                 diagnoses = [mkDiag("NO_DIAGNOSIS", {
@@ -2018,13 +2630,37 @@ export async function runLoop(opts = {}) {
 
             /* diagnose 行**先写**（每轮恰一条），再做指纹判定 —— 顺序与契约 §1.4 的
                「diagnose 在 repair_decide 之前」一致，读 transcript 的人不会看到倒序。 */
-            const fpNow = fingerprintOf(diagnoses);
+            /* ★ 指纹里排除「环境性诊断」★
+             *
+             * `NO_PROGRESS_3X` 的判据是「同一个指纹第 3 次出现 ⇒ halt」。
+             * 它要抓的是「模型反复撞同一个墙」，所以指纹必须只含**能被模型改变**的东西。
+             *
+             * `OBSOLETE_LINE` / `GOAL_CHANGED` 不是那种东西：
+             *   · 残线在拆掉之前**每轮都会存在**。它进指纹 ⇒ 第 3 轮必然 halt ——
+             *     而那时模型可能刚开始动手拆，等于在它来得及行动前就判死。
+             *   · `GOAL_CHANGED` 只在换关那一轮出现一次，但它描述的是**世界自己**
+             *     做的事（升级），把这个算进「模型没进展」的计数是错的。
+             *
+             * `OBSOLETE_LINE` 仍会渲染进 prompt、仍占一个诊断编号，只是不参与
+             * 「同一指纹出现了几次」这个计数。 */
+            const ENV_CODES = new Set(["OBSOLETE_LINE", "GOAL_CHANGED"]);
+            const fpDiags = diagnoses.filter(d => d && !ENV_CODES.has(d.code));
+            /* 全是环境码时退回全量：空列表的指纹是常量，那会让第 3 轮必然 halt
+               （每次都"同一个指纹"）。这时宁可让指纹包含它们。 */
+            const fpNow = fingerprintOf(fpDiags.length ? fpDiags : diagnoses);
             tr.write("diagnose", roundNo, { codes: diagnoses.map(d => d.code), fingerprint: fpNow, diagnoses });
+            tl.push(`    诊断 ${diagCounts(diagnoses)} (fp ${String(fpNow).replace(/^sha256:/, "").slice(0, 10)})`);
             st.diagnoses = diagnoses;
 
             /* 轮首计数：同一世界诊断第 3 次出现 ⇒ **在花掉这一轮的 LLM 调用之前**停；
                第 2 次则强制换动作（候选宏由 countFingerprint 写进 st.candidatesOverride）。 */
-            const seenNow = countFingerprint(diagnoses, roundNo);
+            /* ★ 必须传**过滤后**的列表 ★
+             *
+             * `countFingerprint` 内部自己调 `fingerprintOf`。上面刚把
+             * `OBSOLETE_LINE` / `GOAL_CHANGED` 排除出指纹 —— 如果这里传全量，
+             * 那次排除就白做了：残线仍然每轮进计数，第 3 轮照样 halt。
+             * （这类「算了但没用上」的 bug 在本项目出现过，所以显式写出来。） */
+            const seenNow = countFingerprint(fpDiags.length ? fpDiags : diagnoses, roundNo);
             if (seenNow.haltReason) { outcome = "halt"; reason = seenNow.haltReason; break; }
             if (seenNow.mustChange) {
                 /* 「必须换动作」不能只靠候选列表暗示 —— prompt 里显式点名上一轮用过什么。
@@ -2057,7 +2693,7 @@ export async function runLoop(opts = {}) {
                 let bundle;
                 try {
                     bundle = buildPrompt({
-                        goal, obs: ob.obs, handles: st.handles,
+                        goal: curGoal, obs: ob.obs, handles: st.handles,
                         /* ★ 必须显式传：production 是 `observeOnce()` 的**第三个字段**
                            （`ob.production`），不在 `ob.obs` 里。过去这里漏了它，于是
                            prompt 每一轮都渲染 `unavailable`，模型永远看不见产线真实速率。 */
@@ -2065,6 +2701,30 @@ export async function runLoop(opts = {}) {
                         diagnoses,
                         candidates: cands,
                         lastRound: st.lastPlanSummary || null,
+                        /* ★ 上一步的净效果（2026-11-03）★
+                         *
+                         * `lastRound` 只说「上一轮调了什么宏、verify 红在哪」，
+                         * 它**不含「世界因此变好还是变坏」**。实测的后果：模型可以连续
+                         * 三轮把死带子从一处挪到另一处，每轮 verify 都红、
+                         * 每轮都不知道自己刚刚让局面更糟了。
+                         *
+                         * 这里给的是**机器算出来的判定**（`classifyNetEffect`），不是模型自评。
+                         * `null`（首轮）＝ prompt 里整段不出现。 */
+                        lastNetEffect: st.lastNetEffect || null,
+                        /* ★ 跨 run 记忆（2026-11-03）★
+                         *
+                         * 只给**本目标**下的历史（`attemptsForGoal` 按 `goal_shape` 分组）。
+                         * 并且剔除本次 run 已经用过的动作集 —— 那些由 `## LAST ROUND`
+                         * 负责讲，「历史」段重复它们只是浪费预算。
+                         *
+                         * 注意 goal 用的是**调用方传的** `goal`；它与世界的当前目标是否
+                         * 一致由轮首的 `GOAL_MISMATCH` 检查保证（不一致会直接 halt）。 */
+                        priorAttempts: priorAttemptsFor(curGoal, currentWorldKey),
+                        /* 换关通告与残线清单：让模型知道「目标换了」以及「哪条线该拆」。
+                           两者都由本轮的诊断侧算好（`findObsoleteLines`），
+                           prompt 只负责渲染，不重算 —— 否则两处口径会漂移。 */
+                        goalChanged: st.goalChanged || null,
+                        obsoleteLines: residual,
                         /* 复用 loop 已算好的配方：`buildPrompt` 自己 spawn 一次 solver 要 200–400ms，
                            每轮一次是白花的钱，而且两次结果可能不一致（solver 不可解时）。 */
                         recipe: st.recipe,
@@ -2125,6 +2785,19 @@ export async function runLoop(opts = {}) {
                     error: llmErr ? `${code}: ${llmErr.message}`
                         : (parsed && !parsed.ok ? `${parsed.error.code}: ${parsed.error.message}` : null),
                 });
+
+                /* timeline：模型说了什么、要调什么。`say` 是模型自己的话（已过坐标 lint），
+                   它是排查时最有信息量的一行 —— 「它当时到底以为自己在干什么」。 */
+                if (parsed && parsed.ok && parsed.plan) {
+                    const say = typeof parsed.plan.say === "string" ? parsed.plan.say.replace(/\s+/g, " ").trim() : "";
+                    const calls = (parsed.plan.calls || []).map(c => {
+                        const w = typeof c.why === "string" && c.why.trim() ? `"${c.why.replace(/\s+/g, " ").trim()}"` : "";
+                        return `${c.macro}${w ? " " + w : ""}`;
+                    });
+                    tl.push(`    模型 ${calls.join(" ; ") || "(无调用)"}${say ? `\n         say: ${say}` : ""}`);
+                } else if (code) {
+                    tl.push(`    模型 ✗ ${code}`);
+                }
 
                 if (code) {
                     const d = mkDiag(code, {
@@ -2240,9 +2913,15 @@ export async function runLoop(opts = {}) {
                 },                warnings: planned.warnings,
             });
 
-            /* plan 全绿 ⇒ 每个宏都通过了校验、即将进 tx。**从这里起才算「真正执行过」**。
-               （宏内部可能有自己的 dry-run，但 plan 过了就意味着它们都会产生 op。） */
+            /* plan 全绿 ⇒ 每个宏都通过了校验、即将进 tx。**从这里起才算「真正执行过」**
+               （宏内部可能有自己的 dry-run，但 plan 过了就意味着它们都会产生 op）。
+               跨 run 记忆**不在这里记** —— 见 tx 成功后那段注释。 */
             st.lastExecutedMacros = planned.calls.map(c => c.macro);
+            /* 记下本轮的 txPlan 与残线清单 —— 下一轮判定「拆的是不是残线」要用。
+               放在这里（tx 之前）是对的：即便 tx 失败，下一轮也确实没有可拆的东西，
+               判据自然为假，不会误豁免。 */
+            st.lastTxPlan = planned.txPlan;
+            st.lastObsoleteLines = residual;
 
             if (ctx.dryRun) {
                 st.lastPlanSummary = { round: roundNo, calls: planned.calls.map(c => c.macro), verify: { checks: [] }, decision: "dry_run" };
@@ -2282,7 +2961,30 @@ export async function runLoop(opts = {}) {
 
             /* ── ⑤ apply：一次 tx；判据只用 applyVerdict（绝不读 tx.verify） ── */
             if (st.txCount >= budget.TX_MAX) { outcome = "halt"; reason = "BUDGET_TX"; break; }
+
+            /* ★ 写之前先存检查点 ★
+             *
+             * `opTx` 内部的快照只活在一次调用的调用栈里（失败/dry_run 时回滚，
+             * 成功时丢弃）。所以一旦这个 tx 成功落盘、事后才发现把世界改坏了，
+             * 就**没有任何退路** —— 实测就是这么积累出 41% 死带子的。
+             *
+             * 检查点存的是 `entity.serialize()` 的完整组件状态，恢复走
+             * mod 的 `rollbackToSnapshot`（4 轮收敛 + 先删后放 + nextUid 回收）。
+             *
+             * 失败不阻塞：拿不到检查点意味着这一轮**不能撤销**，
+             * 那是能力缺失，不是世界出问题 —— 记下来，继续跑。 */
             st.txCount++;
+            const ckName = `r${roundNo}`;
+            let ckSaved = null;
+            if (typeof reader.checkpointSave === "function") {
+                try {
+                    ckSaved = await reader.checkpointSave({ name: ckName });
+                    st.checkpointNames.push(ckName);
+                } catch (e) {
+                    ckSaved = null;
+                    tl.push(`    ⚠ 检查点失败：${String(e && e.message ? e.message : e).slice(0, 80)}`);
+                }
+            }
             /* ★ 发出去的 ops 必须剥掉 `provenance` ★
              *
              * `provenance` 是 loop **本地**的溯源标签（`assertProvenance` 用它证明
@@ -2310,6 +3012,10 @@ export async function runLoop(opts = {}) {
             }
             const av = applyVerdict(ap.tx, { requestedOps: planned.txPlan.ops.length });
             st.lastApplyRolledBack = ap.tx.rolled_back === true;
+            tl.push(`    tx   ${av.ok ? "✓" : "✗"} applied ${ap.tx.applied}/${ap.tx.requested}`
+                + `${ap.tx.rolled_back === true ? "  (rolled_back)" : ""}`
+                + `${planned.partial === true ? `  partial: 跳过 ${(planned.skipped || []).length} 个宏` : ""}`
+                + `${av.ok ? "" : `  why: ${av.why.join(" / ")}`}`);
             tr.write("apply", roundNo, {
                 tx_ok: av.ok,
                 applied: ap.tx.applied, requested: ap.tx.requested,
@@ -2348,6 +3054,25 @@ export async function runLoop(opts = {}) {
             }
             st.worldTouched = true;
 
+            /* ★ 只在 tx **真的成功落盘之后**才把这套宏记进跨 run 记忆 ★
+             *
+             * 红队抓到的真 bug：上一版把 `st.roundCalls.push` 放在 plan 全绿之后、
+             * tx 之前。于是 dry_run / BUDGET_TX / NO_PROGRESS / tx 失败回滚 / 写面缺失
+             * 这些「一个 op 都没落地」的轮次，也会留下一条「模型试过这套宏」的记录；
+             * 而下一轮轮首的 `netEffects[{round:N}]` 会被 `extractAttempts` 归因到
+             * `round N-1` —— 也就是那套**从未执行**的动作。结果是记忆里出现
+             * 「remove_run 让世界没变化」这种假因果，还会把一个从没试过的动作
+             * 提前判成负例。
+             *
+             * 判据复用 `st.worldTouched`：它只在 `applyVerdict.ok === true` 之后被置位。
+             * 「模型选过但没执行」由 `## LAST ROUND` 与 plan 的 rejected 记录负责，
+             * 不属于跨 run 经验。 */
+            st.roundCalls.push({
+                round: roundNo,
+                macros: st.lastExecutedMacros.slice(),
+                actionSet: actionSetHash(st.lastExecutedMacros),
+            });
+
             /* pending token → 真 uid（只用 results[i].uid） */
             const bridged = buildUidMap(ap.tx, planned.txPlan.pendingByOp);
             if (bridged.missing.length) {
@@ -2361,7 +3086,7 @@ export async function runLoop(opts = {}) {
                 uidMap: bridged.uidMap,
                 beforeObs: ob.obs,
                 mode,
-                goalShape: goal,
+                goalShape: curGoal,
                 flows: planned.txPlan.flows,
                 tx: ap.tx,
                 behavior: mode === "live"
@@ -2443,6 +3168,12 @@ export async function runLoop(opts = {}) {
                 calls: planned.calls.map(c => c.macro),
                 verify: { checks, codes: failDiag.map(d => d.code) },
                 decision: "continue",
+                /* ★ 宏算出来的后果，交给下一轮 prompt（P17 §6.1）★
+                 *
+                 * 只在 continue 路径上给 —— 上面 `success` / `offline_only` 两条
+                 * 都要 `break` 出去了，下一轮不存在，塞进去也没人读。
+                 * 放在这里而不是更早：partial 之后 `planned.calls` 已定稿。 */
+                macro_warnings: planned.macro_warnings || [],
             };
             /* 失败指纹已在**轮首**计数（见 countFingerprint）：
                「同一世界诊断第 3 次」只可能在下一次轮首被看见，那一轮不花钱即停。 */
@@ -2466,6 +3197,122 @@ export async function runLoop(opts = {}) {
             if (st.lastTx) put("tx-last.json", st.lastTx);
             if (st.lastReport) put("verify-last.json", st.lastReport);
             files.push("transcript.jsonl");
+
+            /* ── 收尾观测：把**最后一次 tx 之后**的世界补上 ──
+             *
+             * 净效果是「本轮轮首 vs 上轮轮首」，所以最后一次 tx 的结果**永远等不到**
+             * 下一轮去读它 —— 而 run 又常常停在这之后（BUDGET_ROUNDS / NO_PROGRESS /
+             * 模型说完了）。不补这一刀，timeline 的累计段就会漏掉最后一步，
+             * 而那一步往往正是「把它改坏了」的那一步（实测：一次 run 的最后一步
+             * 把到 hub 的带子从 140 砍到 133，旧版完全没记）。
+             *
+             * 只在**确实写过世界**且取数不为空时补 —— 读失败就跳过，绝不因为
+             * 一次诊断性读取让 run 变成 error（这是 finally）。
+             */
+            if (st.worldTouched && st.healthBefore && !ctx.dryRun) {
+                try {
+                    const fo = unwrapObs(await reader.obs({
+                        max_entities: 50000, layer: "all",
+                        include_stats: true, include_resources: true, max_resources: 20000,
+                    }));
+                    let fi = null;
+                    try { fi = unwrapItems(await reader.debugItems({ region: debugItemsRegion(fo) })); } catch { fi = null; }
+                    let fp = null;
+                    try { fp = await reader.production({ slices: 6 }); } catch { fp = null; }
+                    const hf = healthWithRedundancy({ obs: fo, items: fi, production: fp, goalShape: curGoal });
+                    const dd = healthDelta(st.healthBefore, hf);
+                    const eff = classifyNetEffect(st.healthBefore, hf, dd);
+                    st.netEffects.push({ round: st.rounds, kind: eff.kind, why: eff.why, final: true });
+                    st.lastNetEffect = eff;
+                    st.healthNow = hf;
+                    tl.push(`── 收尾世界 ${formatHealth(hf)}`);
+                    tl.push(`      ${formatDelta(dd)}`);
+                    tl.push(`    ${formatNetEffect(eff)}`);
+                } catch (e) {
+                    tl.push(`── 收尾世界 （读不到：${String(e && e.message ? e.message : e).slice(0, 80)}）`);
+                }
+            }
+
+            /* ── 整次 run 的累计效果 ──
+             *
+             * 「每步净效果」是局部的（这一步 vs 上一步），它看不见「三轮各改一点、
+             * 最后比一开始还差」这种累积破坏。这里用**首轮快照 vs 末轮快照**再算一次，
+             * 两个量回答的是不同的问题：
+             *   · 每步  → 模型该不该接着这么干；
+             *   · 累计  → 这次 run 值不值得留下。 */
+            let runTotalLocal = null;
+            if (st.healthFirst && st.healthNow) {
+                const dd = healthDelta(st.healthFirst, st.healthNow);
+                runTotalLocal = classifyNetEffect(st.healthFirst, st.healthNow, dd);
+                runTotal = runTotalLocal;
+                tl.push("");
+                tl.push(`══ 累计（首轮 → 末轮）  ${formatDelta(dd)}`);
+                tl.push(`   ${formatNetEffect(runTotalLocal)}`);
+            }
+
+            /* ── 落盘跨 run 记忆（必须在 finally 里 —— 任何 exit 都该留下经验）──
+             *
+             * 为什么放在 `try/finally` 的 finally：`outcome` 可能是 success / halt /
+             * error / 预算耗尽 / 异常。一次失败的 run 恰恰是**最有信息量**的（全是负例），
+             * 只在成功路径写记忆等于把教训扔掉。
+             *
+             * 为什么写失败不抛：记忆是附加能力，绝不能因为它让一次成功的 run 变成 error。 */
+            try {
+                /* 本次 run 观测到的**最终**目标（可能因为中途升级而与 `goal` 不同）。 */
+                const observedGoal = (st.lastObs
+                    && st.lastObs.goal
+                    && typeof st.lastObs.goal.requirement?.shape === "string")
+                    ? st.lastObs.goal.requirement.shape
+                    : curGoal;
+                const observedLevel = (st.lastObs && st.lastObs.goal && Number.isFinite(st.lastObs.goal.level))
+                    ? st.lastObs.goal.level : null;
+                const attempts = extractAttempts({
+                    /* ★ 用**观测到的**当前目标，不用调用方传的 `goal` ★
+                     *
+                     * 世界可能在 run 中途升级（level 5 → 6）。调用方的 `goal` 一旦
+                     * 过期，把新世界的净效果记到旧目标下就是**双重污染**：
+                     * 既给了旧目标假经验，又让新目标缺经验。
+                     * 轮首的 `GOAL_MISMATCH`/`GOAL_CHANGED` 已处理前置判断，
+                     * 但 finally 仍然要写 —— 所以这里必须自己读一次当前目标。 */
+                    goalShape: observedGoal,
+                    world: currentWorldKey || "unknown",
+                    netEffects: st.netEffects,
+                    roundCalls: st.roundCalls,
+                    rollbacks: st.rollbacks,
+                    health: st.healthNow,
+                });
+                /* ★ 把观察到的目标写回 `worlds` ★
+                 *
+                 * 这是**下次 run 能检测到换关**的唯一依据。不写的话 `last_goal`
+                 * 永远停在第一次跑时的值，换关检测形同不存在（而且不报错）。
+                 * 即使 `attempts` 为空也要写 —— 一次什么都没做成的 run
+                 * 同样是一条「我看到了这个目标」的证据。 */
+                worldPatch = worldUpdate({
+                    mem: memory,
+                    world: currentWorldKey || "unknown",
+                    goalShape: observedGoal,
+                    level: observedLevel,
+                });
+                if (attempts.length) {
+                    memorySaved = saveMemory(memoryFile, mergeMemory(memory, attempts, worldPatch));
+                    tl.push(`══ 记忆 本次写入 ${attempts.length} 条（目标 ${observedGoal}）`
+                        + (memorySaved ? "" : "  ⚠ 写盘失败"));
+                } else if (Object.keys(worldPatch).length) {
+                    /* 没有可记的尝试，但**世界状态仍然要更新** —— 否则「上次目标」
+                       永远停在第一次跑时的值，下次换关检测就会误判。 */
+                    memorySaved = saveMemory(memoryFile, mergeMemory(memory, [], worldPatch));
+                    tl.push(`══ 记忆 无可记尝试，但更新了世界目标（${observedGoal}）`
+                        + (memorySaved ? "" : "  ⚠ 写盘失败"));
+                }
+            } catch (e) {
+                tl.push(`══ 记忆 ⚠ 提取失败：${String(e && e.message ? e.message : e).slice(0, 80)}`);
+            }
+
+            tl.push(`══ 收尾 outcome=${outcome}${reason ? ` reason=${reason}` : ""}`
+                + ` 轮 ${st.rounds} · LLM ${st.llmCalls} · tx ${st.txCount}`);
+            tlFile = tl.flush();
+            if (tlFile) files.push("timeline.log");
+            savedFiles = files.slice();
 
             const worldState = st.lastApplyRolledBack ? "rolled_back" : (st.worldTouched ? "applied" : "untouched");
             const preserved = {
@@ -2502,6 +3349,15 @@ export async function runLoop(opts = {}) {
                     goal_delta: verdict ? readGoalDelta(st.lastReport, mode) : 0,
                     verdict: verdict ? { achieved: verdict.achieved, level: verdict.level, why: verdict.why } : null,
                     world_hash: st.lastObs ? worldUidSetHash(st.lastObs) : null,
+                    /* 每步的净效果序列 + 整次累计 —— 这两个是「这次 run 干了什么」
+                       的机器可读版；人读版在 timeline.log。 */
+                    net_effects: st.netEffects || [],
+                    memory_saved: memorySaved,
+                    memory_file: MEMORY_FILE,
+                    goal_changed: st.goalChanged ? { ...st.goalChanged } : null,
+                    final_goal: curGoal,
+                    run_total: runTotal ? { kind: runTotal.kind, why: runTotal.why } : null,
+                    timeline: tlFile ? "timeline.log" : null,
                     error: lastErr ? String(lastErr && lastErr.message ? lastErr.message : lastErr) : null,
                 });
             } catch (e) {
@@ -2520,12 +3376,28 @@ export async function runLoop(opts = {}) {
         llm_calls: st.llmCalls,
         tx_count: st.txCount,
         transcript_path: tr.file,
+        timeline_path: path.join(runDir, "timeline.log"),
         run_dir: runDir,
         preserved: {
             dir: runDir,
+            files: savedFiles,
             world_state: st.lastApplyRolledBack ? "rolled_back" : (st.worldTouched ? "applied" : "untouched"),
             last_successful_round: st.lastSuccessfulRound,
         },
+        /* 每步净效果 + 整次累计：调用方（runner / 人）不必再读 transcript 就能判断
+           「这次 run 到底有没有让世界变好」。 */
+        net_effects: st.netEffects.slice(),
+        /* 撤销记录：每次「判定要撤」都在这里，含是否真的撤了、是否验证通过。
+           与 `net_effects` 的 `reverted` 配对读 —— 前者说「发生了什么」，
+           后者说「我们怎么处置的」。 */
+        rollbacks: st.rollbacks.slice(),
+        checkpoints: st.checkpointNames.slice(),
+        memory_saved: memorySaved,
+        memory_file: memoryFile,
+        goal_changed: st.goalChanged ? { ...st.goalChanged } : null,
+        final_goal: curGoal,
+        run_total: runTotal ? { kind: runTotal.kind, why: runTotal.why } : null,
+        health: st.healthNow || null,
         verdict,
         report: st.lastReport,
         diagnoses: st.diagnoses,
@@ -2650,6 +3522,18 @@ export function makeBridgeReader(baseUrl) {
         async production(p) { return call("production", p || { slices: 6 }); },
         async step(ticks) { return call("act", { op: "step", ticks }); },
         async tx(ops) { return call("act", { op: "tx", ops }); },
+        /* 世界的身份（seed / hub / 版本）。跨 run 记忆用它隔离不同存档 ——
+           没有它，离线夹具的经验会串进真机。mod 侧实现见 `worldInfo()` :800。 */
+        async worldInfo() { return call("world_info", {}); },
+        /* 跨 tx 检查点（撤销能力）。mod 侧实现见 `checkpointSave` / `checkpointRestore`。
+         *
+         * 为什么放在 reader 上而不是单独一个客户端：loop 的所有世界读写都走 reader
+         * （V2 §5.5 第 5 条「两处口径不同 = 两份世界」）。把撤销也放进来，
+         * FakeGame 与真桥就都能提供它 —— 否则「只有真机能撤销」会让离线测试
+         * 永远覆盖不到这条路径。 */
+        async checkpointSave(p) { return call("checkpoint_save", p || {}); },
+        async checkpointRestore(p) { return call("checkpoint_restore", p || {}); },
+        async checkpointList() { return call("checkpoint_list", {}); },
     };
 }
 
@@ -2726,6 +3610,14 @@ export async function runLoopCli(argv = process.argv.slice(2)) {
             console.log(`  · ${d.code}  ${d.layer}  subject=${(d.subject && d.subject.handle) || "-"}  ${d.observed || ""}`);
         }
         console.log(`transcript: ${res.transcript_path}`);
+        /* 终端上一眼回答「这次 run 把世界弄好了还是弄坏了」——
+           这两行是 timeline.log 的存在理由的浓缩版。 */
+        if (res.run_total) console.log(formatNetEffect(res.run_total).replace(/^净效果/, "整次 run"));
+        if (Array.isArray(res.net_effects) && res.net_effects.length) {
+            const seq = res.net_effects.map(e => `${e.round}${e.final ? "终" : ""}:${e.kind}`).join(" → ");
+            console.log(`每步: ${seq}`);
+        }
+        if (res.timeline_path) console.log(`timeline: ${res.timeline_path}`);
         if (res.verdict && res.verdict.why && res.verdict.why.length) {
             console.log("why:");
             for (const w of res.verdict.why) console.log(`  - ${w}`);
