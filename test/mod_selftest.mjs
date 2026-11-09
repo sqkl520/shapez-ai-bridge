@@ -933,7 +933,9 @@ check("rpcTouchesWorld：所有写 op / method 都被判定为改世界，纯读
     // 3) 纯读 method 一个都不许进链（进链会让观测被无关的粘贴拖住）
     for (const method of ["status", "obs", "screenshot", "list_saves", "debug_items", "debug_loop",
                           "debug_log", "debug_app_state", "resources", "production", "world_info",
-                          "debug_canvas_api", "debug_speed_registry"]) {
+                          "debug_canvas_api", "debug_speed_registry",
+                          /* 解锁状态查询：两个都只读 root，不写世界 */
+                          "debug_rewards", "debug_building_unlocked"]) {
         assert(m.rpcTouchesWorld(method, {}) === false, method + " 不该进链");
     }
     // 4) batch：只要含一个写 op 就要进链；全读不进链

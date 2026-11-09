@@ -681,6 +681,9 @@ class Mod extends shapez.Mod {
                 case "debug_rewards":
                     result = this.debugRewards();
                     break;
+                case "debug_building_unlocked":
+                    result = this.debugBuildingUnlocked(params || {});
+                    break;
                 case "debug_frame_alive":
                     result = await this.debugFrameAlive(params || {});
                     break;
@@ -4722,6 +4725,55 @@ class Mod extends shapez.Mod {
      *
      * @returns {object} `{ ok, rewards: string[], raw: object|null, error? }`
      */
+    /**
+     * 问游戏**这台建筑到底解没解锁** —— 直接调 `meta.getIsUnlocked(root)`。
+     *
+     * ## 为什么不只给 `debug_rewards`
+     *
+     * `debug_rewards` 给的是 `gainedRewards`（奖励表），调用方还得自己知道
+     * 「哪个 reward 对应哪个建筑」——那张映射表在 `tutorial_goals_mappings.js`，
+     * 是**另一份真值**。而我们这里已经有 `byId` 表了，直接问建筑自己最准：
+     *
+     *     painter.js#getIsUnlocked(root) -> hubGoals.isRewardUnlocked(reward_painter)
+     *
+     * 2026-11-09：`place painter` 能成功（几何对、tx 全绿、code=16），
+     * 但处理器**不消费**，货静静堵在它前面。而 obs 只说机器在那儿、
+     * debug_items 只说货堵着、日志一片安静 —— 没法区分「没解锁」和「接错线」。
+     * 这个 RPC 就是那个区分手段。
+     *
+     * @param {{building?: string, buildings?: string[]}} params
+     *        `building` 查一个；`buildings` 查多个；都不给就查一张常用表。
+     * @returns {{ok:boolean, unlocked:Record<string,boolean|null>, error?:string}}
+     */
+    debugBuildingUnlocked(params = {}) {
+        const out = { ok: false, unlocked: {}, error: null };
+        try {
+            if (!this.root) { out.error = "no root (not in game?)"; return out; }
+            this.ensureBuildingTables();
+            const tbl = this._buildingTable;
+            const list = Array.isArray(params.buildings) && params.buildings.length
+                ? params.buildings
+                : (params.building ? [params.building]
+                    : ["belt", "miner", "cutter", "rotater", "balancer", "tunnel",
+                        "painter", "mixer", "stacker", "trash"]);
+            for (const id of list) {
+                const meta = tbl.byId[id];
+                if (!meta) { out.unlocked[id] = null; continue; }   // null = 不认识这个 id
+                try {
+                    out.unlocked[id] = typeof meta.getIsUnlocked === "function"
+                        ? !!meta.getIsUnlocked(this.root)
+                        : null;
+                } catch (e) {
+                    out.unlocked[id] = null;
+                }
+            }
+            out.ok = true;
+        } catch (e) {
+            out.error = String(e && e.message ? e.message : e);
+        }
+        return out;
+    }
+
     debugRewards() {
         const out = { ok: false, rewards: null, raw: null, error: null };
         try {
