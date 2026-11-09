@@ -658,6 +658,23 @@ class Mod extends shapez.Mod {
                 case "debug_canvas_api":
                     result = this.debugCanvasApi();
                     break;
+                /* ── 跨 tx 检查点（撤销能力）──
+                 *
+                 * 为什么是 RPC 而不是 op：tx 只接受"增删实体"的 op（`txAllowedOps`），
+                 * 而且检查点本身就是**事务之外**的概念 —— 它描述的是"进入某个 tx 之前"。
+                 * 让它进 tx 会造成递归（恢复到某点会撤销包含它自己的那个事务）。 */
+                case "checkpoint_save":
+                    result = this.checkpointSave(params || {});
+                    break;
+                case "checkpoint_restore":
+                    result = await this.checkpointRestore(params || {});
+                    break;
+                case "checkpoint_list":
+                    result = this.checkpointList();
+                    break;
+                case "checkpoint_clear":
+                    result = this.checkpointClearAll("explicit");
+                    break;
                 case "debug_app_state":
                     result = this.debugAppState();
                     break;
@@ -3082,6 +3099,254 @@ class Mod extends shapez.Mod {
         return { entities, nextUid, skipped };
     }
 
+    /* ══════════════════════════════════════════════════════════════════════
+     * 跨 tx 检查点（checkpoint）
+     * ══════════════════════════════════════════════════════════════════════
+     *
+     * ## 为什么需要它
+     *
+     * `opTx` 内部的快照只活在**一次 tx 的调用栈里**：失败或 dry_run 时用它回滚，
+     * 成功时直接丢弃。所以 tx 之间是**没有撤销能力**的 —— 一旦某个 tx 成功落盘
+     * 却发现把世界改坏了（实测：到 hub 的带子 140→133），没有任何办法退回去。
+     *
+     * `agent/loop` 现在能判出「这一步改坏了」（`V-health` / `classifyNetEffect`），
+     * 但只能眼睁睁看着。检查点补的就是这段：**把快照留在 mod 内存里，按名字取用**。
+     *
+     * ## 三条设计约束（都是被真实约束逼出来的）
+     *
+     * 1. **存在内存里，不落盘。** 快照是 `entity.serialize()` 的完整组件状态
+     *    （`serializeEntity` :1800），一份 5000 实体的世界是几十 MB 量级。
+     *    落盘会让「撤销一步」变成一次磁盘 IO 与一个可能过期的文件 ——
+     *    而 checkpoint 的语义本来就是「这次会话里的最近几步」，不是「存档」。
+     *
+     * 2. **必须有上限，且是最早的先进先出。** 无上限地在内存里堆整世界快照会 OOM。
+     *    默认保留 8 个，且总量超过 `CHECKPOINT_MAX_ENTITIES` 时从**最旧的**开始丢。
+     *    丢的时候**返回里说明**，不静默 —— 调用方拿到「你要的那个已失效」比拿到
+     *    「恢复成功但其实是旧世界」安全得多。
+     *
+     * 3. **`load_save` / `new_game` 必须清空。** 换世界之后旧快照里的 uid 指向
+     *    完全不同的实体，用它恢复就是把两个世界的实体混在一起。这是最危险的一种
+     *    「恢复成功」，所以清空是强制的，不是尽力而为。
+     */
+    checkpointStore() {
+        if (!this._checkpoints) {
+            this._checkpoints = { map: new Map(), order: [], totalEntities: 0, seq: 0 };
+        }
+        return this._checkpoints;
+    }
+
+    /** 检查点上限：数量。 */
+    static get CHECKPOINT_MAX_COUNT() { return 8; }
+    /** 检查点上限：所有检查点的实体总数（防 OOM）。 */
+    static get CHECKPOINT_MAX_ENTITIES() { return 60000; }
+
+    /** 清空全部检查点。`load_save` / `new_game` 必须调用。 */
+    checkpointClearAll(reason) {
+        const st = this.checkpointStore();
+        const n = st.map.size;
+        st.map.clear();
+        st.order.length = 0;
+        st.totalEntities = 0;
+        return { cleared: n, reason: reason || null };
+    }
+
+    /**
+     * 拍一个检查点。
+     *
+     * @param {{name?:string}} [p] `name` 缺省按序号生成 `ck-<seq>`。
+     * @returns {{ok:boolean, name:string, entities:number, skipped:number,
+     *            dropped:string[], total_checkpoints:number, total_entities:number,
+     *            tick:number}}
+     */
+    checkpointSave(p = {}) {
+        const root = this.requireRoot();
+        const st = this.checkpointStore();
+        const name = (typeof p.name === "string" && p.name.trim()) ? p.name.trim() : `ck-${++st.seq}`;
+
+        /* 覆盖同名 = 显式替换。先把它从统计里摘出去，否则 totalEntities 会算两遍。 */
+        if (st.map.has(name)) {
+            const old = st.map.get(name);
+            st.totalEntities -= old.snapshot.entities.size;
+            st.map.delete(name);
+            st.order = st.order.filter(n => n !== name);
+        }
+
+        const snapshot = this.snapshotWorld(root);
+        st.map.set(name, { snapshot, tick: root.time.now(), createdAt: Date.now() });
+        st.order.push(name);
+        st.totalEntities += snapshot.entities.size;
+
+        /* 淘汰：先按数量，再按总实体数。两个循环都从最旧的开始。 */
+        const dropped = [];
+        while (st.order.length > this.constructor.CHECKPOINT_MAX_COUNT) {
+            dropped.push(this.checkpointDropOldest());
+        }
+        while (st.totalEntities > this.constructor.CHECKPOINT_MAX_ENTITIES && st.order.length > 1) {
+            dropped.push(this.checkpointDropOldest());
+        }
+
+        return {
+            ok: true,
+            name,
+            entities: snapshot.entities.size,
+            skipped: snapshot.skipped.length,
+            skipped_uids: snapshot.skipped.slice(0, 20),
+            dropped: dropped.filter(Boolean),
+            total_checkpoints: st.map.size,
+            total_entities: st.totalEntities,
+            tick: root.time.now(),
+        };
+    }
+
+    /** 丢掉最旧的一个，返回它的名字。 */
+    checkpointDropOldest() {
+        const st = this.checkpointStore();
+        const name = st.order.shift();
+        if (!name) return null;
+        const rec = st.map.get(name);
+        if (rec) st.totalEntities -= rec.snapshot.entities.size;
+        st.map.delete(name);
+        return name;
+    }
+
+    /** 列出所有检查点（不含快照本体 —— 那个太大）。 */
+    checkpointList() {
+        const st = this.checkpointStore();
+        return {
+            ok: true,
+            items: st.order.map(name => {
+                const r = st.map.get(name);
+                return r ? {
+                    name, entities: r.snapshot.entities.size,
+                    skipped: r.snapshot.skipped.length,
+                    tick: r.tick, age_ms: Date.now() - r.createdAt,
+                } : null;
+            }).filter(Boolean),
+            total_entities: st.totalEntities,
+            max_count: this.constructor.CHECKPOINT_MAX_COUNT,
+            max_entities: this.constructor.CHECKPOINT_MAX_ENTITIES,
+        };
+    }
+
+    /**
+     * 恢复到某个检查点。**不删除该检查点** —— 恢复失败时还能再试一次，
+     * 而且「恢复到某一步」本来就可以重复执行（幂等方向）。
+     *
+     * @param {{name:string, drop_after?:boolean}} p
+     *   `drop_after:true` 时恢复成功后把这个及**更新**的检查点都丢掉（分支回退语义）。
+     * @returns {{ok:boolean, name:string, rollback:object, after:object,
+     *            entities_restored:number, entities_deleted:number,
+     *            verified:boolean, why:string[]}}
+     */
+    async checkpointRestore(p = {}) {
+        const root = this.requireRoot();
+        const st = this.checkpointStore();
+        const name = typeof p.name === "string" ? p.name.trim() : "";
+        if (!name) throw this.rpcError(2001, "invalid_action", "checkpoint_restore requires {name}");
+        const rec = st.map.get(name);
+        if (!rec) {
+            throw this.rpcError(2004, "not_found",
+                `checkpoint "${name}" not found`,
+                `Available: ${st.order.join(", ") || "(none)"}. Checkpoints are cleared by load_save/new_game.`);
+        }
+        if (this._txDepth) {
+            throw this.rpcError(2001, "invalid_action", "checkpoint_restore cannot run inside a tx");
+        }
+
+        const why = [];
+        const before = this.snapshotWorld(root);
+        const beforeUids = new Set(before.entities.keys());
+        const wantUids = new Set(rec.snapshot.entities.keys());
+
+        /* 只统计「将被删」与「将被恢复」的数量，真正的动作交给 rollbackToSnapshot
+           （它是唯一实现：4 轮收敛 + 先删后放避免撞格 + nextUid 回收）。 */
+        let toDelete = 0, toRestore = 0;
+        for (const uid of beforeUids) if (!wantUids.has(uid)) toDelete++;
+        for (const uid of wantUids) if (!beforeUids.has(uid)) toRestore++;
+        const shared = [...wantUids].filter(u => beforeUids.has(u)).length;
+
+        let rollbackReport = null;
+        this._txDepth = 1;              // 与 tx 互斥：恢复期间不许别的 tx 插进来
+        try {
+            rollbackReport = await this.runGuarded(root, async () =>
+                this.rollbackToSnapshot(root, rec.snapshot));
+        } finally {
+            this._txDepth = 0;
+        }
+
+        /* ★ 恢复之后必须自证 ★
+         *
+         * `rollbackToSnapshot` 返回的 `errors` 非空就是失败；但**光看它不够** ——
+         * 它可能成功执行了每一步，而世界仍与快照有差异（第三方系统在
+         * entityAdded/entityDestroyed 时重算，例如带子按邻居改朝向）。
+         * 所以再做一次独立的 diff：**只看 uid 集合与每实体的几何**，
+         * 不要求组件逐字节相同（组件里含 Belt.assignedPath 这类会被重算的字段，
+         * 拿它当判据会让每一次「成功恢复」都报失败）。
+         */
+        const afterSnapshot = this.snapshotWorld(root);
+        const afterDiff = this.diffSnapshots(rec.snapshot, afterSnapshot);
+        const uidSetEqual = afterDiff.added.length === 0 && afterDiff.removed.length === 0;
+
+        /* 几何比较：code + rotation + origin（这三样才是「这条带子在哪、朝哪」） */
+        let geometryMismatch = 0;
+        for (const uid of afterDiff.modified) {
+            const want = rec.snapshot.entities.get(uid);
+            const got = afterSnapshot.entities.get(uid);
+            if (!want || !got) continue;
+            const same = want.code === got.code
+                && want.rotation === got.rotation
+                && want.origin && got.origin
+                && want.origin.x === got.origin.x && want.origin.y === got.origin.y;
+            if (!same) geometryMismatch++;
+        }
+
+        const verified = uidSetEqual && geometryMismatch === 0;
+        if (!uidSetEqual) {
+            why.push(`uid 集合未恢复：多出 ${afterDiff.added.length} 个、少了 ${afterDiff.removed.length} 个`);
+        }
+        if (geometryMismatch) {
+            why.push(`${geometryMismatch} 个实体的几何（code/rotation/origin）与检查点不符`);
+        }
+        if (rollbackReport && rollbackReport.errors && rollbackReport.errors.length) {
+            why.push(`rollbackToSnapshot 报了 ${rollbackReport.errors.length} 个错误（首条：${JSON.stringify(rollbackReport.errors[0])}）`);
+        }
+
+        if (p.drop_after === true && verified) {
+            /* 分支回退：这个检查点之后的都作废（它们描述的是一个已经不存在的未来） */
+            const idx = st.order.indexOf(name);
+            if (idx >= 0) {
+                const toDrop = st.order.slice(idx);
+                st.order = st.order.slice(0, idx);
+                for (const n of toDrop) {
+                    const r = st.map.get(n);
+                    if (r) st.totalEntities -= r.snapshot.entities.size;
+                    st.map.delete(n);
+                }
+                why.push(`已丢弃 ${toDrop.length} 个检查点（branch rewind）`);
+            }
+        }
+
+        return {
+            ok: verified,
+            name,
+            rollback: rollbackReport,
+            entities_deleted: toDelete,
+            entities_restored: toRestore,
+            entities_kept: shared,
+            verified,
+            uid_set_equal: uidSetEqual,
+            geometry_mismatch: geometryMismatch,
+            why,
+            after: {
+                entities: afterSnapshot.entities.size,
+                expected: rec.snapshot.entities.size,
+                nextUid: afterSnapshot.nextUid,
+                expected_nextUid: rec.snapshot.nextUid,
+            },
+            tick: root.time.now(),
+        };
+    }
+
     /**
      * 预检：这条 op 一旦执行，回滚时能不能把它的效果撤掉？
      *
@@ -5287,6 +5552,13 @@ class Mod extends shapez.Mod {
         if (typeof id !== "string" || id.length < 3) {
             throw this.rpcError(2001, "invalid_action", "internal_id (string) is required");
         }
+        /* ★ 换世界 = 旧检查点全部作废 ★
+         *
+         * 检查点按 uid 索引。换存档之后同一个 uid 指向的是**完全不同的实体**，
+         * 拿旧检查点恢复会把两个世界的实体混在一起 —— 这是最危险的一种
+         * 「恢复成功」（返回 ok:true，世界却是坏的）。
+         * 所以在读取目标存档**之前**就清空，失败路径也不会留下可用的旧快照。 */
+        const ckCleared = this.checkpointClearAll("load_save");
         const mgr = this.app.savegameMgr;
         const sg = mgr.getSavegameById(id);
         if (!sg) {
@@ -5316,7 +5588,10 @@ class Mod extends shapez.Mod {
             }
         }
         this.app.stateMgr.moveToState("InGameState", { savegame: sg });
-        return this.awaitWorldReady("load_save");
+        const ready = await this.awaitWorldReady("load_save");
+        /* 把「清掉了几个检查点」带回给调用方：换世界会静默失去撤销能力，
+           这件事必须可见，否则 loop 会以为还能 undo 而实际拿不到。 */
+        return { ...ready, checkpoints_cleared: ckCleared.cleared };
     }
 
     /**
@@ -5359,6 +5634,8 @@ class Mod extends shapez.Mod {
         if (mode !== "regularMode") {
             throw this.rpcError(2001, "invalid_action", 'game_mode must be "regularMode"');
         }
+        /* 同 load_save：换世界 ⇒ 旧检查点的 uid 全部指向不存在的实体。 */
+        const ckCleared = this.checkpointClearAll("new_game");
         // 先回主菜单（若在游戏中）
         const cur = this.app.stateMgr.currentState;
         const curKey = cur && cur.getKey ? cur.getKey() : null;
@@ -5388,6 +5665,7 @@ class Mod extends shapez.Mod {
             ...ready,
             game_mode: mode,
             internal_id: sg && sg.internalId ? sg.internalId : null,
+            checkpoints_cleared: ckCleared.cleared,
         };
     }
 
