@@ -32,3 +32,24 @@ Thumbs.db
 
 docs/gui/logs/
 gui/mcp-config.generated.json
+
+# ── 临时验证产物（本地实验装置，不进公开仓）───────────────────────────
+# .tmpverify/ 里是 A/B 装置的脚本、原始结果 json、运行日志。
+#   · 脚本：很多是**一次性**的排查工具，不进仓库（早期部分已被跟踪，
+#     保留历史不动，只阻止新增）。
+#   · 结果 json：单个可达 720K，且是**测量原始数据**，复现应该重跑装置
+#     而不是提交数据。
+#   · 日志：本地时间戳，无长期价值。
+# 但 A/B 装置本身有复现价值 —— 有价值的那些已迁到 research/ai-plan/ 并在
+# 对应 P*.md 里点名路径。
+.tmpverify/
+
+# 一次性的 wire-ops 压测目录（367 个 run 目录，13MB）
+.tmpverify/wire-ops-test/
+
+# 写作时误产生的 Windows 设备名文件（`> nul` 的 shell 残留）
+nul
+
+# 运行产物：每次 run 的 transcript/timeline，机器相关、无移植价值
+research/ai-plan/runs/
+research/ai-plan/tmp/

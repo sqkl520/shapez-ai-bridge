@@ -36,9 +36,15 @@ export class FakeGame {
      * @param {object} obs   obs 的 result 部分
      * @param {object} [items] debug_items 的 result 部分（可缺）
      */
-    constructor(obs, items = null) {
+    constructor(obs, items = null, opts = {}) {
         this.obs = structuredClone(unwrap(obs));
         this.items = items ? structuredClone(unwrap(items)) : { paths: [], truncatedPaths: false };
+        /* 离线世界的身份：夹具文件名（或调用方给的名字） + hub uid。
+           没有它，`worldKeyOf` 会退到「hub uid + level」，而 L4 与 L5 夹具的
+           hub uid 相同 —— 两个不同世界的记忆就会串在一起。 */
+        this.fixtureWorldKey = (opts && typeof opts.worldKey === "string" && opts.worldKey.trim())
+            ? opts.worldKey.trim()
+            : (opts && opts.obsFile ? `fixture:${path.basename(opts.obsFile)}` : `fixture:${this.obs.goal?.requirement?.shape || "unknown"}`);
         this.tick = this.obs.tick || 0;
         this.production = { produced_total: {}, produced_per_sec: {}, window_seconds: 60 };
         /** 每次 reader 被调用都记一笔 —— loop 的 transcript 可以据此判断「它到底看了什么」 */
@@ -74,7 +80,7 @@ export class FakeGame {
         if (itemsFile) {
             try { items = JSON.parse(fs.readFileSync(itemsFile, "utf8")); } catch { /* items 可缺 */ }
         }
-        const g = new FakeGame(obs, items);
+        const g = new FakeGame(obs, items, { ...opts, obsFile });
         if (opts.goal !== undefined) g.assertGoal(opts.goal);
         return g;
     }
@@ -95,7 +101,7 @@ export class FakeGame {
 
     /** 深拷贝一份（每个用例都从同一个起点出发，避免用例间串味）。 */
     clone() {
-        const g = new FakeGame(this.obs, this.items);
+        const g = new FakeGame(this.obs, this.items, { worldKey: this.fixtureWorldKey });
         g.tick = this.tick;
         g.production = structuredClone(this.production);
         g._nextUid = this._nextUid;
@@ -110,6 +116,72 @@ export class FakeGame {
             debugItems: async (p = {}) => this.debugItems(p),
             production: async (p = {}) => this.observeProduction(p),
             step: async (ticks) => this.step(ticks),
+            /* ── 跨 tx 检查点（离线版）──
+             *
+             * 与真 mod 的 `checkpointSave/Restore` 同语义，但**范围小得多**：
+             * 真 mod 用 `entity.serialize()` 存完整组件、恢复走 `rollbackToSnapshot`
+             * （4 轮收敛 + 先删后放 + nextUid 回收）；这里只做**实体表的深拷贝**。
+             *
+             * 为什么仍然要实现它：`loop` 的撤销路径必须能被离线测试覆盖。
+             * 如果这里不提供，所有撤销相关测试都得连真桥 —— 而真桥独占、
+             * 一次只能跑一个，实际上等于测不了。
+             *
+             * **诚实边界**：FakeGame 的 `apply()` 不做 immutable 回写，
+             * 所以离线算出来的可达率本来就不可靠（见 `offline_boundary.mjs` 里
+             * `V-health` 那条）。因此 `decideRollback` 在非 live 模式下
+             * **只判定、不执行**（`dry:true`）。这里的 restore 实现是给
+             * 显式调用准备的（测试可以手动调），不是生产路径。 */
+            checkpointSave: async (p = {}) => this.checkpointSave(p),
+            checkpointRestore: async (p = {}) => this.checkpointRestore(p),
+            checkpointList: async () => this.checkpointList(),
+            /* ★ 离线世界身份 ★
+             * 与真桥的 `world_info` 同语义，但**故意不返回 seed**：
+             * 夹具没有真实 seed，编一个会让记忆误以为它属于某个真世界。
+             * `worldKeyOf` 认 `world_key` 这个字段（见 memory.mjs）。 */
+            worldInfo: async () => ({ world_key: this.fixtureWorldKey, seed: null }),
+        };
+    }
+
+    /** 存一份实体表快照。同名覆盖。 */
+    checkpointSave(p = {}) {
+        if (!this._checkpoints) this._checkpoints = new Map();
+        const name = (p && typeof p.name === "string" && p.name.trim()) ? p.name.trim() : `ck-${this._checkpoints.size + 1}`;
+        const entities = structuredClone(this.obs.entities);
+        this._checkpoints.set(name, { entities, tick: this.tick, nextUid: this._nextUid });
+        return { ok: true, name, entities: entities.length, skipped: 0, dropped: [], total_checkpoints: this._checkpoints.size };
+    }
+
+    /** 恢复到某个检查点。返回结构与真 mod 对齐（`ok` / `verified` / `why`）。 */
+    checkpointRestore(p = {}) {
+        const name = p && typeof p.name === "string" ? p.name.trim() : "";
+        if (!this._checkpoints || !this._checkpoints.has(name)) {
+            throw new Error(`checkpoint "${name}" not found`);
+        }
+        const rec = this._checkpoints.get(name);
+        const before = new Set(this.obs.entities.map(e => e.uid));
+        const want = new Set(rec.entities.map(e => e.uid));
+        this.obs.entities = structuredClone(rec.entities);
+        this.obs.entity_count = this.obs.entities.length;
+        this._nextUid = rec.nextUid;
+        let deleted = 0, restored = 0;
+        for (const u of before) if (!want.has(u)) deleted++;
+        for (const u of want) if (!before.has(u)) restored++;
+        /* 与真 mod 一致：`ok` 要求 uid 集合完全相等（这里必然相等，因为是整表替换） */
+        return {
+            ok: true, name, verified: true, uid_set_equal: true, geometry_mismatch: 0,
+            entities_deleted: deleted, entities_restored: restored,
+            entities_kept: want.size - restored, why: [],
+        };
+    }
+
+    checkpointList() {
+        const m = this._checkpoints || new Map();
+        return {
+            ok: true,
+            items: [...m.entries()].map(([name, r]) => ({
+                name, entities: r.entities.length, skipped: 0, tick: r.tick, age_ms: 0,
+            })),
+            total_entities: [...m.values()].reduce((a, r) => a + r.entities.length, 0),
         };
     }
 
