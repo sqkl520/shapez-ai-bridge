@@ -16,6 +16,7 @@
  *   │ L2 槽位  │ 能（槽位由 op-templates 的几何算出）         │ 结构等价 │
  *   │ L3 流通  │ **不能**                                    │ 见下     │
  *   │ L4 行为  │ **不能**                                    │ 见下     │
+ *   │ V-health │ **不能**                                    │ 见下     │
  *   │ tx 原子性│ **不能**                                    │ 见下     │
  *   └──────────┴────────────────────────────────────────────┴──────────┘
  *
@@ -38,6 +39,25 @@ export const OFFLINE_UNVERIFIABLE = Object.freeze({
     "L3-flow": "debug_items.paths 由游戏在带线拓扑变化后重算；FakeGame.apply 不重建 paths",
     "L4-behavior": "production 时间片由游戏主循环推进；FakeGame.step 只加 tick",
     "tx-atomicity": "FakeGame 无快照/回滚，apply 是原地改",
+    /* ★ V-health 为什么也算不可信（2026-11-03 加，实测逼出来的）★
+     *
+     * `V-health` 的可达率用的是 `flowReachable`（每跳验 `accepts`），它**自己**是
+     * 结构等价的 —— 但离线的 `afterObs` 来自 `FakeGame.apply()`，而后者只改实体表、
+     * **不做 `runGuarded` 的 immutable 语义回写**（真 tx 里游戏会按邻居重算带子方向）。
+     *
+     * 实测后果：L4 官方正解（把一条 run 换成 cutter+trash）在离线跑出来是
+     * 「到 hub 的带子 140→133」⇒ V-health 判 `regressive` ⇒ `strict` 红 ⇒
+     * `OFFLINE_ONLY` 那整条链全部失效（10 条断言一起变红）。
+     * 而同一个计划在真机上不一定是变差的。
+     *
+     * 更根本的理由：**增量施工本身就会让可达率暂时下降**。这套系统只有 7 个局部宏，
+     * 「先把旧带子拆掉、下一轮再接新线」是唯一可行的模式。如果每一步都要求
+     * 「可达率不许下降」，那就等于禁止一切施工 —— 而这条判据本来是拿来抓
+     * 「无谓破坏」的，不是拿来抓「正在施工」的。
+     *
+     * 所以：离线不判 V-health（记录事实，不构成结论）；真机 live 才判。
+     * 靠 `evidence.kind` 与 `timeline.log` 仍然保留了全部信息，没有人失去可见性。 */
+    "V-health": "离线 afterObs 来自 FakeGame.apply（不做 immutable 回写）；且增量施工天然会短暂降低可达率",
 });
 
 /** 哪些检查项离线可信（结构等价于真机）。 */
