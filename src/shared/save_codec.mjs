@@ -108,6 +108,19 @@ export function decodeSaveFile(file) {
         entities: (dump.entities || []).length,
         beltPaths: Object.keys(dump.beltPaths || {}).length,
         stored: Object.keys(hg.storedShapes || {}),
+        /* ★ 解锁的奖励（2026-11-09）★
+         *
+         * 这是「某台建筑到底能不能用」的**唯一权威**：
+         * 游戏 `painter.js#getIsUnlocked` → `hubGoals.isRewardUnlocked(reward_painter)`
+         * → 读 `gainedRewards`。
+         *
+         * 为什么必须暴露它：`place painter` 能成功（mod 接受、几何对、tx 全绿），
+         * 但**处理器不消费** —— 货就静静堵在它前面，hub 里目标形状恒为 0，
+         * 而这时 obs / debug_items / 日志**全都看不出问题**。
+         * 只能靠「猜是不是没解锁」，而在这之前没有任何外部手段能确认。
+         *
+         * 这里从存档里直接读，不需要重载游戏。 */
+        rewarded: Object.keys(hg.gainedRewards || {}).filter(k => hg.gainedRewards[k]),
         seed: (dump.map && dump.map.seed) ?? null,
         lastUpdate: obj.lastUpdate ?? null,
         raw: obj,
