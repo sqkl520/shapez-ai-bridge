@@ -425,6 +425,73 @@ const LIVE = { mode: "live", goalShape: "RuRu----", flowsProvided: true, hasMach
     ok(/^fnv1a64:/.test(worldUidSetHash(a)), "hash 带算法前缀（可辨认，不是裸十六进制）");
 }
 
+/* ═══════════ 10. V-health：改了计划之外，世界有没有变差 ═══════════
+ *
+ * 这一层是用户贴图那次复盘（2026-11-03）的直接产物。当天的现场：
+ *   `replace_run` applied 5/5、L1-landing 绿、A-tx 绿，
+ *   而**到 hub 的带子 140→133、死带子 23→27**。
+ * 整个验证体系在说「一切正常」，同时世界在变糟 —— 因为没有一层看连通性的变化。
+ */
+
+{
+    /* 造一个「before/after 之间世界确实变差」的场景：
+       直接从 L4 的 obs 里删掉一条**能到 hub** 的带子当 after。 */
+    const g = l4Game();
+    const before = g.obs;
+    const after = JSON.parse(JSON.stringify(before));
+    const { indexOf, flowReachable } = await import("./topology.mjs");
+    const reach = flowReachable(before, indexOf(before));
+    const liveBelt = before.entities.find(e => e.type === "belt" && reach.has(e.uid));
+    ok(!!liveBelt, "夹具里有一条能到 hub 的带子（构造前提）");
+    after.entities = after.entities.filter(e => e.uid !== liveBelt.uid);
+
+    /* reader 的 obs() 直接返回 after —— verifyRound 内部只用它做 after 快照。 */
+    const fakeReader = {
+        obs: async () => after,
+        debugItems: async () => ({ paths: [], pathCount: 0 }),
+        production: async () => ({ window_seconds: 60, produced_total: {} }),
+        step: async () => ({ ok: true }),
+    };
+    const round = await verifyRound({
+        reader: fakeReader,
+        txPlan: { placements: [], removes: [{ uid: liveBelt.uid }], destroys: [liveBelt.uid], ops: [], flows: [] },
+        beforeObs: before,
+        mode: "mock",
+        goalShape: "RuRu----",
+    });
+    const chk = round.checks.find(c => c.name === "V-health");
+    ok(!!chk, "V-health 检查必须存在（每一轮都要有这条）", round.checks.map(c => c.name));
+    ok(chk && chk.ok === false, "删掉一条能到 hub 的带子 ⇒ V-health 判红", chk);
+    ok(chk && /改坏/.test(chk.reason || ""), "理由必须说「改坏了」，不是笼统的失败", chk && chk.reason);
+    ok(chk && chk.evidence && chk.evidence.kind === "regressive", "evidence 带档位", chk && chk.evidence);
+    ok(chk && typeof chk.evidence.belts_reaching_hub_before === "number"
+        && chk.evidence.belts_reaching_hub_after < chk.evidence.belts_reaching_hub_before,
+        "evidence 带前后两个数（读日志的人能自己核对）", chk && chk.evidence);
+
+    /* 反向：世界没变差时不许判红（否则清理类改动会被系统性地拦掉）。 */
+    const round2 = await verifyRound({
+        reader: { ...fakeReader, obs: async () => JSON.parse(JSON.stringify(before)) },
+        txPlan: { placements: [], removes: [], destroys: [], ops: [], flows: [] },
+        beforeObs: before,
+        mode: "mock",
+        goalShape: "RuRu----",
+    });
+    const chk2 = round2.checks.find(c => c.name === "V-health");
+    ok(chk2 && chk2.ok === true, "世界没变 ⇒ V-health 绿（不奖励也不惩罚）", chk2);
+
+    /* 第三态：算不出来就 undecidable，**不许**伪造绿。 */
+    const round3 = await verifyRound({
+        reader: { ...fakeReader, obs: async () => { throw new Error("读不到"); } },
+        txPlan: { placements: [], removes: [], destroys: [], ops: [], flows: [] },
+        beforeObs: before,
+        mode: "mock",
+        goalShape: "RuRu----",
+    });
+    const chk3 = round3.checks.find(c => c.name === "V-health");
+    ok(chk3 && chk3.ok === false && chk3.undecidable === true,
+        "after obs 读不到 ⇒ undecidable（不是绿）", chk3);
+}
+
 /* ═══════════ 汇总 ═══════════ */
 
 console.log(`\nverify 自测：${pass} 通过 / ${fail} 失败`);

@@ -22,6 +22,7 @@
 
 import { verifyRuntime, slotsOf, beltRvOf } from "../verify_runtime.mjs";
 import { DIRV, beltExit } from "../../ai/belt-rules.mjs";
+import { worldHealth, healthDelta, classifyNetEffect } from "./health.mjs";
 
 const isInt = n => typeof n === "number" && Number.isInteger(n);
 const K = c => `${c[0]},${c[1]}`;
@@ -603,6 +604,72 @@ export async function verifyRound({
             reason: apply.why.length ? apply.why.join(" / ") : null,
             hardStop: apply.hardStop,
             evidence: { applied: tx.applied, requested: tx.requested, rolled_back: !!tx.rolled_back },
+        });
+    }
+
+    /* ── V-health：**这次改动有没有把世界改坏** ──
+     *
+     * ## 为什么必须有这一层
+     *
+     * 用户贴图那次（2026-11-03）的复盘数据：`replace_run` 一路 `applied 5/5`、
+     * L1-landing 绿、A-tx 绿，而**到 hub 的带子从 140 掉到 133、死带子从 23 涨到 27**。
+     * 也就是说：整个验证体系在说「一切正常」，同时世界在变糟。
+     *
+     * 根因是**每一层都在验「计划是否按请求落盘」，没有一层验「落盘之后世界是否更差」**：
+     *   · L1-landing —— 我要放的格子真的有我要的东西吗（落盘正确性）
+     *   · L2-slots   —— 我点名的槽有运行时证据吗
+     *   · L3-flow    —— 我声明的 flow 走得通吗（**只管我声明的那几条**）
+     *   · L4-behavior—— 关卡的交付涨了吗（只管一个数）
+     *
+     * 于是「在我的视角里全对，在世界的视角里更糟」是一个**结构上允许**的结果。
+     * 这一层补的就是那个视角差：它不看计划，只看 before/after 两份世界的连通性。
+     *
+     * ## 判据（保守：只报「更差」，不奖励「更好」）
+     *
+     * `regressive` 才红。`cleanup` / `constructive` / `churn` / `inert` 都绿 ——
+     * 因为在没有交付的一轮里，「清理死带子」和「加了东西」都是合理的中间状态，
+     * 判红会让 loop 把正确的小步也回退掉。**只有确实变差才拦。**
+     *
+     * 与 `strictVerdict` 的关系：它进 `checks`，因此会参与 `strict` 的整体判定，
+     * 但不是 `hardStop`（那会立刻终止 run）。一次改坏了应该让 loop 有机会在下一轮
+     * 自己修回来，而不是当场崩掉 —— 它现在有 `## LAST STEP` 那段提示来知道自己改坏了。
+     */
+    let healthEffect = null;
+    if (afterObs && beforeObs) {
+        try {
+            const hb = worldHealth({ obs: beforeObs, items: null, production: null });
+            const ha = worldHealth({ obs: afterObs, items: null, production: null });
+            const hd = healthDelta(hb, ha);
+            healthEffect = classifyNetEffect(hb, ha, hd);
+            checks.push({
+                name: "V-health",
+                ok: healthEffect.kind !== "regressive",
+                reason: healthEffect.kind === "regressive"
+                    ? `这次改动把世界改坏了：${healthEffect.why.join("；")}`
+                    : null,
+                evidence: {
+                    kind: healthEffect.kind,
+                    why: healthEffect.why,
+                    belts_reaching_hub_before: hb.belts_reaching_hub,
+                    belts_reaching_hub_after: ha.belts_reaching_hub,
+                    belts_dead_before: hb.belts_dead,
+                    belts_dead_after: ha.belts_dead,
+                },
+            });
+        } catch (e) {
+            /* 算不出来就**不判**（不伪造绿）。与 ITEMS_UNAVAILABLE 同一纪律：
+               「没算出来」不许长得像「没问题」。 */
+            checks.push({
+                name: "V-health", ok: false, undecidable: true,
+                reason: `算不出世界健康度：${e && e.message ? e.message : e}`,
+                evidence: {},
+            });
+        }
+    } else {
+        checks.push({
+            name: "V-health", ok: false, undecidable: true,
+            reason: "缺少 before/after 世界快照 —— 无法判断改动是否让世界变差",
+            evidence: {},
         });
     }
 
