@@ -740,6 +740,69 @@ function checkOccupancy(cells, world, opts) {
 }
 
 /**
+ * 被覆盖的既有带子会切断谁 —— `connect(allow_replace)` 的后果分析。
+ *
+ * ## 为什么必须是**本文件的**轻量实现
+ *
+ * `remove.mjs` 有完整的 `analyzeRemoval`，但它已经 `import { buildWorld, portsOf }
+ * from "./connect.mjs"`。反向 import 会成环，而这两个文件都在模块顶层建常量表
+ * （`SHAPE_NAME` / `RV_*`），环上的顶层 const 初始化顺序不可靠 ——
+ * 那类 bug 只在某些入口顺序下出现，极难复现。
+ *
+ * ## 只回答一个问题的原因
+ *
+ * 覆盖带子唯一要紧的后果是：**它原本供着的下游会不会饿死**。
+ * 更细的分类（orphaned-output / starved-machine / opaque）由 `replace_run` 负责，
+ * 那里有完整的机器端口图。这里顺着**出口格**走一格就够 ——
+ * 出口格上是什么，就是谁原本在吃这条带子的货。
+ *
+ * @param {object} world `buildWorld()` 的返回（`cells` 是特格索引）
+ * @param {Array<number>} replacedUids 将被覆盖的带子 uid
+ * @returns {{replaced_uids:Array<number>, would_disconnect:Array<object>}}
+ *   `would_disconnect` 每项 `{kind:"starved-belt"|"starved-machine", uid, cell, why}`
+ */
+function analyzeReplacedBelts(world, replacedUids) {
+    const out = [];
+    if (!world || !world.byUid) return { replaced_uids: replacedUids, would_disconnect: out };
+    const R = new Set(replacedUids);
+    const byUid = world.byUid;
+
+    for (const uid of [...R].sort((a, b) => a - b)) {
+        const b = byUid.get(uid);
+        if (!b || b.type !== "belt") continue;
+        /* 这条带子的出口格 —— 原来是谁在这里接货。 */
+        let dir = null;
+        try {
+            /* buildWorld 的 rec 字段是 `rv`（不是 obs 的 `rotation_variant`）。 */
+            dir = beltExit(b.rv || 0, b.r || 0);
+        } catch { dir = null; }
+        if (!dir || !DIRV[dir]) continue;
+        const d = DIRV[dir];
+        const outCell = [b.x + d[0], b.y + d[1]];
+        const nx = world.cells.get(key(outCell[0], outCell[1]));
+        if (!nx) continue;                                  // 出口本来就空着 ⇒ 覆盖它没让谁饿死
+        if (nx.type === "belt") {
+            if (R.has(nx.uid)) continue;                     // 下游也被覆盖了 ⇒ 一起拆，不算切断
+            /* ⚠️ `world.cells` 的记录只有 `{uid,type,isAnchor}`，**没有坐标**。
+               想拿坐标必须用 `outCell`（我们刚算出来的那一格）或查 `byUid`。
+               第一版写 `[nx.x, nx.y]` ⇒ 得到 `[null, null]` —— 报告里出现
+               一对空坐标，读的人根本不知道断在哪。 */
+            out.push({
+                kind: "starved-belt", uid: nx.uid, cell: outCell,
+                why: `(${b.x},${b.y}) uid=${uid} 被覆盖后，下游 (${outCell[0]},${outCell[1]}) uid=${nx.uid} 再没有供料方`,
+            });
+            continue;
+        }
+        if (nx.type === "hub") continue;                     // 覆盖直连 hub 的带子：hub 不「饿死」
+        out.push({
+            kind: "starved-machine", uid: nx.uid, cell: outCell,
+            why: `(${b.x},${b.y}) uid=${uid} 被覆盖后，${nx.type} (${outCell[0]},${outCell[1]}) 的这个入口再没有供料`,
+        });
+    }
+    return { replaced_uids: replacedUids, would_disconnect: out };
+}
+
+/**
  * 「所有候选都撞」时的**聚合**诊断。
  *
  * 旧实现在 842 条候选里按 (y,x) 挑一条的 `firstConflict` 上报 —— 那是**任意**一条，
@@ -1067,6 +1130,42 @@ export function connect(a, b, c, d) {
         const fc = sum.example
             || (sum.total ? candidates.map(x => x.occ.firstConflict).filter(Boolean)
                 .sort((p, q) => p.y - q.y || p.x - q.x)[0] : null);
+        /* ★ 撞的都是带子而调用方没开 allow_replace ⇒ 自动试一次 ★
+         *
+         * 实测（`.tmpverify/connect/`）：一条 17 格长的墙上 340 条候选全被挡，
+         * 其中 **212 条只差 1 格**。宏自己已经算得出「只要覆盖 1 格就能通」，
+         * 却只把这句话写进 hint，让模型下一轮再调一次 —— 而实测模型常常不照做
+         * （1405 次真实调用里 `opts.allow_replace` 极少出现）。
+         *
+         * 所以这里**替它试一次**：把 allow_replace 打开重跑同一套枚举。
+         * 成功就正常返回（附带 `replace-would-disconnect` 后果报告），
+         * 不成功再报原来的 `occupied`。
+         *
+         * 为什么这是安全的：`connect` 是**只读规划**宏（`dry_run: true`），
+         * 它不写世界。真正的写入由调用方按返回值组 tx。所以「试一次」不产生副作用 ——
+         * 调用方仍然可以选择忽略这个结果、传 opts 重来。
+         *
+         * 为什么必须带后果：替它打开 allow_replace 意味着**替它决定覆盖别人的带子**。
+         * 那个决定必须把「会切断谁」一起交回去，否则就是用一次隐蔽破坏换一次成功。 */
+        if (hasBelt && !opts.allow_replace && opts.auto_relax !== false) {
+            const retry = connect({ from: fe, to: te, opts: { ...opts, allow_replace: true } }, ctx);
+            if (retry && retry.ok) {
+                return {
+                    ...retry,
+                    warnings: [
+                        ...(retry.warnings || []),
+                        {
+                            code: "hub-entry-chosen",
+                            detail: `原调用没开 allow_replace，宏自动用 allow_replace=true 重试并成功`
+                                + `（${sum.beltOnly} 条走法只需覆盖既有带子，最少 ${sum.minReplace} 格）`,
+                            hint: "这不是 hint，是**已替你做的选择**。若不想覆盖那几格带子，"
+                                + "换 from 端口或换 to 目标重调；覆盖的 uid 在 changed.removed_uids 与 consequences.replaced_uids。",
+                        },
+                    ],
+                    auto_relaxed: { allow_replace: true, reason: "all-candidates-blocked-by-belts", tried: sum.total, min_replace: sum.minReplace },
+                };
+            }
+        }
         return failure({
             code: "occupied", field: "to",
             message: `${sum.total} 条候选路径全部被挡住：${sum.text}`,
@@ -1105,6 +1204,61 @@ export function connect(a, b, c, d) {
             detail: `allow_replace=true：路径上有 ${pick.occ.replaceable} 格是既有带子，执行时必须先 delete{uid} 并纳入 tx 回滚`,
         });
     }
+    /* ★ 覆盖既有带子会切断谁 —— **必须报告**，不许盲拆 ★
+     *
+     * `replace_run` 早就有这个分析（`analyzeRemoval`），`connect` 一直没有。
+     * 后果很具体：`allow_replace` 覆盖一条带子，可能正好切断一条主供料路，
+     * 而调用方只看到 `replacing-belts: 3 格`，不知道那 3 格是别人的命脉。
+     *
+     * 实测（`.tmpverify/connect/`）：一条 17 格长的墙上，340 条候选全被挡，
+     * 其中 212 条只差 1 格 —— 只要覆盖一格就能通。但那一格可能是关键链路。
+     * 不给后果就直接替它覆盖，等于用一个更隐蔽的破坏换一次「成功」。
+     *
+     * 这里是**报告，不是阻止**（与 `replace_run` 的 `would_disconnect` 同一口径）：
+     * 断开本身可能是对的（比如那条线本来就是残线），要不要覆盖是调用方的决定。 */
+    const replacedUids = [];
+    if (pick.occ.replaceable > 0 && world) {
+        for (const c of pick.cells) {
+            const rec = world.cells.get(key(c[0], c[1]));
+            if (rec && rec.type === "belt" && !replacedUids.includes(rec.uid)) replacedUids.push(rec.uid);
+        }
+    }
+    let consequences = null;
+    if (replacedUids.length) {
+        try {
+            /* ⚠️ 用**同步的**轻量实现，不用 `remove.mjs` 的 `analyzeRemoval`。
+             *
+             * 原因：`remove.mjs` 已经 `import { buildWorld, portsOf } from "./connect.mjs"`
+             * （它复用本文件的世界模型）。反向 import 会成环 —— ESM 能处理一部分循环，
+             * 但**顶层 const 初始化顺序**在环上是不可靠的，而这两个文件都在模块顶层
+             * 建常量表（`SHAPE_NAME` / `RV_*`）。那类 bug 只在某些 import 顺序下出现，
+             * 极难复现。
+             *
+             * 所以这里只做**本文件负担得起**的那部分分析：对被覆盖的带子，
+             * 顺着出口走一格，看它原本供着谁。这已经能回答
+             * 「覆盖它会不会让别人饿死」这个唯一重要的问题。 */
+            consequences = analyzeReplacedBelts(world, replacedUids);
+            const disc = consequences.would_disconnect;
+            if (disc.length) {
+                warnings.push({
+                    code: "replace-would-disconnect",
+                    detail: `覆盖这 ${replacedUids.length} 格既有带子会断开 ${disc.length} 处链接`
+                        + `（下游带子 ${disc.filter(d => d.kind === "starved-belt").length} / `
+                        + `下游机器 ${disc.filter(d => d.kind === "starved-machine").length}）`,
+                    hint: "这是**报告的后果，不是拒绝**。若那些下游本来就是死路/残线，照常覆盖；"
+                        + "若它们还在供料，覆盖后必须立刻补上，否则会把别人的线弄死。",
+                });
+            }
+        } catch (e) {
+            /* 分析失败**不等于没有后果**：如实报 unavailable，不用空数组冒充「没有问题」。 */
+            consequences = { replaced_uids: replacedUids, would_disconnect: null, unavailable: String(e && e.message ? e.message : e) };
+            warnings.push({
+                code: "replace-consequences-unknown",
+                detail: `无法分析覆盖后果（${consequences.unavailable}）—— 这不代表没有切断`,
+            });
+        }
+    }
+
     if (hubAuto && ptList.length > 1) {
         warnings.push({
             code: "hub-entry-chosen",
@@ -1118,8 +1272,23 @@ export function connect(a, b, c, d) {
         cells_planned: cellsOut.length,
         cells_placed: cellsOut.length,     // 每格都过了 verifyChain 的逐格重解（见文件头口径说明）
         first_mismatch: null,
-        changed: { added_uids: [], removed_uids: [] },
+        /* ★ `changed.removed_uids` 是契约里**唯一规范通道** ★
+         *
+         * 契约（`contract.mjs` 的 `replacing-belts` 条目）写得很明确：
+         *   「把 `changed.removed_uids` 里的每个 uid 纳入 tx 的 destroys
+         *    （这是唯一规范通道，不要解析 detail 的格数）」。
+         *
+         * 而实现一直是 `[]` —— 即使 `allow_replace` 覆盖了 5 格旧带子，
+         * 调用方从规范通道读到的也是「什么都没销毁」。那条 warning 让人去读这个字段，
+         * 字段却是空的 ⇒ 覆盖永远进不了 tx 的 destroys ⇒ **没有回滚**。
+         *
+         * 2026-11-04 修：按 uid 升序确定性填入。
+         * （`consequences.replaced_uids` 保留作冗余，便于日志与红队对账。） */
+        changed: { added_uids: [], removed_uids: replacedUids.slice().sort((a, b) => a - b) },
         warnings,
+        /* 覆盖既有带子的后果（传了 allow_replace 才会有；缺省 = 没覆盖任何东西）。
+           与 `replace_run` 的 `would_disconnect` 同一口径：**报告，不阻止**。 */
+        ...(consequences ? { consequences } : {}),
         error: null,
         dry_run: true,                     // 本宏不写世界；写入由调用方 tx 执行
         // ── 诊断字段（任务书要求）──

@@ -241,6 +241,63 @@ test("H11 `unverified` 渲染成 not reached，且不带 hint", () => {
     assert.doesNotMatch(line, /rebind/, `unverified 不能带别的宏的 hint，实际：${line}`);
 });
 
+/* ═══════════ 6b. 宏算出来的**后果**必须进 prompt（P17 §6.1）═══════════
+ *
+ * 这是本轮最重要的一条接线。`remove_run` 的 warnings 里一直有
+ * `would-disconnect` / `removal-is-clean`，宏每次都算、每次都返回，
+ * 但**从来没进过 prompt** —— 只写进 transcript 的 plan 事件。
+ *
+ * 后果：模型执行 remove_run 后，下一轮只知道「我删了 3 格」，
+ * 不知道「删得干不干净」。它没有依据判断上一步是成功还是闯祸。
+ * P17 的实验结论正是：它缺的不是理由（`when:` 加了没用），是后果的确定感。
+ */
+test("H8b 宏的 warnings 进入 LAST ROUND（removal-is-clean 要看得见）", () => {
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["remove_run"], budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: {
+            round: 1, calls: ["remove_run"], decision: "continue",
+            macro_warnings: [{
+                macro: "remove_run", code: "removal-is-clean",
+                detail: "这 3 格拆除不会让任何下游失去供料，也不会留下孤立输出",
+            }],
+        },
+    });
+    const s5 = p.blocks.S5;
+    assert.match(s5, /consequences of last round's calls:/, `S5 必须有后果段，实际：${s5}`);
+    assert.match(s5, /removal-is-clean/, "码名要到模型眼前");
+    assert.match(s5, /不会让任何下游失去供料/, "detail 也要在（只说码名等于没说后果）");
+    assert.match(s5, /remove_run: /, "要说清是哪个宏");
+});
+
+test("H8c stranded-items-unknown 被排除（「不知道」不占预算）", () => {
+    /* 这条每轮都会出现（宏零写操作 ⇒ 拿不到 debug_items），
+       与「这一刀安不安全」无关。渲染它只会淹没真正的结论。 */
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["remove_run"], budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: {
+            round: 1, calls: ["remove_run"], decision: "continue",
+            macro_warnings: [
+                { macro: "remove_run", code: "stranded-items-unknown", detail: "拿不到 debug_items" },
+                { macro: "remove_run", code: "removal-is-clean", detail: "不会让任何下游失去供料" },
+            ],
+        },
+    });
+    const s5 = p.blocks.S5;
+    assert.doesNotMatch(s5, /stranded-items-unknown/, `不该渲染：${s5}`);
+    assert.match(s5, /removal-is-clean/, "有用的那条仍要在");
+});
+
+test("H8d 没有 macro_warnings 时不渲染空段（回归保护）", () => {
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"], budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: { round: 1, calls: ["connect"], decision: "continue" },
+    });
+    assert.doesNotMatch(p.blocks.S5, /consequences of last round/, "没有宏警告就不该出现这个标题");
+});
+
 test("H12 真失败的那条仍然带 hint（对照，防止改坏）", () => {
     const p = buildPrompt({
         goal: "RuRu----", obs: OBS, handles,

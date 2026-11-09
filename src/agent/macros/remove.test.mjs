@@ -290,6 +290,65 @@ t("remove_run：断开**不阻止执行** —— L4 的唯一正解就是先删�
     ok(r.error === null);
 });
 
+/* ★ P17 §6.1：零后果拆除要**正面**说 ★
+ *
+ * 背景（两次独立实验的结论）：给宏卡片加 `when:`（「这个宏存在的理由」）
+ * **完全没有**改变 remove_run 的采用率（P17：ON 1/50 vs OFF 0/50，Fisher p=1.0；
+ * P14：`$ore` 提示下也是 2/8 vs 2/8）。七个宏的选择分布一项都不显著。
+ *
+ * 同一批数据里模型的说法是「只在明确知道这段是死链时才拆」。
+ * 所以它缺的不是**理由**，是**对后果的确定感**。
+ * 而在这条改动之前，拆干净一段悬空线时 `remove_run` 的 warnings 里
+ * 只有 `stranded-items-unknown`（一条「不知道」），**没有一句说「这一刀是安全的」**。
+ *
+ * 注意 L4 夹具里**找不到**这种情形（那个世界每条带子都连着，实测 5 个连通段全部
+ * 拆了会断东西）—— 所以这里用合成世界。这本身也是发现：
+ * `removal-is-clean` 在健康世界里从不出现，只在真有死路时出现，正是想要的。 */
+{
+    const synth = buildWorld([
+        { uid: 9001, type: "belt", x: 0, y: 0, r: 0, rotation_variant: 0, layer: "regular" },
+        { uid: 9002, type: "belt", x: 1, y: 0, r: 0, rotation_variant: 0, layer: "regular" },
+        { uid: 9003, type: "belt", x: 2, y: 0, r: 0, rotation_variant: 0, layer: "regular" },
+    ]);
+    const sctx = makeContext(synth);
+
+    t("remove_run：拆一段悬空线 ⇒ 报 removal-is-clean（零后果要正面说）", () => {
+        const r = removeRun({ uids: [9001] }, sctx);
+        ok(r.ok, JSON.stringify(r.error));
+        eq(r.would_disconnect.length, 0);
+        ok(r.warnings.some(w => w.code === "removal-is-clean"),
+            `零后果拆除必须报 removal-is-clean，实际 ${JSON.stringify(r.warnings.map(w => w.code))}`);
+        const w = r.warnings.find(w => w.code === "removal-is-clean");
+        ok(/不会让任何下游失去供料/.test(w.detail), `措辞要正面陈述后果：${w.detail.slice(0, 120)}`);
+        ok(validateMacroResult(r).ok, "加了新 warning 仍须过契约信封校验");
+    });
+
+    t("remove_run：removal-is-clean 与 would-disconnect **互斥**（坏消息优先，不许同时说）", () => {
+        /* 断链的情形用 L4 真实世界 —— 那里每条删除都会断东西 */
+        const dirty = removeRun({ uids: [UID.b4_13, UID.b5_13, UID.b4_14] }, CTX);
+        ok(dirty.ok);
+        ok(dirty.would_disconnect.length > 0);
+        ok(!dirty.warnings.some(w => w.code === "removal-is-clean"),
+            "有断链时不该同时报「干净」");
+
+        const clean = removeRun({ uids: [9001, 9002, 9003] }, sctx);
+        ok(clean.ok);
+        eq(clean.would_disconnect.length, 0);
+        ok(!clean.warnings.some(w => w.code === "would-disconnect"));
+        ok(clean.warnings.some(w => w.code === "removal-is-clean"));
+    });
+
+    t("remove_run：removal-is-clean 的措辞点名实际删了几格（不是写死数字）", () => {
+        const one = removeRun({ uids: [9001] }, sctx);
+        const three = removeRun({ uids: [9001, 9002, 9003] }, sctx);
+        const d1 = one.warnings.find(w => w.code === "removal-is-clean").detail;
+        const d3 = three.warnings.find(w => w.code === "removal-is-clean").detail;
+        ok(/这 1 格/.test(d1), `单格应说「这 1 格」：${d1.slice(0, 60)}`);
+        ok(/这 3 格/.test(d3), `三格应说「这 3 格」：${d3.slice(0, 60)}`);
+        ok(d1 !== d3, "措辞必须随实际删除格数变化");
+    });
+}
+
 t("remove_run：删带子**中间一段**只断 2 处，且断的是留下的邻居（不是被删的那些）", () => {
     // x=4 竖线 y=-9..-15：删中间 (4,-12)(4,-13)
     const mid = removeRun({ uids: [UID.b4_12, UID.b4_13] }, CTX);

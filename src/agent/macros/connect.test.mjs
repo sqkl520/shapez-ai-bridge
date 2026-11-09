@@ -470,23 +470,32 @@ t("allow_replace：路径上的旧带子被允许覆盖，并给出回滚警告"
     assert.ok(/3 格/.test(r.warnings.find(w => w.code === "replacing-belts").detail), "应报出要覆盖 3 格旧带");
 });
 
-t("占用检查·负例：rebind 但不给 allow_replace，踩旧带子必须 occupied（不许静默铺上去）", () => {
-    /* ★ 这一条专门锁 `checkOccupancy`（connect.mjs:639）本身。★
+t("占用检查·★行为变更★：踩旧带子且未给 allow_replace ⇒ 自动放宽（但必须留痕）", () => {
+    /* ★ 这一条锁的是 2026-11-04 的行为变更，原意是「不许**静默**铺上去」。★
      *
-     * 现有三条"撞墙"用例挡的都是**机器**，走 `fits()` / `noteBlocked` 那条路
-     * （connect.mjs:766-774、804-814），根本不经过 `checkOccupancy`。
-     * 唯一踩旧带子的用例给了 `allow_replace: true`。
-     * 所以把 `checkOccupancy` 的返回整体改成 `{ok:true, firstConflict:null}`，
-     * 36 条测试全绿 —— 而实际行为退化成"把 5 格新带子直接铺在 3 条既有带子上并报成功"。
+     * 改前：踩旧带子又没给 allow_replace ⇒ 直接返回 `occupied`，让调用方下一轮再调一次。
+     * 实测问题（`.tmpverify/connect/`）：一条 17 格长的墙上 340 条候选全被挡，
+     * 其中 **212 条只差 1 格** —— 宏自己算得出「覆盖 1 格就能通」，
+     * 却只把这句话写进 hint。而真实数据里 1405 次调用中 `opts.allow_replace` 极少出现，
+     * 模型常常不照做 ⇒ 这条能力形同不存在。
+     *
+     * 改后：宏**自动用 allow_replace 重试一次**。但「静默」这条禁令仍然有效 ——
+     * 必须通过三处留痕让人知道它替你做了决定：
+     *   · `auto_relaxed`（机器可读：放宽了什么、为什么、覆盖几格）
+     *   · `warnings[].code === "hub-entry-chosen"`（人读：这不是 hint，是已做的选择）
+     *   · `changed.removed_uids` + `consequences.replaced_uids`（确实覆盖了谁）
+     *
+     * ⚠️ connect 是**只读规划**宏（`dry_run: true`），它不写世界。
+     * 「试一次」不产生副作用；调用方仍可忽略这个结果、换端口重来。
      *
      * 夹具设计（每一步都有理由，改之前先读）：
      *   · 矿机在 (0,6)，出口格 (0,5)；切割机在 (0,0)，入口格 (0,1)。
      *   · 两条旧带子放在 (0,3)、(0,2) —— **不贴矿机出口**，所以不会先命中更早的
      *     port_already_bound（见上一条用例的注释）。
      *   · 两个 balancer 放在 (±1, 1..4)，把两侧堵死，让"绕开旧带子"在 max_cells 内无解；
-     *     这样只剩"踩着旧带子走过去"这一条候选 —— 正是要判的那条。
+     *     这样只剩"踩着旧带子走过去"这一条候选。
      *     注意用 `variant: "merger"`（1×1）；`default` balancer 是 2×1，右半边会盖到 (0,·) 上，
-     *     冲突会先落到"机器"而不是"旧带子"，那条判据就又测不到了。
+     *     冲突会先落到"机器"而不是"旧带子".
      *   · `max_cells: 6` 让 7 格以上的绕行方案也出局，夹具因此是**确定性**的。
      *   · rebind:true 是为了让判据落到占用检查，而不是更早的端口占用判据。 */
     const ents = [
@@ -502,27 +511,34 @@ t("占用检查·负例：rebind 但不给 allow_replace，踩旧带子必须 oc
     }
 
     const r = connect({ from: { uid: 1 }, to: { uid: 2, port: "primary" }, opts: { rebind: true, max_cells: 6 } }, { entities: ents });
-    assert.equal(r.ok, false, `踩旧带子且未给 allow_replace ⇒ 必须失败；实得 ok=true, cells=${JSON.stringify(r.cells && r.cells.map(c => [c.x, c.y]))}`);
-    eq(r.error.code, "occupied", `错误码必须是 occupied，实得 ${r.error && r.error.code}: ${r.error && r.error.message}`);
-    assert.equal(r.cells, null, "失败结果不得带回一条可执行路径（否则调用方会照着铺）");
-    assert.equal(r.cells_planned, 0, "失败时 cells_planned 必须为 0");
-    eq(r.warnings, [], "失败时不应给任何 replacing-belts 之类的警告");
-    // 冲突必须指向**旧带子**，而不是两侧的机器（机器会先被 fits() 拦掉，那就测不到这条判据了）
-    assert.ok(r.firstConflict, `firstConflict 必须非空，实得 ${JSON.stringify(r.firstConflict)}`);
-    eq(r.firstConflict.what, "belt", `冲突对象必须是 belt，实得 ${r.firstConflict.what}`);
-    eq(r.firstConflict.uid, 10, `应指向最靠近源端的旧带子 uid=10，实得 ${r.firstConflict.uid}`);
-    eq([r.firstConflict.x, r.firstConflict.y], [0, 3], "冲突格必须是旧带子的格");
+    assert.equal(r.ok, true, `应当自动放宽并成功，实得 ${JSON.stringify(r.error)}`);
 
-    // 正例对照：同一个夹具给 allow_replace 就必须成功，且报告的覆盖格数正好 2
-    // （不然上一条可能只是"这个夹具永远失败"）。
-    const ok2 = connect({ from: { uid: 1 }, to: { uid: 2, port: "primary" }, opts: { rebind: true, max_cells: 6, allow_replace: true } }, { entities: ents });
-    assert.ok(ok2.ok, `allow_replace=true 时必须能铺上去，实得 ${JSON.stringify(ok2.error)}`);
-    const warn = ok2.warnings.find(w => w.code === "replacing-belts");
-    assert.ok(warn, "allow_replace=true 必须给出 replacing-belts 警告");
-    assert.ok(/2 格/.test(warn.detail), `应报出要覆盖 2 格旧带，实得 ${warn.detail}`);
-    const covered = ok2.cells.filter(c => (c.x === 0 && c.y === 3) || (c.x === 0 && c.y === 2));
-    eq(covered.length, 2, "选中的路径必须真的经过那两格旧带");
-    assert.ok(verifyChain(ok2.cells).ok);
+    /* ① 机器可读的留痕 */
+    assert.ok(r.auto_relaxed, "必须给出 auto_relaxed（否则调用方不知道发生了什么）");
+    eq(r.auto_relaxed.allow_replace, true);
+    eq(r.auto_relaxed.reason, "all-candidates-blocked-by-belts");
+    assert.ok(r.auto_relaxed.tried > 0, "必须报有多少条候选全被挡住");
+    assert.ok(r.auto_relaxed.min_replace >= 1, "必须报最少要覆盖几格");
+
+    /* ② 人读的留痕：这不是 hint，是已做的选择 */
+    const note = r.warnings.find(w => w.code === "hub-entry-chosen");
+    assert.ok(note, "必须有「已替你放宽」的警告");
+    assert.ok(/自动|已替你/.test(note.detail), `警告要说清是自动做的，实得 ${note.detail}`);
+
+    /* ③ 确实覆盖了谁 —— 规范通道是 changed.removed_uids */
+    eq(r.changed.removed_uids.length, 2, `必须报出覆盖了 2 格带子，实得 ${JSON.stringify(r.changed.removed_uids)}`);
+    assert.deepEqual([...r.changed.removed_uids].sort((a, b) => a - b), [10, 11]);
+    assert.ok(r.warnings.some(w => w.code === "replacing-belts"), "仍要保留 replacing-belts");
+
+    /* ④ 选中的路径必须真的经过那两格旧带 */
+    const covered = r.cells.filter(c => (c.x === 0 && c.y === 3) || (c.x === 0 && c.y === 2));
+    eq(covered.length, 2, "路径必须真的经过被覆盖的格子");
+    assert.ok(verifyChain(r.cells).ok);
+
+    /* ⑤ 显式给 allow_replace 时**不该**再标 auto_relaxed（那不是自动放宽） */
+    const explicit = connect({ from: { uid: 1 }, to: { uid: 2, port: "primary" }, opts: { rebind: true, max_cells: 6, allow_replace: true } }, { entities: ents });
+    assert.ok(explicit.ok);
+    assert.equal(explicit.auto_relaxed, undefined, "调用方自己给的就不算自动放宽");
 });
 
 t("占用检查·自重叠：路径自己踩自己必须 occupied(self-overlap)，不许返回带重复格的 cells", () => {

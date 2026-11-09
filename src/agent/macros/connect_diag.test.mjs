@@ -71,7 +71,7 @@ t("真实场景：撞旧带子时 firstConflict 必须指向带子，不得报 s
         belt(10538, 1, -6),        // 断点（from）
         hub(10000, -2, -2),
     ];
-    const r = connect({ from: { uid: 10538 }, to: { hub: { uid: 10000 } } }, { entities: ents });
+    const r = connect({ from: { uid: 10538 }, to: { hub: { uid: 10000 } }, opts: { auto_relax: false } }, { entities: ents });
 
     assert.equal(r.ok, false, "这组几何在没有 allow_replace 时必须失败");
     assert.equal(r.error.code, "occupied");
@@ -86,7 +86,7 @@ t("真实场景：撞旧带子时 firstConflict 必须指向带子，不得报 s
 
 t("真实场景：message 必须说清「撞带子」并且给出「最少覆盖几格」这个可执行结论", () => {
     const ents = [belt(10536, 1, -5, 0), belt(10538, 1, -6), hub(10000, -2, -2)];
-    const r = connect({ from: { uid: 10538 }, to: { hub: { uid: 10000 } } }, { entities: ents });
+    const r = connect({ from: { uid: 10538 }, to: { hub: { uid: 10000 } }, opts: { auto_relax: false } }, { entities: ents });
 
     assert.match(r.error.message, /撞既有带子/, `message 必须点名「撞既有带子」，实得：${r.error.message}`);
     assert.match(r.error.message, /\d+ 条/, "message 必须给出条数（聚合，不是只报一条）");
@@ -97,7 +97,7 @@ t("真实场景：message 必须说清「撞带子」并且给出「最少覆盖
 
 t("聚合口径：detail.breakdown 把「撞带子」与「自交」分开计数，且 sum === tried", () => {
     const ents = [belt(10536, 1, -5, 0), belt(10538, 1, -6), hub(10000, -2, -2)];
-    const r = connect({ from: { uid: 10538 }, to: { hub: { uid: 10000 } } }, { entities: ents });
+    const r = connect({ from: { uid: 10538 }, to: { hub: { uid: 10000 } }, opts: { auto_relax: false } }, { entities: ents });
     const d = r.error.detail;
     const b = d.breakdown;
 
@@ -187,7 +187,7 @@ t("自交与撞带子同时存在时，两者都要被记下来（不是二选�
     /* 夹具同第 1 组：那 156 条候选既自交又撞带子。判据：
        breakdown 里 beltAndSelf > 0 —— 旧实现遇到自交就 return，这个数根本统计不出来。 */
     const ents = [belt(10536, 1, -5, 0), belt(10538, 1, -6), hub(10000, -2, -2)];
-    const r = connect({ from: { uid: 10538 }, to: { hub: { uid: 10000 } } }, { entities: ents });
+    const r = connect({ from: { uid: 10538 }, to: { hub: { uid: 10000 } }, opts: { auto_relax: false } }, { entities: ents });
     const b = r.error.detail.breakdown;
     assert.ok(b.beltAndSelf > 0,
         `必须能统计出「既自交又撞带子」的候选；实得 beltAndSelf=${b.beltAndSelf}`);
@@ -203,6 +203,71 @@ t("成功返回的路径仍然不得有重复格（自交判据没被放宽）",
         assert.ok(!seen.has(k), `成功路径不得有重复格（${k}）—— 自交判据被放宽了`);
         seen.add(k);
     }
+});
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * ★ 2026-11-04 两个新能力：自动放宽 + 覆盖后果 ★
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+const beltOf = (uid, x, y, r = 90) => ({ uid, type: 'belt', variant: 'default', x, y, r, rotation_variant: 0, code: 1 });
+const cutterOf = (uid, x, y) => ({ uid, type: 'cutter', variant: 'default', x, y, r: 0, rotation_variant: 0, code: 5 });
+
+t('自动放宽：被既有带子全挡住时，宏自己用 allow_replace 重试并成功', () => {
+    /* 实测（.tmpverify/connect/）：654 条候选全被挡，其中只差 1-2 格。
+       改前只把这句话写进 hint，等模型下一轮再调；改后宏自己试一次。 */
+    const ents = [cutterOf(1, 0, 0), cutterOf(2, 12, 0)];
+    for (let y = -6; y <= 6; y++) ents.push(beltOf(1000 + y + 10, 6, y));   // 密不透风的墙
+    const r = connect({ from: { uid: 1, port: 'left' }, to: { uid: 2 } }, { entities: ents });
+    assert.equal(r.ok, true, '应当自动放宽并成功，实得 ' + JSON.stringify(r.error));
+    assert.ok(r.auto_relaxed, '必须给 auto_relaxed（机器可读的留痕）');
+    assert.equal(r.auto_relaxed.allow_replace, true);
+    assert.equal(r.auto_relaxed.reason, 'all-candidates-blocked-by-belts');
+    assert.ok(r.auto_relaxed.tried > 0, '必须报有多少条候选全被挡住');
+    assert.ok(r.auto_relaxed.min_replace >= 1, '必须报最少要覆盖几格');
+    assert.ok(r.warnings.some(w => w.code === 'hub-entry-chosen'), '必须有人读的留痕');
+    assert.ok(r.changed.removed_uids.length >= 1, '必须报出覆盖了哪些 uid（规范通道）');
+});
+
+t('自动放宽：被**机器**挡住时不放宽（机器永不可覆盖）', () => {
+    const ents = [cutterOf(1, 0, 0), cutterOf(2, 12, 0), cutterOf(99, 6, 0)];
+    for (let y = -6; y <= 6; y++) if (y !== 0) ents.push(cutterOf(1000 + y + 10, 6, y));
+    const r = connect({ from: { uid: 1, port: 'left' }, to: { uid: 2 } }, { entities: ents });
+    assert.equal(r.ok, false, '机器挡路时必须失败');
+    assert.equal(r.error.code, 'occupied');
+    assert.equal(r.auto_relaxed, undefined, '机器不可覆盖 ⇒ 不该自动放宽');
+});
+
+t('覆盖后果：被覆盖的带子原本在给下游供料 ⇒ 必须报 replace-would-disconnect', () => {
+    /* 路径会覆盖 uid=2@(5,4)，而它朝下供着 uid=3@(5,5)。 */
+    const ents = [cutterOf(10, 0, 3), cutterOf(11, 12, 3),
+                  beltOf(1, 5, 3, 180), beltOf(2, 5, 4, 180), beltOf(3, 5, 5, 180)];
+    const r = connect({ from: { uid: 10, port: 'left' }, to: { uid: 11 }, opts: { allow_replace: true } }, { entities: ents });
+    assert.equal(r.ok, true);
+    assert.ok(r.consequences, '覆盖了带子就必须给 consequences');
+    assert.ok(r.consequences.replaced_uids.includes(2));
+    const disc = r.consequences.would_disconnect;
+    assert.equal(disc.length, 1, '必须报出 1 处切断，实得 ' + JSON.stringify(disc));
+    assert.equal(disc[0].kind, 'starved-belt');
+    assert.equal(disc[0].uid, 3);
+    assert.deepEqual(disc[0].cell, [5, 5], '坐标必须是真的（不是 null,null）');
+    assert.ok(r.warnings.some(w => w.code === 'replace-would-disconnect'));
+});
+
+t('覆盖后果：下游也被一起覆盖 ⇒ 不算切断（一起拆不是饿死）', () => {
+    const ents = [cutterOf(10, 0, 3), cutterOf(11, 12, 3),
+                  beltOf(1, 5, 3, 180), beltOf(2, 5, 4, 180)];
+    const r = connect({ from: { uid: 10, port: 'left' }, to: { uid: 11 }, opts: { allow_replace: true } }, { entities: ents });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.consequences.would_disconnect, [], '两条都被覆盖 ⇒ 没有谁被饿死');
+});
+
+t('覆盖后果：没覆盖任何带子 ⇒ 不给 consequences 字段', () => {
+    const ents = [cutterOf(1, 0, 0), cutterOf(2, 12, 0)];
+    const r = connect({ from: { uid: 1, port: 'left' }, to: { uid: 2 } }, { entities: ents });
+    assert.equal(r.ok, true);
+    assert.equal(r.consequences, undefined);
+    assert.deepEqual(r.changed.removed_uids, [], '没覆盖就不该报销毁');
 });
 
 /* ── 汇总 ── */

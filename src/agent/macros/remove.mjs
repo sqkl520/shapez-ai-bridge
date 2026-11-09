@@ -405,6 +405,9 @@ export function analyzeRemoval(ctx, removedUids) {
 }
 const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
+/** 拆了多少格 —— 给 `removal-is-clean` 的措辞用（picked 在 warnings 那段之前已定） */
+const removed0Count = (picked) => picked.length;
+
 /** 4-邻接连通分量（删选集是否连成一段） */
 function componentsOf(cells) {
     const set = new Map(cells.map(c => [keyOf(c), c]));
@@ -575,6 +578,30 @@ export function removeRun(a, b, c) {
                 + `starved-belt ${consequences.starved_belts.length} / starved-machine ${consequences.starved_machines.length}）。`
                 + "这是**报告的后果，不是拒绝**：L4 的唯一正解就是先删 3 格再插机器。",
             hint: "执行后立刻用 insert_machine / trash_unused 把断点补上；不要停在中间态。",
+        });
+    } else {
+        /* ★ 干净拆除的正向陈述（P17 §6.1）★
+         *
+         * 这里是**零后果**的情形：拆掉的每一格，其上下游要么也在删除集里，
+         * 要么另一个方向本来就没有东西。也就是说这是一段悬空的、拿掉不会伤到任何人的线。
+         *
+         * 为什么必须说 —— P17 的实测结论：给宏卡片加 `when:`（「这个宏存在的理由」）
+         * **完全没有改变** remove_run 的采用率（ON 1/50 vs OFF 0/50，Fisher p=1.0），
+         * 七个宏的选择分布一项都没显著。而同一批数据里模型的说法是
+         * 「只在能明确知道这段是死链时才拆」。
+         *
+         * 也就是说：它缺的不是**理由**，是**对后果的确定感**。
+         * 而在这次改动之前，`remove_run` 拆干净一段线时返回里**什么都不说** ——
+         * 模型下一次看到的世界里，"我删了 3 格"和"世界因此少了 3 条悬空带"是同一个观测，
+         * 它没有任何依据判断自己刚才那一刀是安全的。
+         *
+         * 这条警告补的就是那个确定感：用 analyzeRemoval 已经算出来的事实
+         * **正面**陈述后果，而不是只在有坏消息时才开口。 */
+        warnings.push({
+            code: "removal-is-clean",
+            detail: `这 ${removed0Count(picked)} 格拆除不会让任何下游失去供料，也不会留下孤立输出：`
+                + "每个被删格的相邻方要么也在删除集里，要么该方向本来就是空的。",
+            hint: "这段线是悬空的，拆掉不伤任何产线；随后把腾出的走廊用于 connect / insert_machine 即可。",
         });
     }
     if (strandedItems === null) {
