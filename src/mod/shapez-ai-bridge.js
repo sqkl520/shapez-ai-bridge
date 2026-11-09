@@ -678,6 +678,9 @@ class Mod extends shapez.Mod {
                 case "debug_app_state":
                     result = this.debugAppState();
                     break;
+                case "debug_rewards":
+                    result = this.debugRewards();
+                    break;
                 case "debug_frame_alive":
                     result = await this.debugFrameAlive(params || {});
                     break;
@@ -4698,6 +4701,50 @@ class Mod extends shapez.Mod {
      *     "还没开始加载" 和 "加载到一半崩了"。
      *   · `root` 是否存在 —— 状态对了但没有 root 就是半死。
      */
+    /**
+     * 读 `hubGoals.gainedRewards` —— **解锁状态的唯一权威**。
+     *
+     * ## 为什么必须有这个
+     *
+     * 2026-11-09：`place painter` 成功了（mod 接受、几何对、tx 全绿），
+     * 但货**堵在 painter 前面一动不动**，hub 里 `CrCrCrCr` 恒为 0。
+     *
+     * 查游戏源码 `painter.js#getIsUnlocked`：
+     *   `return root.hubGoals.isRewardUnlocked(enumHubGoalRewards.reward_painter)`
+     * 而 `isRewardUnlocked` 读的是 `this.gainedRewards[reward]`。
+     *
+     * **放下 ≠ 能用。** 放置路径不查解锁（mod 也没有这个权限），
+     * 但处理器不消费 —— 而它不消费时**什么都不报**，只是静静堵着。
+     *
+     * 在这之前没有任何办法从外部看出「这台机器是不是解锁了」：
+     * obs 只说它在那儿，debug_items 只说货堵着，日志一片安静。
+     * 只能靠「逐个奖励猜」。
+     *
+     * @returns {object} `{ ok, rewards: string[], raw: object|null, error? }`
+     */
+    debugRewards() {
+        const out = { ok: false, rewards: null, raw: null, error: null };
+        try {
+            const hg = this.root && this.root.hubGoals;
+            if (!hg) { out.error = "no hubGoals (not in game?)"; return out; }
+            const gained = hg.gainedRewards || {};
+            out.raw = gained;
+            out.rewards = Object.keys(gained).filter(k => gained[k]);
+            out.ok = true;
+            /* 顺手给出恐怕最常问的那几个 —— 让调用方不用自己记枚举名 */
+            const probe = ["reward_painter", "reward_painter_double",
+                "reward_mixer", "reward_rotater", "reward_rotater_ccw",
+                "reward_tunnel", "reward_balancer", "reward_cutter_and_trash"];
+            out.probes = Object.fromEntries(probe.map(k => [k, !!gained[k]]));
+            try {
+                out.level = hg.level || null;
+            } catch (e) { out.level = null; }
+        } catch (e) {
+            out.error = String(e && e.message ? e.message : e);
+        }
+        return out;
+    }
+
     debugAppState() {
         const out = {
             state_key: null,
