@@ -136,6 +136,27 @@ export const DIAG_CODES = Object.freeze({
      * 真机踩过：接在铜切割机上的矿机脚下没矿、还占着 cutter 的输入口，
      * 而 `insert_machine` 报 blocked_by_machine —— 这时唯一的修法是 remove_machine。 */
     BLOCKED_BY_MACHINE: "a machine is in the way and machines never yield (need remove_machine)",
+    /* 2026-11-03：上一轮的改动被判 regressive 且满足撤销判据，系统已经把它撤掉了。
+     * 这是一条**元诊断**（layer:"meta"）：它描述的不是世界，而是 loop 自己做了一件事。
+     * 为什么会存在：撤销之后世界回到了上一轮之前，此时基于「坏世界」算出来的诊断
+     * 全部失效 —— 必须重新 observe 再诊断。这条码是那个转折的标记，
+     * 让读 transcript 的人知道「这一轮没有让模型做决策，因为世界被回退了」。 */
+    WORLD_REVERTED: "the previous round's change was rolled back; re-diagnose before acting",
+    /* 2026-11-04：世界在 run 中途升级了（目标形状变了），当前配方已作废重算。
+     * 这条是**通告**，不是错误：它告诉模型「你现在要造的东西换了」。
+     *
+     * 为什么必须是诊断而不是 halt：halt 等于「赢一局就死机」，而且会丢掉本次 run
+     * 已经收集到的全部经验。而继续跑又必须让模型知道目标变了 —— 否则它会继续修
+     * 那条造着**上一个 level 形状**的产线（用户贴图那次的直接成因：
+     * level 5 的旧产线没拆，变成 41% 到不了 hub 的死带子）。 */
+    GOAL_CHANGED: "the world levelled up mid-run; the goal shape changed and the old recipe is void",
+    /* 2026-11-04：一条从不产出目标形状的线（残线）—— 它属于已作废的旧目标。
+     *
+     * 与 `NO_PRODUCTION` 的分工：那条说的是「**整体**没有产线在造目标」，
+     * 这条说的是「有这么一条线，它在造**别的**东西，而且它的产物一个都没进 hub」。
+     * 前者让模型去建线，后者让模型先看清该拆哪条 —— 两者的动作完全相反，
+     * 合成一条会让模型在「先建」和「先拆」之间摇摆。 */
+    OBSOLETE_LINE: "a live production line is making a shape that is not the goal and delivers nothing",
     NO_PROGRESS: "same fingerprint with the same action",
     NO_PROGRESS_3X: "same fingerprint three times",
     NO_WORLD_CHANGE: "tx succeeded but the world hash did not change",
@@ -212,6 +233,17 @@ export const BUDGET = Object.freeze({
      * 想关掉就传 `budget: { PARTIAL_APPLY: false }`。 */
     PARTIAL_APPLY: true,
     LLM_IN_CHARS_MAX: 12000,
+    /* ★ 删除冗余度的抽样阈值（P18）★
+     *
+     * 逐条试删每个带子要 O(带子数) 次 `removeRun`：
+     *   L4  161 条 → 43ms
+     *   L11 2107 条 → 91ms
+     * 都还行，但 10000 条的世界会到 500ms+，而那是在**每轮**都要付的。
+     *
+     * 超过 `REDUNDANCY_FULL_MAX` 就抽前 `REDUNDANCY_SAMPLE` 条。
+     * `sampled` 字段会如实标注，分母（`belts`）永远报全量 —— 抽样不许谎报全量。 */
+    REDUNDANCY_FULL_MAX: 3000,
+    REDUNDANCY_SAMPLE: 600,
     LLM_OUT_CHARS_MAX: 4000,
     PROMPT_STATE_BELTS_MAX: 12,
     MAX_PATHS: 40,           // = mod 的 paths.slice(0, 40)
@@ -388,6 +420,28 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["remove_machine", 8],
         ["replace_run", 5],
         ["insert_machine", 3],
+    ]),
+    /* 世界刚被撤销过：该重新看，不该照着旧诊断动手。
+     * 候选给空是**故意的** —— 这条诊断出现时 loop 会直接 `continue`（重新 observe），
+     * 根本走不到「选宏」那一步；给空表是防守：万一流程改了，也不会给出误导性的候选。 */
+    WORLD_REVERTED: cand([]),
+    /* 刚换关：先看清目标再动手。候选给拆线相关的宏 ——
+     * 换关时最常见的正确动作是「把服务旧目标的那条线拆掉或改道」，
+     * 而不是在一条作废的线上继续修。但也保留 `connect`：有时旧线离新目标
+     * 只差一个转向，直接接上比拆了重建便宜。 */
+    GOAL_CHANGED: cand([
+        ["remove_run", 6],
+        ["replace_run", 5],
+        ["connect", 3],
+        ["insert_machine", 2],
+    ]),
+    /* 残线：以拆为主。`trash_unused` 排第二 —— 有些残线其实只需要把末端
+     * 接进垃圾桶，不必整条拆掉（那能立刻止血，且比删更保守）。 */
+    OBSOLETE_LINE: cand([
+        ["remove_run", 8],
+        ["trash_unused", 5],
+        ["replace_run", 4],
+        ["connect", 2],
     ]),
 
     /* ── 语义层（P-a） ──
