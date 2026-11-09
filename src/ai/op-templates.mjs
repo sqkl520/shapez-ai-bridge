@@ -322,6 +322,35 @@ const EMBEDDED = [
         wasteRoles: ["left"],
         verifiedOnLive: true,             // ✅ M1b（产物逐字符一致）
         kind: "cutter",
+        /* ★★ left/right 是**槽位编号**，与形状的左右半**相反** ★★
+         *
+         * 这是本项目最阴的一个命名坑，2026-11-09 在 level 6 上真实踩到：
+         * 装 trash 时按直觉选了 `port:"right"`，结果被扔掉的正是要保留的那半，
+         * hub 里目标形状恒为 0、中间产物暴涨，**而且不报任何错**。
+         *
+         * 游戏源码 `shape_definition_manager.js#shapeActionCutHalf`：
+         *
+         *     const rightSide = definition.cloneFilteredByQuadrants([2, 3]);
+         *     const leftSide  = definition.cloneFilteredByQuadrants([0, 1]);
+         *     return [rightSide, leftSide];        // ← 返回顺序：先右后半
+         *
+         * `item_processor.js#process_CUTTER` 用 `requiredSlot: i` 把返回的第 i 项
+         * 送进第 i 个 ejector slot。所以：
+         *
+         *     slot 0（本项目叫 "left"） = rightSide = quads[2,3] = 形状的**右半**
+         *     slot 1（本项目叫 "right"）= leftSide  = quads[0,1] = 形状的**左半**
+         *
+         * 也就是说：**端口名与半边名恰好互换。**
+         *
+         * ⚠️ 别把两件事混起来：
+         *   · 上面那句 `wasteRoles: ["left"]` 说的是**L4 那个具体目标**里
+         *     哪个槽装废料 —— 它依赖目标形状。
+         *   · 本节说的是**槽位编号 ↔ 半边名**的映射 —— 它不依赖目标形状。
+         *   不能用其中一个去推另一个。
+         *
+         * 配方里的 `cut(args:{half:"right"})` 用的是**游戏的半边名**
+         * （`cloneFilteredByQuadrants` 那一套）。所以要保留右半时，
+         * trash 必须挂在**本项目的 `right` 端口**（slot 1）上 —— 名字是反的。 */
     },
     {
         op: "cutQuad", building: "cutter", variant: "quad", code: 10,
@@ -1143,6 +1172,20 @@ function runTests() {
     eq("cutter 输出 (0,0)top=left / (1,0)top=right",
         OP_TEMPLATES.cut.outputs.map(s => [s.cell, s.dir, s.role]),
         [[[0, 0], "top", "left"], [[1, 0], "top", "right"]]);
+    /* ★ 槽位编号 ↔ 半边名是**互换**的（2026-11-09 真机踩到的静默 bug）★
+     *
+     * 游戏 `shapeActionCutHalf` 返回 `[rightSide, leftSide]`，
+     * `process_CUTTER` 用 `requiredSlot: i` 依次送进 ejector slot i。所以：
+     *   slot 0（本项目叫 "left"）  = rightSide = quads[2,3] = **右半**
+     *   slot 1（本项目叫 "right"） = leftSide  = quads[0,1] = **左半**
+     *
+     * 这条断言钉的是**顺序**：第 0 个输出槽必须叫 "left"，第 1 个叫 "right"。
+     * 名字本身对不对是历史包袱（见 cut 模板上那段长注释），
+     * 但**顺序不能变** —— 一变，所有把 trash 挂在某个槽上的调用都会丢错半边，
+     * 而且**不报任何错**：hub 里目标形状恒为 0，中间产物暴涨。
+     * 真机上就是这么丢了 2000+ 个 ----CuCu 才发现。 */
+    eq("★ cutter 的 slot0 必须叫 left、slot1 必须叫 right（与游戏半边语义互换）",
+        OP_TEMPLATES.cut.outputs.map(s => s.role), ["left", "right"]);
     // mixer 双 bottom 进、top 出
     eq("mixer 双 color←bottom、出→top",
         OP_TEMPLATES.mix.inputs.map(s => [s.cell, s.dir, s.role]).concat(OP_TEMPLATES.mix.outputs.map(s => [s.cell, s.dir, s.role])),
