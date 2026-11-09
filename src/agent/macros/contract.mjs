@@ -241,6 +241,29 @@ export const WARNING_CODES = Object.freeze({
         what: "to 指向 hub 且没给 entry：宏按「拐角数→格数」自己选了一个入口",
         action: "不需要处理；不想要就显式给 to.port={entry:N}。",
     },
+    /* 2026-11-04：`connect(allow_replace)` 覆盖的既有带子**会切断下游**。
+     *
+     * 为什么需要这条：`replacing-belts` 只说了「会销毁 N 格带子」，没说「那 N 格
+     * 是谁的命脉」。实测（`.tmpverify/connect/`）：一条 17 格长的墙上 340 条候选
+     * 全被挡，其中 212 条只差 1 格 —— 覆盖一格就能通，但那一格可能正在给主供料路送货。
+     * 不报后果就覆盖，等于用一个更隐蔽的破坏换一次「成功」。
+     *
+     * 与 `replacing-belts` 的分工：那条是**动作**（你会销毁什么），
+     * 这条是**后果**（销毁之后谁会饿死）。两条可以同时出现。 */
+    "replace-would-disconnect": {
+        severity: "warn", macro: "connect",
+        what: "`allow_replace` 覆盖的带子原本在给下游供料，覆盖后那些下游会饿死",
+        action: "这是**报告的后果，不是拒绝**（与 replace_run 的 would_disconnect 同一口径）。"
+            + "后果明细读 `consequences.would_disconnect`（`starved-belt` / `starved-machine`）"
+            + "与 `consequences.replaced_uids`。若那些下游本来就是死路/残线，照常执行；"
+            + "若它们还在供料，覆盖后必须立刻补上，否则会把别人的线弄死。",
+    },
+    /* 后果分析本身失败。**不等于没有后果** —— 不许把它读成「安全」。 */
+    "replace-consequences-unknown": {
+        severity: "warn", macro: "connect",
+        what: "无法分析覆盖既有带子的后果（几何异常等）",
+        action: "按「可能切断了下游」处理：执行后重新 obs 检查那些格；不要假设没问题。",
+    },
     both_rebind_and_allow_replace: {
         severity: "warn", macro: "connect",
         what: "opts.rebind 与 opts.allow_replace 同时为 true —— 抢口 + 剪旧线，最危险的一次调用",
@@ -327,6 +350,13 @@ export const WARNING_CODES = Object.freeze({
         severity: "info", macro: "remove_run",
         what: "宏零写操作、不读 debug_items，被删带子上的在途物品数无法离线确定（stranded_items=null）",
         action: "不需要处理；要在计划里写死这个数，执行前自己读一次 debug_items。",
+    },
+    "removal-is-clean": {
+        severity: "info", macro: "remove_run",
+        what: "这次删除**不会**让任何下游失去供料、也不会留下孤立输出"
+            + "（每个被删格的相邻方要么也在删除集里，要么该方向本来是空的）",
+        action: "不需要补救。与 would-disconnect 互斥：那条只说坏消息，这条只在零后果时出现，"
+            + "作用是让调用方在**下一次**能确定「我刚才那一刀是安全的」。",
     },
 
     /* ── replace_run ── */
@@ -653,7 +683,7 @@ export function validateConnectArgs(args) {
 
     const opts = args.opts === undefined ? {} : args.opts;
     if (!isObj(opts)) return fail("bad_type", "opts", `${A}.opts 必须是对象`);
-    const allowed = ["rebind", "allow_replace", "max_cells", "prefer", "dry_run"];
+    const allowed = ["rebind", "allow_replace", "auto_relax", "max_cells", "prefer", "dry_run"];
     for (const k of Object.keys(opts)) {
         if (!allowed.includes(k)) return fail("unknown_field", `opts.${k}`, `${A}.opts 不认识 '${k}'`);
     }
@@ -662,6 +692,9 @@ export function validateConnectArgs(args) {
     }
     if (opts.allow_replace !== undefined && typeof opts.allow_replace !== "boolean") {
         return fail("bad_type", "opts.allow_replace", "allow_replace 必须是布尔");
+    }
+    if (opts.auto_relax !== undefined && typeof opts.auto_relax !== "boolean") {
+        return fail("bad_type", "opts.auto_relax", "auto_relax 必须是布尔");
     }
     if (opts.dry_run !== undefined && typeof opts.dry_run !== "boolean") {
         return fail("bad_type", "opts.dry_run", "dry_run 必须是布尔");
@@ -690,6 +723,12 @@ export function validateConnectArgs(args) {
         opts: {
             rebind: opts.rebind === true,
             allow_replace: opts.allow_replace === true,
+            /* 撞带子时是否**自动**用 allow_replace 重试（默认 true）。
+               显式 false 可以关掉，用于「我就要看诊断，别替我放宽」的场景
+               与测试。与 allow_replace 分开是因为一个是「愿望」一个是「行为」：
+               allow_replace=true 表示「我允许覆盖」；auto_relax=false 表示
+               「即使你没允许也别自作主张」。 */
+            auto_relax: opts.auto_relax !== false,
             max_cells: opts.max_cells === undefined ? 2000 : opts.max_cells,
             prefer: opts.prefer === undefined ? "fewest_turns" : opts.prefer,
             dry_run: opts.dry_run === true,
@@ -1194,6 +1233,12 @@ export const MACRO_SPECS = Object.freeze({
     connect: {
         name: "connect",
         summary: "从 from 的 ejector 连一条带到 to 的 acceptor；路径/转角/rv 全在内部算。",
+        /* 2026-11-04：正向用途（见 renderCard 的 when: 行）。
+           与 `whenNotToUse` 并列 —— 只列禁令会造成选择偏差。 */
+        whenToUse: [
+            "**把一个空端口接到下游**：机器/矿机的某个输出槽 `(→无)` 还没接东西，而你要把货送到某台机器或 hub —— `connect` 会自己找路径、算转角与 rv，你不用给坐标。这是**唯一**能「凭空铺一条新路」的宏。",
+            "**绕开中间障碍接过去**：目标不在直线上时（同一行但隔着几台机器、要拐两个弯），connect 会枚举 ≤6 转角的折线；撞到既有带子时会自动升级为 allow_replace 并把「会切断谁」一起报出来。",
+        ],
         params: [
             { name: "from", type: "Endpoint", required: true, coordClass: "endpoint", description: "源端口。uid 来自 obs；port 缺省 auto（该实体只有一个输出槽时合法）。" },
             { name: "to", type: "Endpoint", required: true, coordClass: "endpoint", description: "宿端口。必须指向**已存在**的实体；要到空地请先放宿、或改用 build_line。" },
@@ -1264,6 +1309,12 @@ export const MACRO_SPECS = Object.freeze({
     insert_machine: {
         name: "insert_machine",
         summary: "放一台 machine 并朝向 facing；footprint/origin/槽位由宏算，调用方只指一格。",
+        /* 2026-11-04：正向用途（见 renderCard 的 when: 行）。
+           与 `whenNotToUse` 并列 —— 只列禁令会造成选择偏差。 */
+        whenToUse: [
+            "**在空地上新增一台机器**：需要多一台 cutter 提产能、或矿机站错了位置要重新放一台 —— 指一格（`at`），footprint 内的带子默认让它让位（`opts.replace_belts`）。",
+            "**把一台机器放到矿上**：`at: {\"$ore\":\"Ru\"}` 会解析到离消费者最近的钌矿格 —— 这是唯一能给矿机指定矿位的写法。",
+        ],
         params: [
             { name: "at", type: "{cell:[x,y],part?:\"any\"} | [x,y]", required: true, coordClass: "site", description: "**默认用 `{cell:[x,y]}`**：机器要占的其中一格（通常是 obs 里那条带子的格），宏反解 origin；多解时若只有一解让这格成为机器的输入槽槽格则采用（`site.chosen_by=\"input-slot\"`），仍多解即 ambiguous_site。`[x,y]` 裸数组 = 直接给 origin（obs 的 entities[].x/y），向后兼容、宏不做算术。选择口径只有一句：**「在这条带上插一台」用 {cell}；「就是 obs 里那台机器/那个坐标」用 [x,y]。** 两者走不同算术，归一化后 at.kind ∈ any-cell|origin。" },
             { name: "facing", type: "Face", required: false, coordClass: "choice", description: "primary output 的世界喷射方向。**必填性取决于机器**（不是这个参数）：有输出槽且可旋转的机器必填（缺失 → ambiguous_site）；无输出槽/不可旋转（trash）或四向等价的机器可省略（省略后 r=0，并回 facing_ignored 警告）。" },
@@ -1338,6 +1389,20 @@ export const MACRO_SPECS = Object.freeze({
             "每一条带子都能被 serialize 快照（tx）；否则 tx_unavailable —— 不可恢复的删除一律不做。",
             "删除后必须报告 affected：哪些既有机器输出因此变成无去处（orphaned_outputs），哪些带上的物品被丢弃（stranded_items）。这两项**不阻止**执行，但必须如实出现。",
         ],
+        /* ★ 2026-11-04 新增：正向用途 ★
+         *
+         * 这个字段是**新加的**，因为只有 `whenNotToUse` 会造成**选择偏差**：
+         * 模型在候选卡里看到的 `remove_run` 全是「不要用」，而 `replace_run` 只有
+         * 一条「不要用」。实测（`.tmpverify/ore-ab/`，16 个样本）：
+         * `replace_run` 被选 10 次 / `remove_run` 4 次，而且与 `$ore` 提示无关。
+         *
+         * 那不是「模型不敢拆」，是**卡片从来没告诉它什么时候该拆**。 */
+        whenToUse: [
+            "**拆掉一条已经作废的线**：某个矿机脚下没矿、某段带子通向垃圾场、某个形状已经不在当前目标里 —— "
+                + "这些带子永远不会再产货，留着只会占格子和干扰诊断（`OBSOLETE_LINE` / `CHAIN_UNFED` 就是这类）。",
+            "**给新的走线腾出走廊**：目标位置被一串旧带子占着，而你要在那里铺一条新的（先 remove，再 connect）。"
+                + "注意：如果目标是**原地换建筑**，replace_run 一次做完更安全（中间态更少）。",
+        ],
         whenNotToUse: [
             "目的是给机器让位时不要单独用：insert_machine 自己会处理 footprint 内带子并保持原子性；拆成两步会在中间态留下「机器没放、带子已删」的断线。"
                 + "（例外：**定点改造**整段线时 replace_run 一次做完，比 remove_run + insert_machine 两步更安全。）",
@@ -1356,6 +1421,11 @@ export const MACRO_SPECS = Object.freeze({
     remove_machine: {
         name: "remove_machine",
         summary: "删掉一台机器（按 uid）；hub 永不可删。用于移除挡路的废机器。",
+        /* 2026-11-04：正向用途（见 renderCard 的 when: 行）。
+           与 `whenNotToUse` 并列 —— 只列禁令会造成选择偏差。 */
+        whenToUse: [
+            "**拆掉挡路的废机器**：矿机脚下没矿、机器朝向错了又不值得改、或者它占着别人要用的格子 —— 机器永远不会被 `insert_machine` / `connect` 覆盖，只能显式删。",
+        ],
         params: [
             { name: "uids", type: "Uid[]", required: true, coordClass: "endpoint", description: "要删的机器 uid（来自 obs）。只接受机器：带子请用 remove_run，hub 永不可删。" },
             { name: "opts.allow_unwired", type: "boolean", required: false, description: "这台机器正在给下游供料时，是否仍允许拆。默认 false（会报 would_starve 并点名会饿死谁）。" },
@@ -1384,6 +1454,11 @@ export const MACRO_SPECS = Object.freeze({
     extend_line: {
         name: "extend_line",
         summary: "从一段带子的末端（或机器输出口）沿 dir 再接 len 格，首格由 from 的出口算。",
+        /* 2026-11-04：正向用途（见 renderCard 的 when: 行）。
+           与 `whenNotToUse` 并列 —— 只列禁令会造成选择偏差。 */
+        whenToUse: [
+            "**把一段带子往前延长几格**：知道方向、只差几格就够到下游，用这个最省事（不用先想 full path）。它只保证「延长了」，不保证「接上了」—— 要接到具体的东西请用 connect。",
+        ],
         params: [
             { name: "from", type: "Endpoint", required: true, coordClass: "endpoint", description: "既有带子的末端，或机器输出口。" },
             { name: "len", type: "int 1..500", required: true, coordClass: "choice", description: "要新增的格数（不含 from 自身）。**不需要先数障碍**：填一个你可能需要的长度即可，宏会用 occupied + firstConflict 指出第一处被挡格 —— 那就是「到障碍还有多远」的查询结果。" },
@@ -1419,6 +1494,12 @@ export const MACRO_SPECS = Object.freeze({
     replace_run: {
         name: "replace_run",
         summary: "把 region 内的带子原位换成另一种建筑。building=\"belt\" 保持每格拓扑（修 rv）；building 为机器/机器数组时展开 footprint，删掉被覆盖的带、保留没被覆盖的。",
+        /* 2026-11-04：正向用途（见 renderCard 的 when: 行）。
+           与 `whenNotToUse` 并列 —— 只列禁令会造成选择偏差。 */
+        whenToUse: [
+            "**原地把一段带子换成机器**：这是最常见的「给线加一台 cutter / rotater」的写法 —— 一次 tx 完成「删旧带 + 放机器 + 检查留下的带还连着」，没有中间态。",
+            "**重铺一段带子修方向**：`building:\"belt\"` 会保持每格拓扑、按邻居重新反解 rv，用来修 BELT_HANDOFF_REJECTED 这类「朝向不对」的问题。",
+        ],
         params: [
             { name: "region", type: "BBox", required: true, coordClass: "endpoint", description: "闭区间包围盒 [x0,y0,x1,y1]，取 obs 里**已被选中那几条带子**的 min/max 坐标。它不是算出来的落点（见 COORD_CLASSES 的 v2 裁定）。校验按模式不同：belt 模式要求每格都是带子；机器模式允许空格、不许机器。" },
             { name: "building", type: "string|{kind,variant}|Array", required: true, description: "目标建筑。\"belt\" = 原位换带（修 rv）；机器名或 [{kind,variant,port?,confirm_waste?}] = 展开 footprint 换机器；数组里**恰好 1 台主动机器** + 若干 trash，trash **必须点名 port**。" },
@@ -1441,7 +1522,23 @@ export const MACRO_SPECS = Object.freeze({
             "替换会销毁旧 uid 并产生新 uid —— 必须有 tx 与快照，否则 tx_unavailable。",
         ],
         whenNotToUse: [
-            "想删除带子时不要用：remove_run（belt 模式的 replace 不减少实体数，用错会留下一条「换了个 uid 的同样的带子」）。",
+            /* ★ 2026-11-04：这一条改写过（代价表述对等）★
+             *
+             * 原话是「想删除带子时不要用：remove_run（belt 模式的 replace 不减少实体数，
+             * 用错会留下一条「换了个 uid 的同样的带子」）」。
+             *
+             * 那句话**只说了 replace 的"无效"风险，没说它的"破坏"风险** ——
+             * 而两者其实是同一档的：机器模式下 replace_run 删掉被 footprint 覆盖的带、
+             * 还会检查留下的带是否还连着；`belt` 模式下它同样会改掉原有拓扑。
+             * 结果模型在权衡时看到的是「remove 会删、replace 只是换个 uid」，
+             * 于是偏好 replace —— 而真实数据（`.tmpverify/ore-ab/`，16 样本）
+             * 里 `replace_run` 被选 10 次、`remove_run` 4 次，两臂的 `$ore` 提示与否都一样。
+             *
+             * 现在把两边的代价都写清楚，让选择基于事实而不是措辞。 */
+            "**同样会切断下游**：换拓扑、展开 footprint 删带，都会让原本接在那些格上的下游断供 —— "
+                + "与 remove_run 的代价同档，别以为「replace 不删东西所以更安全」。",
+            "想**单纯减少实体数**（拆掉一条死链、腾出空间）时不要用：remove_run 更直接"
+                + "（belt 模式的 replace 不减少实体数，用错会留下一条「换了个 uid 的同样的带子」）。",
             "只想放一台机器、不需要处理它周边带子时，用 insert_machine 更直接（replace_run 会连带删除被 footprint 覆盖的带，并检查留下的带是否还连着）。",
             "想铺隧道时不要用：v1 明确不支持（sender/receiver 成对），会报 unsupported_building。",
             "region 框不准时不要用：先 bulk_delete dry_run 看 items，或用 remove_run(uids) 精确指名。",
@@ -1460,6 +1557,11 @@ export const MACRO_SPECS = Object.freeze({
     trash_unused: {
         name: "trash_unused",
         summary: "给一个没有去处的输出槽（必须显式指定 port）接垃圾桶。outlet 可以是机器输出槽，也可以是一段带子的末端。",
+        /* 2026-11-04：正向用途（见 renderCard 的 when: 行）。
+           与 `whenNotToUse` 并列 —— 只列禁令会造成选择偏差。 */
+        whenToUse: [
+            "**给一个永远没人要的输出接垃圾桶**：cutter 的废料侧、某条断链的末端、或者一条通向死路的带子 —— 接上 trash 能立刻止住回堵（比整条拆掉保守，实体数不变）。",
+        ],
         params: [
             { name: "outlet", type: "Endpoint", required: true, coordClass: "endpoint", description: "源端口：机器输出槽（{uid,port?}）**或一段带子的末端**（{uid}，垃圾桶落在它 exit 方向的下一格）**或上一个宏返回的 pending**（{pending,port?} —— 计划态，未落盘即可挂垃圾桶，见 PENDING_REF_SPEC）。多输出机器（cutter 2 / cutter-quad 4）必须点名 left|right|quad0..3。" },
             { name: "opts.confirm_waste", type: "boolean", required: false, description: "当该端口不属于模板声明的 wasteRoles 时，必须显式确认「这一路确实是废料」。默认 false → 拒绝。这是**签字**，不是判断：宏查不出目标形状，只能要求调用方为销毁负责。" },

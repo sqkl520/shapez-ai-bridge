@@ -142,12 +142,43 @@ test("B5 ★ 生产路径：runLoop 在大存档上把 CAPACITY 送到 prompt �
         `带子名额也要用满（实际 ${b.blocks.belts_shown}/${b.blocks.belts_total}）`);
 });
 
-/* ═══════════ 4. 小场景不受影响（抬预算不该改变它们） ═══════════ */
-test("B6 小场景（37 带子）抬预算前后渲染完全相同", () => {
+/* ═══════════ 4. 小场景：抬预算只能变多，不许变少 ═══════════ */
+
+/**
+ * 这条测试原来断言「小场景两档预算渲染**完全相同**」。
+ *
+ * ## 那个断言在 2026-11-04 不再成立 —— 而且它本来就在测错的命题
+ *
+ * `L4-live-miner1-obs.json` 叫「小场景」，但它有 **5 个候选宏**，
+ * 仅 `## CANDIDATE MACROS` 一段就 3040 字符。加上 MACHINES 824 + BELTS 774
+ * + 诊断 + 预算段，默认档（targetChars=9800）**本来就装不下资源行**。
+ *
+ * 改前两档「相同」的原因是：**两档都把资源行撤掉了** —— 那是巧合，
+ * 不是「小场景在预算内」。一给卡片加上 `when:` 行（+40 字符/卡），
+ * 大档就能装下资源行而默认档不能，两档立刻分叉。
+ *
+ * 分叉本身是**正确行为**：预算大的本来就该看到更多。
+ * 所以这里改成断言真正该成立的三件事：
+ *   ① system 逐字节相同（抬预算绝不该动它）；
+ *   ② 大档的内容是默认档的**超集**（抬预算只会加信息，不会换掉或删掉）；
+ *   ③ 带子名额不减少。
+ *
+ * 这与 B1–B5 共同守住「加预算不许让已有信息变少」这条纪律。
+ */
+test("B6 小场景（37 带子）：抬预算只增不减，system 逐字节相同", () => {
     const small = JSON.parse(fs.readFileSync(
         path.join(FIX, "L4-live-miner1-obs.json"), "utf8"));
     const def = bundleFor(small, {});
     const big = bundleFor(small, { in_chars_max: 16000, prompt_tokens_max: 4600 });
-    assert.equal(def.user, big.user, "小场景本来就在预算内，抬上限不该改变任何东西");
-    assert.equal(def.system, big.system);
+
+    assert.equal(def.system, big.system, "抬预算不该动 system（它是模块常量）");
+    assert.ok(big.user.length >= def.user.length,
+        `大档不该比默认档更短（默认 ${def.user.length} / 大 ${big.user.length}）`);
+    assert.ok(big.blocks.belts_shown >= def.blocks.belts_shown,
+        `带子名额不该减少（默认 ${def.blocks.belts_shown} / 大 ${big.blocks.belts_shown}）`);
+    /* 资源行：默认档可能因为预算被撤，大档不该被撤 */
+    if (def.blocks.resource_dropped_for_capacity) {
+        assert.ok(!big.blocks.resource_dropped_for_capacity,
+            "默认档都装不下资源行时，大档更不该也装不下");
+    }
 });

@@ -256,7 +256,7 @@ const IMPL_WARNING_CODES = Object.freeze([
     "output_not_connected", "output_belt_wrong_direction", "orphaned_upstream", "orphaned_downstream",
     "rotation_not_live_verified", "wiring_mismatch", "world_unknown_entities", "terminal_orphaned",
     /* remove_run */
-    "would-disconnect", "stranded-items-unknown",
+    "would-disconnect", "stranded-items-unknown", "removal-is-clean",
     /* replace_run */
     "rv-drift", "variant-unverified", "kept-belts", "internal-trash-offset",
     /* trash_unused */
@@ -544,7 +544,12 @@ const WHEN_NOT_TO_USE_ANCHORS = Object.freeze({
         ["绕过障碍", ["occupied", "precondition_failed"]],
     ],
     replace_run: [
-        ["删除带子", ["precondition_failed"]],
+        /* 2026-11-04：第 0 条改写成「会切断下游」（代价表述对等），
+           锚点从 `precondition_failed` 换成它真正对应的两个 warning：
+           `cut-upstream-feeds`（上游指向改造格、货被机身吃掉）与
+           `starved-belt`（下游失去供料）。见 P14 的实验结论。 */
+        ["会切断下游", ["cut-upstream-feeds", "would-disconnect"]],
+        ["单纯减少实体数", ["precondition_failed"]],
         ["insert_machine 更直接", ["kept-belts"]],
         ["铺隧道", ["unsupported_building"]],
         ["region 框不准", ["not_a_run", "precondition_failed"]],

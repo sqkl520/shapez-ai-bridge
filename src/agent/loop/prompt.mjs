@@ -163,6 +163,10 @@ function sanitize(value) {
  *   ① 角色  ② 输出 JSON 格式  ③ 禁坐标  ④ 禁 build_line（白名单只有 6 个）
  *   ⑤ ≤6 个调用  ⑥ "只输出 JSON"
  *
+ * ⚠️ 不在 S1 里写底层模型名：S1 是模块级常量、**必须逐字节稳定**（契约 §Q3.4），
+ *    而模型可以随时更换。写死名字会让 system 的哈希漂移，也让「同一份 prompt
+ *    两次可复现」这条验收判据失效。身份由 API 调用方决定，不属于世界数据。
+ *
  * 另外两条是实测催生的（不是设计洁癖）：
  *   · 「不要返回空 calls」——空计划是 Q8-01 的假成功入口，与其让它到 parse 层才被拒，
  *     不如在 system 里就说清楚；
@@ -431,14 +435,35 @@ function wasteRolesOf(kind) {
     } catch { return null; }
 }
 
-function renderCard(name) {
+function renderCard(name, opts = {}) {
     const spec = MACRO_SPECS[name];
     const ex = MACRO_EXAMPLES[name];
     const notUse = (spec.whenNotToUse && spec.whenNotToUse[0]) || "";
+    /* ★ 正向用途：**预算允许时**才渲染 ★
+     *
+     * 只渲染 `whenNotToUse` 会造成**选择偏差**：一张卡如果全是「不要用」，
+     * 模型就没有理由选它。实测（`.tmpverify/ore-ab/`，16 样本）：
+     * `replace_run` 被选 10 次 / `remove_run` 4 次 —— 而 `remove_run` 的卡
+     * 当时只有三条 whenNotToUse、一条 whenToUse 都没有。
+     *
+     * ⚠️ 但这行**不能无条件加**。`prompt_capacity.test.mjs` 的 D1 守着
+     * 「插入 CAPACITY 不减少 belts_shown」，而 CAPACITY 只有 120 字符余量窗口。
+     * 每卡 +58 × 3 卡 = +174 会吃掉那个窗口 ⇒ 带子从 11 掉到 7 ⇒ D1 变红。
+     *
+     * 那是**真回归**：带子是**操作对象**（模型少了它就无对象可改），
+     * 卡片描述是辅助。所以 `when` 让位。
+     *
+     * 折中：默认**不加**（`opts.includeWhen` 缺省 false），调用方在预算宽裕时
+     * 显式打开。这样：
+     *   · 默认档的渲染与加这个字段之前**逐字节相同**（D1/D2/B6 全部不受影响）；
+     *   · 生产路径（16000/4600）打开它，模型拿得到「该用」这个新信息。
+     * 用 `blocks.when_lines_shown` 记录它到底进没进 prompt —— 与 CAPACITY 同口径。 */
+    const useFor = (opts.includeWhen === true && spec.whenToUse && spec.whenToUse[0]) || "";
     const lines = [
         `### ${name}`,
         sanitize(spec.summary).text.trim(),
         `params: ${sanitize(renderParams(spec)).text}`,
+        ...(useFor ? [`when: ${clip(sanitize(useFor).text.trim(), 110)}`] : []),
         `not when: ${clip(sanitize(notUse).text.trim(), 170)}`,
         `example: ${JSON.stringify(ex)}`,
     ];
@@ -493,7 +518,7 @@ function conditionalParamHint(spec) {
  * S2。`candidates` 的每一项可以是宏名字符串，或 `{macro, why}`（retrieve.mjs 的形态）。
  * 未知宏名**直接抛**，不静默丢弃：静默丢弃会让「检索表写错了」变成「模型就是没被提示」。
  */
-function renderCards(candidates) {
+function renderCards(candidates, opts = {}) {
     const names = [];
     for (const c of candidates || []) {
         const n = typeof c === "string" ? c : (c && c.macro);
@@ -505,7 +530,11 @@ function renderCards(candidates) {
     if (!names.length) {
         return "## CANDIDATE MACROS\n(none retrieved — choose only from the whitelist in SYSTEM; do not invent macro names)";
     }
-    return [`## CANDIDATE MACROS (${names.length})`, ...names.map(renderCard)].join("\n\n");
+    /* ⚠️ 必须包一层箭头函数。直接写 `names.map(renderCard)` 会让 map 把
+       `(item, index, array)` 三个参数依次传进 renderCard，于是第二参 `opts`
+       收到的是一个**数字**（索引），`opts.includeWhen` 永远是 undefined ——
+       `when:` 行会静默消失，而且不报任何错。 */
+    return [`## CANDIDATE MACROS (${names.length})`, ...names.map((n) => renderCard(n, opts))].join("\n\n");
 }
 
 /* ══════════════════════════ 4. 句柄表适配 ══════════════════════════ */
@@ -789,7 +818,8 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null, opts = {})
      * CAPACITY 只剩 115 字符余量）。真要彻底解决得让 CAPACITY 先占位、
      * 资源行让位，而那是另一件事（要改 `compose` 的顺序契约，
      * 牵动 `prompt_capacity.test.mjs` 的一整套断言）。这里先做无争议的一半。 */
-    const resCompact = shown.length > 6;
+    /* 调用方可以强制紧凑（预算降级时用）：见 buildPrompt 里那段降级逻辑。 */
+    const resCompact = opts.resourceCompact === true || shown.length > 6;
     if (opts.includeResource !== false) {
         const resLine = renderGoalResource(obs, goalShape, { compact: resCompact });
         if (resLine) {
@@ -811,7 +841,20 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null, opts = {})
              * （算子照旧可用，只是模型没被告知）。 */
             if (opts.includeOreHint !== false
                 && /target ore [A-Z][a-z] IS on the map/.test(resLine)) {
-                lines.push('(`{"$ore":"Cu"}` anywhere a cell is expected = the nearest Cu ore tile — use it as insert_machine.at)');
+                /* ★ `$ore` 的示例必须与**这批**矿石的颜色一致 ★
+                 *
+                 * 旧实现写死了 `{"$ore":"Cu"}`。在目标矿是 Ru 的世界里，那句示例
+                 * 会让模型以为要去连铜矿 —— 而这一行的上一句刚说「目标矿是 Ru」。
+                 *
+                 * 更要紧的是：这是**唯一**告诉模型「有一个能指名矿格」的地方。
+                 * 实验数据（`.tmpverify/ab-real/`，150 样本）：模型 149/150 提到删除、
+                 * 95/150 说「不知道怎么指定位置」，而 `$ore` 出现 **0 次** ——
+                 * 因为那批 prompt 里这条提示被预算挤掉了（下面 2388 行那段）。
+                 * 补上之后示例至少要对得上。 */
+                const kind = (/target ore ([A-Z][a-z]) IS on the map/.exec(resLine) || [])[1];
+                if (kind) {
+                    lines.push(`(\`{"$ore":"${kind}"}\` anywhere a cell is expected = the nearest ${kind} ore tile — use it as insert_machine.at)`);
+                }
             }
         }
     }
@@ -1584,9 +1627,20 @@ function resolveLimits(budget) {
         for (const k of names) if (num(b[k]) !== null && b[k] > 0) return b[k];
         return null;
     };
+    /* `include_when`：**显式**开关，缺省 null = 按预算推断（见 buildPrompt 里 whenLinesOn）。
+     *
+     * 存在的唯一理由是 A/B 实验：`when:` 行原本只能由 `tokensMax >= 4000` 触发，
+     * 于是「有 when:」与「预算更大（带子更多、CAPACITY 出现）」永远是同一个变量。
+     * 那样测出来的任何差异都归因不了。有了它就能**同一预算**下只翻这一行。
+     *
+     * 它不进 prompt、不进 blocks 的语义 —— `blocks.when_lines_shown` 报告的仍是
+     * **实际有没有渲染**，不是这个开关的值。两者不一致时（比如预算 2800 却
+     * 显式打开）以实际渲染为准，因为那才是模型看到的东西。 */
+    const includeWhen = (typeof b.include_when === "boolean") ? b.include_when : null;
     return {
         inCharsMax: pick("in_chars_max", "LLM_IN_CHARS_MAX", "inCharsMax") || PROMPT_RULES.LLM_IN_CHARS_MAX,
         tokensMax: pick("prompt_tokens_max", "PROMPT_TOKENS_MAX", "promptTokensMax") || PROMPT_RULES.PROMPT_TOKENS_MAX,
+        includeWhen,
     };
 }
 
@@ -1988,12 +2042,227 @@ function renderLastRound(lastRound) {
         }
         if (fails.length > 2) lines.push(`  (+${fails.length - 2} more)`);
     }
+    /* ★ 上一轮那些宏**算出来的后果**（P17 §6.1）★
+     *
+     * 宏的 `warnings` 一直有：`would-disconnect` / `removal-is-clean` /
+     * `starved-items-unknown` / `rv-drift` … 但这些**从来没进过 prompt**
+     * （只写进 transcript 的 `plan` 事件，见 loop.mjs 的 `tr.w.write("plan", …)`）。
+     *
+     * 后果很直接：模型执行 remove_run 之后，下一轮只知道「我删了 3 格」，
+     * 不知道「删得干不干净」。它没有任何依据判断上一步是成功还是闯祸。
+     * 这正是 P17 查出来它不敢拆的原因 —— 缺的不是理由，是**后果的确定感**。
+     *
+     * 只渲染带 `detail` 的那几条（宏都写了），每条截 150 字符，
+     * 最多 3 条：预算是硬的，而 `stranded-items-unknown` 这类「不知道」的噪音
+     * 价值低于 `removal-is-clean` 这类「我知道」的结论。
+     * `stranded-items-unknown` 显式排除 —— 它说的是在途物品数拿不到，
+     * 与「这一刀安不安全」无关，每轮都出现只会淹没真正的结论。 */
+    const mw = Array.isArray(lastRound.macro_warnings) ? lastRound.macro_warnings : [];
+    const USEFUL = mw.filter(w => w && w.code && w.code !== "stranded-items-unknown");
+    if (USEFUL.length) {
+        lines.push("consequences of last round's calls:");
+        for (const w of USEFUL.slice(0, 3)) {
+            const mac = w.macro ? `${w.macro}: ` : "";
+            const det = w.detail ? clip(sanitize(String(w.detail)).text.trim(), 150) : "";
+            lines.push(`  · ${mac}${w.code}${det ? ` — ${det}` : ""}`);
+        }
+        if (USEFUL.length > 3) lines.push(`  (+${USEFUL.length - 3} more)`);
+    }
     if (lastRound.decision || lastRound.verdict) lines.push(`decision: ${lastRound.decision || lastRound.verdict}`);
     return sanitize(lines.join("\n")).text;
 }
 
-const INSTRUCTION = [
-    "## YOUR TURN",
+/**
+ * `## LAST STEP` —— 上一轮 tx 对**世界健康度**的净影响（机器算的，不是模型自评）。
+ *
+ * ## 为什么需要它（与 `## LAST ROUND` 的区别）
+ *
+ * `LAST ROUND` 说「上一轮调了什么、verify 红在哪」。**它不含「世界因此变好还是变坏」**。
+ * 实测的后果（2026-11-03，用户贴图那次）：模型连续几轮把死带子从一处挪到另一处，
+ * 每轮 verify 都红（因为目标没交货），每轮都不知道自己刚刚让局面更糟了 ——
+ * 到 hub 的带子从 71 掉到 60 多，它一次都没被告知。
+ *
+ * 这一段的每个字都来自 `health.mjs` 的 `classifyNetEffect()`：
+ *
+ *   positive      目标交付涨了
+ *   cleanup       死带子变少 / 到 hub 的变多 / 带上的货变多（改善，但没交货）
+ *   constructive  只加东西，目标没动
+ *   regressive    **它把世界改坏了**
+ *   churn         世界形态变了，但所有健康指标都没动（等价替换）
+ *   inert         世界完全没变
+ *
+ * 只写判定与**具体数字**，不给修法 —— 修法是模型的事，也是诊断的职责。
+ * 没有 `lastNetEffect`（首轮）时整段不出现，不占预算。
+ *
+ * @param {object|null} e `{kind, why:[], delta:[]}`
+ * @returns {string|null} 无内容时返回 null（调用方据此整段省略）
+ */
+function renderLastStep(e) {
+    if (!e || typeof e !== "object" || typeof e.kind !== "string") return null;
+    const LABEL = {
+        positive: "GOOD — the goal advanced",
+        cleanup: "GOOD — the world got cleaner (but nothing delivered yet)",
+        constructive: "NEUTRAL — you added things, the goal did not move",
+        regressive: "BAD — this made the world WORSE",
+        churn: "WASTE — the world changed but nothing measurable improved",
+        inert: "WASTE — the world did not change at all",
+        /* ★ 撤销档（2026-11-03）★
+         *
+         * 这一档出现时，世界**已经被系统还原了** —— 与 `regressive` 是完全不同的指令：
+         *
+         *   regressive：「你把它改坏了，**你**得修」
+         *   reverted  ：「你把它改坏了，**我**已经替你撤了，换一个动作」
+         *
+         * 混为一谈会让模型以为还要去补救一个已经不存在的破坏
+         * （它很可能会去「修」那条其实完好无损的带子）。 */
+        reverted: "UNDONE — your last change was rolled back automatically",
+    };
+    const label = LABEL[e.kind];
+    if (!label) return null;
+    const lines = ["## LAST STEP", `your last change: ${e.kind} — ${label}`];
+    for (const w of (Array.isArray(e.why) ? e.why : []).slice(0, 3)) {
+        const s = typeof w === "string" ? w.replace(/\s+/g, " ").trim() : "";
+        if (s) lines.push(`  · ${clip(s, 110)}`);
+    }
+    if (e.kind === "regressive") {
+        lines.push("⇒ Repeating a change of this kind will keep making it worse. "
+            + "Pick a different target or a different macro — the diagnosis below is not the whole story.");
+    } else if (e.kind === "churn" || e.kind === "inert") {
+        lines.push("⇒ Nothing improved last round. Repeating the same shape of action will waste another round.");
+    } else if (e.kind === "reverted") {
+        /* 必须明确说「世界已经回到原样」—— 否则模型会去修一个不存在的洞。 */
+        lines.push("⇒ The world is back to how it was BEFORE that change. Do NOT try to repair it — "
+            + "nothing is broken. The action you picked was judged harmful; choose a different one.");
+    }
+    return sanitize(lines.join("\n")).text;
+}
+
+/**
+ * `## PRIOR ATTEMPTS` —— 这个目标下**以前试过什么**（跨 run 记忆）。
+ *
+ * ## 为什么需要它
+ *
+ * 实测：8 次 run 里 6 次 `goal_delta = 0`、实体数不变；同一批宏在同一个诊断指纹下
+ * 被反复重试。模型没有跨 run 记忆 —— 每次 run 都是白纸。
+ *
+ * ## 为什么按 goal 分组（这一条最容易被忽略，也最致命）
+ *
+ * level 5 的目标是 `Cu----Cu`，那条线的经验对 level 6 的 `Cu------` **是误导**。
+ * 用户贴图那次正是这个成因：世界升到 level 6，旧的 level-5 产线没拆，
+ * 变成 41% 到不了 hub 的死带子。若记忆也不分组，模型会拿旧关卡的成功经验重演一遍。
+ * 分组在 `attemptsForGoal` 里做（`mem.goals[goalShape]`），这里拿到的已经是本目标的。
+ *
+ * ## 只陈述事实，不给死禁令
+ *
+ * 每条只写「哪个宏 → 世界变成什么样」。**不能写「所以别用 X」**：
+ * 记忆里只有宏名、没有当时的目标/句柄，同一个 `remove_run` 在 A 处被撤销、
+ * 在 B 处可能正是正确动作。写成全局禁令会堵死正确施工，
+ * 还会逼模型编造「这次为什么不一样」的理由。
+ *
+ * 所以最后一句只提醒「被撤销过的动作值得先想清楚」，不禁止重复。
+ *
+ * @param {Array|null} attempts `attemptsForGoal` 的返回
+ * @returns {string|null} 无内容时 null（整段不出现，不占预算）
+ */
+function renderPriorAttempts(attempts) {
+    if (!Array.isArray(attempts) || !attempts.length) return null;
+    const LABEL = {
+        reverted: "ROLLED BACK automatically — judged harmful",
+        regressive: "made the world worse",
+        positive: "delivered (goal advanced)",
+        cleanup: "cleaned up (fewer dead belts)",
+        inert: "changed nothing",
+    };
+    const lines = ["## PRIOR ATTEMPTS", "your own past attempts on THIS goal, most informative first:"];
+    for (const a of attempts.slice(0, 6)) {
+        const kind = String(a && a.kind || "");
+        const label = LABEL[kind];
+        if (!label) continue;
+        const macros = Array.isArray(a.macros) ? a.macros.filter(Boolean) : [];
+        if (!macros.length) continue;
+        const ctx = a.ctx && typeof a.ctx === "object" ? a.ctx : null;
+        const bits = [];
+        if (ctx && Number.isFinite(ctx.belts_reaching_hub) && Number.isFinite(ctx.entities)) {
+            bits.push(`on a ${ctx.entities}-entity world with ${ctx.belts_reaching_hub} belts reaching the hub`);
+        }
+        const why = Array.isArray(a.why) && a.why.length ? ` — ${clip(sanitize(String(a.why[0])).text, 95)}` : "";
+        /* ★ 别让「最硬的历史结论」看起来像「最近一次也是这样」★
+         *
+         * `mergeMemory` 保留的是**最硬**的 kind（例如一次 `reverted` 会一直压着
+         * 后来的 `inert`），否则一次「碰巧没变化」就能把机器判定过的负例洗掉。
+         * 但如果只显示最硬的，模型会以为这个动作**每次**都被撤销 ——
+         * 而它可能已经换了局势、最近一次其实是 inert。
+         *
+         * 所以带 `n` / `last_kind` 时补一句「见过几次、最近一次是什么」。
+         * 这样既守住负例，又不会让旧结论永久冒充现状。 */
+        const n = Number.isFinite(a.n) ? a.n : 1;
+        const recent = (n > 1 && typeof a.last_kind === "string" && a.last_kind !== kind)
+            ? ` [seen ${n}×; most recent: ${LABEL[a.last_kind] || a.last_kind}]`
+            : (n > 1 ? ` [seen ${n}×]` : "");
+        lines.push(`  · ${macros.join(" + ")} → ${label}${why}${bits.length ? ` (${bits[0]})` : ""}${recent}`);
+    }
+    /* 一条记录也渲染。
+     *
+     * 曾经在这里放过「少于 2 条不出现」的预算门槛，实测直接把功能废掉了：
+     * 第一次 run 结束后记忆里**往往正好只有一条**，第二次 run 就完全没有历史 ——
+     * 而「第一次 run → 第二次 run」恰恰是最需要记忆的时刻
+     * （8 次 run 里 6 次 goal_delta=0，都是在这个阶段反复重试）。
+     * 一段最多 6 行、约 400 字符，比让模型重复一次已知失败便宜得多。 */
+    if (lines.length <= 2) return null;   // 没有任何可渲染的条目
+
+    lines.push("⇒ These are facts about past worlds, not rules for this one. "
+        + "A macro that hurt once may be right here — but an attempt that was ROLLED BACK "
+        + "was judged harmful by the system, so check the current diagnosis before repeating it.");
+    return sanitize(lines.join("\n")).text;
+}
+
+/**
+ * `## GOAL CHANGED` —— 世界在本次 run 中途升级了。
+ *
+ * ## 为什么单独一段，而不是只靠 DIAGNOSIS
+ *
+ * 换关时诊断列表已经很长（实测 7 条以上），`GOAL_CHANGED` 排在里面会被淹没。
+ * 但它改变的是**整件事的前提**：要造的东西换了，之前所有判断的对象都变了。
+ * 这种级别的信息必须出现在诊断列表**之前**。
+ *
+ * ## 为什么还要提「残线」
+ *
+ * 换关之后最典型的失败不是「不会造新形状」，而是「**继续在旧线上修**」。
+ * 实测：level 5 → 6 之后，模型连着几轮在修那条造着 `Cu----Cu` 的线，
+ * 而它一件都进不了 hub。这一段把「那条线现在是什么」直接点名。
+ *
+ * @param {object|null} g `{from, to, level_from, level_to}`
+ * @param {Array|null} obsolete `findObsoleteLines` 的结果
+ * @returns {string|null} 无内容时 null
+ */
+function renderGoalChanged(g, obsolete) {
+    if (!g || typeof g !== "object" || !g.to) return null;
+    const from = typeof g.from === "string" ? g.from : "?";
+    const to = String(g.to);
+    const lines = ["## GOAL CHANGED", `the world levelled up during this run: ${from} → ${to}`];
+    const lf = Number.isFinite(g.level_from) ? g.level_from : null;
+    const lt = Number.isFinite(g.level_to) ? g.level_to : null;
+    if (lf !== null || lt !== null) lines.push(`level ${lf ?? "?"} → ${lt ?? "?"}`);
+    lines.push(`⇒ Everything the old goal needed is now suspect. The recipe above has been recomputed for ${to}.`);
+    if (Array.isArray(obsolete) && obsolete.length) {
+        for (const o of obsolete.slice(0, 2)) {
+            /* 两种证据源：窗口量（`produced`，线还活着）与累计账本（`stored`，线已停）。
+               后者在窗口归零之后仍然在 —— 而「线已经停了」恰恰是最常见的终局。 */
+            if (Number.isFinite(o.stored) && !Number.isFinite(o.produced)) {
+                lines.push(`  · the hub still holds ${o.stored} × ${o.shape}, which is not part of `
+                    + `the recipe for ${to} — that came from the old goal`);
+                continue;
+            }
+            const pct = Math.round((o.share || 0) * 100);
+            lines.push(`  · ${o.shape} ×${o.produced} (${pct}% of output, ${o.delivered} delivered) `
+                + `is a leftover line from the old goal`);
+        }
+        lines.push("⇒ Do NOT keep patching those lines. Remove them, or reroute them toward the new goal.");
+    }
+    return sanitize(lines.join("\n")).text;
+}
+
+const INSTRUCTION = [    "## YOUR TURN",
     "Output the calls for THIS round as one raw JSON object:",
     '{"say":"...","calls":[{"macro":"...","args":{...},"why":"..."}]}',
     `1 to ${PROMPT_RULES.CALLS_MAX} calls. Handles from this prompt only. No coordinates. JSON only.`,
@@ -2025,6 +2294,8 @@ export class PromptOverBudget extends Error {
  * @param {Array} [p.diagnoses]     Diagnosis[]
  * @param {Array} [p.candidates]    宏名 或 {macro, why}；**必须是 MACRO_NAMES 的子集**
  * @param {object} [p.lastRound]    上一轮摘要（见 renderLastRound）
+ * @param {object} [p.lastNetEffect] 上一轮 tx 的净效果（见 renderLastStep）。
+ *   缺省（首轮）⇒ `## LAST STEP` 整段不出现。
  * @param {object} [p.budget]       {rounds_left, llm_calls_left, tx_left, ticks_left, wall_ms_left,
  *                                   in_chars_max, prompt_tokens_max}
  * @param {object} [p.recipe]       已算好的结构化配方（`recipeForCached` 的返回）。
@@ -2033,7 +2304,7 @@ export class PromptOverBudget extends Error {
  * @throws {PromptOverBudget} code=PROMPT_OVER_BUDGET（总字符 > in_chars_max）
  * @throws {TypeError} 缺 goal / obs / 未知候选宏
  */
-export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, budget, production = null, recipe: injectedRecipe = null } = {}) {
+export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, lastNetEffect = null, priorAttempts = null, goalChanged = null, obsoleteLines = null, budget, production = null, recipe: injectedRecipe = null } = {}) {
     if (!obs || typeof obs !== "object") throw new TypeError("buildPrompt: obs is required");
     const goalShape = typeof goal === "string"
         ? goal
@@ -2048,7 +2319,10 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
 
     /* ── 不参与截断的块：先渲染一次，之后逐字节复用 ── */
     const s1 = SYSTEM_PROMPT;
-    const s2 = renderCards(candidates);
+    /* `includeWhen`：预算宽裕时才渲染卡片的 `when:` 行（见 renderCard 的注释）。
+       显式给了 `budget.include_when` 就听它的（只用于 A/B）；否则按预算推断。 */
+    const whenLinesOn = limits.includeWhen === null ? (limits.tokensMax >= 4000) : limits.includeWhen;
+    const s2 = renderCards(candidates, { includeWhen: whenLinesOn });
     const s3Goal = renderGoal(goalShape, goal, obs);
     /* ★ 配方（S3 的一部分）：告诉模型这个形状该怎么造 ★
      *
@@ -2087,6 +2361,16 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     const s3Budget = renderBudget(budget);
     const s4 = renderDiagnoses(diagList);
     const s5 = renderLastRound(lastRound);
+    /* `## LAST STEP` 排在 LAST ROUND **之前**：先回答「你上一步让世界变好还是变坏」，
+       再给「上一轮的细节」。顺序反过来模型会先读细节、后读结论，
+       而那正是旧版只有 LAST ROUND 时的失败模式（它知道调了什么，不知道效果）。 */
+    const sLastStep = renderLastStep(lastNetEffect);
+    /* `## PRIOR ATTEMPTS` 排在 LAST STEP 之后、LAST ROUND 之前：
+     * 先给「这一步/上一步」的即时反馈，再给「以前试过什么」的历史。
+     * 反过来（历史在前）会让模型以为历史比眼前的世界更重要 —— 而世界是新的。 */
+    const sPrior = renderPriorAttempts(priorAttempts);
+    /* 换关通告排在 PRIOR ATTEMPTS **之前**：它改变的是整件事的前提，比历史更重要。 */
+    const sGoalChanged = renderGoalChanged(goalChanged, obsoleteLines);
     const s6 = INSTRUCTION;
 
     const selection = pickBelts(tbl, diagList, goalShape, obs);
@@ -2124,13 +2408,14 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         capacityUnavailable = `capacity error: ${e && e.message ? e.message : e}`;
     }
 
-    const fixed = [s2, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, s5, s6]
+    /* `sLastStep` 无内容（首轮）时由 filter 天然去掉，不占任何字符。 */
+    const fixed = [s2, sGoalChanged, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, sLastStep, sPrior, s5, s6]
         .filter(x => x !== null && x !== undefined).join("\n\n");
 
     /* ── 截断：只动带子列表。目标 = min(token 预算, 字符硬上限) ── */
     const targetChars = Math.min(Math.floor(limits.tokensMax * PROMPT_RULES.CHARS_PER_TOKEN), limits.inCharsMax);
-    const compose = (belts, capacity) => [s2, goalAndRecipe, s3Hub, s3Machines, capacity, belts,
-        s3Production, s3Budget, s4, s5, s6].filter(x => x !== null && x !== undefined).join("\n\n");
+    const compose = (belts, capacity) => [s2, sGoalChanged, goalAndRecipe, s3Hub, s3Machines, capacity, belts,
+        s3Production, s3Budget, s4, sLastStep, sPrior, s5, s6].filter(x => x !== null && x !== undefined).join("\n\n");
 
     /* ★ 顺序：**先定带子，再花余量** ★
      *
@@ -2165,6 +2450,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     let capacityDowngraded = false;
     let resourceDroppedForCapacity = false;
     let oreHintDroppedForCapacity = false;
+    let resourceCompactForCapacity = false;
     if (capacityInfo) {
         /* ★ CAPACITY 优先于「目标矿在哪」那行 ★
          *
@@ -2180,21 +2466,43 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
          * 「加一段新信息永远不许让已有信息变少」这条纪律在这里同样适用。 */
         let room = targetChars - (s1.length + user.length) - 2;
         if (room < 120) {
-            /* 退一步，**按价值从低到高撤**：
-             *   ① 先撤 `$ore` 用法提示（~120 字符，只是"告诉模型有这个算子"，
-             *      撤掉后算子本身仍可用，模型自己想到照样能用）
-             *   ② 还不够才撤整条资源行（那是事实信息，价值更高）
+            /* 退一步，按价值从低到高撤。
              *
-             * 为什么是这个顺序：提示是**教学**，资源行是**事实**。
-             * 预算紧时先牺牲教学。 */
-            const noHint = renderMachines(tbl, diagList, obs, goalShape, { includeOreHint: false });
-            if (noHint !== s3Machines) {
-                const savedHint = s3Machines.length - noHint.length;
-                if (room + savedHint >= 120) {
-                    s3Machines = noHint;
-                    user = compose(s3Belts, null);
-                    room = targetChars - (s1.length + user.length) - 2;
-                    oreHintDroppedForCapacity = true;
+             * ## 2026-11-04 调整：`$ore` 提示**不再**是最先撤的
+             *
+             * 原顺序是「先撤 `$ore` 提示（教学），再撤资源行（事实）」。
+             * 那个判断被实验数据推翻了（`.tmpverify/ab-real/`，150 个真实样本）：
+             *
+             *   · 149/150 的 thinking 里提到删除；
+             *   · **95/150（63%）明确说「不知道怎么指定位置」**
+             *     （原文如 `But we can't compute positions`、`we don't know where ore is`）；
+             *   · `$ore` 在这些 trace 里出现 **0 次** —— 因为那批 prompt 用的是
+             *     ~12000 字符预算，这条提示被下面这段逻辑挤掉了。
+             *
+             * 也就是说：「教学」在**模型根本不知道有这个算子**时不是可牺牲项，
+             * 它是唯一的行动路径。资源行说「矿在图上」，提示说「怎么指它」——
+             * 缺了后者，前者只是一句废话。
+             *
+             * 新顺序：
+             *   ① 先撤**资源行的距离/数量细节**（保留「有没有」这个事实）；
+             *   ② 还不够才撤整条资源行（连带提示一起没了，但那时真的没预算了）。
+             *
+             * 实测这条改动让「有矿但不知道怎么指」的场景不再退化成死局。 */
+            if (room < 120) {
+                /* ① 先试**只撤距离/数量细节**，保住「有矿 + 怎么指」这两句核心。
+                 *
+                 * `compact` 模式只留主矿种与「IS on the map」这个事实，
+                 * 去掉「×N」「a short run from hub」这些描述性部分。
+                 * 那两句是模型真正要用的：知道有矿、知道怎么指它。 */
+                const compactRes = renderMachines(tbl, diagList, obs, goalShape, { resourceCompact: true });
+                if (compactRes !== s3Machines) {
+                    const savedC = s3Machines.length - compactRes.length;
+                    if (savedC > 0 && room + savedC >= 120) {
+                        s3Machines = compactRes;
+                        user = compose(s3Belts, null);
+                        room = targetChars - (s1.length + user.length) - 2;
+                        resourceCompactForCapacity = true;
+                    }
                 }
             }
             if (room < 120) {
@@ -2206,6 +2514,20 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
                         user = compose(s3Belts, null);
                         room = targetChars - (s1.length + user.length) - 2;
                         resourceDroppedForCapacity = true;
+                    }
+                }
+            }
+            /* 到这里已经连资源行都撤了（提示自然也没了）。只有一种情况还需要撤提示：
+               资源行撤完仍然不够 —— 那说明预算真的紧到极限，只能连「矿在哪」一起放弃。 */
+            if (room < 120) {
+                const noHint = renderMachines(tbl, diagList, obs, goalShape, { includeOreHint: false });
+                if (noHint !== s3Machines) {
+                    const savedHint = s3Machines.length - noHint.length;
+                    if (room + savedHint >= 120) {
+                        s3Machines = noHint;
+                        user = compose(s3Belts, null);
+                        room = targetChars - (s1.length + user.length) - 2;
+                        oreHintDroppedForCapacity = true;
                     }
                 }
             }
@@ -2259,10 +2581,24 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
      * 优先级：**CAPACITY > 这条 > 多显示一条带子**。
      * 所以只在 `s3Capacity` 已经拿到、且加完仍不超上限时才加 —— 它绝不抢 CAPACITY 的名额。
      */
-    const MACRO_PREF_HINT = "## MACRO PREFERENCE\n"
-        + "Prefer replace_run / insert_machine / extend_line over connect: connect must find a\n"
-        + "path and will not route through machines, so it often fails `occupied`.\n"
-        + "Prefer ONE call: the whole plan is rejected if ANY call fails, so N calls = N chances to fail.";
+    /* ★ 2026-11-04：这段从「偏好指令」缩成一句，把预算让给卡片的 `when:` 行 ★
+     *
+     * 原文三句：①② 是**定向偏向**（"Prefer replace_run / insert_machine / extend_line
+     * over connect"、"connect ... often fails occupied"），③ 是有效的调用形状提醒。
+     *
+     * ①② 有两个问题：
+     *   · 它们是偏好，不是信息。选哪个宏该由场景决定。
+     *     实测（`.tmpverify/ore-ab/`，16 样本）：`replace_run` 10 次 / `connect` 6 次 /
+     *     `remove_run` 4 次 —— 分布被这类句子压得很偏。
+     *   · ② 已经被本轮的自动放宽推翻（撞到既有带子时 connect 不再硬失败，
+     *     它会升级 allow_replace 并把切断后果报回来）。
+     *
+     * ③ 保留：它讲的是**调用形状**（整单全有或全无），对所有宏一视同仁。
+     * 而「哪个宏能干什么」已经写在每张卡的 `when:` 行里 —— 那里说比这里说更准，
+     * 也不会重复。净效果：这段从 270 字符缩到约 200，让出的空间给了五张卡的 `when:`。 */
+    const MACRO_PREF_HINT = "## CALL SHAPE\n"
+        + "The whole plan is rejected if ANY call fails — so N calls = N chances to fail.\n"
+        + "Prefer one call that solves the top blocker over several speculative ones.";
     if (s3Capacity && s1.length + user.length + MACRO_PREF_HINT.length + 2 <= limits.inCharsMax) {
         user = user + "\n\n" + MACRO_PREF_HINT;
         macroPrefShown = true;
@@ -2301,6 +2637,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         s3_capacity: s3Capacity,
         resource_dropped_for_capacity: resourceDroppedForCapacity,
         ore_hint_dropped_for_capacity: oreHintDroppedForCapacity,
+        resource_compact_for_capacity: resourceCompactForCapacity,
         capacity_unavailable: capacityUnavailable,
         capacity_bottleneck: capacityNote,
         capacity_downgraded: capacityDowngraded,
@@ -2320,8 +2657,18 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         belts_diag_reserve: selection.reserve,
         belts_padded: selection.padded.length,
         over_token_budget: chars > Math.floor(limits.tokensMax * PROMPT_RULES.CHARS_PER_TOKEN),
-        redactions: countMarks([s2, s3, s4, s5, s6].join("\n"), "coord"),
-        redacted_uids: countMarks([s2, s3, s4, s5, s6].join("\n"), "uid"),
+        redactions: countMarks([s2, sGoalChanged, s3, s4, sLastStep, sPrior, s5, s6].join("\n"), "coord"),
+        redacted_uids: countMarks([s2, s3, s4, sLastStep, sPrior, s5, s6].join("\n"), "uid"),
+        /* 净效果段是否真的进了 prompt —— 与 `capacityUnavailable` 同理：
+           让测试与调试能区分「首轮本来就没有」和「加了但被砍掉」。 */
+        last_step_shown: sLastStep !== null,
+        /* 跨 run 记忆段是否真的进了 prompt；测试/调试据此区分「没有记忆」
+           与「有记忆但被砍掉」。 */
+        prior_attempts_shown: sPrior !== null,
+        goal_changed_shown: sGoalChanged !== null,
+        /* 卡片的 `when:` 行是否进了 prompt —— 与 CAPACITY 同口径：
+           让测试能区分「预算不够没加」与「加了但没用」。 */
+        when_lines_shown: whenLinesOn,
         candidates: Array.isArray(candidates) ? candidates.length : 0,
     };
 
