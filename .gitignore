@@ -53,3 +53,4 @@ nul
 # 运行产物：每次 run 的 transcript/timeline，机器相关、无移植价值
 research/ai-plan/runs/
 research/ai-plan/tmp/
+dist/
