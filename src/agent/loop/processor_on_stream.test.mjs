@@ -15,7 +15,7 @@
  * 根因**不是**「跨过 balancer 就看不见」（那份机制说明只对了一半）：
  * 真正的前提是 `buildStreams` 把 balancer 当**边界**，于是同一条货流被切成
  * 「矿机 → balancer」与「balancer → …→ cutter」两段。
- * 实测（`.tmpverify/final-half/probe-obs.json`）：
+ * 实测（`test/fixtures/saves/half-L4-obs.json`，42 实体）：
  *
  *     流头(2,-7) belts=1 end=balancer → processorOnStream=false   ← 旧判据把它报成「缺 cutter」
  *     流头(3,-7) belts=1 end=balancer → false
@@ -50,6 +50,16 @@ import { indexOf, at, isBelt, exitCellOf, exitDirOf, entryCellOf, accepts, runEn
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SAVES = path.resolve(HERE, "../../../test/fixtures/saves");
 const L4 = JSON.parse(fs.readFileSync(path.join(SAVES, "L4-obs.json"), "utf8")).result;
+
+/* ★ 半成品世界：原来读的是 `.tmpverify/final-half/probe-obs.json` ★
+ *
+ * 那份是**未跟踪**的临时产物（实机一次 obs 的快照），2026-11-10 清理 scratch 时
+ * 被误删，无法恢复。它的受跟踪副本一直是 `test/fixtures/saves/half-L4-obs.json`
+ * —— 同样是 42 实体、`cutter@(4,-17)`、balancer 在 (2,-8)/(3,-10)，几何完全一致。
+ *
+ * 教训：测试夹具**不许依赖 .tmpverify/**。那里是实验装置目录，随时会被清掉；
+ * 需要长期使用的实测快照必须搬进 `test/fixtures/` 并提交。 */
+const HALF_L4 = JSON.parse(fs.readFileSync(path.join(SAVES, "half-L4-obs.json"), "utf8")).obs;
 
 const clone = x => JSON.parse(JSON.stringify(x));
 
@@ -159,9 +169,7 @@ test("A 正例：cutter 直接由流内带子喂 ⇒ processorOnStream=true", ()
 
 test("B 正例 ★ 半成品世界的病灶：流停在 balancer，cutter 在它下游 ⇒ true", () => {
     /* 直接用**实机复现的那份 obs**（半成品世界：cutter@(4,-17)，输入来自 (4,-16)）。 */
-    const probe = JSON.parse(fs.readFileSync(
-        path.resolve(HERE, "../../../.tmpverify/final-half/probe-obs.json"), "utf8"));
-    const obs = probe.obs.result && Array.isArray(probe.obs.result.entities) ? probe.obs.result : probe.obs;
+    const obs = HALF_L4;
     const idx = indexOf(obs);
     const streams = buildStreams(idx);
     const cutter = obs.entities.find(e => e.type === "cutter");
@@ -213,9 +221,7 @@ test("B2 正例：balancer 的**两个**输出槽都要跟（只跟 primary 会�
  * ══════════════════════════════════════════════════════════════════════════ */
 
 test("C 反例 ★ 独立的另一条产线上的 cutter ⇒ false（放宽过头 = 把诊断删了）", () => {
-    const probe = JSON.parse(fs.readFileSync(
-        path.resolve(HERE, "../../../.tmpverify/final-half/probe-obs.json"), "utf8"));
-    const obs = probe.obs.result && Array.isArray(probe.obs.result.entities) ? probe.obs.result : probe.obs;
+    const obs = HALF_L4;
     const idx = indexOf(obs);
     const streams = buildStreams(idx);
 
@@ -273,9 +279,7 @@ function streamLeadsToCutter(idx, st) {
 
 test("D 反例：流下游是一台 stacker（不是 cutter）⇒ false", () => {
     /* 半成品世界原样：先确认「下游是 cutter」时为 true。 */
-    const probe = JSON.parse(fs.readFileSync(
-        path.resolve(HERE, "../../../.tmpverify/final-half/probe-obs.json"), "utf8"));
-    const obs = probe.obs.result && Array.isArray(probe.obs.result.entities) ? probe.obs.result : probe.obs;
+    const obs = HALF_L4;
     const cutter = obs.entities.find(e => e.type === "cutter");
     assert.deepEqual([cutter.x, cutter.y], [4, -17]);
 
@@ -296,9 +300,7 @@ test("D 反例：流下游是一台 stacker（不是 cutter）⇒ false", () => 
 });
 
 test("D2 反例：整条下游链断在空格上 ⇒ false（不许把「断头」当「在流上」）", () => {
-    const probe = JSON.parse(fs.readFileSync(
-        path.resolve(HERE, "../../../.tmpverify/final-half/probe-obs.json"), "utf8"));
-    const obs = probe.obs.result && Array.isArray(probe.obs.result.entities) ? probe.obs.result : probe.obs;
+    const obs = HALF_L4;
     /* 删掉 (3,-11) 那一格带子：balancer (3,-10) 一路到 cutter 的通路断在这里。 */
     const cut = clone(obs);
     cut.entities = cut.entities.filter(e => !(e.type === "belt" && e.x === 3 && e.y === -11));

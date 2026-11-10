@@ -1886,7 +1886,24 @@ function renderDiagnoses(diagnoses) {
             if (ev.scope === "stream") line += " (the machine exists; put it ON the stream named above)";
             else if (ev.scope === "factory") line += " (the factory does not own this machine yet)";
             if (num(ev.sites) !== null && ev.sites > 0) {
-                line += `; ${ev.sites} feasible site(s) on the goal raw corridor`;
+                line += `; ${ev.sites} feasible site(s)`;
+            }
+            /* ★ 落点必须真的送到模型眼前 ★
+             *
+             * `site_cells` / `site_handles` 算了很久，但**从来没被渲染过** ——
+             * 这两个词在 prompt.mjs 里一次都不出现。于是诊断说「有 15 个可行落点」，
+             * 模型一个都拿不到，只能继续 `$path_of(["B434"])` 猜，然后
+             * `PATH_NOT_RECT` / `occupied` 连撞三轮。
+             *
+             * 只给**句柄**不给坐标：prompt 里不出现坐标是本文件的硬约束（见文件头），
+             * `sanitize()` 会把数字对打成 `<coord>`。而句柄正是 `insert_machine` 的
+             * `at:{$ref,asCell:true}` 直接接受的东西，也正是模型该用的形态。 */
+            if (Array.isArray(ev.site_handles) && ev.site_handles.length) {
+                line += `; a ${ev.machine} can go on: ${ev.site_handles.slice(0, 4).join(",")}`
+                    + ` (at:{$ref:"<handle>",asCell:true}; facing follows the belt flow)`;
+            }
+            if (num(ev.free_sites) !== null && ev.free_sites === 0) {
+                line += "; NO empty site — clear space first (remove_run / trash_unused)";
             }
         }
         /* WRONG_SHAPE_AT_HUB：病在上游，不在入口（v2 §4 的那句必须出现） */
@@ -1899,9 +1916,14 @@ function renderDiagnoses(diagnoses) {
              * 2026-10-30（第十四轮实测）：`PROCESSOR_REQUIRED` 的 handles 是**可行落点**，
              * 而模型没有理由知道这点 —— 它把 handles 和"流上的带子"混用，
              * 一次塞 6 个进 `$path_of` 得到 PATH_NOT_RECT。
-             * 现在显式说明：「这些格子就是能放机器的地方，直接当 region」。 */
+             *
+             * ⚠️ 这里原来写的是「pass them to $path_of as the region」——
+             * 那句话把模型引向 `replace_run`，而那些落点**在流上是散开的**，
+             * `$path_of` 算不出矩形 ⇒ 第 9 关实测三连败（PATH_NOT_RECT / 太窄 / 接不到来料）。
+             * 而同一批句柄在 `insert_machine {at:{$ref,asCell:true}}` 下**全部成功**。
+             * 现在改成指向真正会成功的那个形态。 */
             const hint = code === "PROCESSOR_REQUIRED"
-                ? ` (these are cells that can hold the machine — pass them to $path_of as the region)`
+                ? ` (these are cells that can hold the machine — pass one to insert_machine as at:{$ref:"<handle>",asCell:true})`
                 : "";
             line += `; handles ${hs.join(",")}${hint}`;
         }
@@ -2262,6 +2284,57 @@ function renderGoalChanged(g, obsolete) {
     return sanitize(lines.join("\n")).text;
 }
 
+/**
+ * `## LEFTOVER LINES` —— 世界里还占着地方、但已经没用的旧产线。
+ *
+ * ## 为什么不并进 `GOAL CHANGED`（真机实测的漏报）
+ *
+ * 原来残线清单是 `renderGoalChanged(goalChanged, obsoleteLines)` 的**第二参数**。
+ * 那个函数第一行就是 `if (!g || !g.to) return null;` —— 于是残线只有在
+ * **本次 run 内部观察到换关**时才会被渲染。
+ *
+ * 2026-11-10 第 9 关实测：run 一开始就是第 9 关，`goalChanged` 是 null，
+ * 整段从来没出现过。而那一刻 `hub.stored_shapes` 里躺着
+ *
+ *     Cu----Cu 27823   Cu------ 28926   ------Cu 229   RuRu---- 781
+ *
+ * 也就是前六关的全部产线还在原地占着地、继续挖继续切继续往 hub 塞废料。
+ * 模型能看到的只有「没有产线在造 CpCpCpCp」，它于是去**新建** —— 在已经
+ * 挤满旧线的世界里再挤一条。用户看到的就是那张图：一堆并排的、谁也用不上的长带子。
+ *
+ * 判据本身（`findStoredObsolete`）是对的，缺的是**渲染时机**。换关只是一个
+ * 方便的时刻，不是残线存在的必要条件 —— 存档里本来就有旧线同样要拆。
+ *
+ * ## 为什么只列账本证据、不列窗口证据
+ *
+ * 窗口证据（"这条线还在产 X"）在 `GOAL CHANGED` 段里已经有了，而且它天然
+ * 只出现在换关那一刻。这里要补的是**另一类**：线早就停了，但占地还在。
+ * 两者同时渲染会在换关那一轮重复同一句话。
+ *
+ * @param {Array|null} obsolete `residual`（窗口 + 账本合并后的清单）
+ * @param {string} goalShape
+ * @returns {string|null} 无内容时 null
+ */
+function renderLeftoverLines(obsolete, goalShape) {
+    if (!Array.isArray(obsolete) || !obsolete.length) return null;
+    const stored = obsolete.filter(o => Number.isFinite(o.stored) && !Number.isFinite(o.produced));
+    if (!stored.length) return null;
+    const lines = [
+        "## LEFTOVER LINES",
+        `the hub still holds shapes that no step of the ${goalShape} recipe produces:`,
+    ];
+    for (const o of stored.slice(0, 3)) {
+        lines.push(`  · ${o.shape} ×${o.stored}`);
+    }
+    lines.push(
+        "Those lines are still on the map, still mining and still cutting, and everything they make"
+        + " either clogs a belt or gets thrown away. They also occupy the space a new line needs.",
+        "⇒ Prefer removing or converting them over building another parallel run."
+        + " `remove_run` and `replace_run` work on them; a new `connect` next to them makes the clutter worse.",
+    );
+    return sanitize(lines.join("\n")).text;
+}
+
 const INSTRUCTION = [    "## YOUR TURN",
     "Output the calls for THIS round as one raw JSON object:",
     '{"say":"...","calls":[{"macro":"...","args":{...},"why":"..."}]}',
@@ -2371,6 +2444,9 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     const sPrior = renderPriorAttempts(priorAttempts);
     /* 换关通告排在 PRIOR ATTEMPTS **之前**：它改变的是整件事的前提，比历史更重要。 */
     const sGoalChanged = renderGoalChanged(goalChanged, obsoleteLines);
+    /* 残线单独一段，**不再依赖 goalChanged**（见 renderLeftoverLines 的注释：
+       把两者绑在一起，导致「本次 run 没换关」时残线整段不可见）。 */
+    const sLeftover = renderLeftoverLines(obsoleteLines, goalShape);
     const s6 = INSTRUCTION;
 
     const selection = pickBelts(tbl, diagList, goalShape, obs);
@@ -2409,12 +2485,12 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     }
 
     /* `sLastStep` 无内容（首轮）时由 filter 天然去掉，不占任何字符。 */
-    const fixed = [s2, sGoalChanged, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, sLastStep, sPrior, s5, s6]
+    const fixed = [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, sLastStep, sPrior, s5, s6]
         .filter(x => x !== null && x !== undefined).join("\n\n");
 
     /* ── 截断：只动带子列表。目标 = min(token 预算, 字符硬上限) ── */
     const targetChars = Math.min(Math.floor(limits.tokensMax * PROMPT_RULES.CHARS_PER_TOKEN), limits.inCharsMax);
-    const compose = (belts, capacity) => [s2, sGoalChanged, goalAndRecipe, s3Hub, s3Machines, capacity, belts,
+    const compose = (belts, capacity) => [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, s3Machines, capacity, belts,
         s3Production, s3Budget, s4, sLastStep, sPrior, s5, s6].filter(x => x !== null && x !== undefined).join("\n\n");
 
     /* ★ 顺序：**先定带子，再花余量** ★
@@ -2666,6 +2742,9 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
            与「有记忆但被砍掉」。 */
         prior_attempts_shown: sPrior !== null,
         goal_changed_shown: sGoalChanged !== null,
+        /* 残线段是否真的进了 prompt。与 `goal_changed_shown` 分开记：
+           两者曾共用一个渲染入口，于是「没换关」被误读成「没有残线」。 */
+        leftover_lines_shown: sLeftover !== null,
         /* 卡片的 `when:` 行是否进了 prompt —— 与 CAPACITY 同口径：
            让测试能区分「预算不够没加」与「加了但没用」。 */
         when_lines_shown: whenLinesOn,

@@ -404,6 +404,18 @@ export const WARNING_CODES = Object.freeze({
             + "签了字不等于可以不留痕。",
     },
 
+    /* ── insert_machine：朝向是从带子货流推出来的，不是调用方给的 ── */
+    facing_derived: {
+        severity: "info", macro: "insert_machine",
+        what: "调用方没给 facing，而 at 指着**一格带子** ⇒ 宏按那条带子的货流（`beltExit`）推出朝向",
+        action: "不需要处理。要按别的方向放就显式给 facing —— 那等于有意把这条流拐弯。",
+    },
+    facing_conflicts_with_flow: {
+        severity: "warn", macro: "insert_machine",
+        what: "调用方给了 facing，但 at 那格带子的货流朝反方向 ⇒ 按这个朝向放会把那条流拐弯",
+        action: "改成货流的方向，或直接去掉 facing 让宏自己推。确认要拐弯就忽略这条。",
+    },
+
     /* ── trash_unused 目前发的 "replacing-belt" 与顶部 alias 同一条（见 WARNING_CODES 开头） ── */
 });
 
@@ -730,7 +742,15 @@ export function validateConnectArgs(args) {
                「即使你没允许也别自作主张」。 */
             auto_relax: opts.auto_relax !== false,
             max_cells: opts.max_cells === undefined ? 2000 : opts.max_cells,
-            prefer: opts.prefer === undefined ? "fewest_turns" : opts.prefer,
+            /* ★ 默认从 `fewest_turns` 改成 `shortest` ★
+             *
+             * 旧注释写「拐角有代价」。在 shapez 里**这是错的**：传送带恒速，
+             * 拐角不掉速也不掉吞吐，转角纯粹是视觉上的。而这条错误前提的代价是可测的：
+             * 实测 399 个端口对里 **48%** 的布线因此选了比必要更长的路（最多多绕 4 格）。
+             *
+             * 用户看着满屏绕远路的带子说「效率这么慢的机器是怎么想出来的」——
+             * 这就是其中一半的成因。要少转角仍然可以显式传 `fewest_turns`。 */
+            prefer: opts.prefer === undefined ? "shortest" : opts.prefer,
             dry_run: opts.dry_run === true,
         },
     });
@@ -1245,7 +1265,7 @@ export const MACRO_SPECS = Object.freeze({
             { name: "opts.rebind", type: "boolean", required: false, description: "**口上**的开关：from.port 已被别的接收方占着时，是否允许改接（会让旧那条断流）。默认 false。" },
             { name: "opts.allow_replace", type: "boolean", required: false, description: "**路上**的开关：是否允许覆盖路径上的既有带子（只覆盖带子，永不覆盖机器）。默认 false。" },
             { name: "opts.max_cells", type: "int 1..5000", required: false, description: "路径格数上限，默认 2000。超了说明不是「连一条线」。" },
-            { name: "opts.prefer", type: "shortest|fewest_turns|reuse_existing", required: false, description: "路径偏好，默认 fewest_turns（拐角有代价）。" },
+            { name: "opts.prefer", type: "shortest|fewest_turns|reuse_existing", required: false, description: "路径偏好，默认 shortest（带子恒速，拐角不掉速 ⇒ 短就是好）。想要少拐弯就显式传 fewest_turns。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只算不写，返回计划。" },
         ],
         /**

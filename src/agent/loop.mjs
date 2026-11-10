@@ -83,7 +83,7 @@ import { structuralDiagnoses } from "./loop/structural.mjs";
 /* 语义层（P-a）：形状传播 + 配方闭包 + 作业分配。**不自己 spawn** ——
    配方由 loop 首轮 observe 后预计算一次、放进 `ctx.recipe` 注入；
    这样 `diagnose` 仍然是纯函数（同 obs 调两次逐字节相同），指纹与 NO_PROGRESS_3X 才成立。 */
-import { semanticDiagnoses } from "./loop/semantic.mjs";
+import { semanticDiagnoses, beltsCarryingShape } from "./loop/semantic.mjs";
 import { recipeForCached } from "./loop/recipe.mjs";
 /* hub 入口判据需要世界几何：`slotsOf` 是槽位几何的**唯一**实现（handles/semantic/verify 同源），
    在这里抄一份就是第三份真值。 */
@@ -222,6 +222,29 @@ function collectNamedUids(resolvedCalls, obs, handles) {
             }
         };
         if (c && c.args) walk(c.args);
+        /* ③ 宏**自己声明**要删的（`insert_machine` 的 footprint 带子）★
+         *
+         * `insert_machine` 的语义就是「就地插进一段带子」：机器占的那几格上
+         * 原本的带子必须让位。这些带子由**几何唯一决定**，模型无从点名 ——
+         * 它指一格带子说「机器插这儿」，压掉哪几格是宏算的。
+         *
+         * 实测（2026-11-10 第 9 关第 4 轮）：模型给出了完全正确的一步
+         *   insert_machine {at: B420, machine: "painter"}
+         * 宏返回 `removed_uids: [11205, 11206]`（就是自己 footprint 那两格），
+         * 但 R13 只认 `$ref`/`$uids`/`$path_of` 指名的 ⇒ 判 `destroys_not_named`
+         * ⇒ 整轮被拒。**没有任何写法能让模型「先点名」那两格**，因为它的意图
+         * 本来就是「把机器插进这段带子」。
+         *
+         * 这与 `connect(allow_replace)` 的豁免同源（见 planToTxOps 的 R13 注释）：
+         * 删除范围由 cells/footprint 唯一决定，不是 `$bbox_of` 猜的矩形。
+         * R13 要防的是**误框**，不是宏按自己的语义拆自己脚下的带子。 */
+        const res = c && c.result;
+        if (res && typeof res === "object") {
+            const decl = [];
+            if (res.changed && Array.isArray(res.changed.removed_uids)) decl.push(...res.changed.removed_uids);
+            if (Array.isArray(res.removed_uids)) decl.push(...res.removed_uids);
+            for (const u of decl) if (typeof u === "number" && byUid.has(u)) out.add(u);
+        }
     }
     void handles;
     return out;
@@ -1558,7 +1581,9 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
      * 注意：`$bbox_of` **不贡献** namedUids —— 它表达的是「覆盖这一块的矩形」，
      * 本身不指名具体对象。这也正是它会顺带框进别的东西的原因。
      */
-    const namedUids = collectNamedUids(res.calls, o, handles);
+    /* 传 `executed` 而不是 `res.calls`：只有前者带 `result`，而后者的
+       `removed_uids` 是「宏按自己语义算出的删除」的唯一来源（见 collectNamedUids ③）。 */
+    const namedUids = collectNamedUids(executed, o, handles);
     const txPlan = planToTxOps(executed, { obs: o, items, namedUids });
     if (!txPlan || txPlan.ok !== true) {
         const e = (txPlan && txPlan.error) || {};
@@ -2306,7 +2331,6 @@ export async function runLoop(opts = {}) {
                     sanctionedTeardown: isSanctionedTeardown({
                         removes: st.lastTxPlan ? st.lastTxPlan.removes : null,
                         obsoleteLines: st.lastObsoleteLines || null,
-                        levelChanged: !!st.goalChanged,
                     }),
                 });
                 tl.push(`    撤销判定 ${dec.kind}${dec.rollback ? "（真撤销）" : ""}${dec.dry ? "（离线不执行）" : ""}`
@@ -2579,16 +2603,38 @@ export async function runLoop(opts = {}) {
              * 值得被点名的时刻 —— 那时模型最容易继续在旧线上修。 */
             if (st.goalChanged && residualWindow.length) {
                 for (const line of residualWindow) {
+                    /* ★ 必须给句柄，否则这条诊断无法施工 ★
+                     *
+                     * 原来 `evidence.handles` 是空的：模型读到「有一条该拆的线」，
+                     * 却没有任何句柄能交给 `remove_run`。同一轮的 `PROCESSOR_REQUIRED`
+                     * 却给了 `stream_handles` —— 差别不在模型，在我们这边。
+                     *
+                     * `beltsCarryingShape` 从形状传播里把「哪些带子正在搬这个形状」
+                     * 拿回来（产出窗口只有形状名，没有位置）。拿不到就照旧留空，
+                     * 不编。 */
+                    const lineHandles = beltsCarryingShape(ob.obs, st.recipe, line.shape, st.handles, { max: 8 });
                     diagnoses.push(mkDiag("OBSOLETE_LINE", {
                         layer: "L4",
+                        severity: "warn",
+                        subject: lineHandles.length
+                            ? (subjectOf(st.handles, null, lineHandles[0]) || { handle: lineHandles[0], type: "belt" })
+                            : { handle: null, type: null },
                         expected: `产线在造目标形状 ${curGoal}`,
-                        observed: describeObsoleteLine(line, curGoal),
+                        observed: describeObsoleteLine(line, curGoal)
+                            + (lineHandles.length
+                                ? `（这条线现在跑在 ${lineHandles.slice(0, 4).join(" / ")} 上）`
+                                : ""),
+                        handles: lineHandles,
                         evidence: {
                             shape: line.shape, produced: line.produced, delivered: line.delivered,
                             share: line.share, ratio: line.ratio, goal: curGoal,
+                            stream_handles: lineHandles,
                         },
-                        hint: "这条线服务的是别的形状。要么把它拆掉腾出空间，要么改道让它产出目标；"
-                            + "在它上面继续修堵塞不会有产出。",
+                        hint: lineHandles.length
+                            ? "这条线服务的是别的形状。它还在挖、还在切、还在占着地方，而产出全部堆积或倒掉。"
+                                + "把 `ev.handles` 的句柄交给 remove_run 拆掉，或交给 replace_run 改成产出目标。"
+                            : "这条线服务的是别的形状。要么把它拆掉腾出空间，要么改道让它产出目标；"
+                                + "在它上面继续修堵塞不会有产出。",
                         candidates: ["remove_run", "trash_unused", "replace_run"],
                     }));
                 }
@@ -3561,9 +3607,30 @@ export async function runLoopCli(argv = process.argv.slice(2)) {
     const runDir = argVal(argv, "--run-dir");
     const maxCalls = argVal(argv, "--max-calls");
     const maxRounds = argVal(argv, "--max-rounds");
+    /* 这三个 flag 曾被**静默忽略**（只认 --goal/--mock/--llm/--dry-run/--json）。
+       后果不是报错，而是「以为在打代理，其实打了官方地址」，或者反过来
+       「以为连不上，其实只是没传」—— 排查方向会被引到完全错误的地方。
+       现在显式接上：不传就是 null，走 llm.mjs 自己的默认值。 */
+    const baseUrl = argVal(argv, "--base-url");
+    const model = argVal(argv, "--model");
+    const apiKey = argVal(argv, "--api-key") || process.env.ANTHROPIC_API_KEY || null;
+    /* 代理上的模型会先吐很长的 thinking 块再把 JSON 写在最后。`AnthropicClient`
+       的默认 1200 会被 thinking 吃满 —— 实测 `stop_reason=max_tokens`、`content`
+       里一个 text 块都没有，然后 parse 报 `LLM_NOT_JSON: output is empty`。
+       这个失败形态**看起来像模型不会输出 JSON**，实际上只是预算不够，排查方向
+       会被带偏一整轮（`experiment-coldstart.mjs` 里同一个坑踩过一次）。
+       所以 --llm 模式给一个够用的默认值，仍可用 --max-tokens 覆盖。 */
+    const maxTokens = Number(argVal(argv, "--max-tokens") || (useLive ? 20000 : 1200));
+    /* 参数是垃圾时不要让它变成 NaN 一路流进 AbortSignal.timeout —— 那个报错
+       （`The value of "delay" is out of range`）与真实原因毫无关系。 */
+    if (!Number.isFinite(maxTokens) || maxTokens <= 0) {
+        console.error(`✗ --max-tokens 必须是正整数，实得 ${argVal(argv, "--max-tokens")}`);
+        return 1;
+    }
 
     if (!goal) {
         console.error("用法：node src/agent/loop.mjs --goal RuRu---- (--mock <scenario> | --llm) [--dry-run] [--json]");
+        console.error("      [--base-url <url>] [--model <id>]   代理/网关；密钥读 ANTHROPIC_API_KEY");
         return 1;
     }
     if (!mock && !useLive) {
@@ -3583,7 +3650,16 @@ export async function runLoopCli(argv = process.argv.slice(2)) {
         } else {
             mode = "live";
             reader = makeBridgeReader();
-            llmClient = makeClient({ mode: "live" });
+            llmClient = makeClient({
+                mode: "live",
+                maxTokens,
+                /* thinking 块也算在 max_tokens 里，所以超时必须跟着放大 ——
+                    否则预算够了、请求先被 fetch 超时掐掉。 */
+                timeoutMs: Math.max(60000, maxTokens * 14),
+                ...(apiKey ? { apiKey } : {}),
+                ...(baseUrl ? { baseUrl } : {}),
+                ...(model ? { model } : {}),
+            });
         }
     } catch (e) {
         console.error(`✗ 初始化失败：${e && e.message ? e.message : e}`);

@@ -343,18 +343,28 @@ test("V38 ★ 未换关时账本法一条都不报（即使 stored 里有非配�
     assert.equal(st.length, 2, "显式换关后才报");
 });
 
-test("V39 ★ 未换关时授权拆除恒为 false（否则回滚永不触发）", () => {
-    /* 这条是实测出来的：账本法没有前置条件时，E11（「撤销之后 prompt 必须说 reverted」）
-       因为「这次 run 必须真的撤销过」不成立而变红 —— 因为每轮都被判成授权拆除。 */
+test("V39 ★ 授权拆除只认清单，不再要求本次 run 内换关（2026-11-10 推翻）", () => {
+    /* 这条原来是「未换关时恒 false」。推翻它的理由是可测的：
+     *
+     * run 一开始就在第 9 关 ⇒ goalChanged 恒假 ⇒ 模型照 OBSOLETE_LINE 去拆旧线
+     * ⇒ 判 regressive ⇒ 连撤两次。系统一边骂它不收拾残局，一边把它收拾的动作撤销掉。
+     *
+     * 真正该有门槛的是**产生清单**的那一步（findStoredObsolete 仍要求
+     * levelChanged，V38 锁着它），而不是消费清单的这一边。 */
     assert.equal(isSanctionedTeardown({
         removes: [{ uid: 1, expect: { type: "belt" } }],
         obsoleteLines: [{ shape: "X" }],
-    }), false);
+    }), true, "清单非空 + 只拆带子 ⇒ 授权");
+
     assert.equal(isSanctionedTeardown({
         removes: [{ uid: 1, expect: { type: "belt" } }],
+        obsoleteLines: [],
+    }), false, "清单为空 ⇒ 不授权");
+
+    assert.equal(isSanctionedTeardown({
+        removes: [{ uid: 1 }, { uid: 2, expect: { type: "cutter" } }],
         obsoleteLines: [{ shape: "X" }],
-        levelChanged: false,
-    }), false);
+    }), false, "拆了机器 ⇒ 不算拆残线");
 });
 
 test("V40 levelChanged 默认值的保守性（undefined / null 都不算换关）", () => {

@@ -270,8 +270,36 @@ export function findStoredObsolete({ hub, goalShape, recipe = null, levelChanged
  * @param {boolean} [p.levelChanged] 本次 run 是否观察到目标形状变化
  * @returns {boolean}
  */
-export function isSanctionedTeardown({ removes, obsoleteLines, levelChanged = false } = {}) {
-    if (levelChanged !== true) return false;
+/**
+ * 本次 tx 拆掉的，是不是一条**已经被点名过**的残线？
+ *
+ * ## `levelChanged` 从「硬门」降为「一个可以不作数的入参」（2026-11-10）
+ *
+ * 原来这里第一行是 `if (levelChanged !== true) return false`。理由写在
+ * `findStoredObsolete` 上面：账本证据在没换关时会误报，而误报会让「授权拆除」
+ * 恒成立 ⇒ 回滚永不触发（实测 E11 变红）。
+ *
+ * 那个担心是真的，但**这道锁挂错地方了**。真正需要证据门槛的是
+ * **产生残线清单**的那一步 —— `findStoredObsolete` 自己已经检查 `levelChanged`
+ * 并返回空，`findObsoleteLines` 的窗口证据本来就是实测的。清单里既然已经有
+ * 一条被认可的证据，拆它就是对的；再在消费端挡一次是重复的。
+ *
+ * 后果（可测、也正是用户贴的那张图）：run 一开始就在第 9 关，`goalChanged` 恒假
+ * ⇒ 模型照 `OBSOLETE_LINE` 去拆旧线 ⇒ 判 regressive ⇒ 连撤两次。
+ * 系统一边骂它不收拾残局，一边把它收拾的动作撤销掉 —— 模型学到的是「别碰」。
+ *
+ * 现在只认**清单本身**：`obsoleteLines` 非空即表示这一轮确实有被点名的残线，
+ * 拆的又只有带子/隧道，那就不是「把世界弄坏了」，而是「执行了一条诊断」。
+ *
+ * E11 那条回归仍然被守住 —— 它守的是「别把**误报的**清单当证据」，
+ * 而误报源（`findStoredObsolete` 的 `levelChanged` 前置）没有被改动，V38 仍然锁着它。
+ *
+ * @param {object} p
+ * @param {Array} [p.removes]       本次 tx 的删除项
+ * @param {Array} [p.obsoleteLines] 本轮算出的残线清单（**非空即为证据**）
+ * @param {boolean} [p.levelChanged] 保留但**不再拦截**；仅供调用方记录上下文
+ */
+export function isSanctionedTeardown({ removes, obsoleteLines } = {}) {
     const rem = Array.isArray(removes) ? removes : [];
     if (!rem.length) return false;
     /* 只删了带子/隧道 —— 拆机器不算「拆残线」（机器可能正在被复用）。 */
