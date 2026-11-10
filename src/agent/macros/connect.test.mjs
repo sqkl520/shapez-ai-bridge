@@ -166,8 +166,23 @@ t("verifyChain 负例⑤：code 与 rv 不一致必须红（静默事故的另�
     assert.equal(verifyChain(bad).ok, false);
 });
 
-t("verifyChain 负例⑥：空链必须红（不许把什么都没生成当成功）", () => {
-    assert.equal(verifyChain([]).ok, false);
+/* 空链：2026-11-10 起是**合法结果**，不再是负例。
+ *
+ * 旧断言 `verifyChain([]).ok === false` 的理由是「不许把什么都没生成当成功」。
+ * 那个理由对**错误路径**成立，但漏了一种真实情况：from 的喷口与 to 的接收格
+ * **正好相邻**时，正确的路径就是零格带子 —— 货直接从源喷进目标。
+ *
+ * 真机现场（2026-11-10）：红矿机 r=180 在 (54,21) 往下喷，painter 的 color
+ * 接收格正是 (54,22)。`connect` 算出 `cells: []`，却被这条负例的判据
+ * 报成 `internal: 空链` —— 一个正确且最短的连接被自证层拒掉。
+ *
+ * 判据改成：**非数组**仍是错的（调用方传错），**空数组**是对的（不需要铺）。
+ * 见 connect_rotated_belt.test.mjs 里那两条正面断言。 */
+t("verifyChain 负例⑥'：空链**不再是**负例（零距离连接是合法结果）", () => {
+    assert.equal(verifyChain([]).ok, true);
+    /* 但"传了个不是数组的东西"仍然必须红 —— 那是两件事 */
+    assert.equal(verifyChain(null).ok, false);
+    assert.equal(verifyChain("x").ok, false);
 });
 
 /* ── 负例⑦：面闭合对、但记录的 (rot,rv) 不是 solveTurn 的唯一解 ──

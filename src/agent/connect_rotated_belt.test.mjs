@@ -39,7 +39,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { connect, portsOf } from "./macros/connect.mjs";
+import { connect, portsOf, verifyChain } from "./macros/connect.mjs";
 import { beltExit } from "../ai/belt-rules.mjs";
 
 const t = (name, fn) => test(name, fn);
@@ -81,29 +81,68 @@ t("★ to 是 r=180 的带子 ⇒ 也必须被接受", () => {
     assert.equal(r.ok, true, `to 是 r=180 的带子必须可用，实际：${JSON.stringify(r.error)}`);
 });
 
-/* ══════════════════════════ 护栏：机器的限制不能被顺手放开 ══════════════════════════ */
+/* ══════════════ r≠0 的**机器**：2026-11-10 起不再被拒 ══════════════
+ *
+ * 这两条原来是「护栏：机器 r≠0 仍然必须被拒」，理由是
+ * 「旋转机器的槽位偏移需要 origin 位移表，v1 没有」。
+ *
+ * **那个前提已经不成立。** P19（2026-11-09）做了两件事：
+ *   · `portSlots()` 从 spec 快照按 `rotate90` 转 tile、按 `rotateLocal` 转 dir
+ *   · `machinePorts()` / `makeContext()` 不再对 r≠0 短路返回空表
+ * 真机验证过：cutter r=180 放着、接货、真的产出（level 6 从 0/270 打到 73%）。
+ *
+ * 而 `connect` 里那道闸是**第五份**判断，修完前四份才轮到它。
+ * 真机现场：红矿机 r=180 在 level 7 的 painter 场景里被它拒成 `out_of_scope`。
+ *
+ * 所以这两条测试改成断言「**能连上**」—— 如果哪天有人把闸加回来，
+ * 这两条会立刻变红，提醒他先去读 portSlots 的注释。 */
 
-t("护栏：机器 r≠0 仍然必须被拒（不能顺手把机器也放开）", () => {
-    /* 这条限制对**机器**是有依据的：旋转机器的槽位偏移需要 origin 位移表，v1 没有。
-       修「带子被误伤」不能把「机器不支持」也一起放宽。 */
+t("机器 r=90 作 from ⇒ 必须被接受（P19 之后不再限制）", () => {
     const ents = [
         { uid: 1, type: "miner", x: 0, y: 6, r: 90 },
         { uid: 2, type: "cutter", x: 0, y: 0, r: 0 },
     ];
     const r = connect({ from: { uid: 1 }, to: { uid: 2, port: "primary" } }, { entities: ents });
-    assert.equal(r.ok, false, "旋转的机器仍须被拒（v1 不支持）");
-    assert.equal(r.error.code, "out_of_scope", `错误码应是 out_of_scope，实际 ${r.error.code}`);
-    assert.match(r.error.message, /rotation=90/, "错误信息要说清是哪台机器");
+    assert.notEqual(r.error && r.error.code, "out_of_scope",
+        `r=90 的机器不该再被 out_of_scope 拒，实际 ${JSON.stringify(r.error)}`);
 });
 
-t("护栏：to 是旋转机器也仍须被拒", () => {
+t("机器 r=90 作 to ⇒ 同样不再被拒", () => {
     const ents = [
         { uid: 1, type: "miner", x: 0, y: 6, r: 0 },
         { uid: 2, type: "cutter", x: 0, y: 0, r: 90 },
     ];
     const r = connect({ from: { uid: 1 }, to: { uid: 2, port: "primary" } }, { entities: ents });
-    assert.equal(r.ok, false, "旋转的目标机器仍须被拒");
-    assert.equal(r.error.code, "out_of_scope");
+    assert.notEqual(r.error && r.error.code, "out_of_scope",
+        `r=90 的目标机器不该再被 out_of_scope 拒，实际 ${JSON.stringify(r.error)}`);
+});
+
+t("★ 空链是合法结果：from 的喷口与 to 的接收格相邻时不需要铺带子", () => {
+    /* 2026-11-10 真机踩到的第二个 connect bug：
+     * 红矿机 r=180 在 (54,21) 往下喷，painter 的 color 接收格正是 (54,22) —— 零距离。
+     * `connect` 算出 `cells: []`（不用铺），但 `verifyChain([])` 判 `ok:false`
+     * 报「internal: 生成的路径几何不自洽（第 chain 处）：空链」——
+     * 一个**正确且最短**的连接被自己的自证层拒掉。
+     *
+     * ⚠️ to 必须是**机器**不是带子：带子那边有另一道正确的闸
+     * （`port_already_bound` —— 已经有带子接货时再连一条会饿死旧的）。 */
+    const ents = [
+        { uid: 1, type: "miner", x: 54, y: 21, r: 180 },
+        { uid: 2, type: "painter", x: 53, y: 23, r: 0 },
+    ];
+    const r = connect({ from: { uid: 1 }, to: { uid: 2, port: "color" } }, { entities: ents });
+    assert.equal(r.ok, true, `零距离连接必须成功，实际：${JSON.stringify(r.error)}`);
+    assert.equal(r.cells.length, 0, "零距离时不该铺任何带子");
+});
+
+t("verifyChain：空数组 ok、非数组仍不合法", () => {
+    /* ⚠️ runner 是**同步**的（`t(name, fn)` 里 try/catch）。
+       第一版这里写了 `async () => { const {verifyChain} = await import(...) }`
+       —— `t()` 拿到一个 Promise，`try/catch` 抓不到里面的断言失败，
+       测试会静默"通过"或报一个看不懂的错。改成同步 import。 */
+    assert.equal(verifyChain([]).ok, true, "空链是合法结果（不需要铺带子）");
+    assert.equal(verifyChain(null).ok, false, "非数组仍是调用方传错");
+    assert.equal(verifyChain(undefined).ok, false);
 });
 
 t("护栏：hub 不是机器，不受 r=0 限制影响（它永远 r=0，但语义要分清）", () => {
