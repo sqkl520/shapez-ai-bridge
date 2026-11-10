@@ -340,17 +340,40 @@ const EMBEDDED = [
          *     slot 0（本项目叫 "left"） = rightSide = quads[2,3] = 形状的**右半**
          *     slot 1（本项目叫 "right"）= leftSide  = quads[0,1] = 形状的**左半**
          *
-         * 也就是说：**端口名与半边名恰好互换。**
+         * ## ⚠️⚠️ 上面这段**被真机推翻过两次**（2026-11-10，level 8）
          *
-         * ⚠️ 别把两件事混起来：
-         *   · 上面那句 `wasteRoles: ["left"]` 说的是**L4 那个具体目标**里
-         *     哪个槽装废料 —— 它依赖目标形状。
-         *   · 本节说的是**槽位编号 ↔ 半边名**的映射 —— 它不依赖目标形状。
-         *   不能用其中一个去推另一个。
+         * 真机实测（debug_items 的 ejectors，同一个 cutter 的两个槽同时可见）：
          *
-         * 配方里的 `cut(args:{half:"right"})` 用的是**游戏的半边名**
-         * （`cloneFilteredByQuadrants` 那一套）。所以要保留右半时，
-         * trash 必须挂在**本项目的 `right` 端口**（slot 1）上 —— 名字是反的。 */
+         *     ejectors: [
+         *       { cell:[24,-41], slot:0, item:"----RuRu" },    ← slot 0 = 左半
+         *       { cell:[24,-41], slot:1, item:"RuRu----" },    ← slot 1 = 右半
+         *     ]
+         *
+         * 而且把 `slot 1` 接进 painter 之后，hub 里立刻出现 `RbRb----`（目标形状）；
+         * 接 `slot 0` 时产出的是 `----RbRb`（左半上色，不是目标）。
+         *
+         * **两次独立验证都指向：slot 0 = 左半、slot 1 = 右半。**
+         *
+         * 也就是说下面这条推理链在**游戏实现层面**是错的：
+         *   「`shapeActionCutHalf` 返回 `[rightSide, leftSide]`」
+         *   ⇒ 「`requiredSlot: i` 把第 i 项送进 slot i」
+         *   ⇒ 「slot 0 = 右半」
+         *
+         * 源码读起来确实如此，但实际行为相反 —— 可能是 ejector slot 的编号顺序
+         * 与 `cutDefinitions` 的下标不同（`ItemEjectorComponent.setSlots` 的顺序
+         * 与 `requiredSlot` 的语义未必是同一个编号空间）。
+         * **以真机为准，不以源码推理为准。**
+         *
+         * 配方的 `cut(args:{half:"right"})` 走的是**形状代数**那套
+         * （`cloneFilteredByQuadrants`），与槽位编号无关 —— 两者别混。
+         * 要让产物是 `xxx----`（保留前半/右半），把 trash 挂在 **`slot 0`**、
+         * 把成品从那一路接走的是 **`slot 1`**。
+         *
+         * ⚠️ 别把三件事混起来：
+         *   · `wasteRoles: ["left"]` —— **L4 那个具体目标**里哪个槽装废料（依赖目标）
+         *   · slot 编号 ↔ 半边 —— 本段（不依赖目标，且**与源码推理相反**）
+         *   · 配方里的 `half` —— 形状代数，与槽位无关
+         */
     },
     {
         op: "cutQuad", building: "cutter", variant: "quad", code: 10,
@@ -1172,19 +1195,22 @@ function runTests() {
     eq("cutter 输出 (0,0)top=left / (1,0)top=right",
         OP_TEMPLATES.cut.outputs.map(s => [s.cell, s.dir, s.role]),
         [[[0, 0], "top", "left"], [[1, 0], "top", "right"]]);
-    /* ★ 槽位编号 ↔ 半边名是**互换**的（2026-11-09 真机踩到的静默 bug）★
+    /* ★ 槽位编号 ↔ 半边：真机两次实测的结论（2026-11-10）★
      *
-     * 游戏 `shapeActionCutHalf` 返回 `[rightSide, leftSide]`，
-     * `process_CUTTER` 用 `requiredSlot: i` 依次送进 ejector slot i。所以：
-     *   slot 0（本项目叫 "left"）  = rightSide = quads[2,3] = **右半**
-     *   slot 1（本项目叫 "right"） = leftSide  = quads[0,1] = **左半**
+     *     ejectors: [{ slot:0, item:"----RuRu" },    ← slot 0 = 后半
+     *                { slot:1, item:"RuRu----" }]    ← slot 1 = 前半
      *
-     * 这条断言钉的是**顺序**：第 0 个输出槽必须叫 "left"，第 1 个叫 "right"。
-     * 名字本身对不对是历史包袱（见 cut 模板上那段长注释），
-     * 但**顺序不能变** —— 一变，所有把 trash 挂在某个槽上的调用都会丢错半边，
-     * 而且**不报任何错**：hub 里目标形状恒为 0，中间产物暴涨。
-     * 真机上就是这么丢了 2000+ 个 ----CuCu 才发现。 */
-    eq("★ cutter 的 slot0 必须叫 left、slot1 必须叫 right（与游戏半边语义互换）",
+     * 把 slot 1 接 painter → hub 出现 `RbRb----`（目标）；接 slot 0 → 出现 `----RbRb`（错的）。
+     * 两次独立验证一致。
+     *
+     * ⚠️ 这与源码推理相反：「`shapeActionCutHalf` 返回 `[rightSide, leftSide]`」
+     * + 「`requiredSlot: i` 送进 slot i」读起来是 slot0=右半，但实际行为是 slot0=后半。
+     * **以真机为准。** 详见 cut 模板上那段长注释。
+     *
+     * 这条断言钉的是**顺序**：第 0 个输出槽必须叫 "left"、第 1 个叫 "right"。
+     * 顺序一变，所有把 trash 挂在某个槽上的调用都会丢错半边，
+     * 而且**不报任何错**：hub 里目标形状恒为 0，中间产物暴涨。 */
+    eq("★ cutter 的 slot0 必须叫 left、slot1 必须叫 right（顺序不能动）",
         OP_TEMPLATES.cut.outputs.map(s => s.role), ["left", "right"]);
     // mixer 双 bottom 进、top 出
     eq("mixer 双 color←bottom、出→top",
