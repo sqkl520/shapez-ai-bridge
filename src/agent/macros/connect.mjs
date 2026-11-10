@@ -673,7 +673,23 @@ export function poseChain(cells, v0, vE) {
  */
 export function verifyChain(cells) {
     const breaks = [];
-    if (!Array.isArray(cells) || !cells.length) return { ok: false, breaks: [{ at: "chain", why: "空链" }], pairs: 0 };
+    /* ★ 空链是**合法结果**，不是错误（2026-11-10 修正）★
+     *
+     * 当 from 的喷口与 to 的接收格**正好相邻**时，不需要铺任何带子 ——
+     * 货直接从源喷进目标。这条路径的 `cells` 就是空数组。
+     *
+     * 原来这里判 `!cells.length → ok:false`，于是 `connect` 走到自证那一步
+     * 报 `internal: 生成的路径几何不自洽（第 chain 处）：空链` ——
+     * 一个**正确且最短**的连接被自己的自证层拒掉。
+     *
+     * 真机现场（2026-11-10）：红矿机 r=180 在 `54,21` 往下喷，painter 的
+     * color 接收格正是 `54,22` —— 相邻零距离。修掉 r≠0 那道闸之后
+     * 才走到这一步，所以之前一直看不出这个 bug。
+     *
+     * 判据改成：空数组 → ok（`pairs: 0`）。**非数组**仍然是不合法
+     * （那是调用方传错了东西，与"不需要铺"是两件事）。 */
+    if (!Array.isArray(cells)) return { ok: false, breaks: [{ at: "chain", why: "cells 不是数组" }], pairs: 0 };
+    if (!cells.length) return { ok: true, breaks: [], pairs: 0 };
 
     for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
@@ -923,25 +939,25 @@ export function connect(a, b, c, d) {
     if (rf.rec.uid === rt.rec.uid && fe.port === te.port) {
         return failure({ code: "precondition_failed", field: "to", message: "from 与 to 是同一个实体的同一个端口" });
     }
-    /* ★ r≠0 只对**机器**是限制，对带子不是 ★
+    /* ★ r≠0 的端点：不再限制（2026-11-10 删除）★
      *
-     * 这条限制的理由是「旋转**机器**的槽位偏移需要 P2 的 origin 位移表」—— 说的是机器。
-     * 而带子根本没有「槽位偏移」这回事：它的方向完全由 `(rotation_variant, r)` 共同决定
-     * （`beltExit(0,180)=bottom`、`beltExit(0,270)=left`），每个方向都合法。
+     * 这里原来有一条：
+     *     if (rec.r !== 0 && !ROTATABLE_ONLY_IF_MACHINE.has(rec.type)) return out_of_scope
+     * 理由是「旋转**机器**的槽位偏移需要 P2 的 origin 位移表」。
      *
-     * 旧实现没区分类型，于是**带子也被拦了**。实测后果：半成品世界实验里，
-     * 断点 `(1,-6)` 是 r=180 的带子，loop 诊断正确（`DEAD_END`）、模型也选对了动作
-     * （`connect`，原文「Route the dead-ended output into the hub」），却被这道闸拒成
-     * `out_of_scope` —— 一个正确的计划被能力缺口挡死。
+     * **那个前提已经不成立了。** P19 做了两件事之后，「r≠0 的机器没有端口」不再是事实：
+     *   · `portSlots()` 从 spec 快照按 `rotate90` 转 tile、按 `rotateLocal` 转 dir
+     *   · `machinePorts()` 不再对 r≠0 短路返回空表
      *
-     * 而真实世界里 r≠0 的带子占绝大多数（长竖直段全是 r=0/r=180，转角是 r=270）。
-     */
-    const ROTATABLE_ONLY_IF_MACHINE = new Set(["belt", "underground_belt"]);
-    for (const [rec, field] of [[rf.rec, "from"], [rt.rec, "to"]]) {
-        if (rec.r !== 0 && !ROTATABLE_ONLY_IF_MACHINE.has(rec.type)) {
-            return failure({ code: "out_of_scope", field, message: `${field} 指向的 ${rec.type} rotation=${rec.r}；v1 只支持 r=0（旋转机器的槽位偏移需 P2 的 origin 位移表）` });
-        }
-    }
+     * 而这道闸是同一件事的**第四份**判断（前三份在 machinePorts / makeContext /
+     * 合成实体）。P19 修完那三份之后，这一份忘了删 —— 于是真机上出现：
+     *
+     *     红矿机 r=180（游戏接受、几何对、货能进）
+     *     connect({from: 那台矿机}) → out_of_scope「v1 只支持 r=0」
+     *
+     * 这正是「同一判据写多份」的典型代价：修了一处，另一处还在拦。
+     * 带子本来就不该被拦（它的方向由 rv+r 共同决定，每个方向都合法），
+     * 机器现在也不该被拦。两句话都过期了，整段删掉。 */
 
     const pfList = portsOf(rf.rec, loadSpec()).eject;
     const ptList = portsOf(rt.rec, loadSpec()).accept;
