@@ -1564,8 +1564,10 @@ export const MACRO_SPECS = Object.freeze({
         ],
         params: [
             { name: "outlet", type: "Endpoint", required: true, coordClass: "endpoint", description: "源端口：机器输出槽（{uid,port?}）**或一段带子的末端**（{uid}，垃圾桶落在它 exit 方向的下一格）**或上一个宏返回的 pending**（{pending,port?} —— 计划态，未落盘即可挂垃圾桶，见 PENDING_REF_SPEC）。多输出机器（cutter 2 / cutter-quad 4）必须点名 left|right|quad0..3。"
-                + "**⚠️ cutter 的 left/right 指的是槽位编号，不是形状的左右半**：`left` = 槽 0 = 游戏 `shapeActionCutHalf` 返回的第一个（**右半** `cloneFilteredByQuadrants([2,3])`），`right` = 槽 1 = **左半**。"
-                + "换句话说：想**保留**某半就去切，把 trash 挂在**另一半**上——而「另一半」的端口名和你的直觉相反。" },
+                + "**⚠️ cutter 的槽 0（本项目叫 `left`）装的是形状的【后半】，槽 1（叫 `right`）是【前半】。**"
+                + "游戏源码读起来像是「slot 0 = 右半」，但真机两次实测（debug_items 的 ejectors 同时显示两个槽）**相反**："
+                + "`slot:0 → \"----RuRu\"`（后半）、`slot:1 → \"RuRu----\"`（前半）。**以真机为准。**"
+                + "所以要保留 `xxx----`（前半），就把它从 `slot 1` / `right` 接走、trash 挂在 `slot 0` / `left`。" },
             { name: "opts.confirm_waste", type: "boolean", required: false, description: "当该端口不属于模板声明的 wasteRoles 时，必须显式确认「这一路确实是废料」。默认 false → 拒绝。这是**签字**，不是判断：宏查不出目标形状，只能要求调用方为销毁负责。" },
             { name: "opts.replace_belt", type: "boolean", required: false, description: "喷射方向的下一格若是带子，是否允许让位。默认 false。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只报告不执行。" },
