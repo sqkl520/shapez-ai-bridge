@@ -719,6 +719,88 @@ function oneCellSites(idx, reach, inCorridor) {
     return out.sort((a, b) => (a.anchor[1] - b.anchor[1]) || (a.anchor[0] - b.anchor[0]));
 }
 
+/**
+ * 2×1 双输入机器（painter）的可落点：把**一段直带**就地换成机器，上下游都保持闭合。
+ *
+ * ## 为什么必须有这个（第 9 关实测的「无解诊断」）
+ *
+ * `sitesFor()` 原来只给 `cut` 与 `rotate` 系列算落点，`paint` 走的是空数组。
+ * 于是 `PROCESSOR_REQUIRED` 对 painter 永远报
+ * 「a painter fits at **0** place(s) on the goal corridor」—— 而宏完全放得下。
+ *
+ * 后果不是「少一条建议」，而是**诊断把模型钉死**：第 9 关的 run 里，模型连着三轮
+ * 追这条 painter 诊断（`replace_run` 三次不同写法全部失败），一次都没去看那条
+ * 「缺 mixer」的诊断 —— 尽管 mixer 有 3737 个空位、是配方里真正的前置步骤。
+ * 一条**看起来可施工、实际无解**的诊断，比没有诊断更糟。
+ *
+ * ## 判据（与 `oneCellSites` 同源，只是多一格）
+ *
+ * painter 有 4 个朝向，逐朝向检查「整台机器能不能嵌进这段带子」：
+ *   · 两个 footprint 格必须空着或是这条流上的带子（带子会让位）
+ *   · 主输入（`shape` 槽）的**来料落点**必须是这条流上的带子，且它的出口正对着
+ *   · 输出槽的落点必须空着，或是一条接得住货的带子（朝本机开口）
+ *   · 辅料槽（`color`）不检查 —— 配方允许开新支线送颜料，那不是「放不下」
+ *
+ * 只收 `reach`（能到 hub）且在目标走廊上的位置：与 `cutSites` 同一口径。
+ */
+function paintSites(idx, reach, inCorridor, tblRef = null) {
+    const tpl = templateByBuildingVariant("painter", "default");
+    if (!tpl || !Array.isArray(tpl.footprint)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const b of idx.ent) {
+        if (!isBelt(b)) continue;
+        if (!reach.has(b.uid)) continue;
+        if (!inCorridor([b.x, b.y])) continue;
+        /* 逐个 rotation 试：机器放进世界后，它的主输入槽槽格必须正好是 b 那一格。
+           这里直接问 `slotsOf`（与宏用的是同一张模板），不自己算旋转 ——
+           方向函数在本项目里只允许有一个实现。 */
+        for (const rot of [0, 90, 180, 270]) {
+            const base = slotsOf("painter", "default", 0, 0, rot);
+            if (!base) continue;
+            const main = base.inputs.find(p => p.role === "shape") || base.inputs[0];
+            if (!main) continue;
+            /* origin = b - main.slot（同一 rotation 下偏移是常量）。 */
+            const ox = b.x - main.slot[0], oy = b.y - main.slot[1];
+            const s = slotsOf("painter", "default", ox, oy, rot);
+            if (!s) continue;
+            const m2 = s.inputs.find(p => p.role === "shape") || s.inputs[0];
+            if (!m2 || !sameCell(m2.slot, [b.x, b.y])) continue;
+            const k = `${ox},${oy}`;
+            if (seen.has(k)) continue;
+            /* footprint 每格：空着，或是一条会让位的带子。 */
+            const cells = [];
+            for (let dx = 0; dx < tpl.footprint[0]; dx++) {
+                for (let dy = 0; dy < tpl.footprint[1]; dy++) {
+                    cells.push([ox + dx, oy + dy]);       // footprint 是从 origin 起的矩形（旋转后仍由 slotsOf 覆盖）
+                }
+            }
+            /* 用槽位/输出格的收纳范围判占位：凡 footprint 里的格都不能是机器。 */
+            const bad = [];
+            for (const c of cells) {
+                const e = at(idx, c);
+                if (e && !isBelt(e)) bad.push(c);
+            }
+            if (bad.length) continue;
+            const o = s.outputs[0];
+            if (!o) continue;
+            const dn = at(idx, o.cell);
+            if (dn && isBelt(dn) && entryDirOf(dn) !== OPP[o.dir]) continue;
+            if (dn && !isBelt(dn) && !isTunnel(dn)) continue;      // 机器挡在出口 ⇒ 出不去
+            seen.add(k);
+            const pairUids = [...new Set(
+                [...cells, o.cell].map(c => at(idx, c)).filter(e => e && isBelt(e)).map(e => e.uid),
+            )];
+            out.push({
+                anchor: [ox, oy], handleUid: b.uid,
+                pair: pairUids.map(u => handleOf(tblRef, u)).filter(Boolean),
+                pairUids, rotation: rot,
+            });
+        }
+    }
+    return out.sort((a, b) => (a.anchor[1] - b.anchor[1]) || (a.anchor[0] - b.anchor[0]));
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * 5. 主入口
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -846,6 +928,9 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
         let sites = [];
         if (op === "cut") sites = cutSites(idx, reach, cellInCorridor, handles);
         else if (op === "rotate" || op === "rotateCCW" || op === "rotate180") sites = oneCellSites(idx, reach, cellInCorridor);
+        /* ★ paint 曾经漏在这里 ⇒ painter 诊断永远报「fits at 0 place(s)」★
+         * 一条看起来可施工、实际无解的诊断会把模型钉死在上面（第 9 关实测三轮）。 */
+        else if (op === "paint" || op === "paintMirrored" || op === "paintDouble") sites = paintSites(idx, reach, cellInCorridor, handles);
         siteCache.set(op, sites);
         return sites;
     };
@@ -941,6 +1026,14 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 shape: top.shapes,
                 site_handles: siteHandles,
                 site_cells: sites.map(s => s.anchor),
+                /* ★ 每个落点的朝向也要交回去 ★
+                 *
+                 * `insert_machine` 的 origin 形态（`at:[x,y]`）要求 `facing`，
+                 * 而朝向不是随便选的：机器必须顺着那条带子的货流接力。
+                 * 只说「放这儿」不说「朝哪」，模型只能猜 —— 猜错就被
+                 * `facing_conflicts_with_flow` 打回来，多浪费一轮。
+                 * 这里把 `paintSites` 已经算出来的 rotation 一并给出。 */
+                site_facings: sites.map(s => (s.rotation === undefined ? null : s.rotation)),
                 sites: sites.length,
                 streams: ranked.map(r => ({
                     head: handleOf(handles, r.stream.head.uid),
@@ -950,7 +1043,23 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 })),
                 ...(model.gated.length ? { level_gated: [...new Set(model.gated)].sort() } : {}),
             },
-            candidates: ["replace_run", "insert_machine", "connect"],
+            /* ★ 有可行落点时 `insert_machine` 必须排第一 ★
+             *
+             * `replace_run` 要的是一个**连续矩形**，而 `site_handles` 给的是「带子本身」——
+             * 那几格在一条流上往往不是矩形（带子转折处），于是 `$path_of(那三个句柄)`
+             * 要么 `PATH_NOT_RECT`，要么 region 太窄 ⇒ `precondition_failed`
+             * 「接不到来料」。第 9 关实测：模型连着三轮用它，三连败。
+             *
+             * 而 `insert_machine` 的 `at:{$ref,asCell:true}` **正好就是这些句柄的形态**，
+             * 宏自己展开 footprint 并让位覆盖的带子。实测 B423/B424/B425 三个句柄
+             * 在 `insert_machine` 下全部成功，在 `replace_run` 下全部失败。 */
+            candidates: sites.length
+                ? ["insert_machine", "replace_run", "connect"]
+                : ["replace_run", "connect", "insert_machine"],
+            ...(sites.length ? {
+                hint: `用 insert_machine，at: {"$ref":"<site_handles 任取一个>","asCell":true}，`
+                    + `宏会展开 footprint 并让位。不要用 replace_run —— 它要连续矩形，这些落点是散开的。`,
+            } : {}),
         });
     }
 
@@ -962,15 +1071,72 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
         if (have >= need) continue;
         const subj = hub ? subjectOf(handles, hub.uid, "hub") : { handle: null, type: null, uid: null };
         const ops = model.usable.filter(s => MACHINE_OF_OP[s.op] === kind).map(s => s.op);
+        /* ★ 别再拿 hub 当「可放位置」★
+         *
+         * 原来 `handles: [subj.handle]`（= hub 的句柄，如 H1），意思是「相关对象是 hub」。
+         * 但模型的读法是「这些是我该动手的格子」—— 第 9 关实测，它连着两轮调
+         *   insert_machine {at: {$ref:"H1", asCell:true}, machine:"mixer"}
+         * 而 hub 周围 16 个入口槽全被带子占着，一个 2×1 的 mixer 都放不下。
+         *
+         * 一条「工厂缺 X」的诊断，真正该回答的是「**那 X 能放哪**」。
+         * 这里给出观测范围内**真实空着的格子**（按离 hub 的距离排序，越近越好 ——
+         * 带子越短、越不容易和别人的线打架），并把 hub 的句柄降级成只是上下文。
+         *
+         * 找不到空地就**不给** handles（而不是给一个放不下的），并在 hint 里说清
+         * 「先腾地方」—— 那才是那一刻的正解。 */
+        const fp = (() => {
+            const t = templateByBuildingVariant(kind, "default");
+            return t && Array.isArray(t.footprint) ? t.footprint : [1, 1];
+        })();
+        const freeSites = [];
+        const region = o && Array.isArray(o.region) && o.region.length === 4 ? o.region : null;
+        if (region) {
+            const [x0, y0, x1, y1] = region;
+            for (let y = y0; y + fp[1] - 1 <= y1; y++) {
+                for (let x = x0; x + fp[0] - 1 <= x1; x++) {
+                    let ok = true;
+                    for (let dx = 0; dx < fp[0] && ok; dx++) {
+                        for (let dy = 0; dy < fp[1] && ok; dy++) {
+                            /* 只收**完全空着**的格子：带子虽然可以让位，但让位会切断既有线，
+                               不该由诊断替调用方决定。 */
+                            if (at(idx, [x + dx, y + dy])) ok = false;
+                        }
+                    }
+                    if (ok) freeSites.push([x, y]);
+                }
+            }
+            const hx = hub ? hub.x : 0, hy = hub ? hub.y : 0;
+            freeSites.sort((a, b) => (Math.abs(a[0] - hx) + Math.abs(a[1] - hy))
+                - (Math.abs(b[0] - hx) + Math.abs(b[1] - hy)));
+        }
+        /* 空格子没有实体 ⇒ 没有句柄。给 `site_cells`（坐标只在**诊断证据**里出现，
+           这是允许的：`assertNoHumanCoords` 管的是 LLM 输出，不是我们给它的材料）。 */
+        const siteCells = freeSites.slice(0, 8);
         out.push({
             code: "PROCESSOR_REQUIRED",
             layer: "L4",
             severity: "blocker",                    // v2 §2：工厂里根本没有这台机器 ⇒ 真的坏
             subject: subj,
             expected: `the factory owns at least ${need} ${kind}(s)`,
-            observed: `the recipe needs ${need} ${kind}(s) (${[...new Set(ops)].join("/")}), but the world has ${have}`,
+            observed: `the recipe needs ${need} ${kind}(s) (${[...new Set(ops)].join("/")}), but the world has ${have}`
+                + (freeSites.length
+                    ? `; ${freeSites.length} empty ${fp[0]}×${fp[1]} site(s) exist for it`
+                    : `; there is **no empty ${fp[0]}×${fp[1]} site** in the observed region`),
             evidence: {
-                handles: [subj.handle].filter(Boolean),
+                /* ★ `handles` 不再放 hub ★
+                 *
+                 * 原来放的是 hub 的句柄（H1），模型的读法是「这些是我该动手的格子」——
+                 * 第 9 关实测它连着两轮 `insert_machine {at:{$ref:"H1"}}`，
+                 * 而 hub 周围全被带子占着，一台 2×1 的机器都放不下。
+                 *
+                 * 空格子没有实体 ⇒ 没有句柄。所以这里把**可落点坐标**放 `site_cells`
+                 * （诊断证据里的坐标是允许的：`assertNoHumanCoords` 管的是 LLM 的**输出**，
+                 * 不是我们喂给它的材料），hub 的句柄降级到 `hub_handle` 只作上下文。 */
+                handles: [],
+                site_cells: siteCells,
+                free_sites: freeSites.length,
+                footprint: fp,
+                hub_handle: subj.handle || null,
                 uids: hub ? [hub.uid] : [],
                 tier: hub ? tierOf(hub.uid) : 2,
                 scope: "factory",
@@ -980,7 +1146,13 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 have,
                 ops: [...new Set(ops)].sort(),
             },
-            candidates: ["insert_machine", "connect"],
+            candidates: freeSites.length ? ["insert_machine", "connect"] : ["remove_run", "trash_unused", "insert_machine"],
+            hint: freeSites.length
+                ? `用 insert_machine 放在 evidence.site_cells 里任意一格的 ${kind}（宏会按 footprint 展开）。`
+                    + `这些格子里离 hub 最近的排在最前 —— 越近的线越短，越不容易和既有产线打架。`
+                    + `**别把 hub 的句柄当落点**：hub 四周通常已经被入口带子占满。`
+                : `工厂里没有能放下 ${kind}(${fp[0]}×${fp[1]}) 的空地。先把挡路的旧线拆掉`
+                    + `（remove_run / trash_unused）腾出位置，再放机器。`,
         });
     }
 
@@ -1184,5 +1356,67 @@ const REASON_TEXT = Object.freeze({
     "not-a-shape": "an input arriving here is not a shape (e.g. a pigment), so the processor output cannot be derived",
     cycle: "shape propagation met a cycle",
 });
+
+/**
+ * 给定一个形状，找出**哪些带子属于正在搬运它的那条流**。
+ *
+ * ## 为什么需要它（`OBSOLETE_LINE` 一度无法施工）
+ *
+ * 残线诊断原来只说「工厂在造 `Cu----Cu` ×29、一件都没进 hub」，
+ * `evidence.handles` 是**空的** —— 比对同一轮的 `PROCESSOR_REQUIRED`，
+ * 后者老老实实给了 `stream_handles`。模型于是知道「有一条该拆的线」，
+ * 却没有任何句柄可以交给 `remove_run`，下一轮只好去干别的。
+ *
+ * 产出窗口（`produced_total`）说的是「哪个形状在被造」，它**不含位置**；
+ * 位置只能从形状传播（`makeShapeEngine` + `buildStreams`）里拿回来。
+ * 这里就是那座桥。
+ *
+ * 判据刻意从宽：**只要这条流上任何一条带子的当前货是它**就算。
+ * 残线要拆的是「这条线」，不是「恰好这一段」，所以宁可多给几条句柄，
+ * 也不能给一条可能属于别处的。量由调用方（`remove_run` 的 `$path_of`）再收。
+ *
+ * @param {object} obs
+ * @param {object} recipe  `recipeForCached` 的返回（与诊断同源，不重算）
+ * @param {string} shape
+ * @param {object|null} [handles] 句柄表；给了就把 uid 翻成句柄
+ * @param {object} [opts] `{max}` 最多几条
+ * @returns {string[]} 句柄（`handles` 缺失时退回 `uid:<n>`）
+ */
+export function beltsCarryingShape(obs, recipe, shape, handles = null, opts = {}) {
+    const want = typeof shape === "string" ? shape.trim() : "";
+    if (!want) return [];
+    const o = unwrapObs(obs);
+    if (!o || o.truncated === true) return [];
+    if (!recipe || recipe.ok !== true || !Array.isArray(recipe.steps) || !recipe.steps.length) return [];
+    const max = Number.isInteger(opts.max) ? opts.max : 8;
+
+    let engine, streams;
+    try {
+        const idx = indexOf(o);
+        engine = makeShapeEngine(o, idx);
+        streams = buildStreams(idx);
+    } catch {
+        return [];                       // 世界读不全 ⇒ 不猜（与语义层其它地方同一条纪律）
+    }
+
+    const out = [];
+    const seen = new Set();
+    for (const st of streams) {
+        for (const b of st.belts) {
+            let shapes;
+            try {
+                shapes = shapesOf(engine.beltValue(b));
+            } catch {
+                continue;
+            }
+            if (!Array.isArray(shapes) || !shapes.includes(want)) continue;
+            if (seen.has(b.uid)) continue;
+            seen.add(b.uid);
+            out.push(handles ? (handleOf(handles, b.uid) || `uid:${b.uid}`) : `uid:${b.uid}`);
+            if (out.length >= max) return out;
+        }
+    }
+    return out;
+}
 
 export default semanticDiagnoses;

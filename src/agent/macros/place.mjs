@@ -180,8 +180,70 @@ export function rotationForFacing(tpl, facing) {
 }
 
 /**
- * `{cell:[x,y], part:"any"}` 形态反解 origin：枚举「该格是 footprint 里哪一格」。
- * 命中 0 个 → 这格根本不在任何合法摆法里；>1 个 → 多解（契约要求 ambiguous_site，不猜）。
+ * `{cell:[x,y]}` 指向**一格带子**时的反解：枚举「这一格的货能喷进机器」的全部摆法。
+ *
+ * ★ 为什么需要它与 `candidateOrigins` 并存 ★
+ *
+ * `candidateOrigins` 的语义是「这一格是机器要占的其中一格」。而调用方指着一格
+ * **带子**说「把机器插在这里」时，它说的是「机器接在这条流上」—— 指向的是
+ * 机器的**来料落点**（`p.cell`），不是机器占的格。
+ *
+ * 2026-11-10 第 9 关真机：模型给 `at: B420`（正北流的带子）插 painter，
+ * 旧语义下 2×1 机器必然两解 ⇒ `ambiguous_site`，模型连撞三轮。
+ *
+ * 多输入槽的机器（painter 的 shape+color、mixer/stacker 的两路）会让同一格
+ * 被不同槽接上，所以还要按**槽的主次**分档：接主料槽优先。
+ *
+ * @returns {{cands: Array<[number,number]>, chosenBy: string|null}}
+ */
+export function originsFeedingCell(tpl, rotation, cell, world = null) {
+    const PRIMARY_IN_ROLES = ["shape", "primary", "lower", "item"];
+    const inRoles = (tpl.inputs || []).map(p => p.role);
+    const [w, h] = tpl.footprint;
+    const spanX = Math.abs(rotOffset([w - 1, 0], rot90(rotation))[0]) + 1;
+    const spanY = Math.abs(rotOffset([0, h - 1], rot90(rotation))[1]) + 1;
+    const bx = [cell[0] - (spanX + 2), cell[0] + 2];
+    const by = [cell[1] - (spanY + 2), cell[1] + 2];
+
+    let cands = [];
+    const primaryCands = [];
+    for (let y = by[0]; y <= by[1]; y++) {
+        for (let x = bx[0]; x <= bx[1]; x++) {
+            const g = machineGeometry(tpl, [x, y], rotation);
+            const hit = g.inputs.find(p => cellKey(p.cell) === cellKey(cell));
+            if (!hit) continue;
+            cands.push([x, y]);
+            const isPrimary = inRoles.length === 1
+                || PRIMARY_IN_ROLES.includes(hit.role)
+                || hit.role === inRoles[0];
+            if (isPrimary) primaryCands.push([x, y]);
+        }
+    }
+    if (!cands.length) return { cands: [], chosenBy: null };
+    if (primaryCands.length) cands = primaryCands;
+
+    /* 仍有多个 ⇒ 用「另一路有没有来料」再收一次。mixer/stacker 的两个同向并列
+       输入槽在几何上完全等价，但只有**正确的**那台，另一格输入也是被喂着的。 */
+    if (cands.length > 1 && world) {
+        const scored = cands.map(o => {
+            const g = machineGeometry(tpl, o, rotation);
+            const fed = g.inputs.filter(p => {
+                const occ = world.cells.get(cellKey(p.cell));
+                return !!occ && (occ.type === "belt" || occ.type === "underground_belt");
+            }).length;
+            return { o, fed };
+        });
+        const maxFed = Math.max(...scored.map(s => s.fed));
+        const best = scored.filter(s => s.fed === maxFed);
+        if (best.length === 1) return { cands: [best[0].o], chosenBy: "input-cell+fed" };
+    }
+    cands.sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+    return { cands, chosenBy: "input-cell" };
+}
+
+/**
+ * `{cell:[x,y]}` 指向**一格带子**时的反解：枚举「这一格能成为机器来料落点」的摆法。
+ *
  * @returns {Array<[number,number]>} 去重后的 origin 候选（确定序：先 y 再 x）
  */
 export function candidateOrigins(tpl, rotation, cell) {
@@ -441,6 +503,52 @@ export function insertMachine(a, b, c, d, e) {
     const hasOut = (tpl.outputs || []).length > 0;
     let rotation = 0;
     let facingOut = facing;
+    let facingFrom = null;          // 从带子货流推出的朝向（见下）
+    /* ★ 插在带子上时，facing 是**算得出来的**，不该让调用方猜 ★
+     *
+     * 2026-11-10 第 9 关实测：模型反复调
+     *   insert_machine {at: B420, facing: "right", machine: "painter"}
+     * 全部 `ambiguous_site`。它读带子句柄、读诊断、指出正确的那一格 —— 都没错，
+     * 错的是 `facing:"right"`，而那条带子的货流其实是**向北**的。
+     *
+     * facing 是"机器从哪一面出料"，而插入点的正确朝向由**那条带子现在往哪流**
+     * 唯一确定：机器必须顺着原来的流向接力。这件事宏自己算得出来
+     * （`beltExit(rv, r)` 就在手边），让 LLM 去猜一个几何量是没有意义的难度。
+     *
+     * 只在 `at` 落在一格**带子**上时推导。给了 facing 就以调用方为准
+     * （它可能在有意改向），冲突由后验报出来。 */
+    if (facing !== null && hasOut && world && at.kind === "any-cell") {
+        const g0 = world.cells.get(cellKey(at.cell));
+        const e0 = g0 ? world.byUid.get(g0.uid) : null;
+        if (e0 && e0.type === "belt") {
+            const flow = beltExit(e0.rv, e0.r);
+            if (flow && flow !== facing && isRotatable(machine.kind) !== false) {
+                warnings.push({
+                    code: "facing_conflicts_with_flow",
+                    detail: `你给 facing="${facing}"，但 ${cellKey(at.cell)} 这格带子（uid=${e0.uid}）`
+                        + `的货流朝 ${flow}。机器顺着接力才是 ${flow} —— 按 ${facing} 放会让这条流拐弯。`
+                        + `不知道朝向时**别给 facing**，at 指向带子就会从货流推出来。`,
+                    hint: `去掉 facing，或改成 "${flow}"。`,
+                });
+            }
+        }
+    } else if (facing === null && hasOut && world && at.kind === "any-cell") {
+        const g0 = world.cells.get(cellKey(at.cell));
+        const e0 = g0 ? world.byUid.get(g0.uid) : null;
+        if (e0 && e0.type === "belt") {
+            const flow = beltExit(e0.rv, e0.r);
+            if (flow && isRotatable(machine.kind) !== false) {
+                facingFrom = flow;
+                facingOut = flow;
+                warnings.push({
+                    code: "facing_derived",
+                    detail: `没给 facing ⇒ 从 ${cellKey(at.cell)} 那格带子（uid=${e0.uid}）`
+                        + `的货流推出 facing="${flow}"`,
+                    hint: "要按别的方向放，就显式给 facing —— 那等于有意把这条流拐弯。",
+                });
+            }
+        }
+    }
     if (!hasOut) {
         /* 无输出槽的机器只有 trash：上游 getIsRotateable()=false ⇒ 游戏里恒 r=0 */
         if (facing !== null) {
@@ -455,11 +563,22 @@ export function insertMachine(a, b, c, d, e) {
     } else if (facing === null) {
         if (isRotatable(machine.kind) === false) {
             rotation = 0;
+        } else if (facingOut !== null) {
+            /* 上一步从带子货流推出来的（见 `facingFrom`）。 */
+            const rr = rotationForFacing(tpl, facingOut);
+            if (!rr.ok) {
+                return failure("insert_machine", {
+                    code: "ambiguous_site", field: "facing", message: rr.message,
+                    hint: "这类建筑请显式给 rotation 无关的摆法，或改用 connect（它不改机器朝向）。",
+                });
+            }
+            rotation = rr.rotation;
         } else {
             return failure("insert_machine", {
                 code: "ambiguous_site", field: "facing",
                 message: `${machine.kind} 有 ${tpl.outputs.length} 个输出槽且可旋转 ⇒ facing 必填（旋转不变以外的机器不给 facing 无法确定朝向）`,
-                hint: `facing = primary output 的世界喷射方向。${machine.kind}/${machine.variant} 的 primary 局部在 ${primaryOutputDir(tpl)}。`,
+                hint: `facing = primary output 的世界喷射方向。${machine.kind}/${machine.variant} 的 primary 局部在 ${primaryOutputDir(tpl)}。`
+                    + ` 或者让 at 指向一格**带子**（形态 {cell:[x,y]}），朝向会从那条带子的货流推出来。`,
             });
         }
     } else {
@@ -480,12 +599,57 @@ export function insertMachine(a, b, c, d, e) {
     if (at.kind === "origin") {
         origin = [at.cell[0], at.cell[1]];
     } else {
-        const cands = candidateOrigins(tpl, rotation, at.cell);
+        /* ★ `at.cell` 指着**一格带子**时，它说的是「这台机器要接谁」 ★
+         *
+         * 2026-11-10 第 9 关实测：模型给 `at: B420`（一格正北流的带子）插 painter。
+         * 旧逻辑把这一格当成「机器要占的其中一格」去反解 footprint ⇒ 2 个 origin，
+         * 再按「这一格是不是输入槽槽格」收窄 ⇒ 0 个命中 ⇒ `ambiguous_site`。
+         * 模型三轮都卡在这里，而它的意图是完全正确的：**把机器插在这条流上**。
+         *
+         * 语义应该是：这一格带子把货喷进机器，所以它必须是某输入槽的**来料落点**
+         * （`p.cell`，不是 `p.slot`）。按这个反解，origin 就唯一了。 */
+        /* ★ 两种语义，按 `at.cell` 上有什么来分 ★
+         *
+         * · 那格是**带子** ⇒ 调用方说的是「这台机器接在这条流上」（来料落点）。
+         *   这是第 9 关真机踩出来的：模型指着一格带子要插 painter，旧逻辑把它
+         *   当「机器要占的其中一格」，2×1 机器必然两解 ⇒ `ambiguous_site` 三轮。
+         * · 那格**不是带子**（空格 / 机器）⇒ 旧语义不变：`at.cell` 是机器要占的
+         *   某一格，反解 footprint 再按「输入槽槽格」收窄。已有回归测试锁着这条路径，
+         *   不能为了新场景把它改掉。 */
+        const cellOwner = world
+            ? (() => {
+                const g0 = world.cells.get(cellKey(at.cell));
+                const e0 = g0 ? world.byUid.get(g0.uid) : null;
+                return e0 && e0.type === "belt" ? e0 : null;
+            })()
+            : null;
+        /* 带子格上也可能**没有**任何摆法让它的货喷进机器（例如流朝反方向）。
+           那就退回旧语义再试一次，而不是直接判死。
+           同理，**旧语义能唯一解出**时优先用旧语义 —— 它锁着 E2E 缺陷 4 的回归位
+           （`{cell}` 指机身格时按「输入槽槽格」收窄），那条路径不能因为新场景被改掉。 */
+        let cands = null;
+        let chosenBy = null;
+        if (cellOwner) {
+            const base = candidateOrigins(tpl, rotation, at.cell);
+            const slotHits = base.filter(o => machineGeometry(tpl, o, rotation)
+                .inputs.some(p => cellKey(p.slot) === cellKey(at.cell)));
+            if (base.length <= 1 || slotHits.length === 1) {
+                cands = base;
+                chosenBy = null;                        // 走下面统一的旧语义收窄
+            } else {
+                const r = originsFeedingCell(tpl, rotation, at.cell, world);
+                if (r.cands.length) { cands = r.cands; chosenBy = r.chosenBy; }
+            }
+        }
+        if (!cands || !cands.length) {
+            cands = candidateOrigins(tpl, rotation, at.cell);
+            chosenBy = null;
+        }
         if (cands.length === 0) {
             return failure("insert_machine", {
                 code: "precondition_failed", field: "at",
                 message: `[${at.cell}] 不在 ${machine.kind}/${machine.variant} @ rotation=${rotation} 的任何 footprint 里`,
-                hint: "at 必须是这台机器**要占的其中一格**（来自 obs 的那条带子）。",
+                hint: "at 必须是这台机器**要占的其中一格**，或一格**要接的来料带子**。",
             });
         }
         if (cands.length > 1) {
@@ -509,16 +673,35 @@ export function insertMachine(a, b, c, d, e) {
                         + `只有 ${JSON.stringify(hits[0])} 让这一格成为机器的**输入槽槽格**（machine 自己那格），据此选定`,
                 };
             } else {
+                /* 走到这里说明候选在**几何与来料上都等价**（例如 mixer 的两个同向
+                   并列输入槽，B420 当左槽或当右槽都成立）。这是真歧义，不能猜 ——
+                   但必须把「两种摆法分别长什么样」说清楚，否则调用方只能反复试。 */
+                const inRoles = (tpl.inputs || []).map(p => p.role);
+                const describe = o => {
+                    const g = machineGeometry(tpl, o, rotation);
+                    return `${JSON.stringify(o)}（占 ${g.cells.map(c => JSON.stringify(c)).join("")}，`
+                        + `输入 ${g.inputs.map(p => cellKey(p.cell)).join(" / ")}）`;
+                };
                 return failure("insert_machine", {
                     code: "ambiguous_site", field: "at",
-                    message: `[${at.cell}] 可反解出 ${cands.length} 个 origin（高 ${tpl.footprint[1]} 宽 ${tpl.footprint[0]}），且这一格不是唯一的输入槽落点`,
-                    hint: `改用 origin 形态 \`at:[x,y]\` 直接指定左上角。候选：${cands.map(c2 => JSON.stringify(c2)).join(" / ")}`,
+                    message: `[${at.cell}] 可反解出 ${cands.length} 个 origin（高 ${tpl.footprint[1]} 宽 ${tpl.footprint[0]}），`
+                        + `且这一格在所有摆法里都被接上 —— 几何与来料都等价，无法唯一确定`
+                        + (inRoles.length > 1 ? `（${machine.kind} 的 ${inRoles.length} 个输入槽同向并列，谁接这格都成立）` : ""),
+                    hint: `改用 origin 形态 \`at:[x,y]\` 直接指定左上角。候选：`
+                        + cands.map(describe).join(" / ")
+                        + `。**另一个输入槽也要喂**（${machine.kind} 是双输入机器），所以这也说明了还缺一路来料。`,
                     candidates: cands.map(c2 => ({ origin: c2 })),
                 });
             }
         } else {
             origin = cands[0];
-            site = { mode: "any-cell", candidates: cands, chosen_by: "unique" };
+            site = chosenBy
+                ? {
+                    mode: "any-cell", candidates: cands, chosen_by: chosenBy,
+                    why: `${JSON.stringify(at.cell)} 是一格带子 ⇒ 机器必须接在它下游；`
+                        + `按「这一格是某输入槽的来料落点」反解出唯一 origin ${JSON.stringify(origin)}`,
+                }
+                : { mode: "any-cell", candidates: cands, chosen_by: "unique" };
         }
     }
 
@@ -574,10 +757,47 @@ export function insertMachine(a, b, c, d, e) {
         });
     }
 
+    /* ── ⑤b ★ 出口落点被另一台机器占死 ⇒ 这台机器永远出不了货 ★ ──
+     *
+     * 实测（2026-11-10 第 9 关）：模型用 origin 形态 `at:[-10,5]` 把 painter 放在
+     * 一台矿机正上方，painter 的输出格 (-10,6) 恰好是那台矿机本身。宏当时返回 ok
+     * —— 因为矿机「有一个朝回的槽」被判成 `mismatch`，而那只是一条 warning。
+     *
+     * 后果是满屏的 `progress: 1.00`：4 台 painter 的产物全部堵在出口，
+     * 一台都送不出去。用户看图问「效率这么慢的机器是怎么想出来的」—— 这就是它。
+     *
+     * 为什么必须**拒**而不是警告：这条不是「接线方向不对、等一下再连」，
+     * 而是**几何上不可能**。输出格被一台永不让位的机器占着，除了把它拆掉
+     * 没有别的解法，而拆掉那台矿机又不是调用方的意思（它想加一台 painter）。
+     * 让它落盘只会得到一个永久堵死的机器。
+     *
+     * 只查**非带子**占位：输出格上是带子（方向对不对）仍走 warning，
+     * 那是可以事后用 connect/extend_line 修的。 */
+    const blockedOutput = [];
+    for (const p of geom.outputs) {
+        const rec = world.cells.get(cellKey(p.cell));
+        if (!rec) continue;
+        if (rec.type === "belt" || rec.type === "underground_belt") continue;
+        blockedOutput.push({ role: p.role, cell: p.cell, what: rec.type, uid: rec.uid });
+    }
+    if (blockedOutput.length) {
+        const b = blockedOutput[0];
+        return failure("insert_machine", {
+            code: "blocked_by_machine", field: "at",
+            message: `这台 ${machine.kind} 的输出槽 ${b.role} 落在 ${JSON.stringify(b.cell)}，`
+                + `那一格被 ${b.what}(uid=${b.uid}) 占着 —— 产物永远出不去，机器会一直堵死`
+                + (blockedOutput.length > 1 ? `（共 ${blockedOutput.length} 个输出槽被挡）` : ""),
+            hint: `换一个落点：让输出槽的带格空着或落在**带子**上（带子可以让位）。`
+                + `机器永远不会被覆盖，所以「紧贴另一台机器」只在两台的槽位正好对接时才成立。`
+                + ` 或者先用 connect 把下游接出来再放机器。`,
+            firstConflict: { x: b.cell[0], y: b.cell[1], what: b.what, uid: b.uid },
+            detail: { blockedOutputs: blockedOutput, origin, rotation },
+        });
+    }
+
     /* 同一台带子被两个 footprint 格命中（2×1 机器横跨同一台机器？不可能，但兜住） */
     const replacedUniq = [...new Map(replaced.map(r => [r.uid, r])).values()]
         .sort((p, q) => (p.y - q.y) || (p.x - q.x));
-
     if (replacedUniq.length) {
         warnings.push({
             code: "replacing_belts",

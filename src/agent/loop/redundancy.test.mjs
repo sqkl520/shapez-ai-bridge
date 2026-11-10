@@ -86,6 +86,15 @@ test("R5 ★ L4 夹具：161 条带子，0 条可安全单删 ★（P18 的核�
 });
 
 test("R6 ★ L5 真机基线：158 条带子，0 条可安全单删 ★", () => {
+    /* ⚠️ 夹具在 `.tmpverify/`（本地实验产物，**不进仓**）。
+       缺了它这条跳过 —— 与 R7 同一口径：skip 而不是 fail。
+       R5（L4 161/0）用的是受跟踪的 `research/ai-plan/live-L4-entities.json`，
+       核心结论由它钉住，不会因为少一份 L5 快照就失去覆盖。 */
+    const f = path.join(REPO, ".tmpverify/obs-live-baseline.json");
+    if (!fs.existsSync(f)) {
+        console.log("  （跳过：.tmpverify/obs-live-baseline.json 不存在 —— 本地实验产物不进仓）");
+        return;
+    }
     const r = removalRedundancy(load(".tmpverify/obs-live-baseline.json"));
     assert.equal(r.belts, 158);
     assert.equal(r.safe, 0);

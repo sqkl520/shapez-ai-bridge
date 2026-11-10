@@ -371,6 +371,34 @@ t("insert_machine：r≠0 一定带 rotation_not_live_verified（observed 级公
  * 7. insert_machine：接线判定（机器↔机器紧贴的 0 格连接）
  * ══════════════════════════════════════════════════════════════════════════ */
 
+t("★ insert_machine：输出槽落在**机器**上 ⇒ 直接拒（产物永远出不去，不是 warning）", () => {
+    /* 真机第 9 关（2026-11-10）：模型把 4 台 painter 放进世界，`debug_items` 显示
+       每一台的产物都是 `progress: 1.00` —— 全部堵死在出口，一件都送不出去。
+       两台的输出格**就是矿机本体**。
+
+       这不是「方向不对、等一下再连」：输出格被一台永不让位的机器占着，
+       几何上就接不出去。旧实现只发 wiring mismatch 警告，机器照样落盘。
+
+       构造：painter@rot90（facing=bottom）的 out 格 = origin + (0,2)。
+       夹具里 (2,-8) 是矿机 10079，所以 origin (2,-10) 的输出格正好落在它身上。 */
+    const wd = buildWorld(ENT);
+    const miner = wd.cells.get("2,-8");
+    assert.ok(miner && miner.type === "miner", "前提：(2,-8) 是一台矿机");
+
+    const r = insertMachine({ at: [2, -10], facing: "bottom", machine: "painter" }, W);
+    assert.ok(!r.ok, `输出格压在矿机上必须拒，实得 ok=${r.ok}`);
+    eq(r.error.code, "blocked_by_machine");
+    eq(r.error.field, "at");
+    assert.match(r.error.message, /产物永远出不去/, "必须说清后果，不是只说「冲突」");
+    assert.match(r.error.hint, /换一个落点/, "必须给出可执行的下一步");
+    eq(r.error.detail.blockedOutputs.map(b => [b.cell[0], b.cell[1], b.what]), [[2, -8, "miner"]],
+        "detail 必须点名真正的堵点格与被谁占着");
+
+    /* 对照：输出格落在**带子**上仍只警告 —— 带子可以让位，也能事后接。 */
+    const okOut = insertMachine({ at: [-9, -11], facing: "top", machine: "cutter" }, { entities: ENT.filter(e => e.uid !== 10036) });
+    assert.ok(okOut.ok, "输出格是带子 ⇒ 仍然允许（这条不能一起拒掉）");
+});
+
 t("insert_machine：输出口接既有带子判 ok、接到空地判 nothing（且既有机器永不让位）", () => {
     /* 真实存档的 cutter@(-8,-11)：输入面 bottom ⇒ 带格 (-8,-10)（既有带子 10058 ⇒ ok）；
        输出面 top ⇒ 带格 (-8,-12)（带子 10059 ⇒ ok）与 (-7,-12)（隧道 10077 ⇒ 无槽位表 ⇒ mismatch）。

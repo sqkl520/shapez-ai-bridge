@@ -1389,14 +1389,14 @@ function scoreOf(cd, opts, world) {
     const turns = cd.sh.turns;
     const len = cd.cells.length;
     switch (opts.prefer) {
-        case "shortest": return len * 1000 + turns;
+        case "fewest_turns": return turns * 1000 + len;
         case "reuse_existing": {
             let reuse = 0;
             if (world) for (const c of cd.cells) { const r = world.cells.get(key(c[0], c[1])); if (r && r.type === "belt") reuse++; }
             return (len - reuse) * 1000 + turns;
         }
-        case "fewest_turns":
-        default: return turns * 1000 + len;
+        case "shortest":
+        default: return len * 1000 + turns;
     }
 }
 
