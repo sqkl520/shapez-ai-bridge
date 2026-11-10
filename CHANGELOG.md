@@ -195,6 +195,21 @@ hub 的句柄降级成 `hub_handle`（只作上下文）。
 而这条流只有一种」——`PROCESSOR_REQUIRED` 目前只数「有几台」，不检查「喂得对不对」。
 详见 `research/ai-plan/P23-LEVEL9-PURPLE-BRANCH.md`。
 
+### Fixed — `trash_unused` 的每条 place 都被判「没有 provenance」
+
+`attachProvenance` 给每条 op 挂来源标签，三级优先：pending token → `$bbox_of` → `obs:uid`。
+`trash_unused` 是唯一一个**有落点但没有 pending 引用**的宏：
+`trashCell` 由宏从端口几何算出来，可它落在**出口格**、不是被点名那条带子本身，
+所以 `obs:uid` 那一级也不成立（判据是 `e.x === op.x`）。于是**每一条都被判 MISSING_PROVENANCE**。
+
+实测（第 9 关）：模型一轮里三条 `trash_unused` 全部通过宏、全部有落点，
+整轮却因为「3 条 op 都没有 provenance」被拒。而那条诊断的原文还写着
+「planToTxOps 目前不产出这一层，loop 必须补齐」——补齐的地方就在 `attachProvenance`，
+只是当初漏了 trash 这一支。
+
+现在 `trash_unused` 和 `connect` / `extend_line` 一样合成 token
+（`trash_unused:trash@<x>,<y>`），语义是「这一格的坐标来自这个宏这一次调用的返回值」。
+
 ### Added — `debug_building_unlocked` 的实机结论
 
 第 9 关要求紫色（`CpCpCpCp`），而世界里**没有紫矿** —— 只有

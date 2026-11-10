@@ -1114,9 +1114,29 @@ function sourceOfPlace(calls, op) {
                 if (p && at(p.origin)) return { call: c, index: i, entry: p, token: (p.pending && p.pending.token) || null };
             }
         } else if (c.macro === "trash_unused") {
-            if (at(r.trashCell)) return { call: c, index: i, entry: r, token: (r.pending && r.pending.token) || null };
-        } else if (c.macro === "connect" || c.macro === "extend_line") {
-            for (const cell of r.cells || []) {
+            if (at(r.trashCell)) {
+                /* ★ 没有 `pending` ⇒ 必须合成 token（与 connect/extend_line 同源处理）★
+                 *
+                 * `trash_unused` 是唯一一个**有落点但没有 pending 引用**的宏：
+                 * 它放一台 trash 到某个出口格，`trashCell` 就是那个格子，坐标由宏
+                 * 从端口几何算出来。但落到 op 上之后既没有 `macro:` token（pending 为空），
+                 * 也不满足 `obs:uid=` 判据（`e.x === op.x` —— trash 落在**出口格**，
+                 * 不是被点名那条带子本身），于是**每一条都被判 MISSING_PROVENANCE**。
+                 *
+                 * 实测（2026-11-10 第 9 关）：模型一轮里三条 `trash_unused` 全部通过宏、
+                 * 全部有落点，整轮却因为 `3 条 op 都没有 provenance` 被拒。
+                 * 那条诊断的原文还写着「planToTxOps 目前不产出这一层，loop 必须补齐」——
+                 * 补齐的地方就在这里，只是当初漏了 trash 这一支。
+                 *
+                 * token 形式与 connect 一致：`<macro>:<kind>@<x>,<y>`，
+                 * 语义是「这一格的坐标来自这个宏在这一次调用里的返回值」。 */
+                return {
+                    call: c, index: i, entry: r,
+                    token: `trash_unused:trash@${r.trashCell[0]},${r.trashCell[1]}`,
+                    synthesized: true,
+                };
+            }
+        } else if (c.macro === "connect" || c.macro === "extend_line") {            for (const cell of r.cells || []) {
                 if (!cell || cell.x !== op.x || cell.y !== op.y) continue;
                 /* 与 planToTxOps 的 kind 推法同口径（`cell.building || "belt"`）；
                    不一致 ⇒ 这一格不是这条 op 的来源，**跳过**（继续找，不就地认领）。 */
