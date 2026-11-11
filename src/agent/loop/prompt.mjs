@@ -2302,6 +2302,70 @@ function renderPriorAttempts(attempts) {
 }
 
 /**
+ * `## THIS RUN` —— 本次 run 里我自己的决策轨迹。
+ *
+ * ## 为什么需要（第 9 关实测的策略漂移）
+ *
+ * 第 9 关的 `MIXER_UNFED` 明确写着「红矿在 44 格外，这不是接一根线，
+ * 是一条要单独规划的长支线」。模型第 4 轮的 `say` 原文：
+ *
+ *   place the existing mixer concept on the blue stream at B194 so the mix step
+ *   sits in-line, **rather than building a far-off color branch first**
+ *
+ * 它**知道**那个选项，主动选择先做别的。然后下一轮完全忘了 —— 又试 connect、
+ * 又放 mixer，三轮下来一步没往支线走。
+ *
+ * 根因不是「信息没送到」（诊断写得很清楚），而是**跨轮没有目标坚持**：
+ * 每轮都是新 prompt，`## LAST ROUND` 只带上一轮，不带「我前几轮决定过什么」。
+ *
+ * ## 与 `## PRIOR ATTEMPTS` 的分工
+ *
+ *   · PRIOR ATTEMPTS = **跨 run** 的统计结论（「这个宏在这个目标上历来没用」）
+ *   · THIS RUN       = **本次 run** 的意图轨迹（「我第 4 轮说要先放 mixer」）
+ *
+ * 两者都要有：前者防重蹈覆辙，后者防半途而废。
+ *
+ * ## 预算
+ *
+ * 只列最近 4 轮、每轮一句话（`say` 截 90 字符）。再多就是噪音 ——
+ * 模型真正需要的是「我刚才在干什么」，不是完整日志。
+ *
+ * @param {Array|null} log `st.runLog`，每项 `{round, say, calls, outcome}`
+ * @returns {string|null} 无内容时 null
+ */
+function renderRunLog(log) {
+    if (!Array.isArray(log) || !log.length) return null;
+    const OUTCOME = {
+        planned: "planned",
+        positive: "delivered",
+        cleanup: "cleaned up",
+        constructive: "added stuff, no delivery",
+        reactive: "made it worse",
+        regressive: "made it worse",
+        inert: "changed nothing",
+        churn: "sideways move",
+        failed: "did not apply",
+    };
+    const recent = log.slice(-4);
+    const lines = ["## THIS RUN", "what you decided earlier in THIS run (most recent last):"];
+    for (const r of recent) {
+        const round = Number.isFinite(r && r.round) ? r.round : "?";
+        const calls = Array.isArray(r.calls) && r.calls.length ? r.calls.join("+") : "(no calls)";
+        const out = OUTCOME[String(r && r.outcome)] || String((r && r.outcome) || "");
+        const say = r && typeof r.say === "string" && r.say.trim()
+            ? ` — "${clip(sanitize(r.say).text.trim(), 90)}"`
+            : "";
+        lines.push(`  · r${round} ${calls} → ${out}${say}`);
+    }
+    lines.push(
+        "⇒ Stay on one plan until it is DONE or proven impossible. If an earlier round named"
+        + " something it deliberately postponed (\"rather than ... first\"), either do it now"
+        + " or say plainly why you are abandoning it. Do not silently restart the same step.",
+    );
+    return sanitize(lines.join("\n")).text;
+}
+
+/**
  * `## GOAL CHANGED` —— 世界在本次 run 中途升级了。
  *
  * ## 为什么单独一段，而不是只靠 DIAGNOSIS
@@ -2440,7 +2504,7 @@ export class PromptOverBudget extends Error {
  * @throws {PromptOverBudget} code=PROMPT_OVER_BUDGET（总字符 > in_chars_max）
  * @throws {TypeError} 缺 goal / obs / 未知候选宏
  */
-export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, lastNetEffect = null, priorAttempts = null, goalChanged = null, obsoleteLines = null, budget, production = null, recipe: injectedRecipe = null } = {}) {
+export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, lastNetEffect = null, priorAttempts = null, goalChanged = null, obsoleteLines = null, budget, production = null, recipe: injectedRecipe = null, runLog = null } = {}) {
     if (!obs || typeof obs !== "object") throw new TypeError("buildPrompt: obs is required");
     const goalShape = typeof goal === "string"
         ? goal
@@ -2525,6 +2589,10 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
      * 先给「这一步/上一步」的即时反馈，再给「以前试过什么」的历史。
      * 反过来（历史在前）会让模型以为历史比眼前的世界更重要 —— 而世界是新的。 */
     const sPrior = renderPriorAttempts(priorAttempts);
+    /* `## THIS RUN` 紧挨着 PRIOR ATTEMPTS：先看「我以前在别的 run 里试过什么」，
+       再看「这次 run 我自己打算干什么」—— 前者是统计，后者是意图，后者更即时。
+       放在 LAST ROUND 之后、PRIOR 之前。 */
+    const sRunLog = renderRunLog(runLog);
     /* 换关通告排在 PRIOR ATTEMPTS **之前**：它改变的是整件事的前提，比历史更重要。 */
     const sGoalChanged = renderGoalChanged(goalChanged, obsoleteLines);
     /* 残线单独一段，**不再依赖 goalChanged**（见 renderLeftoverLines 的注释：
@@ -2568,7 +2636,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     }
 
     /* `sLastStep` 无内容（首轮）时由 filter 天然去掉，不占任何字符。 */
-    const fixed = [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, sLastStep, sPrior, s5, s6]
+    const fixed = [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, sLastStep, sRunLog, sPrior, s5, s6]
         .filter(x => x !== null && x !== undefined).join("\n\n");
 
     /* ── 截断：只动带子列表。目标 = min(token 预算, 字符硬上限) ── */
@@ -2589,7 +2657,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
      * 机器表 20 → 12 → 6 → 0，每档都重跑截断循环，取第一个能让带子 > 0 的档。
      * 「带子优先」因此是**结构性成立**的，不是调出来的。 */
     const composeWith = (machines, belts, capacity) => [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, machines, capacity, belts,
-        s3Production, s3Budget, s4, sLastStep, sPrior, s5, s6].filter(x => x !== null && x !== undefined).join("\n\n");
+        s3Production, s3Budget, s4, sLastStep, sRunLog, sPrior, s5, s6].filter(x => x !== null && x !== undefined).join("\n\n");
     const compose = (belts, capacity) => composeWith(s3Machines, belts, capacity);
 
     /* ★ 顺序：**先定带子，再花余量** ★
@@ -2867,14 +2935,18 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         belts_diag_reserve: selection.reserve,
         belts_padded: selection.padded.length,
         over_token_budget: chars > Math.floor(limits.tokensMax * PROMPT_RULES.CHARS_PER_TOKEN),
-        redactions: countMarks([s2, sGoalChanged, s3, s4, sLastStep, sPrior, s5, s6].join("\n"), "coord"),
-        redacted_uids: countMarks([s2, s3, s4, sLastStep, sPrior, s5, s6].join("\n"), "uid"),
+        redactions: countMarks([s2, sGoalChanged, s3, s4, sLastStep, sRunLog, sPrior, s5, s6].join("\n"), "coord"),
+        redacted_uids: countMarks([s2, s3, s4, sLastStep, sRunLog, sPrior, s5, s6].join("\n"), "uid"),
         /* 净效果段是否真的进了 prompt —— 与 `capacityUnavailable` 同理：
            让测试与调试能区分「首轮本来就没有」和「加了但被砍掉」。 */
         last_step_shown: sLastStep !== null,
         /* 跨 run 记忆段是否真的进了 prompt；测试/调试据此区分「没有记忆」
            与「有记忆但被砍掉」。 */
         prior_attempts_shown: sPrior !== null,
+        /* 本次 run 的决策轨迹是否进了 prompt。与 `prior_attempts_shown` 分开记：
+           前者是跨 run 的统计，后者是本次 run 的意图，两者独立失效。 */
+        this_run_shown: sRunLog !== null,
+        this_run_rounds: Array.isArray(runLog) ? Math.min(runLog.length, 4) : 0,
         goal_changed_shown: sGoalChanged !== null,
         /* 残线段是否真的进了 prompt。与 `goal_changed_shown` 分开记：
            两者曾共用一个渲染入口，于是「没换关」被误读成「没有残线」。 */

@@ -15,6 +15,79 @@
 
 ## [Unreleased]
 
+### Fixed — 计划被拒之后，下一轮的 `LAST ROUND` 显示 "none"
+
+`settleFailure`（计划/应用失败时的收尾）只写 transcript 的 `repair_decide`，
+**不更新 `lastPlanSummary`**。后果：
+
+```
+## LAST ROUND
+none (this is round 1)
+```
+
+模型压根不知道上一轮失败过、更不知道输在哪。
+
+实机第 9 关：第 1 轮 `connect` 被 `target_already_fed` 拒，
+第 2 轮它换了个 `prefer` 又调了一次**几乎完全相同**的 `connect` ——
+因为它读到的是「上一轮：无」。
+
+现在 `settleFailure` 也写 `lastPlanSummary`（形态与成功路径一致），
+失败的那条带 `code` + `hint` + `observed`：
+
+```
+## LAST ROUND
+round 1: calls [connect]
+codes: MACRO_REFUSED
+previous failures:
+  · connect → target_already_fed: C7 的 color slot 0 已经被 B205 占着
+    ↳ 换一个 port，或传 opts.rebind=true。
+```
+
+**错误码、具体格子、修法**三样都到模型眼前了。
+
+### Added — `## THIS RUN`：本次 run 的决策轨迹（跨轮目标坚持）
+
+第 9 关暴露的最后一个缺陷不是「信息没送到」，而是**跨轮没有目标坚持**。
+
+`MIXER_UNFED` 明确写着「红矿在 44 格外，这不是接一根线，是一条要单独规划的长支线」。
+模型第 4 轮的 `say` 原文：
+
+> place the existing mixer concept on the blue stream at B194 so the mix step sits in-line,
+> **rather than building a far-off color branch first**
+
+它**知道**那个选项，主动选择先做别的。然后下一轮完全忘了 —— 又试 `connect`、
+又放 mixer，三轮下来一步没往支线走。
+
+根因：每轮都是新 prompt，`## LAST ROUND` 只带上一轮的动作与结果，
+不带「我前几轮决定过什么」。
+
+新增 `st.runLog`：每轮记 `{round, say, calls, outcome}`，tx 后回填真实净效果。
+prompt 里渲染成 `## THIS RUN`，只列**最近 4 轮**，每轮一句：
+
+```
+## THIS RUN
+what you decided earlier in THIS run (most recent last):
+  · r2 insert_machine → added stuff, no delivery — "place a mixer first, rather than building a far-off color branch"
+  · r3 connect → made it worse — "connect B192 into C7 slot 1"
+⇒ Stay on one plan until it is DONE or proven impossible. If an earlier round named something
+  it deliberately postponed ("rather than ... first"), either do it now or say plainly why
+  you are abandoning it. Do not silently restart the same step.
+```
+
+关键是**把模型自己说过的话原样还回去** —— 那是「我决定过什么」的唯一来源。
+收尾那句给它一条可执行的纪律，而不只是陈列历史。
+
+与 `## PRIOR ATTEMPTS` 的分工：
+
+- `PRIOR ATTEMPTS` = **跨 run** 的统计（「这个宏在这个目标上历来没用」）
+- `THIS RUN` = **本次 run** 的意图（「我第 4 轮说要先放 mixer」）
+
+前者防重蹈覆辙，后者防半途而废。两者都需要，且独立失效 —— `blocks` 里
+`prior_attempts_shown` 与 `this_run_shown` 分开记。
+
+12 条新断言覆盖：段出现/不出现、say 原文被还回去、意图与结局并排、
+4 轮上限、`planned` 状态如实显示。
+
 ### Fixed — 颜料矿机的输出是裸名，配方要的是 `color:<name>`
 
 两套命名在形状传播里撞车：
