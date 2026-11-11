@@ -2366,6 +2366,39 @@ function renderRunLog(log) {
 }
 
 /**
+ * `## STICKY GOAL` —— 一件需要跨多轮才能做成的事，别被眼前的红点挤掉。
+ *
+ * ## 为什么单独一段（第 9 关的「修症状」循环）
+ *
+ * `MIXER_UNFED` 一出现就说清「红矿 44 格外，这是要规划的长支线」。
+ * 但每轮 observe 都重算一堆诊断，结构层那些 `BELT_HANDOFF_REJECTED` /
+ * `CHAIN_UNFED` 是眼前看得见的红点 —— 模型连续 8 轮都在修它们、`tx=5`，
+ * **一次都没往红矿那个方向走**。
+ *
+ * 诊断是「每轮重新拍的快照」，没有「哪件事一直没做成」的概念。
+ * loop 侧已经把连续 ≥2 轮的成因类诊断置顶（`st.stickyGoal`），
+ * 这一段负责把「它是长期目标」这件事明确说出来 ——
+ * 光置顶不够，模型仍会按「先修最红的」这条本能行事。
+ *
+ * @param {object|null} g `{code, since, rounds}`
+ * @returns {string|null} 无内容时 null
+ */
+function renderStickyGoal(g) {
+    if (!g || typeof g !== "object" || !g.code) return null;
+    const rounds = Number.isFinite(g.rounds) ? g.rounds : 1;
+    return sanitize([
+        "## STICKY GOAL",
+        `\`${g.code}\` has been present for ${rounds} rounds and is the CAUSE, not a symptom.`,
+        "It is listed first in DIAGNOSIS for that reason — the structural red spots below it",
+        "(handoff rejections, dead ends) are downstream of it: fixing them will not make",
+        "this goal produce anything.",
+        "⇒ Spend this round on the sticky goal. If it cannot be finished in one round, do the",
+        "  next concrete step toward it (place what it needs, or lay one segment) and say in",
+        "  `say` which step you are on. Do not go back to patching the red spots.",
+    ].join("\n")).text;
+}
+
+/**
  * `## GOAL CHANGED` —— 世界在本次 run 中途升级了。
  *
  * ## 为什么单独一段，而不是只靠 DIAGNOSIS
@@ -2504,7 +2537,7 @@ export class PromptOverBudget extends Error {
  * @throws {PromptOverBudget} code=PROMPT_OVER_BUDGET（总字符 > in_chars_max）
  * @throws {TypeError} 缺 goal / obs / 未知候选宏
  */
-export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, lastNetEffect = null, priorAttempts = null, goalChanged = null, obsoleteLines = null, budget, production = null, recipe: injectedRecipe = null, runLog = null } = {}) {
+export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, lastNetEffect = null, priorAttempts = null, goalChanged = null, obsoleteLines = null, budget, production = null, recipe: injectedRecipe = null, runLog = null, stickyGoal = null } = {}) {
     if (!obs || typeof obs !== "object") throw new TypeError("buildPrompt: obs is required");
     const goalShape = typeof goal === "string"
         ? goal
@@ -2593,6 +2626,8 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
        再看「这次 run 我自己打算干什么」—— 前者是统计，后者是意图，后者更即时。
        放在 LAST ROUND 之后、PRIOR 之前。 */
     const sRunLog = renderRunLog(runLog);
+    /* `## STICKY GOAL` 紧跟在诊断之后靠前的位置 —— 它说的是「这一轮该往哪走」。 */
+    const sSticky = renderStickyGoal(stickyGoal);
     /* 换关通告排在 PRIOR ATTEMPTS **之前**：它改变的是整件事的前提，比历史更重要。 */
     const sGoalChanged = renderGoalChanged(goalChanged, obsoleteLines);
     /* 残线单独一段，**不再依赖 goalChanged**（见 renderLeftoverLines 的注释：
@@ -2636,7 +2671,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     }
 
     /* `sLastStep` 无内容（首轮）时由 filter 天然去掉，不占任何字符。 */
-    const fixed = [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, sLastStep, sRunLog, sPrior, s5, s6]
+    const fixed = [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, s3Machines, s3Production, s3Budget, s4, sLastStep, sSticky, sRunLog, sPrior, s5, s6]
         .filter(x => x !== null && x !== undefined).join("\n\n");
 
     /* ── 截断：只动带子列表。目标 = min(token 预算, 字符硬上限) ── */
@@ -2657,7 +2692,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
      * 机器表 20 → 12 → 6 → 0，每档都重跑截断循环，取第一个能让带子 > 0 的档。
      * 「带子优先」因此是**结构性成立**的，不是调出来的。 */
     const composeWith = (machines, belts, capacity) => [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, machines, capacity, belts,
-        s3Production, s3Budget, s4, sLastStep, sRunLog, sPrior, s5, s6].filter(x => x !== null && x !== undefined).join("\n\n");
+        s3Production, s3Budget, s4, sLastStep, sSticky, sRunLog, sPrior, s5, s6].filter(x => x !== null && x !== undefined).join("\n\n");
     const compose = (belts, capacity) => composeWith(s3Machines, belts, capacity);
 
     /* ★ 顺序：**先定带子，再花余量** ★
@@ -2935,8 +2970,8 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         belts_diag_reserve: selection.reserve,
         belts_padded: selection.padded.length,
         over_token_budget: chars > Math.floor(limits.tokensMax * PROMPT_RULES.CHARS_PER_TOKEN),
-        redactions: countMarks([s2, sGoalChanged, s3, s4, sLastStep, sRunLog, sPrior, s5, s6].join("\n"), "coord"),
-        redacted_uids: countMarks([s2, s3, s4, sLastStep, sRunLog, sPrior, s5, s6].join("\n"), "uid"),
+        redactions: countMarks([s2, sGoalChanged, s3, s4, sLastStep, sSticky, sRunLog, sPrior, s5, s6].join("\n"), "coord"),
+        redacted_uids: countMarks([s2, s3, s4, sLastStep, sSticky, sRunLog, sPrior, s5, s6].join("\n"), "uid"),
         /* 净效果段是否真的进了 prompt —— 与 `capacityUnavailable` 同理：
            让测试与调试能区分「首轮本来就没有」和「加了但被砍掉」。 */
         last_step_shown: sLastStep !== null,
@@ -2947,6 +2982,10 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
            前者是跨 run 的统计，后者是本次 run 的意图，两者独立失效。 */
         this_run_shown: sRunLog !== null,
         this_run_rounds: Array.isArray(runLog) ? Math.min(runLog.length, 4) : 0,
+        /* 粘性目标是否注入。与 THIS RUN 分开记：
+           一个讲「我打算干什么」，一个讲「这件事还没做成」。 */
+        sticky_goal_shown: sSticky !== null,
+        sticky_goal_code: stickyGoal && stickyGoal.code ? stickyGoal.code : null,
         goal_changed_shown: sGoalChanged !== null,
         /* 残线段是否真的进了 prompt。与 `goal_changed_shown` 分开记：
            两者曾共用一个渲染入口，于是「没换关」被误读成「没有残线」。 */

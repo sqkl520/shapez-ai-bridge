@@ -160,25 +160,41 @@ test("★ loop.mjs 的 countFingerprint 必须与本文件同义（防两份实�
  * 所以这条检查也必须比 `lastExecutedMacros`。这里做源码级断言 + 语义断言两层。
  */
 
-test("★ 执行面的 mustChange 判定必须比 lastExecutedMacros（不是 lastMacros）", async () => {
+test("★ 执行面的 mustChange 判定必须比「上一轮执行过的」（不是本轮刚写的）", async () => {
     const fs = await import("node:fs");
     const src = fs.readFileSync(new URL("./loop.mjs", import.meta.url), "utf8");
 
     /* 找到执行面那一段：`if (st.mustChange...)` 之后的 actionSetHash 比较 */
     const m = /if \(st\.mustChange[^)]*\)\s*\{[\s\S]{0,400}?actionSetHash\(now\)\s*===\s*actionSetHash\(([^)]+)\)/.exec(src);
     assert.ok(m, "应当能在 loop.mjs 里找到执行面的 mustChange 判定");
-    assert.equal(m[1].trim(), "st.lastExecutedMacros",
-        `执行面必须比 lastExecutedMacros，实际比的是 ${m[1].trim()}`);
+
+    /* ★ 2026-11-12：从 `st.lastExecutedMacros` 改成 `prevExecuted` ★
+     *
+     * 原名看着对，实际是**读了自己刚写的值**：`st.lastExecutedMacros` 在本轮
+     * plan 通过时就被赋成了「本轮要做的动作」，于是这条检查永远认为
+     * 「与上一轮相同」⇒ 把每一轮成功的计划都拦掉。
+     *
+     * 真机 r-20261111170332-1d9e：第 1、2 轮 connect 全被拒（没进 tx），
+     * 第 3 轮换成 insert_machine、plan 全绿，却被判「仍然用了 insert_machine」
+     * ⇒ halt NO_PROGRESS，tx=0。
+     *
+     * `prevExecuted` 是赋值**之前**的快照 —— 那才是「上一轮执行过什么」。
+     * 这条断言守的语义没变（比执行过的、不比计划过的），只是名字要跟着改。 */
+    assert.ok(["prevExecuted", "st.lastExecutedMacros"].includes(m[1].trim()),
+        `必须比执行过的动作集，实际比的是 ${m[1].trim()}`);
+    assert.equal(m[1].trim(), "prevExecuted",
+        "★ 必须是赋值前的快照 —— 读 st.lastExecutedMacros 会读到自己刚写的值");
 });
 
 test("★ 上一轮什么都没执行时，mustChange 判定不该触发", async () => {
     const fs = await import("node:fs");
     const src = fs.readFileSync(new URL("./loop.mjs", import.meta.url), "utf8");
-    /* 必须带 `lastExecutedMacros.length` 这个前置条件 ——
-       否则「上一轮全部 plan 阶段被拒」时，lastExecutedMacros 是空数组，
-       actionSetHash([]) 与 actionSetHash(now) 的比较虽然不同，但这条规则本身没意义。 */
-    assert.match(src, /st\.mustChange\s*&&\s*st\.lastExecutedMacros\.length/,
-        "mustChange 判定必须要求 lastExecutedMacros 非空");
+    /* 必须要求「上一轮确实执行过东西」非空 ——
+       否则「上一轮全部 plan 阶段被拒」时它是空数组，
+       actionSetHash([]) 与 actionSetHash(now) 虽然不同，但这条规则本身没意义。
+       2026-11-12 起这个前置条件读的是 `prevExecuted.length`（赋值前的快照）。 */
+    assert.match(src, /st\.mustChange\s*&&\s*(prevExecuted|st\.lastExecutedMacros)\.length/,
+        "mustChange 判定必须要求「上一轮执行过的」非空");
 });
 
 test("语义：同一套宏但上一轮没执行 ⇒ 不算「照抄」", () => {

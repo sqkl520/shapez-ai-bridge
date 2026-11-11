@@ -550,6 +550,40 @@ console.log("\n── 5b. 动作不同不算 stall ──");
     cleanup(dir);
 }
 /* ══════════════════════════════════════════════════════════════════════════
+ * 5b2. ★ 上一轮没执行 + 本轮换了动作 ⇒ 必须放行到 tx（检查读错了变量）
+ *
+ * 2026-11-12 真机 r-20261111170332-1d9e：第 1、2 轮 connect 被 NO_REVERSIBLE_CALL 拒
+ * （宏失败、没进 tx）⇒ 上一轮什么都没执行。第 3 轮换成 insert_machine，
+ * plan 全绿（ops=2、partial=false），却被「必须换动作」那道检查拦下 ——
+ * 它比的是**刚被自己写进去**的 lastExecutedMacros，判成「与上一轮相同」，
+ * halt: NO_PROGRESS，把这一轮自己的 tx 也跳过了（tx=0）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+console.log("\n── 5b2. 换动作后必须真的执行（NO_PROGRESS 的检查时机）──");
+{
+    const dir = tmpRoot();
+    const g = l4Game();
+    /* 第 1 轮：注定被宏拒（insert_machine 不许放 hub）。 */
+    const bad = { say: "cannot work", calls: [{ macro: "insert_machine", args: { at: { $ref: "H1", asCell: true }, facing: "top", machine: "cutter" }, why: "x" }] };
+    /* 第 2 轮：合法动作，必须真的落盘。
+       ⚠️ 必须用**句柄**不能写 `at:[4,-13]` —— `assertNoHumanCoords` 会把它判成
+       `LLM_COORD`（"坐标只能来自 $ref / $uids / $bbox_of / $path_of"）。
+       这条测试第一版就是栽在这里：写得像测试数据，其实测的是一个被设计拒掉的输入。
+       B81 在 L4 上正好是 `(4,-13)`，也就是 cutter 该落的格子。 */
+    const good = { say: "place on the run", calls: [{ macro: "insert_machine", args: { at: { $ref: "B81", asCell: true }, facing: "top", machine: "cutter" }, why: "x" }] };
+    const res = await runLoop({
+        reader: g.reader(), goal: "RuRu----",
+        llmClient: new ScriptedClient([bad, good, good, good]),
+        mode: "mock", runDir: dir, game: g,
+        budget: { ROUNDS_MAX: 4, LLM_CALLS_MAX: 6, TX_MAX: 3 },
+    });
+    const rows = transcriptOf(res);
+    const applied = rows.filter(r => r.kind === "apply");
+    ok(applied.length >= 1, `★ 换了动作的计划必须真的执行（apply 实际 ${applied.length} 条）`);
+    ok(res.reason !== "NO_PROGRESS", `★ 不许因「与上一轮相同」被误判（上一轮压根没执行），实得 ${res.reason}`);
+    ok(res.tx_count >= 1, `★ tx_count 至少 1（实际 ${res.tx_count}）`);
+    cleanup(dir);
+}
+/* ══════════════════════════════════════════════════════════════════════════
  * 5c. ★ goal 与世界不一致 ⇒ GOAL_MISMATCH（2026-11-02，真机踩出来的）
  * ══════════════════════════════════════════════════════════════════════════
  *

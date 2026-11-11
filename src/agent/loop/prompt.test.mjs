@@ -829,6 +829,42 @@ console.log("\n── §R. 配方段 —— 形状代数接进 prompt ──");
     ok(/r1 connect → planned/.test(pending.user), "planned 状态必须如实显示");
 }
 
+
+/* ══════════════════════ STICKY GOAL（跨多轮的成因不许被忘掉） ══════════════════════
+ *
+ * 第 9 关实测：MIXER_UNFED 说「红矿 44 格外，要规划长支线」，但每轮 observe 都会
+ * 重算出结构层的红点（BELT_HANDOFF_REJECTED / CHAIN_UNFED），模型连续 8 轮都在修
+ * 它们、tx=5，一次都没往红矿那个方向走。
+ *
+ * 光把诊断置顶不够 —— 模型仍按「先修最红的」这条本能行事。这一段负责说清
+ * 「它是长期目标、那些红点是它的下游」。
+ * ══════════════════════════════════════════════════════════════════════════════════ */
+
+{
+    const base = () => JSON.parse(fs.readFileSync(path.join(
+        path.dirname(fileURLToPath(import.meta.url)), "../../../test/fixtures/saves/L4-obs.json"), "utf8")).result;
+    const mk = (sticky) => buildPrompt({
+        goal: "RuRu----", obs: base(), handles: buildHandles(base(), null), diagnoses: [],
+        candidates: ["connect"], budget: { prompt_tokens_max: 4600, in_chars_max: 16000 },
+        stickyGoal: sticky,
+    });
+
+    const p = mk({ code: "MIXER_UNFED", since: 2, rounds: 3 });
+    ok(p.user.includes("## STICKY GOAL"), "有粘性目标时必须出现该段");
+    ok(p.blocks.sticky_goal_shown === true);
+    ok(p.blocks.sticky_goal_code === "MIXER_UNFED");
+    ok(/`MIXER_UNFED` has been present for 3 rounds/.test(p.user), "码与轮数都要写出");
+    /* 最关键的一句：那些红点是**下游**，修它们没用 */
+    ok(/are downstream of it/.test(p.user), "必须说清结构层红点是它的下游");
+    ok(/Do not go back to patching the red spots/.test(p.user), "必须给出「别回头修红点」的纪律");
+    /* 一轮做不完时的出路 —— 否则禁用「修红点」等于把模型逼死 */
+    ok(/cannot be finished in one round/.test(p.user), "必须给「多轮推进」的许可");
+
+    const q = mk(null);
+    ok(!q.user.includes("## STICKY GOAL"), "没有粘性目标时不许出现空段");
+    ok(q.blocks.sticky_goal_shown === false);
+}
+
 /* ═══════════════════ 汇总 ═══════════════════ */
 
 console.log(`\n${pass} 通过 / ${fail} 失败`);
