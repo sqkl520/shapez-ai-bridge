@@ -390,6 +390,45 @@ export function nearestOreCell(obs, prefix) {
         return m;
     };
 
+    /* ★ 已被**机器**占着的矿格不能用 ★
+     *
+     * 2026-11-12 第 9 关实测：`$ore:"red"` 解析到 (52,23)，而那格上是 `belt`；
+     * `$ore:"blue"` 解析到 (37,-10)，那是 `painter`。两次 `insert_machine`
+     * 全被判 `blocked_by_machine`。
+     *
+     * 判据原来是「离消费者最近」—— 完全没考虑「那格能不能放机器」。
+     * 一个用不了的位置比不给位置更糟：模型以为算对了，试两轮才发现撞墙。
+     *
+     * 三层过滤，由宽到严：
+     *   ① 那格本身不能是机器/hub（带子可以让位）
+     *   ② 那格**四面**至少要有两面是空/带子 —— 矿机四面都可转，
+     *      只要有一个方向能出货就放得下；四面全被机器堵死才是真的不行
+     *   ③ 都满足时仍按「离消费者最近」排序（接线短）
+     *
+     * 不做到「逐 facing 精确检查」：`$ore` 不知道调用方会给哪个 facing，
+     * 猜错反而会让本来能放的格子被误排除。② 是安全的近似 ——
+     * 它只排除那些**无论朝哪都不可能**的格子。 */
+    const occupant = new Map();
+    for (const e of (obs && obs.entities) || []) {
+        if (!e || !Number.isInteger(e.x) || !Number.isInteger(e.y)) continue;
+        occupant.set(`${e.x},${e.y}`, e.type);
+    }
+    const blocked = new Set();
+    for (const [k, t] of occupant) {
+        if (t === "belt" || t === "underground_belt") continue;   // 可以让位
+        blocked.add(k);
+    }
+    /** 这格能给矿机用吗：本身空/带子，且四面至少两面不是机器。 */
+    const usable = (x, y) => {
+        if (blocked.has(`${x},${y}`)) return false;
+        let free = 0;
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+            const t = occupant.get(`${x + dx},${y + dy}`);
+            if (t === undefined || t === "belt" || t === "underground_belt") free++;
+        }
+        return free >= 2;
+    };
+
     let best = null;
     const counts = new Map();
     for (const r of list) {
@@ -398,8 +437,21 @@ export function nearestOreCell(obs, prefix) {
         if (!Number.isInteger(x) || !Number.isInteger(y)) continue;
         if (typeof kind !== "string" || !kind.startsWith(prefix)) continue;
         counts.set(kind, (counts.get(kind) || 0) + 1);
+        if (!usable(x, y)) continue;                                         // 这格放不下机器
         const d = distToNearest(x, y);
         if (!best || d < best.d) best = { cell: [x, y], kind, d };
+    }
+    /* 没有一格能放 ⇒ 退回「最近的矿格」并标 `occupied`。
+       这比返回 null 准确：矿是有的，只是摆不下 —— 调用方据此报 blocked 而不是 ORE_NOT_FOUND。 */
+    if (!best) {
+        for (const r of list) {
+            if (!Array.isArray(r) || r.length < 3) continue;
+            const [x, y, kind] = r;
+            if (!Number.isInteger(x) || !Number.isInteger(y)) continue;
+            if (typeof kind !== "string" || !kind.startsWith(prefix)) continue;
+            const d = distToNearest(x, y);
+            if (!best || d < best.d) best = { cell: [x, y], kind, d, occupied: true };
+        }
     }
     if (!best) return null;
 

@@ -430,7 +430,19 @@ const LEGAL_VALUES = Object.freeze({
     insert_machine: () => {
         try {
             const names = Object.keys(SUPPORTED_BUILDINGS);
-            return `machine ∈ {${names.join(" | ")}}   (note the spelling: "rotater", not "rotator")`;
+            /* ★ `$ore` 必须在这里说，不能只放在 `whenToUse` ★
+             *
+             * 2026-11-12 第 9 关实测：模型想给 mixer 接红颜料，而矿不是实体、
+             * 句柄表里没有它。`$ore` 是**唯一**能给矿机指定矿位的写法，
+             * 但它只写在 `insert_machine.whenToUse[1]` 里 ——
+             * 而 `when:` 行只在预算宽裕时才渲染（见 renderCard 的 useFor）。
+             *
+             * `LEGAL_VALUES` 是**无条件**渲染的，所以把它挪到这里。
+             * 实测代价：prompt 里 `$ore` 从「一次都不出现」变成每次都出现，
+             * 而模型 8 轮里一次都没用过它 —— 不是没想到，是根本没看到。 */
+            return `machine ∈ {${names.join(" | ")}}   (note the spelling: "rotater", not "rotator")`
+                + `; at 也可写 {"$ore":"<矿种>"} 让宏挑一格矿 —— 形状矿用前缀（"Cu"/"Ru"），`
+                + ` 颜料矿用颜色名（"red"/"blue"）。只是选格，facing 仍要给`;
         } catch { return null; }
     },
     replace_run: () => {
