@@ -26,6 +26,7 @@
  */
 import { nearestOreCell, resolveOreRef, resolveRefs } from "./coords.mjs";
 import { buildHandles } from "./handles.mjs";
+import { buildTxPlan } from "../loop.mjs";
 
 let pass = 0, fail = 0;
 const check = (name, fn) => {
@@ -211,3 +212,26 @@ check("O12 多个处理机器时取最近的那个", () => {
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
+
+/* ── O10：★ 颜料名必须能走完整条链路（含 provenance 审计） ──
+ *
+ * 真机 r-20261111190429-81d1：`$ore:"blue"` 解析成功、宏也放得下，
+ * 却在**最后一道溯源审计**被判 `COORD_PROVENANCE: ore 标签解析失败 "ore:blue@37,-9"`。
+ *
+ * 因为 `$ore` 的白名单散在四处：checkRefShape / resolveNode / resolveOreRef /
+ * assertProvenance 的 tag 解析。放宽前三处时漏了第四处 ——
+ * 那条报错看起来像「标签格式错」，实际是白名单没同步，极难查。
+ *
+ * 这条走完整的 buildTxPlan → assertProvenance，任何一处漏掉都会红。
+ */
+check("O13 颜料名能走完整条链路（含 provenance 审计）", () => {
+    const obs = mkObs([[2, 2, "red"], [8, 8, "blue"], [5, 5, "CuCuCuCu"]]);
+    const tbl = buildHandles(obs, null);
+    for (const [ore, facing] of [["red", "top"], ["blue", "top"], ["Cu", "top"]]) {
+        const r = buildTxPlan(
+            { calls: [{ macro: "insert_machine", args: { at: { $ore: ore }, facing, machine: "miner" } }] },
+            obs, null, tbl, { partial: true },
+        );
+        assert(r.ok, `${ore}: 必须通过整条链路（含 provenance），实得 ${r.ok ? "" : r.diagnosis.code + " " + r.diagnosis.observed}`);
+    }
+});

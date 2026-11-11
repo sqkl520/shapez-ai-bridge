@@ -722,7 +722,11 @@ function checkTag(tag, value, { obs, knownTokens, opLike = null }) {
      *
      * 重算 = 再调一次 `nearestOreCell`。它只看 obs.resources 和 hub，纯函数。 */
     if (tag.startsWith(PROVENANCE_PREFIX.ORE)) {
-        const m = /^ore:([A-Z][a-z])@(-?\d+),(-?\d+)$/.exec(tag);
+        /* 矿种名同 `$ore` 的取值：形状矿两字母前缀（`Cu`）∪ 颜料名（`red`）。
+           四处（checkRefShape / resolveNode / resolveOreRef / 这里）必须同一口径 ——
+           漏一处就是「校验过了但审计不认」，而这条报错还特别难查
+           （它看起来像标签格式错，实际是白名单没同步）。 */
+        const m = /^ore:([A-Z][a-z]|[a-z]{3,8})@(-?\d+),(-?\d+)$/.exec(tag);
         if (!m) return { ok: false, why: `ore 标签解析失败：${JSON.stringify(tag)}` };
         const [, color, tx, ty] = m;
         const now = nearestOreCell(obs, color);
