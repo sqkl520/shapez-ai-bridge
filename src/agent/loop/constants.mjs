@@ -112,6 +112,7 @@ export const DIAG_CODES = Object.freeze({
      *    `scope:"stream"` 是 warn（该做的事）、`scope:"factory"` 是 blocker（工厂真的缺机器）。
      *    只看 code 分不出严重性，必须看 `evidence.scope` —— 这是本闭集里唯一一个有这种二义性的码。 */
     PROCESSOR_REQUIRED: "L4: the recipe needs a process step (cut/rotate/stack/paint) that is either absent from the factory (scope:factory, blocker) or present but not on the stream that carries its input shape (scope:stream, warn)",
+    MIXER_UNFED: "L4: a mixer exists but its two color slots do not receive two *different* pigments (the recipe's mix step needs e.g. blue+red); counting mixers is not enough — the machine is there and still can never run",
     WRONG_SHAPE_AT_HUB: "L4: a stream reaching the hub carries a shape that is one rotation away from the goal (in orbit(goal) but not goal); the fix is upstream, not at the inlet",
     DISCARDED_INTERMEDIATE: "L4: a multi-output machine sends a useful half (in orbit(goal) or the recipe closure) into trash/nowhere while the other half is delivered and is not the goal",
     SHAPE_UNKNOWN: "L4: shape propagation stopped (no-resources/tunnel/unknown-op/unverified-rotation/cycle/unknown-color); info only, never a blocker and never fed to the LLM as an action",
@@ -455,6 +456,13 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["replace_run", 8],
         ["insert_machine", 6],
         ["connect", 3],
+    ]),
+    /* `MIXER_UNFED` 的首要修法是**铺线**（把另一种颜料从别处接过来），
+       不是再放一台 mixer —— 机器已经在世界上了，问题在槽。 */
+    MIXER_UNFED: cand([
+        ["connect", 8],
+        ["replace_run", 5],
+        ["insert_machine", 4],
     ]),
     WRONG_SHAPE_AT_HUB: cand([
         ["replace_run", 8],

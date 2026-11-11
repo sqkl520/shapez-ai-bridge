@@ -475,8 +475,14 @@ test("P-a 产出的每个码都在 DIAG_CODES 闭集里，且 severity ∈ {bloc
     }
 });
 
-test("P-a 只产出这 4 个码（越界即红：别顺手加了没登记的东西）", () => {
-    const OWNED = new Set(["PROCESSOR_REQUIRED", "WRONG_SHAPE_AT_HUB", "DISCARDED_INTERMEDIATE", "SHAPE_UNKNOWN"]);
+test("P-a 只产出这 5 个码（越界即红：别顺手加了没登记的东西）", () => {
+    /* `MIXER_UNFED` 是第 5 个。加它的理由是可测的：`PROCESSOR_REQUIRED` 只数
+       「工厂里有几台 mixer」，于是「有一台、但两个 color 槽喂的是同一条线」
+       会让诊断彻底消失 —— 而配方要的是两种**不同**的颜料。第 9 关就是这么卡住的。 */
+    const OWNED = new Set([
+        "PROCESSOR_REQUIRED", "WRONG_SHAPE_AT_HUB", "DISCARDED_INTERMEDIATE",
+        "SHAPE_UNKNOWN", "MIXER_UNFED",
+    ]);
     for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {
         for (const d of run(obs, rec, { level: 5 })) {
             assert.ok(OWNED.has(d.code), `${name}: 语义层不许产出 ${d.code}`);
@@ -502,4 +508,168 @@ test("★ 峰值：L4 + L5 的 diagnosis 字段形状与 report 渲染器兼容�
             assert.ok(Array.isArray(d.candidates));
         }
     }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MIXER_UNFED —— 「机器在了，槽没喂」是 PROCESSOR_REQUIRED 看不见的一类病
+ *
+ * 真实场景（第 9 关，2026-11-10）：
+ *   配方 mix 步的 inputs 是 ["color:blue","color:red"]
+ *   世界上有 1 台 mixer，两个 color 槽的上游是**同一条蓝矿线**
+ *   ⇒ 数量达标、诊断消失、mix() 永远不跑
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 紫色目标的配方（与 solver 在 level 9 的真实输出逐字段一致）。 */
+const RECIPE_PURPLE = Object.freeze({
+    ok: true,
+    steps: [
+        { op: "mine", hash: goalOf(L4) === "x" ? "x" : "CuCuCuCu", inputs: [], args: {} },
+        { op: "mineColor", hash: "color:blue", inputs: [], args: { color: "blue" } },
+        { op: "mineColor", hash: "color:red", inputs: [], args: { color: "red" } },
+        { op: "mix", hash: "color:purple", inputs: ["color:blue", "color:red"], args: { color: "purple" } },
+        { op: "paint", hash: "CpCpCpCp", inputs: ["CuCuCuCu", "color:purple"], args: { color: "purple" } },
+    ],
+});
+
+test("M1 ★ 没有 mixer ⇒ 不报 MIXER_UNFED（那是 PROCESSOR_REQUIRED 的活）", () => {
+    /* 两份真实存档里都没有 mixer。这条防的是「新码把缺机器也报一遍」，
+       那会让同一个问题出两条诊断、白白吃掉预算。 */
+    for (const [obs, lvl] of [[L4, 4], [L5, 5]]) {
+        const ds = semanticDiagnoses(obs, null, "CpCpCpCp", handlesOf(obs), { recipe: RECIPE_PURPLE, level: lvl });
+        assert.equal(byCode(ds, "MIXER_UNFED").length, 0, "没有 mixer 时不该报 MIXER_UNFED");
+    }
+});
+
+test("M2 ★ 有 mixer 但 color 槽没凑齐两种颜料 ⇒ MIXER_UNFED（blocker）", () => {
+    /* 在 L4 上造一台 mixer，两个 color 槽都朝下（r=0 时 feed 格在 slot 下方）。
+       只喂**一条**线，另一槽空着 —— 正是真机的形态。 */
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 14, my = -30;                       // 远离既有结构的一块空地
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    /* 两个 feed 格 = (mx,my+1) 与 (mx+1,my+1) —— mixer r=0 的输入槽 `cell`
+       是 slot + DIRV["bottom"] = slot + (0,+1)。`slotsOf` 逐字给出：
+       `[{slot:[14,-30],cell:[14,-29]}, {slot:[15,-30],cell:[15,-29]}]`。
+       带子放在 feed 格上、exit 朝下（r=180）才喂得进。 */
+    w.entities.push({
+        uid: next++, type: "belt", x: mx, y: my + 1, r: 180, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const mix = byCode(ds, "MIXER_UNFED");
+    assert.equal(mix.length, 1, `应当恰好报一条 MIXER_UNFED，实得 ${mix.length}`);
+    const d = mix[0];
+    assert.equal(d.severity, "blocker");
+    assert.equal(d.subject.type, "mixer");
+    assert.equal(d.subject.uid, next - 2, "subject 指向那台 mixer");
+    assert.deepEqual(d.evidence.want_colors, ["color:blue", "color:red"], "证据里必须写明配方要的两种颜色");
+    assert.equal(d.evidence.slot_values.length, 2, "两个槽都要给出各自解到的东西");
+    /* ★ 必须能指出「哪个槽、为什么」—— 只说「没喂」对模型没有可执行性 ★
+       两槽的状态是**不同**的（一路有带子但没对准、一路压根没有格上东西），
+       这正是 M3（两路全空）区分得开的地方。 */
+    assert.deepEqual(d.evidence.slot_why, ["belt-not-aimed", "feed-cell-empty"],
+        "两个槽的缺口原因必须分别报出，且互不相同");
+    assert.ok(d.candidates.includes("connect"), "首要修法是铺线，不是再放一台 mixer");
+});
+
+test("M3 反例：两个 color 槽都解不出时，仍报 MIXER_UNFED（不因为是「两路都空」而放过）", () => {
+    /* 一台孤零零的 mixer，四周全空。数量对了（have:1），但一个槽都没喂。
+       这正是「PROCESSOR_REQUIRED 说够了、而 mix() 永远不跑」的最小形态。 */
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    w.entities.push({
+        uid: next++, type: "mixer", x: -40, y: 40, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    assert.equal(byCode(ds, "MIXER_UNFED").length, 1, "两槽全空也必须报");
+});
+
+test("M4 反例：配方**不**需要两种不同颜色时，不报 MIXER_UNFED（不许误伤单输入配方）", () => {
+    const single = Object.freeze({
+        ok: true,
+        steps: [
+            { op: "mine", hash: "CuCuCuCu", inputs: [], args: {} },
+            { op: "mineColor", hash: "color:blue", inputs: [], args: { color: "blue" } },
+            { op: "mix", hash: "color:purple", inputs: ["color:blue"], args: { color: "purple" } },
+            { op: "paint", hash: "CpCpCpCp", inputs: ["CuCuCuCu", "color:purple"], args: { color: "purple" } },
+        ],
+    });
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    w.entities.push({
+        uid: next++, type: "mixer", x: -40, y: 40, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: single, level: 9 });
+    assert.equal(byCode(ds, "MIXER_UNFED").length, 0, "配方只要一种颜色时不该报");
+});
+
+test("M5 MIXER_UNFED 已登记进 DIAG_CODES 闭集（否则 loop 的 mkDiag 会抛）", () => {
+    assert.ok(Object.prototype.hasOwnProperty.call(DIAG_CODES, "MIXER_UNFED"),
+        "新增诊断码必须同时登记 constants.mjs 的 DIAG_CODES");
+});
+
+test("M6 ★ evidence.slots 必须给出可直接用的 port 选择器信息（索引 + 槽格 + 缺口原因）", () => {
+    /* 第 9 关实测：诊断说「接到另一个 color 槽」，模型写 `port:"color"` ——
+       mixer 两个槽的 role 都叫 color ⇒ `ambiguous_port` ⇒ 三连败。
+       宏支持 `{role,index}` 与 `{entry:n}`，所以诊断必须把索引交出去。 */
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 14, my = -30;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    w.entities.push({
+        uid: next++, type: "belt", x: mx, y: my + 1, r: 180, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+    const slots = d.evidence.slots;
+    assert.equal(slots.length, 2, "两个 color 槽都要描述");
+    assert.deepEqual(slots.map(s => s.index), [0, 1], "索引必须是 0/1 —— 那是 connect 的 port.index");
+    assert.ok(slots.every(s => s.role === "color"));
+    assert.ok(slots.every(s => Array.isArray(s.slot) && s.slot.length === 2), "每槽都要给槽格坐标");
+    assert.ok(slots.every(s => Array.isArray(s.feed_cell) && s.feed_cell.length === 2), "每槽都要给喂料格");
+    assert.match(d.hint, /role:"color", index:/, "hint 必须给出可直接抄进 connect 的选择器");
+});
+
+test("M7 ★ 建议的 facing 必须指向 mixer 那一侧（槽朝向的反面，不是照抄槽朝向）", () => {
+    /* 第 9 关实测：B198 @(mx,my+2)、mixer 槽 @(mx,my+1)。
+     *   - 槽的 `dir` 是 "bottom"（槽在机器下沿朝下）
+     *   - 而带子必须 exit **朝上**（top）才能喷进上方那一格
+     *
+     * 第一版把 `f.dir` 直接写进 hint，等于告诉模型「朝 bottom」——
+     * 照做会把货喷到反方向，比不给建议还糟。这条锁住符号。 */
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 14, my = -30;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    /* 喂料带子放在 feed 格上，但**朝反了**（r=180 ⇒ exit bottom，喷离 mixer）。 */
+    const feedUid = next++;
+    w.entities.push({
+        uid: feedUid, type: "belt", x: mx, y: my + 1, r: 180, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+    const slot0 = d.evidence.slots[0];
+    assert.equal(slot0.why, "belt-not-aimed", "前提：这一槽的带子方向不对");
+    assert.deepEqual(slot0.feed_cell, [mx, my + 1]);
+    assert.deepEqual(slot0.slot, [mx, my], "槽格在 feed 格的正上方一格");
+
+    /* hint 里建议的面必须是 top（朝上、指向 mixer），不是槽自己的 dir=bottom。 */
+    const m = /必须朝 "(\w+)"/.exec(d.hint);
+    assert.ok(m, `hint 必须给出可直接抄的朝向，实得：${d.hint}`);
+    assert.equal(m[1], "top", `必须朝上才能喷进上方的 mixer 槽；照抄槽的 dir 会得到 bottom（错）`);
 });
