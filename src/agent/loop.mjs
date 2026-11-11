@@ -2063,12 +2063,34 @@ export async function runLoop(opts = {}) {
         lastReport: null, lastPlanSummary: null,
         lastTx: null, lastObs: null, lastItems: null, lastProduction: null,
         worldTouched: false, lastApplyRolledBack: false, lastSuccessfulRound: 0,
-        /** 轮数 = **observe 的次数**。解析/计划被拒**不**消耗它（只消耗 llm_calls）——
-            世界没变时重新 observe 只会得到同一份数据，那是浪费而不是重试。 */
+        /* ★ 本次 run 的任务日志：每一轮「我说要做什么 / 世界变成什么样」★
+         *
+         * ## 为什么需要它（第 9 关实测的策略漂移）
+         *
+         * 第 9 关的 `MIXER_UNFED` 明确写着「红矿在 44 格外，这不是接一根线，
+         * 是一条要单独规划的长支线」。模型第 4 轮的 `say` 原文：
+         *
+         *   place the existing mixer concept on the blue stream at B194 so the mix
+         *   step sits in-line, **rather than building a far-off color branch first**
+         *
+         * 它**知道**那个选项，主动选择先做别的。然后下一轮完全忘了这个决定，
+         * 又去试 connect、又去放 mixer —— 三轮下来一步没往支线走。
+         *
+         * 根因不是「信息没送到」（诊断写得很清楚），而是**跨轮没有目标坚持**：
+         * 每轮都是新 prompt，`## LAST ROUND` 只带上一轮的动作与结果，
+         * 不带「我前几轮决定过什么」。
+         *
+         * 这个数组记 `{round, say, calls, outcome}`。渲染时只取**最近几轮**，
+         * 让模型看到自己的决策轨迹 —— 「我第 4 轮说过要先放 mixer，
+         * 现在第 6 轮又回头来做同一件事，是不是该换条路」。
+         *
+         * 注意它**不是**跨 run 记忆（那是 `memory.mjs` / `attempts.json`）。
+         * 两者互补：跨 run 记「这类动作在这个目标上历来有没有用」，
+         * 这个记「本次 run 我打算干什么、已经走到哪」。 */
+        runLog: [],
         rounds: 0,
         llmCalls: 0, txCount: 0, ticks: 0,
-        diagnoses: [],
-        /** fp → {count, actions:Set} */
+        diagnoses: [],        /** fp → {count, actions:Set} */
         fpSeen: new Map(),
         /** 上一轮用过的宏（供「必须换动作」时从候选中剔除，以及机器判定是否照抄） */
         lastMacros: [],
@@ -2139,6 +2161,22 @@ export async function runLoop(opts = {}) {
         /** 上一轮算出的残线清单（授权拆除的第二判据） */
         lastObsoleteLines: null,
     };
+
+    /**
+     * 把某一轮的 runLog 条目标成给定结局（只标最后一条 `planned`）。
+     *
+     * `## THIS RUN` 的价值在「我说的」与「实际发生的」之间的对照。
+     * tx 没跑起来时也必须落一个结局，否则那一轮会永远停在 `planned`，
+     * 模型看到的是一句没有下文的打算 —— 比不显示更误导。
+     */
+    function markRunLog(round, kind) {
+        for (let i = st.runLog.length - 1; i >= 0; i--) {
+            if (st.runLog[i].round === round && st.runLog[i].outcome === "planned") {
+                st.runLog[i].outcome = kind;
+                return;
+            }
+        }
+    }
 
     let outcome = "error";
     let reason = "INTERNAL";
@@ -2279,6 +2317,33 @@ export async function runLoop(opts = {}) {
     const settleFailure = (diagnoses, macros, roundNo, phase) => {
         st.diagnoses = diagnoses;
         st.lastMacros = Array.isArray(macros) ? macros.slice() : [];
+        /* ★ 失败的这一轮也要写进 `lastPlanSummary` ★
+         *
+         * 原来这里只写 transcript 的 `repair_decide`，不更新 `lastPlanSummary`。
+         * 后果：计划被拒之后，**下一轮 prompt 的 `## LAST ROUND` 显示
+         * "none (this is round 1)"** —— 模型看不到自己上一轮失败过、更看不到为什么。
+         *
+         * 实机第 9 关：模型第 1 轮 `connect` 被 `target_already_fed` 拒，
+         * 第 2 轮它换了个 `prefer` 又调了一次**几乎完全相同**的 connect。
+         * 因为它读到的是「上一轮：无」。
+         *
+         * `failures` 的形态与成功路径一致（`renderLastRound` 直接吃）：
+         * 失败的那个带 code + hint + observed，其余标 `unverified`。 */
+        const d0 = Array.isArray(diagnoses) && diagnoses[0] ? diagnoses[0] : null;
+        st.lastPlanSummary = {
+            round: roundNo,
+            calls: Array.isArray(macros) ? macros.slice() : [],
+            verify: { checks: [], codes: (Array.isArray(diagnoses) ? diagnoses : []).map(d => d && d.code).filter(Boolean) },
+            decision: "plan_rejected",
+            failures: (Array.isArray(macros) ? macros : []).map(m => ({
+                macro: m,
+                code: d0 ? d0.code : "PLAN_REJECTED",
+                hint: d0 && d0.hint ? d0.hint : null,
+                observed: d0 && typeof d0.observed === "string" ? d0.observed : null,
+            })),
+        };
+        /* runLog 也落一个结局 —— 否则那一轮永远停在 `planned`。 */
+        markRunLog(roundNo, "failed");
         tr.write("repair_decide", roundNo, {
             phase: phase || null,
             fingerprint: fingerprintOf(diagnoses),
@@ -2436,6 +2501,13 @@ export async function runLoop(opts = {}) {
                 const dd = healthDelta(beforeSnapshot, healthNow);
                 roundNetEffect = classifyNetEffect(beforeSnapshot, healthNow, dd);
                 st.netEffects.push({ round: roundNo, kind: roundNetEffect.kind, why: roundNetEffect.why });
+                /* ★ 把真实净效果回填进 runLog（见 st.runLog 的注释）★
+                 *
+                 * 计划阶段只能记 `planned` —— 那时 tx 还没跑。
+                 * 下一轮渲染 `## THIS RUN` 时，模型需要看到的是「我那一轮**实际**做了什么」，
+                 * 而不是「我打算做什么」。没有这一次回填，整段就退化成意图列表，
+                 * 「说了要做 X、结果改坏了」这个最有价值的对照就消失了。 */
+                markRunLog(roundNo, roundNetEffect.kind);
                 tl.push(`      ${formatDelta(dd)}`);
                 tl.push(`    ${formatNetEffect(roundNetEffect)}`);
                 /* ★ 撤销的观感优先级高于这一轮的 inert ★
@@ -2918,6 +2990,8 @@ export async function runLoop(opts = {}) {
                         diagnoses,
                         candidates: cands,
                         lastRound: st.lastPlanSummary || null,
+                        /* 本次 run 的任务日志（跨轮目标坚持，见 st.runLog 的注释）。 */
+                        runLog: st.runLog,
                         /* ★ 上一步的净效果（2026-11-03）★
                          *
                          * `lastRound` 只说「上一轮调了什么宏、verify 红在哪」，
@@ -3123,6 +3197,17 @@ export async function runLoop(opts = {}) {
                 if (!innerDecided) continue;
                 break;
             }
+            /* ★ 记进本次 run 的任务日志（见 st.runLog 的注释）★
+             *
+             * 存的是**模型自己的意图**（say）与它实际要做的动作。
+             * outcome 先记 `planned`，tx 之后再回填真实净效果 ——
+             * 这样下一轮渲染时能说「第 3 轮你说要做 X，结果改坏了」。 */
+            st.runLog.push({
+                round: roundNo,
+                say: typeof planned.say === "string" ? planned.say.replace(/\s+/g, " ").trim() : "",
+                calls: planned.calls.map(c => c.macro),
+                outcome: "planned",
+            });
             tr.write("plan", roundNo, {
                 ok: true, rejected: null, stage: "ok",
                 calls: planned.calls.map(c => c.macro),
@@ -3240,6 +3325,7 @@ export async function runLoop(opts = {}) {
                 tr.write("apply", roundNo, { error: ap.error || "写面缺失", tx_ok: false });
                 settleFailure([d], planned.calls.map(c => c.macro), roundNo, "apply");
                 st.lastPlanSummary = { round: roundNo, calls: planned.calls.map(c => c.macro), verify: { checks: [] }, decision: "tx_unavailable" };
+                markRunLog(roundNo, "failed");
                 break;                          // 没有写面就不该继续转（下一轮还是同一个错误）
             }
             const av = applyVerdict(ap.tx, { requestedOps: planned.txPlan.ops.length });
@@ -3281,6 +3367,7 @@ export async function runLoop(opts = {}) {
                 });
                 settleFailure([d], planned.calls.map(c => c.macro), roundNo, "apply");
                 st.lastPlanSummary = { round: roundNo, calls: planned.calls.map(c => c.macro), verify: { checks: [] }, decision: "tx_failed" };
+                markRunLog(roundNo, "failed");
                 st.obs = null;                  // 世界可能已被回滚/部分改：下一轮必须重读
                 continue;
             }

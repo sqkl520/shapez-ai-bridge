@@ -983,6 +983,39 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
         for (const op of [...ops].sort()) {
             const kind = MACHINE_OF_OP[op];
             if (processorOnStream(idx, st, kind)) continue;      // 该工序已经在这条流上 ⇒ 不缺
+            /* ★ 已有的同类机器**自己都没料可吃**时，不再建议「再放一台」★
+             *
+             * 2026-11-10 第 9 关实测出的自相矛盾：同一份 prompt 里同时有
+             *
+             *   1. MIXER_UNFED  ……「配方要 blue+red，红矿 44 格外，去建支线」
+             *   2. PROCESSOR_REQUIRED{scope:stream} ……「put it ON the stream named above」
+             *
+             * 第 2 条更容易执行，模型 7 轮里 4 次调 connect(B194→C7)、
+             * 2 次 replace_run(building:mixer) —— 都在往别的流上放第二台 mixer，
+             * 一次都没去接红矿。
+             *
+             * ⚠️ 判据必须**窄**：只压「已有的那台因为缺料根本跑不起来」的情形。
+             * L4 上那台 cutter 只是**不在某条流上**，它自己是有料的，
+             * 所以「往这条流上放一台 cutter」仍然是正解 —— 一刀切会把它也压掉
+             * （实测：直接按 `have > 0` 压，T1/T5/T8/T11 五条当场变红）。
+             *
+             * 这里只看**多输入同类机器**（mixer / stacker）：它们有「两路必须都喂」
+             * 的硬约束，而「一路有料、另一路没有」正是「放一台新的」救不了的病。 */
+             const TWIN_INPUT = kind === "mixer" || kind === "stacker";
+             if (TWIN_INPUT) {
+                 const existing = idx.ent.filter(e => e.type === kind);
+                 const stalled = existing.some((m) => {
+                     const sl = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m));
+                     if (!sl || !Array.isArray(sl.inputs) || sl.inputs.length < 2) return false;
+                     let fed = 0;
+                     for (let i = 0; i < sl.inputs.length; i++) {
+                         const f = engine.inputSlotValue(m, i);
+                         if (f && Array.isArray(f.value) && f.value.length) fed++;
+                     }
+                     return fed < sl.inputs.length;      // 至少一路没料 ⇒ 这台机器跑不起来
+                 });
+                 if (stalled) continue;
+             }
             const rec = needByOp.get(op) || [];
             rec.push({ stream: st, shapes, corridor: corridorOf(st), canReach: st.belts.some(b => reach.has(b.uid)) });
             needByOp.set(op, rec);

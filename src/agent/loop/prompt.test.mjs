@@ -20,6 +20,7 @@ import {
     buildPrompt, PROMPT_RULES, MACRO_WHITELIST, coordRegex, hasCoords, PromptOverBudget,
 } from "./prompt.mjs";
 import { MACRO_NAMES, MACRO_SPECS } from "../macros/contract.mjs";
+import { buildHandles } from "./handles.mjs";
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -773,6 +774,61 @@ console.log("\n── §R. 配方段 —— 形状代数接进 prompt ──");
         "配方段里没有坐标形态", p.blocks.s3_recipe);
 }
 
+/* ══════════════════════════ THIS RUN（本次 run 的决策轨迹） ══════════════════════════
+ *
+ * 第 9 关实测的策略漂移：诊断明确说「红矿在 44 格外，这是支线工程」，
+ * 模型第 4 轮的 say 原文是「... rather than building a far-off color branch first」——
+ * 它知道那个选项、主动选择先做别的，然后下一轮完全忘了，又回头试同一件事。
+ *
+ * `## LAST ROUND` 只带上一轮，不带「我前几轮决定过什么」。这一段补的就是那个缺口。
+ * ══════════════════════════════════════════════════════════════════════════════════ */
+
+{
+    const base = () => JSON.parse(fs.readFileSync(path.join(
+        path.dirname(fileURLToPath(import.meta.url)), "../../../test/fixtures/saves/L4-obs.json"), "utf8")).result;
+    const h4 = () => buildHandles(base(), null);
+    const mk = (log) => buildPrompt({
+        goal: "RuRu----", obs: base(), handles: h4(), diagnoses: [],
+        candidates: ["connect"], budget: { prompt_tokens_max: 4600, in_chars_max: 16000 },
+        runLog: log,
+    });
+
+    const log = [
+        { round: 2, say: "place a mixer first, rather than building a far-off color branch", calls: ["insert_machine"], outcome: "constructive" },
+        { round: 3, say: "connect B192 into C7 slot 1", calls: ["connect"], outcome: "regressive" },
+    ];
+    const p = mk(log);
+
+    ok(p.user.includes("## THIS RUN"), "有 runLog 时必须出现 THIS RUN 段");
+    ok(p.blocks.this_run_shown === true, "blocks.this_run_shown 必须为 true");
+    /* 模型自己的话必须原样还给它 —— 那是「我决定过什么」的唯一来源 */
+    ok(p.user.includes("rather than building a far-off color branch"),
+        "上一轮 say 里那句「我先不做远处支线」必须被还回去");
+    /* 意图与结果必须并排，否则看不出「说了要做 X、结果改坏了」 */
+    ok(/r2 insert_machine → added stuff, no delivery/.test(p.user), "r2 的动作 + 结局");
+    ok(/r3 connect → made it worse/.test(p.user), "r3 的结局必须是 made it worse");
+    /* 收尾必须给出可执行的纪律，而不只是陈列 */
+    ok(/Stay on one plan until it is DONE/.test(p.user), "必须给出「守着一个计划做到底」的指令");
+
+    /* 没有 runLog 时整段不出现，且不占预算 */
+    const q = mk(null);
+    ok(!q.user.includes("## THIS RUN"), "没有 runLog 时不许出现空段");
+    ok(q.blocks.this_run_shown === false, "blocks.this_run_shown 必须为 false");
+
+    /* 轮数上限：只列最近 4 轮。历史再长也不允许把预算吃光。 */
+    const long = Array.from({ length: 9 }, (_, i) => ({
+        round: i + 1, say: `step ${i + 1}`, calls: ["connect"], outcome: "inert",
+    }));
+    const l = mk(long);
+    ok(l.blocks.this_run_rounds === 4, `最多渲染 4 轮（实际 ${l.blocks.this_run_rounds}）`);
+    ok(!l.user.includes("r1 connect"), "最早那几轮不再渲染（只留最近的）");
+    ok(l.user.includes("r9 connect"), "最近一轮必须在");
+
+    /* `planned` 说明 tx 还没跑 —— 渲染成原样，不许伪装成已有结论 */
+    const pending = mk([{ round: 1, say: "x", calls: ["connect"], outcome: "planned" }]);
+    ok(/r1 connect → planned/.test(pending.user), "planned 状态必须如实显示");
+}
+
 /* ═══════════════════ 汇总 ═══════════════════ */
 
 console.log(`\n${pass} 通过 / ${fail} 失败`);
@@ -781,3 +837,4 @@ if (fail) {
     for (const f of failures) console.log("  · " + f);
     process.exitCode = 1;
 }
+

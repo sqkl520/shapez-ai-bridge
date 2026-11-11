@@ -353,3 +353,35 @@ test("H14 没有 observed 时退化成旧格式（不许出现空的冒号段）
     assert.match(s5, /connect → MACRO_REFUSED: 传 opts\.rebind=true/, "无 observed 时 hint 直接跟在 code 后面");
     assert.ok(!/→ MACRO_REFUSED: :/.test(s5), "不许出现双重冒号");
 });
+
+test("H15 ★ 计划被拒之后，下一轮 LAST ROUND 必须看得到失败原因（不许是 none）", () => {
+    /* 实机第 9 关：第 1 轮 `connect` 被 `target_already_fed` 拒，
+       第 2 轮模型换了个 `prefer` 又调了一次**几乎完全相同**的 connect。
+
+       原因是 `settleFailure` 只写 transcript、不更新 `lastPlanSummary` ⇒
+       下一轮 prompt 的 `## LAST ROUND` 显示 "none (this is round 1)"。
+       模型压根不知道上一轮失败过，更不知道输在哪。
+
+       这条测渲染侧：给了带 failures 的 lastRound，失败原因必须出现。 */
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"],
+        budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: {
+            round: 1, calls: ["connect"],
+            verify: { checks: [], codes: ["MACRO_REFUSED"] },
+            decision: "plan_rejected",
+            failures: [{
+                macro: "connect", code: "target_already_fed",
+                observed: "C7 的 color slot 0 已经被 B205 占着",
+                hint: "换一个 port，或传 opts.rebind=true。",
+            }],
+        },
+    });
+    const s5 = p.blocks.S5;
+    assert.ok(!/none \(this is round 1\)/.test(s5), "★ 有失败时不许渲染成 none");
+    assert.match(s5, /previous failures:/, "必须出现失败段");
+    assert.match(s5, /target_already_fed/, "错误码必须出现");
+    assert.match(s5, /B205/, "失败的**具体对象**必须出现（模型要知道是哪一格）");
+    assert.match(s5, /rebind/, "修法必须出现");
+});
