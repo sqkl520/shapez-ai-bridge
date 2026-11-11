@@ -1409,38 +1409,47 @@ export function replaceRun(a, b) {
                 want = { rotation: b.r, rotationVariant: b.rv };
             }
             if (!want) {
-                /* ★ 2026-11-02：hint 从「解释」改成「动作」★
+                /* ★ 2026-11-10：hint 必须点名 `opts.facing` ★
                  *
-                 * 原来这条写的是：「把 region 缩到『两侧都有可参照邻居』的那几格；
-                 * 或对孤立/单侧带子改用 place/paste_blueprint 显式带 rv」。
+                 * 上面那一大段已经支持 `opts.facing = "top"` / `{entry,exit}`
+                 * 显式给方向（`bopts.facing`），但**这条拒绝消息从来没提过它**。
+                 * 于是宏有能力、模型不知道，只能反复试同一条路。
                  *
-                 * 实测（`HINT-AB-RESULT.md`，38 条多轮样本）：它是**最高频的 hint**
-                 * （18/38），但模型读完仍然改不对。原因是它要求模型自己判断
-                 * 「哪几格两侧都有邻居」——**而 prompt 里没有这个信息**。
-                 * 模型看不到邻居关系，只能再猜一次。
+                 * 第 9 关实测（MIXER_UNFED 把模型引到 mixer 的 color 槽之后）：
+                 * 模型 8 轮里 4 次调 `replace_run` 修那一格带子，每次都被这条
+                 * `precondition_failed` 打回，一次都没传 `opts.facing` ——
+                 * 而它要的答案宏完全支持。
                  *
-                 * 修法：宏**已经把邻居证据算出来了**（`neighborFaces`），
-                 * 直接把「哪些格不能碰、哪些格可以」写成句柄，模型照抄即可。
-                 * 这是同一次失败里能立刻重写出来的东西 —— 判据是
-                 * 「模型读完能不能不推理就写出一个不同的调用」。
-                 *
-                 * 句柄从 `ctx` 的实体表取（`b.uid` 已经在手里，邻居 uid 在 evidence 里）。
-                 * **不引入坐标**（契约 V4 禁止），只说格数和句柄。 */
+                 * 更关键的是：`neighborFaces` **已经把已知的那一侧算出来了**
+                 * （`evidence.exit.why` 会写「机器 accept color」这种话）。
+                 * 既然它知道出口该朝哪，就该把这个面直接写进 hint，
+                 * 让模型照抄 `opts.facing:"top"`，而不是自己从三选一里挑。
+                 */
                 const ev = neighborFaces(b, c0).evidence || {};
                 const hasEntry = !!ev.entry, hasExit = !!ev.exit;
                 const sideDesc = hasEntry && hasExit ? "两侧都有"
                     : (hasEntry || hasExit) ? "只有一侧有"
                         : "两侧都没有";
+                /* 已知的那一侧翻成可直接抄的调用片段。 */
+                const known = hasExit ? { face: exit, form: `opts.facing:"${exit}"`,
+                    why: ev.exit && ev.exit.why }
+                    : hasEntry ? { face: entry, form: `opts.facing:{entry:"${entry}"}`,
+                        why: ev.entry && ev.entry.why }
+                        : null;
                 return failure(A, {
                     code: "precondition_failed", field: "region",
                     message: `(${b.x},${b.y}) 的邻居证据不足以反解方向（入口 ${entry || "未知"} / 出口 ${exit || "未知"}）`,
                     hint: `${sideDesc}邻居证据，这一格的方向有 3 种合法解，宏不猜。`
-                        + `把这个 uids 从 region 里去掉，或改用 replace_run 的 belt 模式逐格保持原样。`
+                        + (known
+                            ? `**但已知的那一侧是从真实邻居推出来的**（${known.why || "见 evidence"}）——`
+                                + `直接把方向写进调用即可：\`replace_run {…, opts:{facing:…}}\`，`
+                                + `本格用 ${known.form}。这是「选一个面」，不是坐标，契约允许。`
+                            : `这一格四周没有任何带子邻居，方向无处可推。`)
+                        + ` 另一种做法：把这个 uids 从 region 里去掉。`
                         + (hasEntry || hasExit
-                            ? `（这一格能参照的邻居是 ${[ev.entry && ev.entry.uid, ev.exit && ev.exit.uid].filter(Boolean).join(" / ")}，`
-                            + `但它只给出一侧方向，另一侧仍然三选一。）`
-                            : `（这一格四周没有任何带子邻居。）`),
-                    detail: { cell: [b.x, b.y], uid: b.uid, entry, exit, evidence: ev },
+                            ? `（这一格能参照的邻居是 ${[ev.entry && ev.entry.uid, ev.exit && ev.exit.uid].filter(Boolean).join(" / ")}。）`
+                            : ``),
+                    detail: { cell: [b.x, b.y], uid: b.uid, entry, exit, evidence: ev, suggested_facing: known ? known.form : null },
                 });
             }
             if (want.rotation !== b.r || want.rotationVariant !== b.rv) {

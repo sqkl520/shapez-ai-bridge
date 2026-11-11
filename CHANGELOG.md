@@ -210,6 +210,57 @@ hub 的句柄降级成 `hub_handle`（只作上下文）。
 现在 `trash_unused` 和 `connect` / `extend_line` 一样合成 token
 （`trash_unused:trash@<x>,<y>`），语义是「这一格的坐标来自这个宏这一次调用的返回值」。
 
+### Added — 执行前的净效果预演（`stage:"simulate"`）
+
+`classifyNetEffect` 一直能判 `regressive`，但那是**事后** —— 世界已经被改了。
+第 9 关有一轮里，模型两次 `connect {allow_replace:true}` 覆盖了正在工作的带子：
+到 hub 的带子 320 → 254、死带子 184 → 282。判定层如实判了 regressive 并回滚，
+但那两步都白做了，而模型**看不到自己那一步的代价**，下一轮接着用同样的写法。
+
+`applyToWorld` 的语义就是「把宏结果折进世界」，`worldHealth` 接受任意 obs ——
+两者加起来就能在**写盘前**回答「这一步会让世界变好还是变坏」。新增
+`applyTxOpsToObs()`（内存里应用 ops，不动原对象）+ `buildTxPlan` 里的预演闸门。
+
+关键设计：**只拦破坏，不拦施工**。两者在「到 hub 的带子变少了」上看起来完全一样，
+只有调用性质不同：
+
+- `insert_machine` / `replace_run` 改朝向 = **施工**，临时减少连通性是正常的
+  （`rollback.mjs` 的文件头早就写明：拆旧线是唯一可行的施工模式）
+- `connect{allow_replace}` / `rebind` / `trash_unused` = **覆盖/封死既有货流**
+
+第一版没有这个区分，直接把 `partial_apply` 的 P0/P13 打红 —— 那两条正是
+「放一台 cutter」这种正解第一步。收窄后两者都通过。
+
+阈值：相对损失 ≥25%，或绝对损失 ≥20 格。第一版写的是 `loss > ops.length`，
+方向反了（一条 op 杀掉几十格连通性是常态，op 多的调用反而更难触发）。
+
+### Added — `MIXER_UNFED`：「机器在了，槽没喂」是 `PROCESSOR_REQUIRED` 看不见的一类病
+
+第 9 关的最后一堵墙。`PROCESSOR_REQUIRED` 只**数**「工厂里有几台 mixer」：
+
+- 模型照着它，把一台 mixer 插进了一条**只有蓝色**的流上
+- 数量达标（`have: 1`）⇒ 诊断消失
+- 而配方里 `mix` 步的 `inputs` 是 `["color:blue","color:red"]` —— **两种不同的颜料**
+- 于是 `mix()` 永远不可能跑，而系统再也不会提这件事
+
+真实数据（同一份 obs）：唯一那台 mixer 的两个 color 槽，上游是**同一条蓝矿线**；
+红矿在 44 格外、有矿石有矿机、只是没接过来。**材料全在，判据只差一步「两个槽分别收到了什么」。**
+
+形状传播引擎早就算得出这件事（`inputSlotValue`），从没被用来回答这个问题。现在：
+
+- 配方说 `mix` 要哪几种颜色（从 `steps[].inputs` 读，不硬编码）
+- 对每台 mixer 逐 color 槽取上游值
+- 两槽不同 ⇒ 正常；有一槽解不出 ⇒ 报「另一路没接上」；两槽相同 ⇒ 报「同源，产不出第三种颜色」
+- **解不出时不猜是哪种颜色** —— 只说这一槽没有已知来料，并给出该槽的缺口原因
+  （`feed-cell-empty` / `belt-not-aimed` / `tunnel-barrier` / …）与喂料带子句柄
+- `candidates` 把 `connect` 排第一（首要修法是铺线，不是再放一台 mixer）
+
+配方只要一种颜色时**不报**（M4 锁着这条，防止误伤单输入配方）。
+没有 mixer 时也不报 —— 那是 `PROCESSOR_REQUIRED` 的活（M1）。
+
+5 条新测试：M1 无 mixer 不报 / M2 一喂一空必报且两槽原因不同 / M3 全空也报 /
+M4 单色配方不报 / M5 已登记 `DIAG_CODES`。
+
 ### Added — `debug_building_unlocked` 的实机结论
 
 第 9 关要求紫色（`CpCpCpCp`），而世界里**没有紫矿** —— 只有

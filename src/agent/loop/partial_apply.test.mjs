@@ -35,7 +35,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { buildTxPlan } from "../loop.mjs";
+import { buildTxPlan, applyTxOpsToObs } from "../loop.mjs";
+import { worldHealth } from "./health.mjs";
 import { buildHandles } from "./handles.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -307,4 +308,42 @@ test("P14 对照：有失败 + 剩下不可撤销 ⇒ 仍然拒绝（P4 的语�
     const p = buildTxPlan(plan(FAIL_M1, OK_CUTTER), OBS, null, handles, { partial: true });
     assert.equal(p.ok, false, "应当拒");
     assert.equal(p.diagnosis.code, "NO_REVERSIBLE_CALL");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 执行前预演（`stage:"simulate"`）—— 拦破坏，不拦施工
+ *
+ * 这个区分是本文件最容易被改坏的地方：两者在「到 hub 的带子变少了」这一点上
+ * **看起来完全一样**，只有调用的性质不同。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("S1 ★ 施工类调用（insert_machine / replace_run 改朝向）不许被预演拦下", () => {
+    /* 实测：L4 上放一台 cutter 会临时切断经过它的分支 —— 那是正解的第一步。
+       拿「连通性下降」一概而论，等于把施工本身禁掉（rollback.mjs 文件头警告过）。 */
+    const obs = OBS;
+    const handles = buildHandles(obs, null);
+    const plans = [
+        { say: "x", calls: [{ macro: "insert_machine", args: { at: [4, -13], facing: "top", machine: "cutter" }, why: "w" }] },
+        { say: "x", calls: [{ macro: "replace_run", args: { region: [4, -13, 5, -13], building: "belt", opts: { facing: "top" } }, why: "w" }] },
+    ];
+    for (const p of plans) {
+        const r = buildTxPlan(p, obs, null, handles, { partial: true });
+        assert.ok(r.ok || r.diagnosis.evidence.stage !== "simulate",
+            `${p.calls[0].macro} 属于施工，不该被预演拦下（实得 ${r.diagnosis && r.diagnosis.code}）`);
+    }
+});
+
+test("S2 ★ 预演的拒绝必须给出两侧数字（模型要知道代价，不是只收到一个 no）", () => {
+    /* 直接构造一个「覆盖一大片既有带子」的调用太重；这里用单元口径验证
+       `applyTxOpsToObs` + `worldHealth` 的组合能算出前后差 —— 那是闸门的全部依据。 */
+    const obs = OBS;
+    const belts = obs.entities.filter(e => e.type === "belt").slice(0, 40);
+    const after = applyTxOpsToObs(obs, belts.map(b => ({ op: "delete", uid: b.uid })));
+    assert.ok(after, "applyTxOpsToObs 必须能处理纯 delete");
+    assert.equal(after.entities.length, obs.entities.length - belts.length);
+    const a = worldHealth({ obs, goalShape: "RuRu----" });
+    const b = worldHealth({ obs: after, goalShape: "RuRu----" });
+    assert.ok(a.belts_reaching_hub > b.belts_reaching_hub,
+        `删掉 40 条带子后到 hub 的带子必须变少（${a.belts_reaching_hub} → ${b.belts_reaching_hub}）`);
+    assert.ok(Number.isInteger(a.belts_dead) && Number.isInteger(b.belts_dead), "死带子数也要算得出来");
 });

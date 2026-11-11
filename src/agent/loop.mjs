@@ -935,7 +935,20 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
         OBS_TRUNCATED: 0, PATHS_TRUNCATED: 0,
         /* 语义层排在最前：它们直接说「缺哪一步工序 / 哪条流送错形状」，
            比「窗口内零产出」更接近可执行动作。v2 §4：WRONG_SHAPE_AT_HUB 必须可见。 */
-        WRONG_SHAPE_AT_HUB: 1, DISCARDED_INTERMEDIATE: 2, PROCESSOR_REQUIRED: 3,
+        WRONG_SHAPE_AT_HUB: 1, DISCARDED_INTERMEDIATE: 2,
+        /* ★ `MIXER_UNFED` 必须排在**结构层之前** ★
+         *
+         * 跨层 RANK 是这个文件说了算的，`semantic.mjs` 自己的 CODE_RANK 只管层内。
+         * 没登记在这里 ⇒ 落到默认的 50 ⇒ 排在 `DEAD_END`(9) /
+         * `BELT_HANDOFF_REJECTED`(9) **之后**。
+         *
+         * 第 9 关实测的后果：`MIXER_UNFED` 说「这台 mixer 只有一路颜料，配方永远跑不起来」，
+         * 而模型连着五轮在追 `BELT_HANDOFF_REJECTED` 和 dead painter —— 那些是**症状**，
+         * 而配方的前提没满足时，下游怎么修都不会有产出。
+         *
+         * 排在 `< PROCESSOR_REQUIRED` 之前：机器已经在世界上、只是喂不进去，
+         * 这种情形比「还没有机器」更具体，也更该先处理。 */
+        MIXER_UNFED: 2, PROCESSOR_REQUIRED: 3,
         NO_PRODUCTION: 4, PRODUCED_NOT_DELIVERED: 5, FLOW_UNREACHABLE: 6, FLOW_UNVERIFIED: 7,
         SLOT_STARVED: 8, OUTPUT_UNROUTED: 8,
         DEAD_END: 9, BELT_HANDOFF_REJECTED: 9,
@@ -1147,6 +1160,43 @@ function sourceOfPlace(calls, op) {
         }
     }
     return null;
+}
+
+/**
+ * 把一次 tx 的 ops 在**内存里**应用到一个 obs 上，返回新的 obs（不改原对象）。
+ *
+ * 用途只有一个：写盘**之前**算一遍「这一步会让世界变好还是变坏」。
+ * 所以它只需要**够准到能算健康度**：实体表 + region。
+ *
+ * 三条刻意的简化（都不影响 health 的判据）：
+ *   · 新实体的 uid 从「当前最大值 +1」递增 —— health 只数个数与连通性，不看具体 uid；
+ *   · 带子的 `rotationVariant` 从 op 原样搬（planToTxOps 已经算好）；
+ *   · 不模拟游戏里的「按邻居重算 rv」—— 那正是 `tx` 要开 `runGuarded` 的原因，
+ *     而 health 的连通判据读的是 op 给的 rv，与写盘后的形态一致。
+ *
+ * @param {object} obs   当前 obs（`entities` 数组）
+ * @param {Array} ops    `txPlan.ops`
+ * @returns {object|null} 新的 obs；ops 形态不认识时返回 null（调用方据此跳过预演）
+ */
+export function applyTxOpsToObs(obs, ops) {
+    if (!obs || !Array.isArray(obs.entities) || !Array.isArray(ops)) return null;
+    const del = new Set();
+    for (const op of ops) if (op && op.op === "delete" && isInt(op.uid)) del.add(op.uid);
+    const entities = obs.entities.filter(e => e && !del.has(e.uid));
+    let next = 1 + Math.max(0, ...entities.map(e => (isInt(e.uid) ? e.uid : 0)));
+    for (const op of ops) {
+        if (!op || op.op !== "place") continue;
+        if (typeof op.building !== "string" || !isInt(op.x) || !isInt(op.y)) return null;
+        entities.push({
+            uid: next++,
+            type: op.building,
+            variant: "default",
+            x: op.x, y: op.y,
+            r: isInt(op.r) ? op.r : 0,
+            rotation_variant: isInt(op.rotationVariant) ? op.rotationVariant : 0,
+        });
+    }
+    return { ...obs, entities, entity_count: entities.length };
 }
 
 /**
@@ -1669,6 +1719,107 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
             evidence: { stage: "verifyMacroTokenCoords", violations: tc.violations.length },
             hint: "标签没变、值变了：坐标在「宏返回 → 挂标签 → 落盘」之间被改过。",
         });
+    }
+
+    /* ⑤c ★ 执行前的净效果预演：把 ops 在内存里应用一遍，先算世界会变好还是变坏 ★
+     *
+     * ## 为什么需要（第 9 关实测的连续退化）
+     *
+     * `classifyNetEffect` 一直能判 `regressive`，但那是**事后**——世界已经被改了。
+     * 第 9 关有一轮里，模型两次 `connect {allow_replace:true}` 覆盖了正在工作的带子，
+     * 到 hub 的带子 320 → 254、死带子 184 → 282。判定层如实判了 regressive 并回滚，
+     * 但那一轮的两步都是白做的；更糟的是模型**看不到自己那一步的代价**，
+     * 下一轮接着用同样的写法。
+     *
+     * `applyToWorld` 的语义就是「把宏结果折进世界」，而 `worldHealth` 接受任意
+     * obs —— 两者加起来就能在**写盘前**回答「这一步会让世界变好还是变坏」。
+     *
+     * ## 什么情况拒
+     *
+     * 只在**明显变坏**时拒。判据取自两个量，任一成立就拦：
+     *
+     *   · `belts_reaching_hub` 掉了超过 **25%**（相对损失）—— 第 9 关那条
+     *     `connect{B124→C7, allow_replace}` 实测是 320 → 286（-11%），
+     *     已经吃掉三分之一的可达带子；再松一点就拦不住了。
+     *   · 或者**净掉 20 格以上**（绝对损失）—— 小世界（L4 只有 161 条带子）
+     *     掉 20 格等于掉了八分之一，那也是明显变坏。
+     *
+     * ⚠️ 第一版写的是 `loss > txPlan.ops.length`（「掉得比 op 数还多才拦」）——
+     * 那个阈值方向反了：一条 op 杀掉几十格连通性正是**常态**（覆盖一格能让整条分支
+     * 断掉），而 op 数多的调用反而更难触发。实测那条 B124→C7 有 54 条 op、
+     * 掉了 34 格 ⇒ 34 > 54 不成立 ⇒ 放行。判据必须看**世界损失**，不是 op 数。
+     *
+     * 这条阈值刻意留了余量：施工本来就会临时减少可达带子（`rollback.mjs` 的文件头
+     * 写明了这一点）。要拦的是「几十条带子一起掉」，不是「少一两格」。
+     *
+     * 拒了之后把两侧的数字都交给模型 —— 它需要知道代价，而不是只收到一个 `no`。 */
+    if (o && Array.isArray(o.entities) && txPlan.ops.length) {
+        try {
+            /* `buildTxPlan` 是纯函数，拿不到 `runLoop` 的 `curGoal`。
+               目标从 obs 读（`goal.requirement.shape`），并允许调用方用
+               `opts.goalShape` 覆盖 —— 换关那一轮两者会短暂不同。 */
+            const simGoal = (typeof opts.goalShape === "string" && opts.goalShape)
+                ? opts.goalShape
+                : ((o.goal && o.goal.requirement && o.goal.requirement.shape) || null);
+            const before = worldHealth({ obs: o, goalShape: simGoal });
+            const afterObs = applyTxOpsToObs(o, txPlan.ops);
+            const after = afterObs ? worldHealth({ obs: afterObs, goalShape: simGoal }) : null;
+            if (after && Number.isInteger(before.belts_reaching_hub) && Number.isInteger(after.belts_reaching_hub)) {
+                const loss = before.belts_reaching_hub - after.belts_reaching_hub;
+                const pct = before.belts_reaching_hub > 0 ? loss / before.belts_reaching_hub : 0;
+                /* ★ 只在「覆盖既有带子」这类调用上拦 ★
+                 *
+                 * 实测（P0/P13 回归）：`insert_machine` 放一台 cutter 到带子上，
+                 * 会临时切断经过它的分支 —— L4 上那是**正解的第一步**。
+                 * 拿同一个阈值去拦它，等于把施工本身禁掉，正是
+                 * `rollback.mjs` 文件头明确警告过的那种错。
+                 *
+                 * 真正要拦的是**覆盖/封死既有货流**：`connect{allow_replace}`、
+                 * `trash_unused`、`replace_run` 把带子改成别的。这些的共同点是
+                 * **删掉既有带子并把那几格给别人**，而 `insert_machine` 是
+                 * 「插进」——它自己会重新接线。
+                 *
+                 * 判据：本次调用里有没有 `allow_replace` / `rebind` / `confirm_waste`。 */
+                const risky = executed.some(c => {
+                    const a = (c && c.args) || {};
+                    const op = (a.opts && typeof a.opts === "object") ? a.opts : {};
+                    if (op.allow_replace === true || op.rebind === true) return true;
+                    if (c.macro === "trash_unused") return true;
+                    return false;
+                });
+                const tooMuch = risky && (loss >= 20 || (loss >= 5 && pct >= 0.25));
+                if (tooMuch) {
+                    return reject("PLAN_REJECTED", {
+                        layer: "plan", stage: "simulate",
+                        expected: "这一步不会大幅减少到 hub 的带子",
+                        observed: `预演：到 hub 的带子 ${before.belts_reaching_hub} → ${after.belts_reaching_hub}`
+                            + `（-${loss}，${Math.round(pct * 100)}%），死带子 ${before.belts_dead} → ${after.belts_dead}；`
+                            + `这一步是 ${txPlan.ops.length} 条 op`,
+                        evidence: {
+                            stage: "simulate",
+                            before: { reach: before.belts_reaching_hub, dead: before.belts_dead },
+                            after: { reach: after.belts_reaching_hub, dead: after.belts_dead },
+                            loss, pct: Math.round(pct * 1000) / 1000,
+                            ops: txPlan.ops.length,
+                            calls: executed.map(c => c.macro),
+                        },
+                        /* 最可能是 `allow_replace` 覆盖了正在工作的带子 —— 那句话必须说出口，
+                           因为宏的 warning 只报「几格」，不报到 hub 少了多少。 */
+                        hint: `这一步会让世界明显变差，已在写盘前拦下（世界没有被改）。`
+                            + `最常见的原因是 \`connect {allow_replace:true}\` 或 \`trash_unused\` 覆盖/封死了**正在工作**的带子 ——`
+                            + `宏只会说「覆盖了 N 格」，不会说那 N 格背后挂着 ${loss} 条到 hub 的带子。`
+                            + `换一条更短的路径（先不带 allow_replace 试），或先确认那几格确实是废料。`,
+                    });
+                }
+            }
+        } catch (e) {
+            /* 预演失败**不许**变成拒绝：它是额外的安全网，不是判据本身。
+               算不出来就放行，让已有的后验路径（verify + rollback）兜住。
+               （`buildTxPlan` 是纯函数，拿不到 `runLoop` 的 timeline —— 只能 console。） */
+            if (typeof process !== "undefined" && process.env && process.env.SHAPEZ_DEBUG_SIM) {
+                console.error(`[simulate] skipped: ${String(e && e.message ? e.message : e).slice(0, 120)}`);
+            }
+        }
     }
 
     return {

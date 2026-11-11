@@ -421,7 +421,44 @@ function makeShapeEngine(obs, idx) {
         if (acc.ok) mark("tunnel", e.uid, "underground_belt");
     }
 
-    return { ore, resourcesPresent, unknown, beltValue, outValue, inputValue, senderOf };
+    /**
+     * 机器某个**槽位**（按索引，不是 role）收到的形状。
+     *
+     * `inputValue(m, role)` 按 role 查，对多输入同 role 的机器（mixer / stacker
+     * 两个槽都叫 `color` / `lower|upper` 分得开，但 mixer 分不开）只能拿到第一个。
+     * 而「两个槽分别喂了什么」正是判断 mixer 能否产出的**唯一**依据 ——
+     * 配方里 `mix` 步的 inputs 是 `["color:blue","color:red"]`，两种不同的颜料。
+     *
+     * @param {object} m    机器实体
+     * @param {number} i    第几个输入槽（按模板顺序，旋转后）
+     * @returns {{slot:Array, cell:Array, dir:string, value:any}|null}
+     */
+    function inputSlotValue(m, i) {
+        const s = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m));
+        if (!s || !Array.isArray(s.inputs) || !s.inputs[i]) return null;
+        const sl = s.inputs[i];
+        const up = at(idx, sl.cell);
+        const base = { slot: sl.slot, cell: sl.cell, dir: sl.dir, role: sl.role };
+        if (!up) return { ...base, value: null, why: "feed-cell-empty" };
+        if (isBelt(up)) {
+            if (!sameCell(exitCellOf(up), sl.slot)) return { ...base, value: null, why: "belt-not-aimed", beltUid: up.uid };
+            if (!accepts(idx, sl.slot, exitDirOf(up)).ok) return { ...base, value: null, why: "belt-not-accepted", beltUid: up.uid };
+            return { ...base, value: beltValue(up), beltUid: up.uid };
+        }
+        if (isTunnel(up)) {
+            if (tunnelIsSender(up)) return { ...base, value: null, why: "tunnel-sender", tunnelUid: up.uid };
+            if (!sameCell(exitCellOf(up), sl.slot)) return { ...base, value: null, why: "tunnel-not-aimed", tunnelUid: up.uid };
+            return { ...base, value: null, why: "tunnel-barrier", tunnelUid: up.uid };
+        }
+        const o = ejectSlotInto(up, sl.slot, sl.dir);
+        return {
+            ...base, machineUid: up.uid, machineType: up.type,
+            value: o ? outValue(up, o.role) : null,
+            ...(o ? {} : { why: "machine-not-aimed" }),
+        };
+    }
+
+    return { ore, resourcesPresent, unknown, beltValue, outValue, inputValue, inputSlotValue, senderOf };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -809,8 +846,22 @@ const SEVERITY_RANK = Object.freeze({ blocker: 0, warn: 1, info: 2 });
 const CODE_RANK = Object.freeze({
     DISCARDED_INTERMEDIATE: 0,
     WRONG_SHAPE_AT_HUB: 1,
-    PROCESSOR_REQUIRED: 2,
-    SHAPE_UNKNOWN: 3,
+    /* ★ `MIXER_UNFED` 排第一档（在 `PROCESSOR_REQUIRED` 之前）★
+     *
+     * 它和「配方缺工序」是同一类病：**配方下一步跑不起来**。落在默认档（50）
+     * 意味着它排在所有 `PROCESSOR_REQUIRED` / `BELT_HANDOFF_REJECTED` 之后 ——
+     * 而后者是**症状**，这条是**成因**。
+     *
+     * 第 9 关实测：`MIXER_UNFED` 那一轮恰好排到 prompt 第 1 位（同分后按 code
+     * 字典序碰巧靠前），但只要世界上还有别的语义诊断，它就往后掉，模型五轮
+     * 都没看它一眼，一直在追 `BELT_HANDOFF_REJECTED` 和 painter。
+     *
+     * 为什么该压在 `PROCESSOR_REQUIRED` 之前：紫色的链是
+     * `mine → mix → paint`。mixer 产不出紫颜料，下游的 painter 修了也白修 ——
+     * 前提没满足时，先修前提。 */
+    MIXER_UNFED: 2,
+    PROCESSOR_REQUIRED: 3,
+    SHAPE_UNKNOWN: 4,
 });
 
 /**
@@ -1154,6 +1205,171 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 : `工厂里没有能放下 ${kind}(${fp[0]}×${fp[1]}) 的空地。先把挡路的旧线拆掉`
                     + `（remove_run / trash_unused）腾出位置，再放机器。`,
         });
+    }
+
+    /* ────────────────────────────────────────────────────────────────────
+     * ②b MIXER_UNFED —— mixer 在世界上，但两个 color 槽没凑齐**两种不同**的颜料
+     *
+     * ## 为什么这条诊断必须有（第 9 关实测的最后一堵墙）
+     *
+     * `PROCESSOR_REQUIRED` 只数「工厂里有几台 mixer」。第 9 关的模型照着它，
+     * 把一台 mixer 插进了一条**只有蓝色**的流上 —— 数量达标了（`have: 1`），
+     * 于是诊断消失，而配方里的 `mix` 步永远不可能发生：它需要**红 + 蓝**。
+     *
+     * 世界的真实数据（同一份 obs）：
+     *   · 配方：`mix(inputs: ["color:blue","color:red"]) → color:purple`
+     *   · 唯一那台 mixer 的两个槽，上游都是**同一条蓝矿线**
+     *   · 而红矿在 44 格之外、有矿石有矿机（`(54,21)`），只是没有接过来
+     *
+     * 也就是说：**材料全在，判据只差一步「两个槽分别收到了什么」**。
+     * 形状传播引擎早就算得出这件事（`inputSlotValue`），从没被用来回答这个问题。
+     *
+     * ## 判据（只报**能确定**的）
+     *
+     * 配方里 `mix` 步的 `inputs` 给出需要哪几种颜色（这里是两个不同的 color:*）。
+     * 对世界上每一台 mixer，逐个 color 槽取上游值：
+     *   · 两槽都解得出且**互不相同** → 正常，不报
+     *   · 有一个槽解不出（空 / 没对准 / 隧道屏障 / 形状未知）→ 报「另一路没接上」
+     *   · 两槽都有但**相同** → 报「同源，产不出第三种颜色」
+     *
+     * 解不出时**不猜**是哪种颜色 —— 只说「这一槽没有已知来料」，
+     * 并把该槽的喂料格与缺口原因一起给出。
+     * ──────────────────────────────────────────────────────────────────── */
+    if (model.needs.has("mixer")) {
+        const mixStep = model.usable.find(s => s.op === "mix");
+        const wantColors = (mixStep && Array.isArray(mixStep.inputs) ? mixStep.inputs : [])
+            .filter(v => typeof v === "string" && v.startsWith("color:"));
+        const mixers = idx.ent.filter(e => e.type === "mixer");
+        /* 只有**真的**需要两种不同颜色时才查（单输入配方不该被这条打扰） */
+        const needDistinct = new Set(wantColors).size >= 2 || wantColors.length >= 2;
+
+        for (const m of mixers) {
+            const tpl = templateByBuildingVariant(m.type, variantOf(m));
+            const colorIdx = (tpl && Array.isArray(tpl.inputs) ? tpl.inputs : [])
+                .map((s, i) => (s.role === "color" ? i : -1)).filter(i => i >= 0);
+            if (colorIdx.length < 2) continue;
+
+            const feeds = colorIdx.slice(0, 2).map(i => engine.inputSlotValue(m, i));
+            const vals = feeds.map(f => (f && Array.isArray(f.value)
+                ? f.value.filter(v => typeof v === "string" && v.startsWith("color:"))
+                : []));
+            const resolved = vals.map(v => (v.length ? v.slice().sort() : null));
+            const anyUnresolved = resolved.some(v => v === null);
+            const bothSame = resolved[0] && resolved[1]
+                && resolved[0].join("|") === resolved[1].join("|");
+
+            if (!needDistinct) continue;
+            if (!anyUnresolved && !bothSame) continue;         // 两路不同 ⇒ 正常
+
+            const mh = handleOf(handles, m.uid);
+            const feedHandles = feeds.map(f => (f && Number.isInteger(f.beltUid) ? handleOf(handles, f.beltUid) : null))
+                .filter(Boolean);
+            const shapeOfVal = v => (v ? v.join("+") : null);
+            /* 有值的那个槽也要报，否则「两个槽都是 null」时模型不知道该修哪个。 */
+            const describeSlot = i => {
+                const f = feeds[i];
+                if (!f) return `color slot ${i}: no such slot`;
+                if (f.value === null && f.why) return `color slot ${i}: ${f.why}`;
+                if (Array.isArray(f.value) && f.value.length) return `color slot ${i}: ${shapeOfVal(resolved[i])}`;
+                if (f.machineType) return `color slot ${i}: fed by ${f.machineType} whose output shape is not derived`;
+                return `color slot ${i}: no known incoming pigment`;
+            };
+            const why = anyUnresolved
+                ? `${describeSlot(0)}; ${describeSlot(1)}`
+                : `both color slots receive the same pigment (${shapeOfVal(resolved[0])}), so mix() cannot produce a different colour`;
+
+            /* ★ 必须点名**哪一个** color 槽，否则模型只能瞎猜 ★
+             *
+             * 第 9 关实测：诊断说「接到这个 mixer 的另一个 color 槽」，模型照做写
+             * `to: {ref:"C7", port:"color"}` —— mixer 两个槽的 role **都叫 color**，
+             * 于是 `selectPort` 命中 2 个 ⇒ `ambiguous_port` ⇒ 三连败。
+             *
+             * 这不是模型不懂消歧，是我们没告诉它该填哪个索引。`connect` 的
+             * `port` 支持 `{role,index}` 与 `{entry:n}` 两种形态，把可用的那个直接写出来。 */
+            const badSlots = resolved.map((v, i) => (v === null ? i : -1)).filter(i => i >= 0);
+            /* ★ `belt-not-aimed` 这种情形，正确的出口方向是**唯一确定的** ★
+             *
+             * 那一格的带子就贴在 mixer 的输入面上，它必须朝 mixer 喷。
+             * `replace_run` 的 belt 模式支持 `opts.facing:"<face>"` 显式给方向
+             * （见 remove.mjs 的 `bopts.facing`），而模型 8 轮里试了 4 次
+             * 都没能通过 —— 因为它不知道要传，也不知道该传哪个面。
+             *
+             * 这里把「哪一格、必须朝哪面」直接算出来写进 hint：
+             *   face = 从该格指向 mixer 槽格的方向（= 该槽的 `dir`）。
+             * 模型照抄 `opts.facing:"<face>"` 就能一次改对。 */
+            const facingFix = [];
+            for (const i of badSlots) {
+                const f = feeds[i];
+                if (!f || f.why !== "belt-not-aimed") continue;
+                const h = Number.isInteger(f.beltUid) ? handleOf(handles, f.beltUid) : null;
+                if (!h) continue;
+                /* ⚠️ 不是 `f.dir`！`f.dir` 是**槽的朝向**（bottom = 槽在机器下沿），
+                   而带子要朝的是**从它自己那格指向槽格**的方向 —— 两者正好相反。
+                   实测（第 9 关 B198 @(34,-12)、mixer 槽 @(34,-13)）：
+                     slot.dir = "bottom"（槽朝下）
+                     带子必须 exit = "top"（朝上，才能喷进上方那格）
+                   拿 `f.dir` 会给出「必须朝 bottom」，照做会把货喷到反方向 ——
+                   比不给还糟。所以这里按**坐标差**算，不按槽的朝向。 */
+                const dx = f.slot[0] - f.cell[0], dy = f.slot[1] - f.cell[1];
+                const face = dy < 0 ? "top" : dy > 0 ? "bottom" : dx > 0 ? "right" : dx < 0 ? "left" : null;
+                if (!face) continue;
+                facingFix.push({ slot: i, belt: h, face });
+            }
+            const slotHint = (badSlots.length === 1)
+                ? `缺料的是第 ${badSlots[0]} 个 color 槽 —— connect 时写 `
+                    + `\`to:{..., port:{role:"color", index:${badSlots[0]}}}\`（该槽槽格 ${JSON.stringify(feeds[badSlots[0]].slot)}）。`
+                : badSlots.length
+                    ? `两个 color 槽都没有已知来料（索引 0 与 1）；connect 时用 `
+                        + `\`port:{role:"color", index:0}\` 或 \`{role:"color", index:1}\` 指定是哪一个。`
+                    : "";
+            out.push({
+                code: "MIXER_UNFED",
+                layer: "L4",
+                severity: "blocker",
+                subject: { handle: mh, type: "mixer", uid: m.uid },
+                expected: `this mixer receives ${[...new Set(wantColors)].join(" + ")} (the recipe's mix step needs `
+                    + `inputs ${JSON.stringify(mixStep.inputs)})`,
+                observed: why,
+                evidence: {
+                    handles: [mh, ...feedHandles].filter(Boolean),
+                    uids: [m.uid],
+                    mixer_handle: mh,
+                    feed_handles: feedHandles,
+                    /* 每个槽的可施工描述：索引、槽格、喂料格、缺口原因 —— 模型据此写 port 选择器 */
+                    slots: colorIdx.slice(0, 2).map((i, k) => ({
+                        index: k, role: "color",
+                        slot: feeds[k] ? feeds[k].slot : null,
+                        feed_cell: feeds[k] ? feeds[k].cell : null,
+                        value: shapeOfVal(resolved[k]),
+                        why: feeds[k] ? (feeds[k].why || null) : "slot-missing",
+                        feed_handle: (feeds[k] && Number.isInteger(feeds[k].beltUid))
+                            ? handleOf(handles, feeds[k].beltUid) : null,
+                    })),
+                    slot_values: resolved.map(shapeOfVal),
+                    slot_why: feeds.map(f => (f ? (f.why || null) : "slot-missing")),
+                    need_slot: badSlots.length === 1 ? badSlots[0] : null,
+                    want_colors: [...new Set(wantColors)].sort(),
+                    mix_inputs: mixStep ? mixStep.inputs : null,
+                },
+                /* 可施工的下一步：那条缺的/重复的颜料得从别处的矿拉过来。
+                   `connect` 能铺路；`insert_machine` 能补一台矿机；`replace_run` 能就地改线。 */
+                candidates: ["connect", "insert_machine", "replace_run"],
+                hint: anyUnresolved
+                    ? `这台 mixer 只有一路颜料。配方要的是 ${[...new Set(wantColors)].join(" + ")} —— `
+                        + `找另一种颜色的矿，用 connect 把它的线接过来。${slotHint}`
+                        + (facingFix.length
+                            ? ` \`belt-not-aimed\` 的那一格是**方向错了、不是没接**：`
+                                + facingFix.map(f => `${f.belt} 必须朝 "${f.face}"`)
+                                    .join("；")
+                                + `。用 \`replace_run {region:$path_of(["${facingFix[0].belt}"]), building:"belt", opts:{facing:"${facingFix[0].face}"}}\` 就地改对 —— `
+                                + `这个面是从 mixer 的输入槽推出来的，唯一确定，不用猜。`
+                            : ``)
+                        + `别放着不管：数量对了但槽没喂，mix() 永远不会跑。`
+                    : `两个 color 槽接的是**同一条**线（都是 ${shapeOfVal(resolved[0])}）。`
+                        + `mix() 要的是两种**不同**的颜料 —— 把其中一路改接到另一种颜色的矿上。`
+                        + `改哪一路：connect 时用 \`port:{role:"color", index:0}\` 或 \`index:1\` 指定。`,
+            });
+        }
     }
 
     /* ────────────────────────────────────────────────────────────────────
