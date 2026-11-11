@@ -91,10 +91,23 @@ check("O5 没有机器时按 hub 中心算距离", () => {
 });
 
 /* ── O6：resolveOreRef 的形状校验 ── */
-check("O6 只接受两字母矿种前缀", () => {
-    const obs = mkObs([[2, 2, "CuCuCuCu"]]);
+check("O6 拒绝完整形状串 / 空串 / 非字符串（但接受颜料名）", () => {
+    /* ★ 2026-11-12：判据放宽 ★
+     *
+     * 原来只收 `/^[A-Z][a-z]$/`（`Cu` / `Ru`），而世界的矿种里还有颜料矿
+     * （`red` / `green` / `blue` / …）。第 9 关需要把红颜料接到 mixer 上，
+     * 模型 r1 的 say 直接说「no handle exists for the blue/red ore field」——
+     * 矿不是实体没有句柄，`$ore` 又不收 `red`/`blue` ⇒ **它没有任何合法方式
+     * 指定颜料矿**，只能往 mixer 旁边瞎塞矿机（blocked_by_machine ×2）。
+     *
+     * 现在收「形状矿两字母前缀 ∪ 颜料名」。下面那条「该拒」的清单里，
+     * `Cuu` 从「该拒」变成「可以」（它符合颜料名的形状，虽然世界上没有这种矿 ——
+     * 那种情况由 `ORE_NOT_FOUND` 报，见 O8，不是形状错误）。 */
+    const obs = mkObs([[2, 2, "CuCuCuCu"], [5, 5, "red"], [8, 8, "blue"]]);
     assert(resolveOreRef({ $ore: "Cu" }, obs), "Cu 应可用");
-    for (const bad of ["CuCuCuCu", "cu", "C", "", 42, null, undefined, "Cuu"]) {
+    assert(resolveOreRef({ $ore: "red" }, obs), "★ 颜料名 red 必须可用");
+    assert(resolveOreRef({ $ore: "blue" }, obs), "★ 颜料名 blue 必须可用");
+    for (const bad of ["CuCuCuCu", "C", "", 42, null, undefined]) {
         assert(resolveOreRef({ $ore: bad }, obs) === null,
             `${JSON.stringify(bad)} 不该被接受`);
     }

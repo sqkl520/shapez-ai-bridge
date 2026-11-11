@@ -1333,7 +1333,21 @@ export const MACRO_SPECS = Object.freeze({
            与 `whenNotToUse` 并列 —— 只列禁令会造成选择偏差。 */
         whenToUse: [
             "**在空地上新增一台机器**：需要多一台 cutter 提产能、或矿机站错了位置要重新放一台 —— 指一格（`at`），footprint 内的带子默认让它让位（`opts.replace_belts`）。",
-            "**把一台机器放到矿上**：`at: {\"$ore\":\"Ru\"}` 会解析到离消费者最近的钌矿格 —— 这是唯一能给矿机指定矿位的写法。",
+            /* ★ 2026-11-12：补上颜料名，并说清 facing 必填 ★
+             *
+             * 第 9 关需要把红颜料接到 mixer 上，模型 r1 的 say 直接说
+             * 「no handle exists for the blue/red ore field」—— 矿不是实体、没有句柄，
+             * 而卡片只举了 `"Ru"` 这种形状矿的例子，颜料名在别处**根本不合法**
+             * （`$ore` 原来只收 `/^[A-Z][a-z]$/`）。它只能往 mixer 旁边瞎塞矿机。
+             *
+             * 现在两个都收，卡片必须把两种写法都写出来 —— 只放宽代码不改卡片，
+             * 模型仍然不知道有这个写法。
+             *
+             * `facing` 必填也写进来：`$ore` 只解析出「哪一格」，朝向它不管，
+             * 而矿机可旋转 ⇒ 不给 facing 会被 `ambiguous_site` 拒。 */
+            "**把一台机器放到矿上**：`at: {\"$ore\":\"Ru\"}` 会解析到离消费者最近的钌矿格 —— 这是唯一能给矿机指定矿位的写法。"
+                + " 颜料矿用**颜色名**：`at:{\"$ore\":\"red\"}` / `{\"$ore\":\"blue\"}`。"
+                + " `$ore` 只给格子，**朝向仍要给**（矿机可旋转，不给 facing 会被 ambiguous_site 拒）。",
         ],
         params: [
             { name: "at", type: "{cell:[x,y],part?:\"any\"} | [x,y]", required: true, coordClass: "site", description: "**默认用 `{cell:[x,y]}`**：机器要占的其中一格（通常是 obs 里那条带子的格），宏反解 origin；多解时若只有一解让这格成为机器的输入槽槽格则采用（`site.chosen_by=\"input-slot\"`），仍多解即 ambiguous_site。`[x,y]` 裸数组 = 直接给 origin（obs 的 entities[].x/y），向后兼容、宏不做算术。选择口径只有一句：**「在这条带上插一台」用 {cell}；「就是 obs 里那台机器/那个坐标」用 [x,y]。** 两者走不同算术，归一化后 at.kind ∈ any-cell|origin。" },
