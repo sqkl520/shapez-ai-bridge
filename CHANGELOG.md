@@ -15,6 +15,48 @@
 
 ## [Unreleased]
 
+### Added — `## STICKY GOAL`：跨多轮的成因不许被更近的红点挤掉
+
+`## THIS RUN` 解决了「忘了自己决定过什么」，但还不够：第 9 关实测，
+每轮 observe 都会重算出结构层的红点（`BELT_HANDOFF_REJECTED` ×3、`CHAIN_UNFED` ×3），
+它们是**眼前看得见的**，模型连续 8 轮都在修它们、`tx=5`，
+**一次都没往红矿那个方向走**。
+
+诊断是「每轮重新拍的快照」，没有「哪件事一直没做成」的概念。
+一个需要跨很多轮才能完成的工程，每一轮都会被更近的红点挤到后面。
+
+新增 `st.stickyGoal`：**连续 ≥2 轮**存在的成因类诊断（`MIXER_UNFED` /
+`PROCESSOR_REQUIRED`，且 severity=blocker）会被每轮强制置顶，
+并在 prompt 里渲染成 `## STICKY GOAL`，说清「它是成因、下面的红点是它的下游、
+修它们没用」，同时给出可执行纪律。
+
+三个设计要点：
+
+- **≥2 轮才钉**：只出现一轮的诊断多半是上一轮改动的瞬时后果，钉住反而误导
+- **必须有出口**：`STICKY_MAX_ROUNDS = 6`，超时自动解除 —— 无限钉住等于把模型
+  锁死在一个做不到的计划上
+- **一轮做不完时给许可**：只禁「修红点」而不给替代出路，会把它逼死
+
+### Fixed — 「必须换动作」的检查读了自己刚写的变量，把正确的计划拦掉了
+
+真机 `r-20261111170332-1d9e` 的完整复现：
+
+- 第 1、2 轮 `connect` 都被 `NO_REVERSIBLE_CALL` 拒（宏失败，没进 tx）
+  ⇒ 上一轮**什么都没执行**
+- 第 3 轮模型换成 `insert_machine`，plan 全绿（`ops=2`、`placements=1`、`partial=false`）
+- 结果这道检查拿**刚被自己写进去**的 `lastExecutedMacros = ["insert_machine"]` 去比，
+  判成「仍然用了 insert_machine（与上一轮相同）」⇒ `halt: NO_PROGRESS`，
+  **把这一轮自己的 tx 也跳过了**（`tx=0`）
+
+它问的是「上一轮执行过的那套动作，这次又照抄了吗」，必须读上一轮留下的值。
+现在先存 `prevExecuted` 再赋值，检查读 `prevExecuted`。
+
+回归测试 `5b2`：上一轮全部失败、本轮换动作，断言 `apply ≥ 1`、`tx_count ≥ 1`。
+
+写这条测试时自己也踩了一次坑：第一版用 `at: [4, -13]` 写字面坐标，
+被 `assertNoHumanCoords` 判成 `LLM_COORD` —— 看起来像测试数据，其实测的是
+一个**按设计一定会被拒**的输入。改用句柄 `{$ref:"B81", asCell:true}`。
+
 ### Fixed — 计划被拒之后，下一轮的 `LAST ROUND` 显示 "none"
 
 `settleFailure`（计划/应用失败时的收尾）只写 transcript 的 `repair_decide`，

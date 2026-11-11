@@ -2160,6 +2160,15 @@ export async function runLoop(opts = {}) {
         lastTxPlan: null,
         /** 上一轮算出的残线清单（授权拆除的第二判据） */
         lastObsoleteLines: null,
+        /**
+         * 粘性目标：连续 ≥2 轮存在、且属于「成因类」的诊断码，每轮强制置顶。
+         * `{code, since, rounds}`；null = 当前没有。
+         * 详见轮首那段长注释 —— 它解决的是「模型每轮被更近的红点吸引、
+         * 需要跨多轮的工程永远排不到前面」。
+         */
+        stickyGoal: null,
+        /** 上一轮出现过的粘性候选码（用来判「连续两轮」） */
+        stickySeen: [],
     };
 
     /**
@@ -2805,6 +2814,59 @@ export async function runLoop(opts = {}) {
             /* 观测面的问题（items/production 不可用）与业务诊断并列；它们不导致 halt。 */
             for (const p of ob.problems) if (!diagnoses.some(d => d.code === p.code && d.layer === p.layer)) diagnoses.push(p);
 
+            /* ★ 粘性目标：一直没被解决的关键阻塞，每轮都提到最前 ★
+             *
+             * ## 为什么需要（第 9 关的「修症状」循环）
+             *
+             * `MIXER_UNFED` 一出现就说得很清楚：「红矿 44 格外，这是要规划的长支线」。
+             * 但每一次新的 observe 都会重算出**当前**的一堆诊断 ——
+             * 结构层那些 `BELT_HANDOFF_REJECTED` / `CHAIN_UNFED` 是眼前看得见的红点，
+             * 模型每轮都被它们吸引过去，修了 8 轮、`tx=5`，
+             * 而**一次都没往红矿那个方向走**。
+             *
+             * 根因：诊断是「每轮重新拍的快照」，没有「哪件事一直没做成」的概念。
+             * 一个需要跨很多轮才能完成的工程，每一轮都会被更近的红点挤到后面。
+             *
+             * ## 判据（尽量窄）
+             *
+             * 只钉**成因类**的码（`STICKY_CODES`），且必须连续存在 ≥2 轮才升级成粘性 ——
+             * 只出现一轮就消失的诊断多半是上一轮改动的瞬时后果，钉住它反而会误导。
+             * 钉住之后每轮强制置顶，直到它消失（= 做成了）或超过 `STICKY_MAX_ROUNDS`
+             * （= 判定这条路走不通，放开让模型自由选择）。
+             *
+             * 这与「必须换动作」那条纪律不冲突：那条管的是**同一个动作**不许重试，
+             * 这条管的是**同一个目标**不许被忘掉。 */
+            const STICKY_CODES = new Set(["MIXER_UNFED", "PROCESSOR_REQUIRED"]);
+            const present = diagnoses
+                .filter(d => STICKY_CODES.has(d.code) && d.severity === "blocker")
+                .map(d => d.code);
+            if (st.stickyGoal) {
+                st.stickyGoal.rounds++;
+                /* 它还在吗？不在 ⇒ 做成了（或世界变了），解除。 */
+                if (!present.includes(st.stickyGoal.code)) {
+                    tl.push(`    粘性目标「${st.stickyGoal.code}」已解除（存在 ${st.stickyGoal.rounds} 轮）`);
+                    st.stickyGoal = null;
+                } else if (st.stickyGoal.rounds > (BUDGET.STICKY_MAX_ROUNDS || 6)) {
+                    tl.push(`    粘性目标「${st.stickyGoal.code}」超时解除 —— 这条路走不通，换方向`);
+                    st.stickyGoal = null;
+                }
+            }
+            if (!st.stickyGoal) {
+                /* 新候选：连续两轮都出现才钉 */
+                const prev = st.stickySeen || null;
+                const cand = present.find(c => prev && prev.includes(c));
+                if (cand) {
+                    st.stickyGoal = { code: cand, since: roundNo, rounds: 2 };
+                    tl.push(`    粘性目标「${cand}」置顶 —— 它已连续出现，且是成因不是症状`);
+                }
+                st.stickySeen = present;
+            }
+            if (st.stickyGoal) {
+                /* 置顶：把它挪到数组最前，其余顺序不变。 */
+                const i = diagnoses.findIndex(d => d.code === st.stickyGoal.code);
+                if (i > 0) diagnoses = [diagnoses[i], ...diagnoses.slice(0, i), ...diagnoses.slice(i + 1)];
+            }
+
             /* ── 残线：在造别的形状 / 或账本里有别的目标的存量 ──
              *
              * ★ 两路证据，互补而不是重复 ★
@@ -2992,6 +3054,8 @@ export async function runLoop(opts = {}) {
                         lastRound: st.lastPlanSummary || null,
                         /* 本次 run 的任务日志（跨轮目标坚持，见 st.runLog 的注释）。 */
                         runLog: st.runLog,
+                        /* 粘性目标：需要跨多轮才能完成的成因，别被更近的红点挤掉。 */
+                        stickyGoal: st.stickyGoal,
                         /* ★ 上一步的净效果（2026-11-03）★
                          *
                          * `lastRound` 只说「上一轮调了什么宏、verify 红在哪」，
@@ -3232,7 +3296,11 @@ export async function runLoop(opts = {}) {
 
             /* plan 全绿 ⇒ 每个宏都通过了校验、即将进 tx。**从这里起才算「真正执行过」**
                （宏内部可能有自己的 dry-run，但 plan 过了就意味着它们都会产生 op）。
-               跨 run 记忆**不在这里记** —— 见 tx 成功后那段注释。 */
+               跨 run 记忆**不在这里记** —— 见 tx 成功后那段注释。
+
+               ⚠️ 顺序很重要：这里**先**写 `lastExecutedMacros`，而上面那道
+               「必须换动作」的检查读的也是它。两者必须在同一处对齐，见下面那段。 */
+            const prevExecuted = st.lastExecutedMacros.slice();
             st.lastExecutedMacros = planned.calls.map(c => c.macro);
             /* 记下本轮的 txPlan 与残线清单 —— 下一轮判定「拆的是不是残线」要用。
                放在这里（tx 之前）是对的：即便 tx 失败，下一轮也确实没有可拆的东西，
@@ -3260,9 +3328,21 @@ export async function runLoop(opts = {}) {
                与「候选剔除」用的是同一口径：没被执行的动作不算「试过」，
                拿它去证明「没换动作」是在惩罚一个未被检验的假设。
                上一轮什么都没执行 ⇒ `lastExecutedMacros` 为空 ⇒ 这条检查不该触发。 */
-            if (st.mustChange && st.lastExecutedMacros.length) {
+            /* ★ 读 `prevExecuted`（本轮赋值**之前**的值），不是 `st.lastExecutedMacros` ★
+             *
+             * 2026-11-12 真机（第 9 关 r-20261111170332-1d9e）：第 1、2 轮 `connect`
+             * 都被 `NO_REVERSIBLE_CALL` 拒（宏失败，没进 tx）⇒ 上一轮**什么都没执行**。
+             * 第 3 轮模型换成了 `insert_machine`，plan 全绿（ops=2、placements=1、
+             * partial=false）—— 结果这道检查拿**刚被自己写进去**的
+             * `lastExecutedMacros = ["insert_machine"]` 去比，
+             * 判成「仍然用了 insert_machine（与上一轮相同）」，
+             * 直接 `halt: NO_PROGRESS`，**把这一轮自己的 tx 也跳过了**（tx=0）。
+             *
+             * 语义上这条检查问的是「上一轮执行过的那套动作，这次又照抄了吗」，
+             * 所以必须读上一轮留下的值。 */
+            if (st.mustChange && prevExecuted.length) {
                 const now = planned.calls.map(c => c.macro);
-                if (actionSetHash(now) === actionSetHash(st.lastExecutedMacros)) {
+                if (actionSetHash(now) === actionSetHash(prevExecuted)) {
                     const d = mkDiag("NO_PROGRESS", {
                         layer: "meta",
                         expected: "同一失败指纹下换一套动作",
