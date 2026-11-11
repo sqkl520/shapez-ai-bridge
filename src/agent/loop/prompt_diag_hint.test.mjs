@@ -309,3 +309,47 @@ test("H12 真失败的那条仍然带 hint（对照，防止改坏）", () => {
     });
     assert.match(p.blocks.S5, /rebind/, "真失败的 hint 必须还在");
 });
+
+test("H13 ★ 预演闸门的**代价数字**必须进 LAST ROUND（只给 code 等于没说）", () => {
+    /* 第 9 关实测：预演拦下一次 `connect{allow_replace}`，diagnosis 里写着
+       「到 hub 的带子 254 → 232（-22），死带子 282 → 311」，
+       但 `lastRound.failures` 只传了 `{macro, code, hint}` —— observed 被丢掉，
+       模型下一轮换个写法接着试。
+
+       `code:"PLAN_REJECTED"` + 「会让世界明显变差」不带数字，
+       模型不知道自己那一步**有多糟**。这条锁住 observed 通路。 */
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"], budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: {
+            round: 3, calls: ["connect"],
+            verify: { checks: [], codes: ["PLAN_REJECTED"] },
+            decision: "plan_rejected",
+            failures: [{
+                macro: "connect", code: "PLAN_REJECTED",
+                observed: "预演：到 hub 的带子 254 → 232（-22，9%），死带子 282 → 311；这一步是 87 条 op",
+                hint: "最常见的原因是 connect{allow_replace:true} 覆盖了正在工作的带子",
+            }],
+        },
+    });
+    const s5 = p.blocks.S5;
+    assert.match(s5, /connect → PLAN_REJECTED: /, "宏名与错误码仍在首行");
+    assert.match(s5, /254 → 232/, "代价数字（到 hub 的带子）必须出现");
+    assert.match(s5, /282 → 311/, "死带子数也必须出现");
+    assert.match(s5, /allow_replace/, "修法紧随其后");
+});
+
+test("H14 没有 observed 时退化成旧格式（不许出现空的冒号段）", () => {
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"], budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: {
+            round: 1, calls: ["connect"], verify: { checks: [], codes: ["MACRO_REFUSED"] },
+            decision: "plan_rejected",
+            failures: [{ macro: "connect", code: "MACRO_REFUSED", hint: "传 opts.rebind=true" }],
+        },
+    });
+    const s5 = p.blocks.S5;
+    assert.match(s5, /connect → MACRO_REFUSED: 传 opts\.rebind=true/, "无 observed 时 hint 直接跟在 code 后面");
+    assert.ok(!/→ MACRO_REFUSED: :/.test(s5), "不许出现双重冒号");
+});

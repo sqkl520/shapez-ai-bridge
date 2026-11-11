@@ -2059,8 +2059,20 @@ function renderLastRound(lastRound) {
                 lines.push(`  · ${mac} → not reached (an earlier call failed first)`);
                 continue;
             }
+            /* ★ `observed` 是**这一步的代价数字**，必须出现 ★
+             *
+             * 预演闸门（`stage:"simulate"`）的全部信息量在这里：
+             * 「到 hub 的带子 254 → 232（-22），死带子 282 → 311」。
+             * 只给 `code` + `hint` 的话模型知道"被拒了"，但不知道**有多糟** ——
+             * 于是下一轮换个写法接着试（第 9 关实测）。
+             *
+             * 与 code 放**同一行**：`<macro> → <code>: <observed>`。
+             * 拆成两行会让「哪个宏、什么码」这条最基本信息离开首行，
+             * 而下游测试与模型都按首行找它。 */
+            const obsTxt = f && f.observed ? clip(sanitize(String(f.observed)).text.trim(), 110) : "";
             const hint = f && f.hint ? clip(sanitize(String(f.hint)).text.trim(), 100) : "";
-            lines.push(`  · ${mac} → ${code}${hint ? `: ${hint}` : ""}`);
+            lines.push(`  · ${mac} → ${code}${obsTxt ? `: ${obsTxt}` : ""}${!obsTxt && hint ? `: ${hint}` : ""}`);
+            if (obsTxt && hint) lines.push(`    ↳ ${hint}`);
         }
         if (fails.length > 2) lines.push(`  (+${fails.length - 2} more)`);
     }
