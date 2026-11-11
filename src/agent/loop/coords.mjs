@@ -127,7 +127,10 @@ export const PROVENANCE_PREFIX = Object.freeze({
  * 按 v1 字面实现，`assertProvenance` 会对所有宏溯源判红（＝宏放的机器永远无法溯源）。
  * 这里把前缀放宽成 `[\w-]+(?::[\w-]+)*@`，即「宏名，可带冒号分段，最后跟 @」。
  */
-export const PROVENANCE_RE = /^(?:obs:uid=\d+|macro:[\w-]+(?::[\w-]+)*@[^|]+|computed:(?:bbox|path)_of\[.+?\]|ore:[A-Z][a-z]@-?\d+,-?\d+)$/;
+/* `ore:` 段原为 `[A-Z][a-z]`（只认 `Cu` 这种形状矿）。2026-11-12 起 `$ore`
+   也收颜料名（`red` / `blue`），provenance 标签跟着放宽，否则颜料矿的溯源
+   会被 `assertProvenance` 判红 —— 又是一次「校验过了但审计不认」。 */
+export const PROVENANCE_RE = /^(?:obs:uid=\d+|macro:[\w-]+(?::[\w-]+)*@[^|]+|computed:(?:bbox|path)_of\[.+?\]|ore:(?:[A-Z][a-z]|[a-z]{3,8})@-?\d+,-?\d+)$/;
 
 /**
  * `computed:path_of[…]` 的**专属**前缀。单独导出是因为「重算 + 判连续」
@@ -244,11 +247,27 @@ function checkRefShape(opKey, v, path, add) {
         }
         return;
     }
-    /* `$ore` 的值是**矿种前缀**（`Cu`），不是句柄 —— 它压根不是数组。
-     * 形状校验放在 `resolveNode` 里（那里能同时判前缀格式与「地图上有没有」）。 */
+    /* `$ore` 的值是**矿种名**，不是句柄 —— 它压根不是数组。
+     * 形状校验放在 `resolveNode` 里（那里能同时判格式与「地图上有没有」）。
+     *
+     * ★ 必须同时接受**颜料名**（2026-11-12）★
+     *
+     * 原来只允许 `/^[A-Z][a-z]$/`（`Cu` / `Ru` / `Rb` 这种形状矿），
+     * 而世界的矿种里还有 `red` / `green` / `blue` / `cyan` / `purple` 这些**颜料矿**。
+     *
+     * 后果是硬阻断：第 9 关需要把红颜料接到 mixer 上，模型 r1 的 say 直接说
+     * 「no handle exists for the blue/red ore field」—— 矿不是实体、没有句柄，
+     * 而 `$ore` 又不收 `red`/`blue` ⇒ **它没有任何合法方式指定颜料矿**。
+     * 于是它只能往 mixer 旁边瞎塞矿机（`blocked_by_machine` ×2）。
+     *
+     * 判据放宽到「形状矿的两字母前缀 ∪ 颜料名」。颜料名的合法集合以世界实际
+     * 矿种为准（`obs.resources` 的第三元），这里只挡住明显不是矿种的值。 */
     if (opKey === "$ore") {
-        if (typeof v !== "string" || !/^[A-Z][a-z]$/.test(v)) {
-            add(path, "REF_SHAPE", `$ore 的值必须是两字母矿种前缀（如 "Cu"），实得 ${JSON.stringify(v)}`, v);
+        const isShapePrefix = typeof v === "string" && /^[A-Z][a-z]$/.test(v);
+        const isPigment = typeof v === "string" && /^[a-z]{3,8}$/.test(v);
+        if (!isShapePrefix && !isPigment) {
+            add(path, "REF_SHAPE",
+                `$ore 的值必须是矿种名（形状矿如 "Cu"、颜料如 "red" / "blue"），实得 ${JSON.stringify(v)}`, v);
         }
         return;
     }
@@ -396,7 +415,11 @@ export function nearestOreCell(obs, prefix) {
  */
 export function resolveOreRef(node, obs) {
     const raw = node && node.$ore;
-    if (typeof raw !== "string" || !/^[A-Z][a-z]$/.test(raw)) return null;
+    /* 与 `checkRefShape` / `resolveNode` 三处同口径：形状矿两字母前缀 ∪ 颜料名。
+       三处必须一致 —— 漏一处就会出现「校验过了但解析成 null」这种最难查的形态。 */
+    const okShape = typeof raw === "string" && /^[A-Z][a-z]$/.test(raw);
+    const okPigment = typeof raw === "string" && /^[a-z]{3,8}$/.test(raw);
+    if (!okShape && !okPigment) return null;
     return nearestOreCell(obs, raw);
 }
 
@@ -498,9 +521,13 @@ export function resolveRefs(llmPlan, handles, obs) {
                  * 一段矿的「矩形」会框进大量非矿格（和 `$bbox_of` 的老坑同型）。
                  * 模型要的是「在哪一格放矿机」，一格就够。 */
                 const raw = node.$ore;
-                if (typeof raw !== "string" || !/^[A-Z][a-z]$/.test(raw)) {
+                /* 与 `checkRefShape` 同口径：形状矿两字母前缀 ∪ 颜料名。
+                   见那里对「为什么必须收颜料名」的说明（第 9 关的硬阻断）。 */
+                const okShape = typeof raw === "string" && /^[A-Z][a-z]$/.test(raw);
+                const okPigment = typeof raw === "string" && /^[a-z]{3,8}$/.test(raw);
+                if (!okShape && !okPigment) {
                     add(path, "REF_SHAPE",
-                        `$ore 的值必须是两字母矿种前缀（如 "Cu"），实得 ${JSON.stringify(raw)}`, raw);
+                        `$ore 的值必须是矿种名（形状矿如 "Cu"、颜料如 "red" / "blue"），实得 ${JSON.stringify(raw)}`, raw);
                     return null;
                 }
                 const hit = nearestOreCell(obs, raw);
