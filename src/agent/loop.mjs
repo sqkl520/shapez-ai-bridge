@@ -3081,9 +3081,24 @@ export async function runLoop(opts = {}) {
                         failures: (() => {
                             const ev = (p.diagnosis && p.diagnosis.evidence) || {};
                             const failIdx = typeof ev.call_index === "number" ? ev.call_index : -1;
+                            /* ★ `observed` 必须一起交给模型 ★
+                             *
+                             * 原来只传 `{macro, code, hint}`。对宏自己的失败够用
+                             * （code 就说清了是 `occupied` 还是 `no_path`），
+                             * 但**预演闸门**（`stage:"simulate"`）的全部信息量都在
+                             * `observed` 里：「到 hub 的带子 254 → 232（-22），
+                             * 死带子 282 → 311」。只给 `code:"PLAN_REJECTED"` 加一句
+                             * 「会让世界明显变差」，模型不知道自己那一步**有多**糟，
+                             * 下一轮换个写法接着试 —— 第 9 关实测就是这么循环的。
+                             *
+                             * 这是本项目最高频的缺陷形态（「算出来 ≠ 送达」）的第 N 次复发：
+                             * 数字算出来了、写进了 diagnosis，却没进 prompt。 */
+                            const observed = (p.diagnosis && typeof p.diagnosis.observed === "string"
+                                && p.diagnosis.observed) ? p.diagnosis.observed : null;
                             return st.lastMacros.map((m, k) => (
                                 k === failIdx
-                                    ? { macro: m, code: p.diagnosis.code, hint: p.diagnosis.hint || null }
+                                    ? { macro: m, code: p.diagnosis.code, hint: p.diagnosis.hint || null,
+                                        ...(observed ? { observed } : {}) }
                                     : { macro: m, code: "unverified", hint: null }
                             ));
                         })(),
