@@ -50,24 +50,37 @@ function bundleFor(obs, budget, extra = {}) {
     });
 }
 
-/* ═══════════ 1. 事实：默认预算下真实存档掉 CAPACITY ═══════════
+/* ═══════════ 1. 默认预算现在够用（2026-11-10 起） ═══════════
  *
- * 这条**故意断言 bug 的存在**。它不是在保护坏行为，是在钉住「为什么需要那个显式传参」——
- * 如果哪天有人把 `PROMPT_TOKENS_MAX` 调够了，这条会变红，提醒同步更新理由。 */
-test("B1 真实 L4 存档（163 带子 / 7 诊断）：默认预算 9800 撑不住", () => {
+ * 这条**原来是故意断言 bug 的存在**，并写着「如果哪天有人把 PROMPT_TOKENS_MAX
+ * 调够了，这条会变红，提醒同步更新理由」。那天就是 2026-11-10 ——
+ * 第 9 关（536 条带子）实测 `belts_shown: 0`，连诊断点名的 10 条都不可见，
+ * 而模型那一轮要做的正是改其中两条的朝向。默认值 2800 → 4000。
+ *
+ * 现在这条钉的是**修复后的状态**：默认路径也要能显示带子。
+ * 第 3 组（B5）仍守「runLoop 有没有把预算传下去」—— 与默认值高低无关。 */
+test("B1 真实 L4 存档（163 带子 / 7 诊断）：默认预算已经够用", () => {
     const p = bundleFor(L4, {});
     const total = p.system.length + p.user.length;
     const target = Math.min(PROMPT_RULES.PROMPT_TOKENS_MAX * PROMPT_RULES.CHARS_PER_TOKEN,
         PROMPT_RULES.LLM_IN_CHARS_MAX);
 
-    assert.equal(target, 9800, `默认 targetChars 应为 9800，实际 ${target}`);
+    /* ★ 2026-11-10：默认预算从 2800 抬到 4000，这条断言随之改写 ★
+     *
+     * 旧版断言 `target === 9800` 且「默认下带子掉光、CAPACITY 消失」——
+     * 那记录的是**修复前的事实**。第 9 关（536 条带子）实测暴露出这个默认值
+     * 在真实规模上不可用：`belts_shown: 0`，连诊断点名的 10 条都一条不可见，
+     * 而那一轮模型要做的正是改其中两条的朝向。
+     *
+     * 现在默认值本身就够用，本文件第 3 组（B5 生产路径）仍然是真正的防线：
+     * 它守的是「runLoop 有没有把预算传下去」，与默认值高低无关。 */
+    assert.equal(target, Math.min(PROMPT_RULES.PROMPT_TOKENS_MAX * PROMPT_RULES.CHARS_PER_TOKEN,
+        PROMPT_RULES.LLM_IN_CHARS_MAX), `targetChars 由 PROMPT_TOKENS_MAX 推出（实际 ${target}）`);
     assert.ok(total > 9000, `真实存档的 prompt 本身就接近上限（实际 ${total}）`);
 
-    /* 现象本身：带子掉光、CAPACITY 消失。这是修复的动机。 */
-    assert.equal(p.blocks.s3_capacity, null, "默认预算下 CAPACITY 会消失（这正是要修的）");
-    assert.equal(p.blocks.capacity_unavailable, "dropped-for-budget",
-        `消失的原因必须是预算，不是 confidence（实际 ${p.blocks.capacity_unavailable}）`);
-    assert.equal(p.blocks.belts_shown, 0, `默认预算下一条带子都显示不出来（实际 ${p.blocks.belts_shown}）`);
+    /* 抬过默认值之后，默认路径就能显示带子了 —— 这是修复的目标，不是bug。 */
+    assert.ok(p.blocks.belts_shown > 0,
+        `默认预算下必须有带子可见（实际 ${p.blocks.belts_shown}）—— 第 9 关的失败形态就是这里为 0`);
 });
 
 /* ═══════════ 2. 抬预算之后两者都回来 ═══════════ */
@@ -77,16 +90,27 @@ test("B2 同样的存档，16000/4600 下 CAPACITY 与带子都回来", () => {
     assert.ok(big.blocks.s3_capacity, `抬预算后 CAPACITY 必须出现（实际 unavailable=${big.blocks.capacity_unavailable}）`);
     assert.match(big.blocks.s3_capacity, /^## CAPACITY/m);
     assert.match(big.blocks.s3_capacity, /bottleneck: cutter/);
-    assert.equal(big.blocks.belts_shown, PROMPT_RULES.STATE_BELTS_MAX,
+    /* `=== STATE_BELTS_MAX` → `>=`：诊断点名的带子现在追加在 cap 之外（见 pickBelts 注释），
+       真实存档上会超过 cap。这条要守的是「名额用满、没被预算砍」，不是精确等于。 */
+    assert.ok(big.blocks.belts_shown >= PROMPT_RULES.STATE_BELTS_MAX,
         `带子名额应当用满 ${PROMPT_RULES.STATE_BELTS_MAX}（实际 ${big.blocks.belts_shown}）`);
     assert.ok(big.system.length + big.user.length <= 16000, "总字符不许超上限");
 });
 
-test("B3 16000/4600 是饱和点：再抬不涨（STATE_BELTS_MAX 是独立上限）", () => {
+test("B3 16000/4600 是**带子**饱和点：再抬不涨（STATE_BELTS_MAX 是独立上限）", () => {
     const a = bundleFor(L4, { in_chars_max: 16000, prompt_tokens_max: 4600 });
     const b = bundleFor(L4, { in_chars_max: 40000, prompt_tokens_max: 11500 });
-    assert.equal(a.user, b.user, "16000 与 40000 渲染出同一个 user（已饱和）");
-    assert.equal(a.system, b.system);
+    /* ★ 从「user 逐字节相同」改成「带子数相同」★
+     *
+     * 2026-11-10：`when:` 行的门槛是 `tokensMax >= 5000`，而 4600 < 5000 < 11500
+     * ⇒ 第二档会**多出** when: 行，user 自然不同。那是设计内的差异，
+     * 不是「没饱和」。这条真正要守的是**带子名额的独立上限**（STATE_BELTS_MAX），
+     * 它才是「再抬预算也不涨」的那个东西。 */
+    assert.equal(a.blocks.belts_shown, b.blocks.belts_shown,
+        `两档预算下带子条数相同（${a.blocks.belts_shown} vs ${b.blocks.belts_shown}）`);
+    assert.equal(a.blocks.trimmed_belts, b.blocks.trimmed_belts);
+    assert.equal(a.system, b.system, "system 段逐字节相同");
+    assert.ok(b.blocks.belts_shown >= a.blocks.belts_shown, "抬预算只增不减");
 });
 
 test("B4 抬预算不改 system（只动 user）", () => {
@@ -138,8 +162,15 @@ test("B5 ★ 生产路径：runLoop 在大存档上把 CAPACITY 送到 prompt �
         + ` 修法见 loop.mjs 的 budget 字面量。`);
 
     assert.match(b.blocks.s3_capacity, /bottleneck: cutter/);
-    assert.equal(b.blocks.belts_shown, PROMPT_RULES.STATE_BELTS_MAX,
-        `带子名额也要用满（实际 ${b.blocks.belts_shown}/${b.blocks.belts_total}）`);
+    /* ★ 从 `=== STATE_BELTS_MAX` 改成 `>=` ★
+     *
+     * 2026-11-10 起诊断点名的带子**追加在 cap 之外**（cap + STATE_BELTS_DIAG_RESERVE），
+     * 因为「走廊吃满 cap」与「点名可见」在 cap 满时不可兼得（详见 pickBelts 的注释）。
+     * 于是真实存档上的条数会**超过** cap —— 这是设计变化，不是回归。
+     * 这条断言真正要守的是「带子名额用满了，没有因为预算不足被砍」，`>=` 足够。 */
+    assert.ok(b.blocks.belts_shown >= PROMPT_RULES.STATE_BELTS_MAX,
+        `带子名额也要用满（实际 ${b.blocks.belts_shown}/${b.blocks.belts_total}，`
+        + ` 至少 ${PROMPT_RULES.STATE_BELTS_MAX}）`);
 });
 
 /* ═══════════ 4. 小场景：抬预算只能变多，不许变少 ═══════════ */

@@ -349,8 +349,14 @@ console.log("\n── 4. S3 goal + state ──");
     ok(inList.length >= 1,
         `诊断点名的带子里至少 1 条进入列表（证明 referenced 仍有优先级）`, { inList, named });
     eq(pd.blocks.belts_referenced, 3, "belts_referenced === 3");
-    /* 而未被点名的带子也不是全进来 */
-    ok((pd.blocks.s3_belts.match(/^B\d+ /gm) || []).length <= 12, "点名 + 补足合计仍 ≤ 12");
+    /* ★ 上限从「≤ 12」改成「≤ cap + diag reserve」★
+     *
+     * 2026-11-10 起诊断点名的带子**追加在 cap 之外**（见 pickBelts 的注释）：
+     * 走廊吃满 cap，点名溢出到 `cap + STATE_BELTS_DIAG_RESERVE`。
+     * 旧断言 `≤ 12` 会把这条新机制判成回归。真正要守的是「有硬上限，不会无限膨胀」。 */
+    const capPlus = PROMPT_RULES.STATE_BELTS_MAX + PROMPT_RULES.STATE_BELTS_DIAG_RESERVE;
+    ok((pd.blocks.s3_belts.match(/^B\d+ /gm) || []).length <= capPlus,
+        `点名 + 补足合计仍 ≤ ${capPlus}（cap + diag reserve）`);
 }
 {
     /* 诊断点名的机器必须排进 20 台上限内。
@@ -463,7 +469,10 @@ console.log("\n── 6. 预算与截断 ──");
     }];
     const full = buildPrompt(baseOpts({ diagnoses: diag, budget: { rounds_left: 3 } }));
     ok(full.blocks.trimmed_belts === 0, `默认预算下不截断（实际砍了 ${full.blocks.trimmed_belts}）`);
-    ok(full.blocks.belts_shown === 12, `默认预算下 12 条带子全在（实际 ${full.blocks.belts_shown}）`);
+    /* 基线不再是硬编码的 12：诊断点名会溢出 cap（2026-11-10），
+       所以用「至少 cap 条」而不是「恰好 12 条」。 */
+    ok(full.blocks.belts_shown >= PROMPT_RULES.STATE_BELTS_MAX,
+        `默认预算下至少 ${PROMPT_RULES.STATE_BELTS_MAX} 条带子（实际 ${full.blocks.belts_shown}）`);
 
     /* 压预算，逼它截断 */
     const tight = buildPrompt(baseOpts({
@@ -471,7 +480,8 @@ console.log("\n── 6. 预算与截断 ──");
         budget: { rounds_left: 3, prompt_tokens_max: Math.floor(full.blocks.chars / PROMPT_RULES.CHARS_PER_TOKEN) - 60 },
     }));
     ok(tight.blocks.trimmed_belts > 0, `压低预算后确实砍了带子（砍 ${tight.blocks.trimmed_belts} 条）`);
-    ok(tight.blocks.belts_shown < 12, `带子数下降（${tight.blocks.belts_shown}/12）`);
+    ok(tight.blocks.belts_shown < full.blocks.belts_shown,
+        `带子数下降（${tight.blocks.belts_shown}/${full.blocks.belts_shown}）`);
 
     /* 硬规矩：goal / hub / diagnosis / S1 **逐字节不变** */
     eq(tight.blocks.S1, full.blocks.S1, "截断后 S1 逐字节相同");
