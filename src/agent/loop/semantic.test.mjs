@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { semanticDiagnoses } from "./semantic.mjs";
+import { semanticDiagnoses, beltsCarryingShape } from "./semantic.mjs";
 import { buildHandles } from "./handles.mjs";
 import { indexOf } from "./topology.mjs";
 import { replaceRun } from "../macros/remove.mjs";
@@ -672,4 +672,40 @@ test("M7 ★ 建议的 facing 必须指向 mixer 那一侧（槽朝向的反面�
     const m = /必须朝 "(\w+)"/.exec(d.hint);
     assert.ok(m, `hint 必须给出可直接抄的朝向，实得：${d.hint}`);
     assert.equal(m[1], "top", `必须朝上才能喷进上方的 mixer 槽；照抄槽的 dir 会得到 bottom（错）`);
+});
+
+test("M8 ★ 颜料矿机的输出必须是 color:<name>，不是裸 <name>", () => {
+    /* 实机第 9 关：两条喂料带子方向完全正确、确实连着蓝矿机，
+       诊断却报 `color slot 0/1: no known incoming pigment`。
+
+       根因是**两套命名撞车**：
+         · `obs.resources` 的矿种是裸名：`blue` / `red` / `CuCuCuCu`
+         · 配方里的颜料是带前缀的：`color:blue` / `color:red`
+       传播引擎原样返回 `"blue"`，而判据找 `v.startsWith("color:")`
+       ⇒ 一条都认不出来 ⇒ `beltsCarryingShape(obs, recipe, "color:blue")` 返回 0。
+
+       这条锁住那条分界线：颜料加前缀，形状类（CuCuCuCu/RuRuRuRu）保持裸名。 */
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    /* 一块真的有 `red` 矿的地面 —— 用 L4 的资源图，找不到就跳过（不编）。 */
+    const red = (w.resources || []).find(r => r[2] === "red");
+    if (!red) return;                       // 这份夹具没有红矿 ⇒ 这条测不了
+    const [rx, ry] = [red[0], red[1]];
+    /* 矿机站在红矿上，输出朝上；上方一条带子朝上（把颜料运出去）。 */
+    w.entities.push({ uid: next++, type: "miner", x: rx, y: ry, r: 0, variant: "default", rotation_variant: 0, code: 7, layer: "regular" });
+    w.entities.push({ uid: next++, type: "belt", x: rx, y: ry - 1, r: 0, variant: "default", rotation_variant: 0, code: 1, layer: "regular" });
+
+    const h = handlesOf(w);
+    const rec = Object.freeze({
+        ok: true,
+        steps: [
+            { op: "mine", hash: "CuCuCuCu", inputs: [], args: {} },
+            { op: "mineColor", hash: "color:red", inputs: [], args: { color: "red" } },
+            { op: "paint", hash: "CpCpCpCp", inputs: ["CuCuCuCu", "color:red"], args: { color: "red" } },
+        ],
+    });
+    const carrying = beltsCarryingShape(w, rec, "color:red", h, { max: 4 });
+    assert.ok(carrying.length > 0,
+        `★ 红矿机上方那条带子必须被认成「运 color:red」—— 返回 0 说明矿种没加前缀`
+        + `（矿种=${JSON.stringify(red[2])}）`);
 });

@@ -323,7 +323,24 @@ function makeShapeEngine(obs, idx) {
         if (op === "mine") {
             const kind = ore.get(K([m.x, m.y]));
             if (kind === undefined) { mark(resourcesPresent ? "no-ore" : "no-resources", m.uid, m.type); return null; }
-            return new Set([kind]);
+            /* ★ 颜料矿的输出是 `color:<name>`，不是裸 `<name>` ★
+             *
+             * 矿种（`obs.resources` 的第三元）用的是裸名：`blue` / `red` / `green` / `CuCuCuCu` / …
+             * 而配方里颜料用的是带前缀的：`color:blue` / `color:red`（见 `recipeForCached`
+             * 的 `mineColor` 步）。
+             *
+             * 两套命名在这个函数里撞车：矿机站在蓝矿上，`kind` 是 `"blue"`，
+             * 原样返回 ⇒ 下游 `mixer` 的 color 槽收到 `"blue"`，
+             * 而判据找的是 `v.startsWith("color:")` ⇒ **一条都认不出来**。
+             *
+             * 实机症状（第 9 关）：两条喂料带子方向完全正确、确实连着蓝矿机，
+             * 诊断却报 `color slot 0: no known incoming pigment` —— 传播在命名这一层就断了。
+             * `beltsCarryingShape(obs, recipe, "color:blue")` 也因此返回 0 条。
+             *
+             * 判据：只有**颜料类**矿种需要加前缀。形状类（`CuCuCuCu` / `RuRuRuRu`）
+             * 本身就是最终形态，配方里也是裸名，加了反而对不上。 */
+            const PIGMENTS = new Set(["red", "green", "blue", "cyan", "purple", "yellow", "white", "uncolored"]);
+            return new Set([PIGMENTS.has(kind) ? `color:${kind}` : kind]);
         }
         if (op === "balance") {
             /* 两路输入并集 → 两路输出都发全集。 */
@@ -1278,6 +1295,40 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 ? `${describeSlot(0)}; ${describeSlot(1)}`
                 : `both color slots receive the same pigment (${shapeOfVal(resolved[0])}), so mix() cannot produce a different colour`;
 
+            /* ★ 每种要的颜料**最近在哪** —— 这是模型唯一缺的那块信息 ★
+             *
+             * 第 9 关实机：两条喂料带子（B11932/B11936）追溯上去是**同一台蓝矿机**，
+             * 所以 mixer 拿到的是蓝+蓝。诊断只说「需要 blue+red」，模型知道缺红，
+             * 但**不知道红在哪** —— 它对世界的认识只有句柄，没有矿图。
+             *
+             * 实测距离：蓝 5 格、红 **44 格**。这不是「接一根线」的量级，
+             * 是一条需要单独规划的长支线。不给距离，模型会以为随手 connect 就能解决，
+             * 于是反复试 `connect(B192→C7)` 然后被 `target_already_fed` 打回。
+             *
+             * 只给「最近的那一格」和距离，不给整张矿图（预算）。
+             * 无矿图时如实说读不到，不编。 */
+            const oreHint = (() => {
+                if (!engine.resourcesPresent) return { text: "the observation carries no resource map, so where to mine a pigment cannot be read", sites: [] };
+                const wantPig = [...new Set(wantColors)].map(c => String(c).replace(/^color:/, ""));
+                const mx = m.x, my = m.y;
+                const nearest = [];
+                for (const pig of wantPig) {
+                    let best = null;
+                    for (const [k, kind] of engine.ore) {
+                        if (kind !== pig) continue;
+                        const [ox, oy] = k.split(",").map(Number);
+                        const d = Math.abs(ox - mx) + Math.abs(oy - my);
+                        if (!best || d < best.d) best = { d, at: [ox, oy] };
+                    }
+                    nearest.push({ pigment: `color:${pig}`, ...(best ? { distance: best.d, at: best.at } : { distance: null }) });
+                }
+                const missing = nearest.filter(n => n.distance === null);
+                const text = missing.length
+                    ? `no ${missing.map(n => n.pigment).join("/")} ore exists in the observed region at all`
+                    : nearest.map(n => `${n.pigment} ore is ${n.distance} tile(s) away`).join("; ");
+                return { text, sites: nearest };
+            })();
+
             /* ★ 必须点名**哪一个** color 槽，否则模型只能瞎猜 ★
              *
              * 第 9 关实测：诊断说「接到这个 mixer 的另一个 color 槽」，模型照做写
@@ -1349,25 +1400,39 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                     slot_why: feeds.map(f => (f ? (f.why || null) : "slot-missing")),
                     need_slot: badSlots.length === 1 ? badSlots[0] : null,
                     want_colors: [...new Set(wantColors)].sort(),
+                    /* 每种要的颜料最近在哪、多远 —— 见上方 oreHint 的注释。 */
+                    ore_reach: oreHint.sites,
                     mix_inputs: mixStep ? mixStep.inputs : null,
                 },
                 /* 可施工的下一步：那条缺的/重复的颜料得从别处的矿拉过来。
                    `connect` 能铺路；`insert_machine` 能补一台矿机；`replace_run` 能就地改线。 */
                 candidates: ["connect", "insert_machine", "replace_run"],
+                /* ★ 顺序是**按重要性**排的，因为 prompt 只给 hint 前 180 字符 ★
+                 *
+                 * 实测（第 9 关）：矿距信息原来排在最后，被 `clip(…, 180)` 整个切掉 ——
+                 * prompt 里只剩「…」，模型看到的是「这台 mixer 只有一路颜料」
+                 * 然后自己想办法，三轮都在改那条蓝线，一次都没去看 44 格外的红矿。
+                 *
+                 * 真正决定行动的是**矿在哪、多远**（蓝 5 格 / 红 44 格 ⇒ 这是支线工程，
+                 * 不是接线问题）。所以它必须排在最前面。端口索引是「怎么调」的细节，
+                 * 排在后面被截掉也不致命。 */
                 hint: anyUnresolved
-                    ? `这台 mixer 只有一路颜料。配方要的是 ${[...new Set(wantColors)].join(" + ")} —— `
-                        + `找另一种颜色的矿，用 connect 把它的线接过来。${slotHint}`
+                    ? `配方要 ${[...new Set(wantColors)].join(" + ")}。**颜料从哪来**：${oreHint.text}。`
+                        + (oreHint.sites.some(n => Number.isInteger(n.distance) && n.distance > 20)
+                            ? `最近的那种在 20 格以外 —— 这不是「接一根线」，是一条要单独规划的长支线：`
+                                + `先在那片矿区放一台矿机（insert_machine），再用 connect 一路接过来。`
+                                + `反复改现有那条线没用，它接的还是同一台矿机。`
+                            : `找另一种颜色的矿，用 connect 把它的线接过来。`)
+                        + `${slotHint}`
                         + (facingFix.length
                             ? ` \`belt-not-aimed\` 的那一格是**方向错了、不是没接**：`
                                 + facingFix.map(f => `${f.belt} 必须朝 "${f.face}"`)
                                     .join("；")
-                                + `。用 \`replace_run {region:$path_of(["${facingFix[0].belt}"]), building:"belt", opts:{facing:"${facingFix[0].face}"}}\` 就地改对 —— `
-                                + `这个面是从 mixer 的输入槽推出来的，唯一确定，不用猜。`
+                                + `。用 \`replace_run {region:$path_of(["${facingFix[0].belt}"]), building:"belt", opts:{facing:"${facingFix[0].face}"}}\` 就地改对。`
                             : ``)
-                        + `别放着不管：数量对了但槽没喂，mix() 永远不会跑。`
                     : `两个 color 槽接的是**同一条**线（都是 ${shapeOfVal(resolved[0])}）。`
-                        + `mix() 要的是两种**不同**的颜料 —— 把其中一路改接到另一种颜色的矿上。`
-                        + `改哪一路：connect 时用 \`port:{role:"color", index:0}\` 或 \`index:1\` 指定。`,
+                        + `**颜料从哪来**：${oreHint.text}。`
+                        + `mix() 要的是两种**不同**的颜料 —— 把其中一路改接到另一种颜色的矿上。`,
             });
         }
     }
