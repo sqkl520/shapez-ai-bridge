@@ -78,8 +78,24 @@ import { capacityFor } from "../assess.mjs";
 export const PROMPT_RULES = Object.freeze({
     /** 字符→token 的估算比（契约 §Q3.4：中文/代码混合 ≈3.5 字符/token，不引 tokenizer） */
     CHARS_PER_TOKEN: 3.5,
-    /** 输入预算 2.8k tok（S1..S6 合计） */
-    PROMPT_TOKENS_MAX: 2800,
+    /* ★ 输入预算 2.8k → 4k tok ★
+     *
+     * 2800 是按 **37 条带子的小场景**定的（L4 冷启动夹具）。在真实规模上它不够：
+     *
+     *   2026-11-10 第 9 关（536 条带子 / 8 条诊断 / 37 台机器）实测：
+     *     tokensMax=2800 → targetChars 9800 → 输出 7722 字符，**belts_shown: 0**
+     *     tokensMax=4000 → 输出 9164 字符，belts_shown: 12
+     *
+     * 而那一轮模型要做的正是「把 B205/B206 的朝向往回改」——
+     * 带子列表为 0 意味着它看不到那两条带子的任何属性（出口朝向、能否到 hub），
+     * 只能从诊断里那句 `belt-not-aimed` 猜。
+     *
+     * 注意 S1（系统规则）本身就占 4716 字符 ≈ 1348 token：2800 的预算里
+     * 光规则就吃掉一半，剩下 1452 token 要装 宏卡片(646) + 目标/配方(190) +
+     * 机器表(584) + 诊断(564) + 带子 —— 带子抢不到任何名额是**结构性的**。
+     *
+     * 4000 是实测最小的、能让带子出现的值。 */
+    PROMPT_TOKENS_MAX: 4000,
     /** 硬上限：超过即抛 PROMPT_OVER_BUDGET（= BUDGET.LLM_IN_CHARS_MAX） */
     LLM_IN_CHARS_MAX: BUDGET.LLM_IN_CHARS_MAX,
     /** 输出上限（parseLlmPlan 用同一条） */
@@ -90,8 +106,18 @@ export const PROMPT_RULES = Object.freeze({
     STATE_BELTS_MAX: BUDGET.PROMPT_STATE_BELTS_MAX,
     /** S3 机器表上限（不是契约硬数，是 900 tok 预算的工程上限） */
     MACHINES_MAX: 20,
-    /** 诊断点名带子的保底名额（见 pickBelts 的取舍规则；实测值 2，不是随手取的整） */
-    STATE_BELTS_DIAG_RESERVE: 2,
+    /* ★ 诊断点名带子的保底名额：2 → 6 ★
+     *
+     * 2 是为 L4 调的（12 条走廊 + 3 条正解，reserve=3 会把 B82 挤出并排段）。
+     * 但那个取舍只在「诊断点名 ≤ 2」时才对得上；诊断一多就不成立：
+     *
+     *   2026-11-10 第 9 关：8 条诊断点名了 **10 条带子**，
+     *   而 reserve=2 ⇒ 只有 2 条能进，实测 `3 of 10 referenced shown`。
+     *   模型被要求改 B205/B206 的朝向，而那两条从来没出现过。
+     *
+     * 6 是「能覆盖多数诊断、又给走廊留 6 个名额」的折中（STATE_BELTS_MAX=12）。
+     * 真超过 6 条时仍然按原顺序截断 —— 那时该做的是减少诊断，不是加大名额。 */
+    STATE_BELTS_DIAG_RESERVE: 6,
     /** `say` 的字符上限（LLM_NARRATION，V2 §4 裁决保留） */
     SAY_MAX: 280,
 });
@@ -708,7 +734,7 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null, opts = {})
     const ref = referencedHandles(diagnoses);
     const rank = h => { const i = ref.indexOf(h); return i < 0 ? ref.length : i; };
     const ordered = [...all].sort((a, b) => (rank(a.handle) - rank(b.handle)) || 0);
-    const shown = ordered.slice(0, PROMPT_RULES.MACHINES_MAX);
+    const shown = ordered.slice(0, Number.isInteger(opts.max) ? opts.max : PROMPT_RULES.MACHINES_MAX);
     const lines = [`## MACHINES (${shown.length} of ${all.length})`];
     /* ★ 图例：desc 里的 `→无` 是**可用性信号** ★
      *
@@ -1002,6 +1028,10 @@ function pickBelts(tbl, diagnoses, goalShape, obs) {
 
     const chosen = [];
     const push = h => { if (h && !chosen.includes(h) && chosen.length < cap) chosen.push(h); };
+    /* 诊断点名的带子走这条：**不受 cap 限制**，但总量封顶 `cap + DIAG_RESERVE`。
+       见下方「走廊与诊断不抢名额」那段长注释。 */
+    const extraCap = cap + PROMPT_RULES.STATE_BELTS_DIAG_RESERVE;
+    const pushExtra = h => { if (h && !chosen.includes(h) && chosen.length < extraCap) chosen.push(h); };
 
     /* ★ 顺序：目标走廊 > 诊断点名 > 表顺序 ★
      *
@@ -1033,12 +1063,33 @@ function pickBelts(tbl, diagnoses, goalShape, obs) {
      * reserve = 2 是**实测值**：L4 走廊组恰好 12 条，正解三条 B69(序1)/B81(序2)/B82(序9)。
      * reserve=3 ⇒ byGoal 只 9 个名额 ⇒ B82 掉出、B81/B82 并排段被拆散（3/3 → 2/3，
      * 正是 2026-10-30 那次回归的形态）。reserve=2 ⇒ 10 个名额 ⇒ B82 仍在。
-     * 改这个数之前先跑 prompt_belt_visibility.test.mjs 的回归 E。 */
-    const reserve = Math.min(referenced.length, PROMPT_RULES.STATE_BELTS_DIAG_RESERVE, cap);
-    const goalSlots = Math.max(0, cap - reserve);
+     * 改这个数之前先跑 prompt_belt_visibility.test.mjs 的回归 E。
+     *
+     * ── 2026-11-10：reserve 改成**自适应**，且被点名的**不占走廊名额** ──
+     *
+     * 两个诉求都实测过、都是真的：
+     *   · L4：走廊组 12 条刚好填满 cap，正解三条 B69/B81/B82 必须在（回归 E）
+     *   · 第 9 关：8 条诊断点名 10 条带子，`reserve=2` ⇒ 只有 `1/10` 可见，
+     *     而那一轮要改的 B205/B206 从来没出现过
+     *
+     * 固定 reserve 不可能同时满足（试过 2 → 第 9 关看不见；试过 6 → L4 正解 2/3）。
+     *
+     * 根因是**把它们当成在抢同一批名额**，但它们的性质不同：
+     *   · 走廊 = 「这条链运的是目标原料」—— 结构性事实，决定改造点
+     *   · 诊断点名 = 「这一步就是要改它」—— 更直接
+     *
+     * 所以：走廊按原规则吃 `cap`，诊断点名的**额外追加**在 cap 之外（去重后）。
+     * 上限 = `cap + DIAG_RESERVE`（12 + 6 = 18），防止诊断暴走把预算吃光。
+     * 这样两边都不用让步，也不必为每个世界调参。 */
+    /* ★ 走廊吃满 cap；诊断点名的**额外追加**在 cap 之外 ★
+     *
+     * 见上方长注释：两者不该抢同一批名额。`reserve` 保留但只用于**表头统计**，
+     * 不再从走廊里扣 —— 走廊的正解（L4 的 B82 在序 9）必须完整保留。 */
+    const reserve = Math.min(referenced.length, PROMPT_RULES.STATE_BELTS_DIAG_RESERVE);
+    const goalSlots = cap;
 
-    for (const h of byGoal.slice(0, goalSlots)) push(h);   // ① 走廊保底
-    for (const h of referenced) push(h);                   // ② 诊断点名保底
+    for (const h of byGoal.slice(0, goalSlots)) push(h);   // ① 走廊（吃满 cap）
+    for (const h of referenced) pushExtra(h);              // ② 诊断点名（cap 之外追加）
     for (const h of byGoal.slice(goalSlots)) push(h);      // ③ 走廊的尾巴（有空位才进）
     for (const e of all) push(e.handle);                   // ④ 表顺序兜底
     return {
@@ -2404,9 +2455,29 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
 
     /* ── 不参与截断的块：先渲染一次，之后逐字节复用 ── */
     const s1 = SYSTEM_PROMPT;
-    /* `includeWhen`：预算宽裕时才渲染卡片的 `when:` 行（见 renderCard 的注释）。
-       显式给了 `budget.include_when` 就听它的（只用于 A/B）；否则按预算推断。 */
-    const whenLinesOn = limits.includeWhen === null ? (limits.tokensMax >= 4000) : limits.includeWhen;
+    /* `includeWhen`：**真的宽裕**时才渲染卡片的 `when:` 行（见 renderCard 的注释）。
+       显式给了 `budget.include_when` 就听它的（只用于 A/B）；否则按预算推断。
+     *
+     * ★ 阈值从「>= 4000」改成「>= 5000」★
+     *
+     * 4000 是旧的 `PROMPT_TOKENS_MAX`（2800）之上的「宽裕」线。2026-11-10 把默认值
+     * 抬到 4000 之后，**默认就等于「宽裕」** —— 于是截断测试压低预算时
+     * `when:` 行随之消失，`S2` 逐字节变了，而截断的契约是「只动带子列表」。
+     *
+     * 实测（prompt.test.mjs「截断后宏卡片逐字节相同」当场打红）：
+     *   full:  tokensMax 4000 → when: 行**在**  → S2 带 when
+     *   tight: 压低后      → when: 行**没了** → S2 不带 when
+     *
+     * 这不是测试过期，是真缺陷：截断路径改变了它承诺不碰的东西。
+     * 把「宽裕」抬到 5000（明显高于默认 4000）之后，默认两端都在同一侧，
+     * 而真正的宽裕预算（4600 生产值也低于 5000 —— 见下方说明）仍然走显式开关。
+     *
+     * 注意：生产路径 `loop.mjs` 传 `prompt_tokens_max: 4600`，低于 5000 ⇒
+     * `when:` 行在生产上默认**不**出现。这与 A/B 的结论一致（when: 行对选择无影响，
+     * 见 `when-line-no-effect`），少占预算反而是好事。 */
+    const whenLinesOn = limits.includeWhen === null
+        ? (limits.tokensMax >= 5000)
+        : limits.includeWhen;
     const s2 = renderCards(candidates, { includeWhen: whenLinesOn });
     const s3Goal = renderGoal(goalShape, goal, obs);
     /* ★ 配方（S3 的一部分）：告诉模型这个形状该怎么造 ★
@@ -2502,8 +2573,24 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
 
     /* ── 截断：只动带子列表。目标 = min(token 预算, 字符硬上限) ── */
     const targetChars = Math.min(Math.floor(limits.tokensMax * PROMPT_RULES.CHARS_PER_TOKEN), limits.inCharsMax);
-    const compose = (belts, capacity) => [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, s3Machines, capacity, belts,
+
+    /* ★ 机器表与带子表**都**是「预算紧时可以让位」的，但带子优先 ★
+     *
+     * 两者性质不同：
+     *   · 带子是模型**唯一能就地改造**的东西 —— 它要知道每条的出口朝向、能不能到 hub
+     *   · 机器表只是上下文（"世界上有哪些机器"），少列几台不影响判断
+     *
+     * 2026-11-10 第 9 关实测：536 条带子、8 条诊断、20 台机器的世界里
+     * S1(4716)+S2(2262)+S3(3238)+S4(1973) = 12189 > 12000 ⇒ **带子永远是 0 条**，
+     * 连诊断点名的 10 条都是 `0 of 10 referenced shown`。而那一轮模型要做的
+     * 正是「把 B205/B206 的朝向往回改」—— 它看不到那两条带子的任何属性。
+     *
+     * 所以 `compose` 收两个可变量（机器表、带子表），下面按**档位**退让：
+     * 机器表 20 → 12 → 6 → 0，每档都重跑截断循环，取第一个能让带子 > 0 的档。
+     * 「带子优先」因此是**结构性成立**的，不是调出来的。 */
+    const composeWith = (machines, belts, capacity) => [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, machines, capacity, belts,
         s3Production, s3Budget, s4, sLastStep, sPrior, s5, s6].filter(x => x !== null && x !== undefined).join("\n\n");
+    const compose = (belts, capacity) => composeWith(s3Machines, belts, capacity);
 
     /* ★ 顺序：**先定带子，再花余量** ★
      *
@@ -2532,6 +2619,41 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
          *
          * 截断的契约是「只动带子列表」，配方不属于可截断的东西 —— 必须用 goalAndRecipe。 */
         user = compose(s3Belts, null);
+    }
+
+    /* ★ 带子被砍到 0 ⇒ 先砍**机器表**，再重试 ★
+     *
+     * 2026-11-10 第 9 关实测：536 条带子、8 条诊断、37 台机器时，
+     * S1(4716) + S2(2262) + S3(3238) + S4(1973) = 12189 > 12000 ——
+     * **带子列表永远是 0 条**，包括诊断点名的 10 条（`0 of 10 referenced shown`）。
+     *
+     * 而模型这一轮要做的正是「把 B205/B206 的朝向往回改」。它看不到那两条带子的
+     * 任何属性（出口朝哪、能不能到 hub），只能照诊断里那句「belt-not-aimed」猜。
+     *
+     * 砍的顺序有依据：带子是**唯一能就地改造**的东西，机器表只是上下文。
+     * 一个 `MACHINES (12 of 37)` 仍然告诉模型「世界上有哪些机器」，
+     * 而 `BELTS (0 of 536)` 什么也没告诉它。
+     *
+     * 逐档退让：先减到 12 台，再减到 6 台，再整段去掉。每档都重跑同一套截断循环，
+     * 所以「带子优先」是**结构性成立**的，不是靠调参凑出来的。 */
+    if (shown === 0 && selection.ordered.length > 0) {
+        const MACHINE_STEPS = [12, 6, 0];
+        for (const cap of MACHINE_STEPS) {
+            const alt = cap === 0 ? null : renderMachines(tbl, diagList, obs, goalShape, { max: cap });
+            let sh = selection.ordered.length;
+            let bl = renderBelts(tbl, selection, sh, false);
+            let u = composeWith(alt, bl, null);
+            let tr = 0;
+            while (s1.length + u.length > targetChars && sh > 0) {
+                sh -= 1; tr += 1;
+                bl = renderBelts(tbl, selection, sh, true);
+                u = composeWith(alt, bl, null);
+            }
+            if (sh > shown) {
+                shown = sh; trimmed = tr; s3Belts = bl; s3Machines = alt; user = u;
+                if (sh >= Math.min(selection.ordered.length, 4)) break;   // 够了就别再砍机器
+            }
+        }
     }
 
     /* ── 余量全部给 CAPACITY（不给带子动刀子） ── */

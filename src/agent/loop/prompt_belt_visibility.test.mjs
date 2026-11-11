@@ -143,15 +143,22 @@ test("A. 正例：诊断点名 B34 ⇒ BELTS 段里必须有 B34（实机夹具�
         `★ B34 必须出现在 BELTS 段里；实际渲染: ${lines.join(",")}`);
     /* 行首匹配而不是 includes —— 后者会被 `B3`/`B34` 之类的子串骗过 */
     assert.match(section, /^B34 belt /m, "B34 是**独立一行**（不是被别的句柄子串带上来的）");
-    assert.ok(lines.length <= CAP, `总数仍 ≤ ${CAP}（实际 ${lines.length}）`);
+    assert.ok(lines.length <= CAP + RESERVE, `总数 ≤ ${CAP}+reserve（实际 ${lines.length}）`);
 });
 
-test("A2. 正例：B34 出现时，名额从 byGoal 里扣 —— 总数不变、表头不撒谎", () => {
-    const noDiag = beltsSection(halfPrompt());
-    const withDiag = beltsSection(halfPrompt({ diagnoses: diagNaming(["B34"]) }));
-    assert.equal(beltLines(withDiag).length, beltLines(noDiag).length,
-        "带子总数不变（保底是**换**名额，不是加名额）");
-    const h = headerReferenced(withDiag);
+test("A2. 正例：B34 出现时**追加**在 cap 之外 —— 走廊一条不少、表头不撒谎", () => {
+    /* 契约变了（2026-11-10）：诊断点名的带子不再从走廊里**换**名额，而是**额外追加**。
+       旧断言「总数不变」编码的是旧契约，它和 E（走廊正解必须 3/3）在 cap 被走廊填满时
+       不可兼得 —— 试过 reserve=2（第 9 关 1/10 可见）与 reserve=6（L4 正解 2/3），
+       两个都错。现在的约束是：走廊吃满 cap，点名溢出到 cap+reserve。 */
+    const noDiag = beltLines(beltsSection(halfPrompt()));
+    const withDiag = beltLines(beltsSection(halfPrompt({ diagnoses: diagNaming(["B34"]) })));
+    assert.equal(withDiag.length, noDiag.length + 1,
+        "带子总数 = 走廊名额 + 1 条被点名的（**追加**，不是替换）");
+    /* 走廊那批必须**一条不少** —— 这才是 A2 真正要守的东西 */
+    for (const h of noDiag) assert.ok(withDiag.includes(h),
+        `走廊的 ${h} 不能因为有一条带子被点名就掉出`);
+    const h = headerReferenced(beltsSection(halfPrompt({ diagnoses: diagNaming(["B34"]) })));
     assert.equal(h.shown, 1, `表头写 1 referenced（实际 ${h.shown}）`);
     assert.equal(h.total, 1, "总点名数也是 1（没有第二个来源）");
 });
@@ -200,7 +207,7 @@ test("C. 反例：诊断点名 20 条（> cap）⇒ 不能全塞，但保底那�
     const lines = beltLines(section);
     const present = named.filter(h => lines.includes(h));
 
-    assert.ok(lines.length <= CAP, `★ 总数仍 ≤ ${CAP}（实际 ${lines.length}）—— 没有因为点名多就突破上限`);
+    assert.ok(lines.length <= CAP + RESERVE, `★ 总数 ≤ ${CAP}+reserve（实际 ${lines.length}）—— 点名可以溢出 cap，但不能无限溢出`);
     assert.ok(present.length < named.length,
         `★ 20 条点名不能全进（实际进了 ${present.length}）`);
     /* 保底那几条（referenced 顺序的前 RESERVE 条）必须在 */
@@ -289,7 +296,7 @@ test("E. 回归：L4 目标走廊的正解三条仍然可见（保底不能把�
             assert.ok(lines.includes(a) && lines.includes(b),
                 `[n=${n}] 并排两条 ${a}/${b} 同时出现`);
         }
-        assert.ok(lines.length <= CAP, `[n=${n}] 总数 ≤ ${CAP}`);
+        assert.ok(lines.length <= CAP + RESERVE, `[n=${n}] 总数 ≤ ${CAP}+reserve（实际 ${lines.length}）`);
         /* 这一组里点名的带子如果进了，表头必须说实话（D 的抽样版） */
         const h = headerReferenced(section);
         assert.equal(h.shown, named.filter(x => lines.includes(x)).length,
@@ -300,38 +307,40 @@ test("E. 回归：L4 目标走廊的正解三条仍然可见（保底不能把�
         "所有点名规模下走廊都是 3/3");
 });
 
-test("E2. 对照：保底若放大到 3，B82 必须掉出 —— 证明 E 不是恒真的", () => {
-    /* 复算 `pickBelts` 的名义分配（不改实现，只在测试里模拟 reserve 变化）。
-       这条测的是「E 有没有牙齿」：若 reserve=3 也 3/3，说明 E 恒真、测不出回归。 */
-    const byGoal = beltLines(beltsSection({
+test("E2. 对照：若点名**不**能溢出 cap，B34 就必须看不见 —— 证明「追加」是有作用的", () => {
+    /* 契约变了（2026-11-10）：`pickBelts` 现在让走廊吃满 cap、被点名的**追加**在 cap 之外。
+       旧版 E2 模拟的是「reserve 从走廊里扣」，那个算法已经不存在了。
+       但 E2 想守的东西仍然重要：**证明这个机制不是恒真的** ——
+       如果溢出与不溢出结果一样，那说明它白加了预算。
+
+       做法：在同一份 L4 夹具上比「走廊填满 cap」与「再追加一条被点名的」。
+       走廊 12 条已经用满 ⇒ 追加那条只能靠溢出进来 ⇒ 如果实现漏了
+       `pushExtra`，它必然消失。 */
+    const corridorOnly = beltLines(beltsSection({
         goal: "RuRu----", obs: L4_OBS, handles: L4_TABLE,
         diagnoses: [], candidates: ["replace_run"], lastRound: null, budget: {},
     }));
-    assert.equal(byGoal.length, CAP, `byGoal 恰好填满 ${CAP} 条（这是这个 bug 的结构性前提）`);
+    assert.equal(corridorOnly.length, CAP, `前提：走廊组恰好填满 ${CAP} 条`);
 
     const TARGETS = ["B69", "B81", "B82"];
-    const refs = beltHandles(L4_TABLE).filter(h => !TARGETS.includes(h)).slice(0, 3);
+    assert.deepEqual(TARGETS.filter(h => corridorOnly.includes(h)), TARGETS,
+        "前提：走廊里已经含着三条正解");
 
-    const simulate = reserve => {
-        const chosen = [];
-        const push = h => { if (h && !chosen.includes(h) && chosen.length < CAP) chosen.push(h); };
-        byGoal.slice(0, CAP - reserve).forEach(push);
-        refs.forEach(push);
-        byGoal.slice(CAP - reserve).forEach(push);
-        return chosen;
-    };
+    /* 挑一条**不在走廊里**的带子点名 */
+    const outsider = beltHandles(L4_TABLE).find(h => !corridorOnly.includes(h));
+    assert.ok(outsider, "前提：夹具里存在不在走廊上的带子");
 
-    const r2 = simulate(RESERVE);
-    assert.deepEqual(TARGETS.filter(h => r2.includes(h)), TARGETS,
-        `reserve=${RESERVE} 时三条正解都在`);
-
-    const r3 = simulate(3);
-    const vis3 = TARGETS.filter(h => r3.includes(h));
-    assert.ok(vis3.length < 3,
-        `★ 对照：reserve=3 时必须丢掉至少一条正解（实际 ${vis3.length}/3：${vis3.join(",")}）——`
-        + "丢了说明 E 有牙齿；没丢说明 E 恒真、需要换更强的口径");
-    assert.ok(!r3.includes("B82"),
-        `对照：reserve=3 时 B82 掉出（B82 在 byGoal 里排第 9 位，被切在 tail 上）`);
+    const withName = beltLines(beltsSection({
+        goal: "RuRu----", obs: L4_OBS, handles: L4_TABLE,
+        diagnoses: diagNaming([outsider]), candidates: ["replace_run"], lastRound: null, budget: {},
+    }));
+    assert.ok(withName.includes(outsider),
+        `★ 对照：${outsider} 只能靠溢出进来 —— 它必须出现（否则 pickBelts 的 pushExtra 没生效）`);
+    assert.ok(withName.length > corridorOnly.length,
+        `★ 总数必须 > 走廊名额（实际 ${withName.length} vs ${corridorOnly.length}）——`
+        + " 相等说明这个溢出是假的，模型看到的带子并没有变多");
+    assert.deepEqual(TARGETS.filter(h => withName.includes(h)), TARGETS,
+        "★ 追加之后三条正解**一条不少**（这是与旧 reserve 方案的关键区别）");
 });
 
 /* ═══════════════════════════ 6. 常量自检 ═══════════════════════════
@@ -339,9 +348,15 @@ test("E2. 对照：保底若放大到 3，B82 必须掉出 —— 证明 E 不�
  * reserve 是"对着实测算出来的"，不是一个随便的魔法数。把它和 cap 的关系钉住：
  * 太小等于没保底，太大等于把走廊吃光。
  */
-test("6. 常量：0 < reserve < cap/2，且 reserve 小于「走廊刚好填满」时能容忍的切尾长度", () => {
+test("6. 常量：reserve 是「诊断可**溢出** cap 的名额」，不再是「从走廊里扣的名额」", () => {
+    /* 契约变了（2026-11-10）。旧设计：`goalSlots = cap - reserve`，即诊断与走廊
+       **抢同一批**名额 —— 那时 reserve 必须 ≤ 3，否则 L4 的 B82（序 9）掉出。
+       新设计：走廊吃满 cap，诊断点名的**额外追加**到 `cap + reserve`。
+       于是 reserve 的约束变成「别让诊断把预算吃光」，而不是「别挤掉走廊」。
+       这两条断言的**方向**因此反了，改成新的边界。 */
     assert.ok(RESERVE > 0, `reserve 必须 > 0（否则 A/B/C 全部退回老 bug）；实际 ${RESERVE}`);
-    assert.ok(RESERVE <= 3, `reserve 不能 > 3（实测 reserve=3 就吃掉 B82）；实际 ${RESERVE}`);
-    assert.ok(RESERVE * 2 < CAP, `reserve 必须远小于 cap，走廊才有名额；cap=${CAP} reserve=${RESERVE}`);
-    assert.equal(RESERVE, 2, "当前值是实测得到的 2（见 PROMPT_RULES 注释里的 byGoal 顺序）");
+    assert.ok(RESERVE <= CAP, `reserve 不该超过 cap 本身（实际 ${RESERVE} vs cap ${CAP}）`);
+    assert.ok(CAP + RESERVE <= 24,
+        `cap+reserve 必须有个硬上限，否则诊断一多就能把预算吃光（${CAP}+${RESERVE}）`);
+    assert.equal(RESERVE, 6, "当前值 6：第 9 关 8 条诊断点名 10 条带子，reserve=2 时只有 1/10 可见");
 });
