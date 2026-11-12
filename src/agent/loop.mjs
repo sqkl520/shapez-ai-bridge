@@ -1767,19 +1767,27 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
             if (after && Number.isInteger(before.belts_reaching_hub) && Number.isInteger(after.belts_reaching_hub)) {
                 const loss = before.belts_reaching_hub - after.belts_reaching_hub;
                 const pct = before.belts_reaching_hub > 0 ? loss / before.belts_reaching_hub : 0;
-                /* ★ 只在「覆盖既有带子」这类调用上拦 ★
+                /* ★ 判据用**损失规模**，不用调用类型 ★
                  *
-                 * 实测（P0/P13 回归）：`insert_machine` 放一台 cutter 到带子上，
-                 * 会临时切断经过它的分支 —— L4 上那是**正解的第一步**。
-                 * 拿同一个阈值去拦它，等于把施工本身禁掉，正是
-                 * `rollback.mjs` 文件头明确警告过的那种错。
+                 * 第一版按「本次调用有没有 `allow_replace` / `rebind` / `trash_unused`」
+                 * 判定 risky。实测（2026-11-12 r-20261112095123-1134）漏掉了一次灾难：
                  *
-                 * 真正要拦的是**覆盖/封死既有货流**：`connect{allow_replace}`、
-                 * `trash_unused`、`replace_run` 把带子改成别的。这些的共同点是
-                 * **删掉既有带子并把那几格给别人**，而 `insert_machine` 是
-                 * 「插进」——它自己会重新接线。
+                 *   r5  `connect(M15 → B207)` —— **不带** allow_replace
+                 *       到 hub 的带子 246 → 186（-60），死带子 289 → 396（+107）
                  *
-                 * 判据：本次调用里有没有 `allow_replace` / `rebind` / `confirm_waste`。 */
+                 * `connect` 即使不覆盖带子，只要把货从原路径改走，下游整片就断了
+                 * （`rebind` 的隐式效果）。类型判据拦不住它。
+                 *
+                 * 为什么原先要按类型分：`insert_machine` 放一台 cutter 到带子上，
+                 * 会临时切断经过它的分支 —— L4 上那是**正解的第一步**（P0/P13 回归）。
+                 *
+                 * 但那个场景的损失是**一两条带子**，和这里的 60 条不是一个量级。
+                 * 用规模区分就够了，不必猜调用方意图：
+                 *   · 绝对损失 ≥20 格 —— 无论什么宏都拦（施工不会一次切掉 20 条）
+                 *   · 或相对损失 ≥25% 且 ≥5 格 —— 小世界里的等比例破坏
+                 *
+                 * 保留 `risky` 只为**放宽**：`allow_replace` 类调用本来就会删带子，
+                 * 给它更高的容忍阈值没有意义 —— 所以现在两者用同一条线。 */
                 const risky = executed.some(c => {
                     const a = (c && c.args) || {};
                     const op = (a.opts && typeof a.opts === "object") ? a.opts : {};
@@ -1787,7 +1795,8 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                     if (c.macro === "trash_unused") return true;
                     return false;
                 });
-                const tooMuch = risky && (loss >= 20 || (loss >= 5 && pct >= 0.25));
+                void risky;
+                const tooMuch = loss >= 20 || (loss >= 5 && pct >= 0.25);
                 if (tooMuch) {
                     return reject("PLAN_REJECTED", {
                         layer: "plan", stage: "simulate",
@@ -2170,6 +2179,62 @@ export async function runLoop(opts = {}) {
         /** 上一轮出现过的粘性候选码（用来判「连续两轮」） */
         stickySeen: [],
     };
+
+    /**
+     * 把一轮的计划压成一句人话：**落了什么**，不只是用了哪个宏。
+     *
+     * ## 为什么要它（第 9 关 r-20261112093135-cdeb）
+     *
+     * 模型 r1/r2/r3 连着放了 3 台矿机（`$ore:"blue"` ×2、`$ore:"red"` ×1，
+     * 三台全部落盘成功）。r4/r5 它又回到**不带 `$ore` 的盲目 insert_machine** ——
+     * 因为 `## THIS RUN` 只写了「r3 insert_machine → applied」，
+     * 它不知道自己刚才已经把矿机放到位了。
+     *
+     * ## 只记「不随 uid 变的东西」
+     *
+     * tx 之后 uid 会变、句柄要重建，所以**不能**记 uid。记的是
+     * `provenance.at`（形如 `ore:blue@37,-8`）与机器种类 ——
+     * 那是下一轮模型能自己重新定位的东西。
+     *
+     * 没有 provenance 的调用退回「宏名 + 目标句柄」，同样不含 uid。
+     *
+     * @param {object} planned `buildTxPlan` 的返回（`calls[].args/provenance/result`）
+     * @returns {string[]} 每个调用一句，最多 3 句（再多就是噪音）
+     */
+    function summarizeCalls(planned) {
+        const out = [];
+        for (const c of (planned && Array.isArray(planned.calls) ? planned.calls : [])) {
+            if (!c || typeof c.macro !== "string") continue;
+            const a = c.args && typeof c.args === "object" ? c.args : {};
+            const prov = c.provenance && typeof c.provenance === "object" ? c.provenance : {};
+            /* `insert_machine`：最要紧的是「什么机器、落在哪种矿上」 */
+            if (c.macro === "insert_machine") {
+                const kind = (a.machine && typeof a.machine === "object" ? a.machine.kind : a.machine) || "machine";
+                const atProv = typeof prov.at === "string" ? prov.at : "";
+                const ore = /^ore:([^@]+)@/.exec(atProv);
+                if (ore) { out.push(`${kind} on ${ore[1]} ore`); continue; }
+                const cell = a.at && Array.isArray(a.at.cell) ? a.at.cell : null;
+                if (cell) { out.push(`${kind} at ${cell[0]},${cell[1]}`); continue; }
+                out.push(kind);
+                continue;
+            }
+            /* `connect` / `extend_line`：起止端点都是句柄，天然稳定 */
+            if (c.macro === "connect" || c.macro === "extend_line") {
+                const h1 = (c.result && c.result.from && c.result.from.handle) || "";
+                const h2 = (c.result && c.result.to && c.result.to.handle) || "";
+                if (h1 || h2) { out.push(`${c.macro} ${h1}→${h2}`.trim()); continue; }
+            }
+            /* 其余：宏名 + 首个 looks-like-handle 的字符串参数值 */
+            const refs = [];
+            for (const v of Object.values(a)) {
+                if (typeof v === "string" && /^[A-Z]{1,2}\d{1,3}$/.test(v)) refs.push(v);
+                if (v && typeof v === "object" && typeof v.ref === "string") refs.push(v.ref);
+                if (v && typeof v === "object" && Array.isArray(v.$uids)) refs.push(...v.$uids.filter(x => typeof x === "string"));
+            }
+            out.push(refs.length ? `${c.macro} ${refs.slice(0, 3).join(",")}` : c.macro);
+        }
+        return out.slice(0, 3);
+    }
 
     /**
      * 把某一轮的 runLog 条目标成给定结局（只标最后一条 `planned`）。
@@ -3266,10 +3331,27 @@ export async function runLoop(opts = {}) {
              * 存的是**模型自己的意图**（say）与它实际要做的动作。
              * outcome 先记 `planned`，tx 之后再回填真实净效果 ——
              * 这样下一轮渲染时能说「第 3 轮你说要做 X，结果改坏了」。 */
+            /* ★ 记进本次 run 的任务日志（见 st.runLog 的注释）★
+             *
+             * 存的是**模型自己的意图**（say）与它实际要做的动作。
+             * outcome 先记 `planned`，tx 之后再回填真实净效果 ——
+             * 这样下一轮渲染时能说「第 3 轮你说要做 X，结果改坏了」。
+             *
+             * ⚠️ 还必须记下**落了什么**，不只是宏名。
+             *
+             * 实测（2026-11-12 第 9 关 r-20261112093135-cdeb）：模型 r1/r2/r3 连着
+             * 放了 3 台矿机（`$ore:"blue"` ×2、`$ore:"red"` ×1，全部落盘成功），
+             * 但 r4/r5 又回到**不带 $ore 的盲目 insert_machine** ——
+             * 因为它只看到「r3 insert_machine → ...」，不知道自己刚才放了什么。
+             *
+             * 记 `detail`：每个调用的「做了什么」一句人话。tx 之后 uid 会变，
+             * 所以**不记 uid**，只记矿种与落点（「miner on blue ore」）——
+             * 那是不随 uid 变化的、模型下一轮能自己重新定位的东西。 */
             st.runLog.push({
                 round: roundNo,
                 say: typeof planned.say === "string" ? planned.say.replace(/\s+/g, " ").trim() : "",
                 calls: planned.calls.map(c => c.macro),
+                detail: summarizeCalls(planned),
                 outcome: "planned",
             });
             tr.write("plan", roundNo, {

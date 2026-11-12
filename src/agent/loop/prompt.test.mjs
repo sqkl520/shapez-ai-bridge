@@ -810,6 +810,21 @@ console.log("\n── §R. 配方段 —— 形状代数接进 prompt ──");
     /* 收尾必须给出可执行的纪律，而不只是陈列 */
     ok(/Stay on one plan until it is DONE/.test(p.user), "必须给出「守着一个计划做到底」的指令");
 
+    /* ★  优先于宏名 ★
+     *
+     * 只渲染宏名等于告诉模型「你用过 insert_machine」，而它需要的是
+     * 「你刚把一台 miner 放在 blue ore 上」—— 后者才能指导下一步（去接它）。
+     * 真机 r-20261112093135-cdeb：连着放 3 台矿机全成功，但 r4/r5 又回到盲目
+     * insert_machine，因为它只看到「r3 insert_machine」。 */
+    const withDetail = mk([{
+        round: 2, say: "seed both pigments", calls: ["insert_machine", "insert_machine"],
+        detail: ["miner on blue ore", "miner on red ore"], outcome: "constructive",
+    }]);
+    ok(withDetail.user.includes("miner on blue ore"), "★ detail 必须进 prompt（不只是宏名）");
+    ok(withDetail.user.includes("miner on red ore"), "★ 两台都要写出来");
+    ok(!/r2 insert_machine+insert_machine/.test(withDetail.user), "有 detail 时不再退回宏名串");
+    /* 收尾那句要提醒「已放好的还在」—— 否则模型会重复放同一件东西 */
+    ok(/Anything you already PLACED is still there/.test(withDetail.user), "必须提醒已放置的东西还在");
     /* 没有 runLog 时整段不出现，且不占预算 */
     const q = mk(null);
     ok(!q.user.includes("## THIS RUN"), "没有 runLog 时不许出现空段");

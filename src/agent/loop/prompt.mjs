@@ -2362,17 +2362,26 @@ function renderRunLog(log) {
     const lines = ["## THIS RUN", "what you decided earlier in THIS run (most recent last):"];
     for (const r of recent) {
         const round = Number.isFinite(r && r.round) ? r.round : "?";
-        const calls = Array.isArray(r.calls) && r.calls.length ? r.calls.join("+") : "(no calls)";
         const out = OUTCOME[String(r && r.outcome)] || String((r && r.outcome) || "");
+        /* ★ 优先渲染 `detail`（落了什么），没有才退回宏名 ★
+         *
+         * 只写宏名等于告诉模型「你用过 insert_machine」，而它需要的是
+         * 「你刚把一台 miner 放在 blue ore 上」—— 前者不能指导下一步，
+         * 后者能（「去接它」）。见 summarizeCalls 的注释。 */
+        const detail = Array.isArray(r && r.detail) && r.detail.length
+            ? r.detail.join(" + ")
+            : (Array.isArray(r.calls) && r.calls.length ? r.calls.join("+") : "(no calls)");
         const say = r && typeof r.say === "string" && r.say.trim()
             ? ` — "${clip(sanitize(r.say).text.trim(), 90)}"`
             : "";
-        lines.push(`  · r${round} ${calls} → ${out}${say}`);
+        lines.push(`  · r${round} ${clip(sanitize(detail).text, 110)} → ${out}${say}`);
     }
     lines.push(
         "⇒ Stay on one plan until it is DONE or proven impossible. If an earlier round named"
         + " something it deliberately postponed (\"rather than ... first\"), either do it now"
         + " or say plainly why you are abandoning it. Do not silently restart the same step.",
+        "⇒ Anything you already PLACED is still there — connect it or continue from it."
+        + " Re-placing the same thing usually just collides with what you built.",
     );
     return sanitize(lines.join("\n")).text;
 }

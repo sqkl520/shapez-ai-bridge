@@ -56,7 +56,16 @@ const FAIL_M1 = { macro: "connect", args: { from: ref("M1"), to: { $ref: "C1", p
 const OK_BELT = { macro: "connect", args: { from: ref("B83"), to: ref("H1") }, why: "x" };
 
 /* 成功的、不可撤销的：在带子上插一台 cutter（产物是机器） */
-const OK_CUTTER = { macro: "insert_machine", args: { at: { $ref: "B2", asCell: true }, facing: "top", machine: "cutter" }, why: "x" };
+/* ★ 落点从 B2 换成 B83（2026-11-12）★
+ *
+ * B2 在 L4 的 (2,-34)，是一条链的**中段**。往那里塞 cutter 会切断整条链 ——
+ * 预演实测：到 hub 的带子 140 → 72（-68，49%）。
+ * 闸门（buildTxPlan 的 simulate 段）拦下了它，而 P0 的前提是「应当成功」。
+ *
+ * 闸门判断是对的，是这条夹具选了一个破坏性落点 —— 它当初能过只是因为没有闸门。
+ * B83 是实测**零损失**的落点（宏照常成功、产物仍是不可撤销的 place:cutter），
+ * 这条测试要守的是「不可撤销的产物语义」，与落点无关。 */
+const OK_CUTTER = { macro: "insert_machine", args: { at: { $ref: "B83", asCell: true }, facing: "top", machine: "cutter" }, why: "x" };
 
 /* ═══════════ 0. 夹具前提自检 ═══════════
  *
@@ -317,6 +326,36 @@ test("P14 对照：有失败 + 剩下不可撤销 ⇒ 仍然拒绝（P4 的语�
  * **看起来完全一样**，只有调用的性质不同。
  * ══════════════════════════════════════════════════════════════════════════ */
 
+test("S3 ★ 预演判据必须看**损失规模**，不能看调用类型", () => {
+    /* 2026-11-12 r-20261112095123-1134 的教训：
+     * 第一版判据按「有没有 allow_replace / rebind / trash_unused」分类，
+     * 于是漏掉了一次 -60 的破坏（那次 connect **不带** allow_replace，
+     * 但把货从原路径改走，下游整片就断了）。
+     *
+     * 这条用 insert_machine 造一个**损失巨大**的场景（B2 在链中段，塞 cutter 会
+     * 切断整条链，实测 140 → 72），断言它必须被拦 ——
+     * 与 opts 里有什么开关无关。 */
+    const handles = buildHandles(OBS, null);
+    const plan = (opts) => ({
+        calls: [{
+            macro: "insert_machine",
+            args: { at: { $ref: "B2", asCell: true }, facing: "top", machine: "cutter", ...(opts ? { opts } : {}) },
+        }],
+    });
+    const plain = buildTxPlan(plan(null), OBS, null, handles, { partial: true });
+    assert.equal(plain.ok, false, "★ B2 上放 cutter 会切断整条链（-68），必须被预演拦下");
+    const ev = plain.diagnosis && plain.diagnosis.evidence ? plain.diagnosis.evidence : {};
+    assert.equal(ev.stage, "simulate", "拦在预演段（不是别的判据）");
+    assert.ok(typeof ev.loss === "number" && ev.loss >= 20,
+        `证据里必须给出损失格数（实际 ${ev.loss}）—— 模型要知道代价`);
+
+    /* 对照：同样的调用换个零损失落点就必须放行（B83 实测 loss=0）。 */
+    const okSite = buildTxPlan(
+        { calls: [{ macro: "insert_machine", args: { at: { $ref: "B83", asCell: true }, facing: "top", machine: "cutter" } }] },
+        OBS, null, handles, { partial: true },
+    );
+    assert.equal(okSite.ok, true, "零损失落点必须放行 —— 否则闸门把施工一起禁掉了");
+});
 test("S1 ★ 施工类调用（insert_machine / replace_run 改朝向）不许被预演拦下", () => {
     /* 实测：L4 上放一台 cutter 会临时切断经过它的分支 —— 那是正解的第一步。
        拿「连通性下降」一概而论，等于把施工本身禁掉（rollback.mjs 文件头警告过）。 */
