@@ -638,7 +638,10 @@ console.log("\n── 9. 变异：连续性检查恒真 → 必须被抓 ──"
             .replace('from "./handles.mjs"', `from ${JSON.stringify(pathToFileURL(mPath).href)}`)
             /* 其余相对 import 也要换成绝对 URL —— 临时目录里的相对路径会指到别处，
                子模块会以「模块找不到」崩掉，而那个崩溃**不是**「变异被抓」（假绿来源）。 */
-            .replace('"../macros/contract.mjs"', JSON.stringify(uri("../macros/contract.mjs")));
+            .replace('"../macros/contract.mjs"', JSON.stringify(uri("../macros/contract.mjs")))
+            /* 2026-11-12 新增：`nearestOreCell` 现在要 template 的 footprint
+               （占用表必须按 footprint 展开，见 coords.mjs 那段注释）。 */
+            .replace('"../../ai/op-templates.mjs"', JSON.stringify(uri("../../ai/op-templates.mjs")));
         ok(!/from "\.\.?\//.test(coordsMut), "coords 变异体的 import 全部换成绝对 URL（否则会假绿）");
         const cPath = path.join(tmp, "coords.mutant.mjs");
         fs.writeFileSync(cPath, coordsMut);

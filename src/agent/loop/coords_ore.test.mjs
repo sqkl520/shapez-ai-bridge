@@ -27,6 +27,7 @@
 import { nearestOreCell, resolveOreRef, resolveRefs } from "./coords.mjs";
 import { buildHandles } from "./handles.mjs";
 import { buildTxPlan } from "../loop.mjs";
+import { insertMachine } from "../macros/place.mjs";
 
 let pass = 0, fail = 0;
 const check = (name, fn) => {
@@ -184,11 +185,15 @@ check("O11 优先选离 cutter 近的矿（不是离 hub 近的）", () => {
         hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
         resources: [
             [2, 2, "CuCuCuCu"],        // 离 hub 近（约 2 格），离 cutter 很远（196 格）
-            [101, 100, "CuCuCuCu"],    // 离 cutter 近（1 格）
+            /* ⚠️ 不能放 (101,100) —— cutter 的 footprint 是 [2,1]，
+               展开后覆盖 (100,100) 和 (101,100)，那格放不下矿机。
+               这条测的是「按距离排序」，不该被可放性干扰，所以放到 (99,100)
+               （cutter 左边一格，距离仍是 1）。 */
+            [99, 100, "CuCuCuCu"],     // 离 cutter 近（1 格）
         ],
     };
     const r = nearestOreCell(obs, "Cu");
-    assert(r.cell[0] === 101 && r.cell[1] === 100,
+    assert(r.cell[0] === 99 && r.cell[1] === 100,
         `应选靠近 cutter 的那格，实际 ${JSON.stringify(r.cell)}`);
     assert(r.to === 1, `到最近机器应为 1 格，实际 ${r.to}`);
 });
@@ -234,4 +239,44 @@ check("O13 颜料名能走完整条链路（含 provenance 审计）", () => {
         );
         assert(r.ok, `${ore}: 必须通过整条链路（含 provenance），实得 ${r.ok ? "" : r.diagnosis.code + " " + r.diagnosis.observed}`);
     }
+});
+
+/* ── O14：★ `$ore` 选出的格子，`insert_machine` 必须真的放得下 ──
+ *
+ * 真机 r-20261112083132-d9d8：`nearestOreCell("blue")` 返回 (38,-10)，
+ * 而那格被一台 **2×2 painter 的第二格**压着（painter 的 origin 在别处）。
+ * 四个朝向逐一试全 `blocked_by_machine`。
+ *
+ * 判据错了两次：
+ *   ① 只按 origin 建占用表 ⇒ 把「被别人的第二格压着」当成空格
+ *   ② 用「四面至少两面空」近似 ⇒ 与宏的「输出格必须能出货」不是一回事，
+ *      实测 (38,-10) 四面基本空却四向全拒
+ *
+ * 现在按 footprint 展开 + 逐朝向看输出格。这条守的是「两边必须一致」——
+ * 只要 `$ore` 说能用、宏就必须放得下，否则模型会拿到一个注定失败的落点。 */
+check("O14 $ore 选出的格子必须真的放得下（与 insert_machine 一致）", () => {
+    /* 造一个逼真的局面：`[2,1]` 机器的**第二格**压在最靠近的那格矿上。
+     * 这台机器 origin 在 (9,10)，footprint 覆盖 (9,10) 和 (10,10)
+     * ⇒ (10,10) 那格矿**表面看是空的**（按 origin 建表查不到占用），
+     * 但实际放不下矿机。这正是真机 (38,-10) 的形态。 */
+    const res = [[10, 10, "blue"], [10, 11, "blue"], [11, 10, "blue"], [11, 11, "blue"], [20, 20, "blue"]];
+    const obs = {
+        entities: [
+            { uid: 1, type: "painter", x: 9, y: 10, r: 0, variant: "default", rotation_variant: 0 },
+        ],
+        hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+        resources: res,
+    };
+    const hit = nearestOreCell(obs, "blue");
+    assert(hit, "必须选出某一格（不能因为最近几格被占就报 ORE_NOT_FOUND）");
+
+    /* 核心断言：选出来的这一格，宏必须真的接受。 */
+    let ok = null;
+    for (const f of ["top", "right", "bottom", "left"]) {
+        if (insertMachine({ at: hit.cell, machine: "miner", facing: f }, { entities: obs.entities }).ok) {
+            ok = f; break;
+        }
+    }
+    assert(ok, `$ore 选了 ${JSON.stringify(hit.cell)}，但四个朝向都放不下 —— `
+        + `判据与 insert_machine 不一致（这正是 r-20261112083132 的形态）`);
 });

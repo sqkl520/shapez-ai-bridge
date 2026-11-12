@@ -68,6 +68,7 @@
  */
 import { MACRO_NAMES, MACRO_SPECS, lintNoBareCoords } from "../macros/contract.mjs";
 import { buildHandles, resolveHandle, bboxOf, pathOf, HANDLE_RE } from "./handles.mjs";
+import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
 
 /* ══════════════════════════════════════════════════════════════════════════
  * 0. 四种坐标来源（唯一闭集）
@@ -401,32 +402,53 @@ export function nearestOreCell(obs, prefix) {
      *
      * 三层过滤，由宽到严：
      *   ① 那格本身不能是机器/hub（带子可以让位）
-     *   ② 那格**四面**至少要有两面是空/带子 —— 矿机四面都可转，
-     *      只要有一个方向能出货就放得下；四面全被机器堵死才是真的不行
+     *   ② 该格的**输出格**在至少一个朝向上可用 —— 矿机只有 1 个输出槽，
+     *      而方向由调用方的 `facing` 决定；只要存在一个朝向让输出能出货，这格就能用
      *   ③ 都满足时仍按「离消费者最近」排序（接线短）
      *
-     * 不做到「逐 facing 精确检查」：`$ore` 不知道调用方会给哪个 facing，
-     * 猜错反而会让本来能放的格子被误排除。② 是安全的近似 ——
-     * 它只排除那些**无论朝哪都不可能**的格子。 */
+     * ★ ② 第一版写的是「四面至少两面空」，不够 ★
+     *
+     * 实测（2026-11-12 第 9 关，蓝矿 (38,-10)）：那格本身是空的、四面也基本空，
+     * 但**四个朝向逐一试下来全都 `blocked_by_machine`** —— 因为矿机的输出格
+     * 正好被邻格的东西堵着。于是 `nearestOreCell("blue")` 返回 null，
+     * 上层报 `ORE_NOT_FOUND: 地图上没有 blue 这种矿`，而事实是**有 19 格**。
+     *
+     * 「四面空」和「能出货」不是一回事。② 现在直接按「输出格」判 ——
+     * 与 `place.mjs` 的 `⑧ 输出槽落点被机器占死` 是同一条判据，
+     * 所以这里说能用、那边就不会拒。 */
+    /* ★ 占用表必须按 **footprint** 展开，不能只按 origin ★
+     *
+     * 实测（2026-11-12 第 9 关）：`(38,-10)` 查 origin 表是「空格」，四个朝向却全被
+     * `blocked_by_machine` 拒 —— 因为**一台 2×2 的 painter 的 footprint 覆盖了它**，
+     * 而 painter 的 origin 在别处。
+     *
+     * 只按 origin 建表，会把「被别人的第二格压着」当成空格。
+     * 这与 `planToTxOps` 的 R6「footprint 级检查」是同一个坑（那里已经踩过一次）。 */
     const occupant = new Map();
     for (const e of (obs && obs.entities) || []) {
         if (!e || !Number.isInteger(e.x) || !Number.isInteger(e.y)) continue;
-        occupant.set(`${e.x},${e.y}`, e.type);
-    }
-    const blocked = new Set();
-    for (const [k, t] of occupant) {
-        if (t === "belt" || t === "underground_belt") continue;   // 可以让位
-        blocked.add(k);
-    }
-    /** 这格能给矿机用吗：本身空/带子，且四面至少两面不是机器。 */
-    const usable = (x, y) => {
-        if (blocked.has(`${x},${y}`)) return false;
-        let free = 0;
-        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
-            const t = occupant.get(`${x + dx},${y + dy}`);
-            if (t === undefined || t === "belt" || t === "underground_belt") free++;
+        const tpl = templateByBuildingVariant(e.type, e.variant || "default");
+        const fp = tpl && Array.isArray(tpl.footprint) ? tpl.footprint : [1, 1];
+        for (let dy = 0; dy < fp[1]; dy++) {
+            for (let dx = 0; dx < fp[0]; dx++) {
+                const k = `${e.x + dx},${e.y + dy}`;
+                if (!occupant.has(k)) occupant.set(k, e.type);
+            }
         }
-        return free >= 2;
+    }
+    /** 该格上/该方向上能不能放东西：空、或能让位的带子。 */
+    const clearAt = (x, y) => {
+        const t = occupant.get(`${x},${y}`);
+        return t === undefined || t === "belt" || t === "underground_belt";
+    };
+    const DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+    /** 这格能给矿机用吗：本身能让位、且**存在一个朝向**让输出格可出货。 */
+    const usable = (x, y) => {
+        if (!clearAt(x, y)) return false;
+        for (const [dx, dy] of DIRS) {
+            if (clearAt(x + dx, y + dy)) return true;   // 朝这个方向喷，落点可用
+        }
+        return false;
     };
 
     let best = null;
