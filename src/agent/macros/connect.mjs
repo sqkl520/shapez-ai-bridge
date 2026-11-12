@@ -763,10 +763,11 @@ export function verifyChain(cells) {
  *
  * @returns {{uid:number,x:number,y:number,what:string,handle?:string}|null} 第一个受害者
  */
-function this_feedsOfOtherMachine(replacedUids, world, spec) {
+function this_feedsOfOtherMachine(replacedUids, world, spec, scratchCells) {
     if (!world || !Array.isArray(replacedUids) || !replacedUids.length) return null;
     const sp = spec || loadSpec();
     const dead = new Set(replacedUids);
+    const scratch = scratchCells instanceof Set ? scratchCells : new Set();
     /* 每台机器的 input 槽的 `cell`（= 喂料格）就是「别人专用」的位置。 */
     for (const rec of world.byUid.values()) {
         if (!rec || rec.type === "belt" || rec.type === "underground_belt" || rec.type === "hub") continue;
@@ -780,6 +781,8 @@ function this_feedsOfOtherMachine(replacedUids, world, spec) {
            第一版按 `inputs`/`outputs` 写，恒空 ⇒ victim 恒 null ⇒ 守卫形同虚设。 */
         for (const p of (ports && ports.accept) || []) {
             if (!p || !Array.isArray(p.cell)) continue;
+            /* 这一格在本批里会被重新接上 ⇒ 不算「拆别人产线」 */
+            if (scratch.has(key(p.cell[0], p.cell[1]))) continue;
             const occ = world.cells.get(key(p.cell[0], p.cell[1]));
             if (occ && dead.has(occ.uid)) {
                 return {
@@ -1258,7 +1261,19 @@ export function connect(a, b, c, d) {
                    守卫永远不触发（测出来 ok:true 才发现）。 */
                 const replaced = Array.isArray(retry.changed && retry.changed.removed_uids)
                     ? retry.changed.removed_uids : [];
-                const victim = replaced.length ? this_feedsOfOtherMachine(replaced, world) : null;
+                /* ★ 同批里会被重新接上的喂料格 ⇒ 覆盖它不算拆产线 ★
+                 *
+                 * 真机 r-20261112210803-e1a3：模型同时提交
+                 * `connect{M2→slot0}` + `connect{M3→slot1}` —— 每条都要穿对方的喂料格，
+                 * 逐条判就把两条都拒了（死锁）。而那两格本来会被同一个 tx 重新接上。
+                 * 调用方（`loop.mjs` 的 buildTxPlan）把这份名单算好传进来。 */
+                const scratch = new Set(
+                    (Array.isArray(ctx && ctx.scratch_feed_cells) ? ctx.scratch_feed_cells : [])
+                        .map(c => key(c[0], c[1])),
+                );
+                const victim = replaced.length
+                    ? this_feedsOfOtherMachine(replaced, world, null, scratch)
+                    : null;
                 if (victim) {
                     return failure({
                         code: "occupied", field: "to",
