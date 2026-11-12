@@ -237,7 +237,7 @@ check("R8 ★ $ore 示例的颜色跟着目标走，不许写死 Cu", () => {
        更要紧的是：这是**唯一**告诉模型「有一个能指名矿格」的地方。 */
     const obs = {
         entities: [{ uid: 1, type: "hub", x: 0, y: 0, r: 0 }],
-        resources: [{ 0: -5, 1: 0, kind: "RuRuRuRu" }, { 0: 5, 1: 0, kind: "RuRuRuRu" }],
+        resources: [[-5, 0, "RuRuRuRu"], [5, 0, "RuRuRuRu"]],
         goal: { level: 4, requirement: { shape: "RuRu----", required: 70 } },
         hub: { stored_shapes: {} },
     };
@@ -248,8 +248,8 @@ check("R8 ★ $ore 示例的颜色跟着目标走，不许写死 Cu", () => {
         budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
     });
     if (/\$ore/.test(b.user)) {
-        assert.match(b.user, /\{"\$ore":"Ru"\}/, "示例必须是 Ru（目标矿），不是 Cu");
-        assert.ok(!/\{"\$ore":"Cu"\}/.test(b.user), "不许出现写死的 Cu");
+        assert(/\{"\$ore":"Ru"\}/.test(b.user), "示例必须是 Ru（目标矿），不是 Cu");
+        assert(!/\{"\$ore":"Cu"\}/.test(b.user), "不许出现写死的 Cu");
     }
 });
 
@@ -272,16 +272,39 @@ check("R9 ★ 默认预算下不渲染 when: 行（与加字段之前逐字节�
     assert(b.blocks.when_lines_shown === false, "blocks.when_lines_shown 应为 false");
 });
 
-check("R10 ★ 生产预算下渲染 when: 行，且与 not when: 是两行不同内容", () => {
+check("R10 ★ 充裕预算下渲染 when: 行，且与 not when: 是两行不同内容", () => {
+    /* ⚠️ 阈值是 **5000**，不是 4600。
+     *
+     * 2026-11-12 起 `PROMPT_TOKENS_MAX` 从 2800 提到 4000，而 `when:` 的
+     * 「宽裕」判据同步抬到 5000 —— 目的是让**默认两端都落在同一侧**，
+     * 避免截断路径悄悄改变卡片内容（见 prompt.mjs 那段注释）。
+     * 生产路径传的是 4600 < 5000 ⇒ 生产上默认**不**渲染 `when:`，
+     * 这与 `when-line-no-effect` 的 A/B 结论一致（少占预算更好）。
+     *
+     * 所以这条测的是「渲染逻辑还在」，用 6000 表示真正的宽裕预算。 */
+    const b = buildPrompt({
+        goal: "RuRu----", obs: mkObs("RuRu----"),
+        handles: { byHandle: new Map(), list: [] },
+        diagnoses: [], candidates: ["connect", "replace_run"],
+        budget: { in_chars_max: 16000, prompt_tokens_max: 6000 },
+    });
+    assert(/\nwhen: /m.test(b.user), "充裕预算必须出现 when: 行");
+    assert(b.blocks.when_lines_shown === true, "blocks.when_lines_shown 应为 true");
+    assert(/\nnot when: /m.test(b.user), "not when: 行仍然要在（两者并列，不是替换）");
+});
+
+check("R10c ★ 生产预算 4600 < 5000 ⇒ 默认**不**渲染 when: 行（这是有意的）", () => {
+    /* 锁住这条，因为它是「默认两端同侧」那个决定的可观测后果。
+       哪天有人把阈值调回 4600 以下，这条会红 —— 那时必须同时重新审视
+       prompt.mjs 里关于截断路径的论证，而不是顺手改测试。 */
     const b = buildPrompt({
         goal: "RuRu----", obs: mkObs("RuRu----"),
         handles: { byHandle: new Map(), list: [] },
         diagnoses: [], candidates: ["connect", "replace_run"],
         budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
     });
-    assert(/\nwhen: /m.test(b.user), "生产预算必须出现 when: 行");
-    assert(b.blocks.when_lines_shown === true, "blocks.when_lines_shown 应为 true");
-    assert(/\nnot when: /m.test(b.user), "not when: 行仍然要在（两者并列，不是替换）");
+    assert(!/\nwhen: /m.test(b.user), "4600 是生产值，低于 5000 阈值 ⇒ 不该渲染 when:");
+    assert(b.blocks.when_lines_shown === false);
 });
 
 check("R11 每个宏都有 whenToUse（信息结构对称，不许只有 remove_run 有）", async () => {
@@ -324,9 +347,11 @@ check("R10b ★ 显式 include_when 能覆盖预算推断（A/B 的前提）", (
     assert(on.blocks.belts_shown === off.blocks.belts_shown, "两臂 belts_shown 必须相同");
     assert(!!on.blocks.s3_capacity === !!off.blocks.s3_capacity, "两臂 CAPACITY 出现与否必须相同");
 
-    /* 默认（不给 include_when）仍然按预算推断 —— 不许让显式开关改变旧行为 */
+    /* 默认（不给 include_when）仍然按预算推断 —— 不许让显式开关改变旧行为。
+       ⚠️ 宽裕阈值是 5000（见 R10 的说明），所以这里用 6000 表示真·宽裕。 */
     assert(mk({}).blocks.when_lines_shown === false, "默认预算仍应推断为 false");
-    assert(mk(fat).blocks.when_lines_shown === true, "生产预算仍应推断为 true");
+    assert(mk({ ...fat, prompt_tokens_max: 6000 }).blocks.when_lines_shown === true,
+        "宽裕预算（≥5000）仍应推断为 true");
 });
 
 check("R12 偏好指令已中性化（不许再写 Prefer X over connect）", async () => {

@@ -709,3 +709,97 @@ test("M8 ★ 颜料矿机的输出必须是 color:<name>，不是裸 <name>", ()
         `★ 红矿机上方那条带子必须被认成「运 color:red」—— 返回 0 说明矿种没加前缀`
         + `（矿种=${JSON.stringify(red[2])}）`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M9 / M10 —— 「矿上已经有矿机了」必须说出来，且必须按**矿脉**分别数
+ *
+ * 真实缺陷（第 9 关真机 `r-20261112111044-e5b0`，2026-11-12）：
+ *
+ *   mixer `C7` 的两个 color 槽都空着。诊断连报 **7 轮**
+ *   「先在那片矿区放一台矿机（insert_machine）」，模型照做 7 轮，
+ *   蓝矿 19 格上挤了 **7 台矿机**、红矿 3 台，**一次都没接线**。
+ *
+ *   两个独立的错：
+ *     ① `oreHint` 只说「矿在哪」，从不说「那儿已经有矿机了」
+ *        ⇒ 模型每轮都以为要从零开始
+ *     ② 后来改成数「该矿种上有几台矿机」，但把**不同矿脉**加在一起
+ *        ⇒ 最近那片红矿区明明是空的，却报「红矿已有 3 台」
+ *
+ *   ①② 都会把模型推向「再放一台」，而正确动作分别是「接线」和「在空矿区放一台」。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 造一个带矿图的小世界：mixer 在原点附近，两种矿各一片。 */
+function worldWithVeins(veins) {
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 30, my = -30;                       // 离 L4 既有结构足够远
+    const uid = () => next++;
+    w.entities.push({
+        uid: uid(), type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    w.resources = [];
+    const built = [];
+    for (const v of veins) {
+        for (const [x, y] of v.cells) w.resources.push([x, y, v.kind]);
+        for (let i = 0; i < (v.miners || 0); i++) {
+            const [x, y] = v.cells[i];
+            w.entities.push({
+                uid: uid(), type: "miner", x, y, r: 0, variant: "default",
+                rotation_variant: 0, code: 7, layer: "regular",
+            });
+            built.push([x, y]);
+        }
+    }
+    return { w, built, mixer: [mx, my] };
+}
+
+test("M9 ★ 矿上已有矿机时 hint 必须说「别再放」，不能只说「矿在哪」", () => {
+    /* 蓝矿一整片 8 格，上面站着 4 台矿机；红矿一片，一台都没有。 */
+    const blue = { kind: "blue", cells: [], miners: 4 };
+    for (let x = 30; x <= 33; x++) for (let y = -26; y <= -25; y++) blue.cells.push([x, y]);
+    const red = { kind: "red", cells: [], miners: 0 };
+    for (let x = 20; x <= 23; x++) for (let y = -26; y <= -25; y++) red.cells.push([x, y]);
+    const { w } = worldWithVeins([blue, red]);
+
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+
+    const site = k => d.evidence.ore_reach.find(s => s.pigment === `color:${k}`);
+    assert.equal(site("blue").miners, 4, "蓝矿最近那片上有 4 台，必须数出来");
+    assert.equal(site("red").miners, 0, "红矿最近那片上是空的");
+
+    /* ★ 核心断言：蓝矿那句必须明确「别再放」，红矿那句必须指向 insert_machine ★ */
+    assert.match(d.hint, /别再放|矿机已经在了/,
+        `已有矿机的矿种必须明确说「别再放」——否则模型会继续放。实得 hint：${d.hint}`);
+    assert.match(d.hint, /一台矿机都没有/,
+        "空矿区必须明确说「没有矿机」，否则模型不知道要放");
+    assert.match(d.hint, /insert_machine/, "空矿区的动作是 insert_machine，必须点出来");
+    assert.ok(d.candidates.includes("insert_machine"), "还有空矿区时 insert_machine 必须留在候选里");
+});
+
+test("M10 ★ 矿机计数必须按**矿脉**分开，不能把 44 格外的另一片算进来", () => {
+    /* 这正是第 9 关的形态：red 在 (20..23,-26..-25)（近）和 (60..63,-26..-25)（远，有矿机）。
+       把两片加在一起会报「红矿已有 4 台」，于是诊断认为红矿只差接线 ——
+       而**最近那片其实是空的**，那 4 台在另一片矿区，接不过来。 */
+    const blue = { kind: "blue", cells: [], miners: 2 };
+    for (let x = 30; x <= 33; x++) for (let y = -24; y <= -23; y++) blue.cells.push([x, y]);
+    const redNear = { kind: "red", cells: [], miners: 0 };
+    for (let x = 20; x <= 23; x++) for (let y = -24; y <= -23; y++) redNear.cells.push([x, y]);
+    const redFar = { kind: "red", cells: [], miners: 4 };
+    for (let x = 50; x <= 53; x++) for (let y = -24; y <= -23; y++) redFar.cells.push([x, y]);
+    const { w } = worldWithVeins([blue, redNear, redFar]);
+
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+    const red = d.evidence.ore_reach.find(s => s.pigment === "color:red");
+    assert.equal(red.miners, 0,
+        `最近那片红矿区是空的 ⇒ miners 必须是 0。实得 ${red.miners} `
+        + `（把另一片矿区的矿机算进来了 ⇒ 模型会以为红矿只差接线）`);
+    assert.equal(red.veins, 2, "两片矿区必须被识别成两条独立的矿脉");
+    assert.equal(red.miners_anywhere, 4, "全图的台数仍要如实给出（作为参考）");
+    /* 距离必须是**最近那片**的，不是远那片 */
+    assert.ok(red.distance < 20, `最近的红矿区应该很近，实得 ${red.distance}`);
+});
