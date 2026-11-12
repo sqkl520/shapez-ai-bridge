@@ -385,3 +385,70 @@ test("H15 ★ 计划被拒之后，下一轮 LAST ROUND 必须看得到失败原
     assert.match(s5, /B205/, "失败的**具体对象**必须出现（模型要知道是哪一格）");
     assert.match(s5, /rebind/, "修法必须出现");
 });
+
+test("H16 ★ ambiguous_port 必须把宏算好的 {role,index} 送到模型眼前", () => {
+    /* 真机（第 9 关 r-20261112151848-86fe，2026-11-12）：模型连 2 轮写
+       `connect to:{ref:"C7", port:"color"}` —— mixer 两个 color 槽的 role
+       **都叫 color** ⇒ `ambiguous_port`。
+
+       `connect` 其实已经在错误里算好了 `candidates: [{role,index,cell}…]`，
+       但 `loop.mjs` 的 `macroFailures` 只保留了 code/hint/message，
+       **candidates 被丢掉** ⇒ 模型只看到六个字母，只能猜，于是又猜错一遍。
+
+       这与 `macro-warnings-never-reached-prompt` 是同一类缺陷：
+       算出来了 ≠ 送到了。这条锁住「送到」。 */
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"],
+        budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: {
+            round: 2, calls: ["connect"],
+            verify: { checks: [], codes: ["NO_REVERSIBLE_CALL"] },
+            decision: "plan_rejected",
+            failures: [{
+                macro: "connect", code: "ambiguous_port",
+                observed: "to.port=\"color\" 命中 2 个，需 {role,index}",
+                hint: null,
+                /* 宏按槽序给出——模型该抄的就是其中之一 */
+                candidates: [
+                    { role: "color", index: 0, cell: [34, -13] },
+                    { role: "color", index: 1, cell: [35, -13] },
+                ],
+            }],
+        },
+    });
+    const s5 = p.blocks.S5;
+    assert.match(s5, /ambiguous_port/, "错误码必须出现");
+    assert.match(s5, /use one of:/,
+        `★ 必须把候选写出来，否则模型只能再猜一遍。实际 S5：${s5}`);
+    /* 两条都要有 —— 只给 index:0 会让模型以为只有那一个槽 */
+    assert.match(s5, /role:"color", index:0/, "必须有 index:0 的完整写法");
+    assert.match(s5, /role:"color", index:1/, "必须有 index:1 的完整写法");
+});
+
+test("H17 对照：其它错误码不渲染 candidates（预算撑不住，且不是答案）", () => {
+    /* `occupied` / `target_already_fed` 这类错误的 candidates 往往是
+       「所有可连端口的清单」，动辄十几条 —— 那个不是「这一格该填什么」的答案，
+       渲染出来只会把真正的 hint 挤出预算。 */
+    const p = buildPrompt({
+        goal: "RuRu----", obs: OBS, handles,
+        diagnoses: [], candidates: ["connect"],
+        budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
+        lastRound: {
+            round: 1, calls: ["connect"],
+            verify: { checks: [], codes: ["MACRO_REFUSED"] },
+            decision: "plan_rejected",
+            failures: [{
+                macro: "connect", code: "occupied",
+                observed: "落点被占",
+                hint: "换一条路，或传 allow_replace。",
+                candidates: [{ role: "primary", index: 0 }, { role: "secondary", index: 1 }],
+            }],
+        },
+    });
+    const s5 = p.blocks.S5;
+    assert.match(s5, /occupied/, "错误码要在");
+    assert.ok(!/use one of:/.test(s5),
+        "非 ambiguous_port 不该渲染候选清单（会挤掉 hint）");
+    assert.match(s5, /allow_replace/, "hint 必须还在");
+});

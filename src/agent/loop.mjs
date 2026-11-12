@@ -1415,6 +1415,20 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                     code: e.code || null,
                     hint: e.hint || null,
                     message: e.message || (r && r.reason) || null,
+                    /* ★ 宏的 `candidates` 必须带出来 ★
+                     *
+                     * 真机（第 9 关 r-20261112151848-86fe，2026-11-12）：
+                     * 模型连 2 轮写 `connect to:{ref:"C7", port:"color"}`，
+                     * 而 mixer 两个 color 槽的 role **都叫 color** ⇒ `ambiguous_port`。
+                     *
+                     * `connect` 其实在错误里算好了 `candidates: [{role,index,cell}…]` ——
+                     * 那正是模型需要的消歧信息（它该写 `{role:"color", index:0}`）。
+                     * 但这里只保留了 code/hint/message，**candidates 被丢掉**，
+                     * 于是模型看到的只有「ambiguous_port」六个字，只能猜。
+                     *
+                     * 这类「宏已经算出答案、却没送到决策者眼前」的缺口在
+                     * `macro-warnings-never-reached-prompt` 里记过一次，这是同一类。 */
+                    candidates: Array.isArray(e.candidates) ? e.candidates : null,
                 });
                 continue;
             }
@@ -1541,6 +1555,9 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
        宏失败的先放进来 —— 它们是被跳过的第一批。 */
     const skippedAll = macroFailures.map(f => ({
         macro: f.macro, reason: "macro_failed", code: f.code, hint: f.hint,
+        /* 宏算出的候选（`ambiguous_port` 的 `{role,index}` 就在这里）——
+           一路带到 diagnose.evidence → prompt 的 "previous failures"。 */
+        ...(Array.isArray(f.candidates) ? { candidates: f.candidates } : {}),
     }));
     /* ★ 2026-11-02 修：筛选条件不能再带 `executed.length < res.calls.length` ★
      *
@@ -2409,12 +2426,28 @@ export async function runLoop(opts = {}) {
             calls: Array.isArray(macros) ? macros.slice() : [],
             verify: { checks: [], codes: (Array.isArray(diagnoses) ? diagnoses : []).map(d => d && d.code).filter(Boolean) },
             decision: "plan_rejected",
-            failures: (Array.isArray(macros) ? macros : []).map(m => ({
-                macro: m,
-                code: d0 ? d0.code : "PLAN_REJECTED",
-                hint: d0 && d0.hint ? d0.hint : null,
-                observed: d0 && typeof d0.observed === "string" ? d0.observed : null,
-            })),
+            failures: (Array.isArray(macros) ? macros : []).map(m => {
+                /* ★ 从诊断的 evidence 里捞出**这个宏自己**的宏级 candidates ★
+                 *
+                 * `partial` 模式下 `NO_REVERSIBLE_CALL` 把每个失败宏的
+                 * `{macro, code, hint, candidates}` 放进 `evidence.skipped`。
+                 * `ambiguous_port` 的消歧答案就在那份 candidates 里
+                 * （每个 `{role,index,cell}`），不带给模型它只能猜。
+                 *
+                 * 注意按 **macro 名** 匹配而不是按下标：诊断里的 skipped 顺序
+                 * 与 `macros` 一致，但同名宏可能出现多次，配对靠下标更稳。 */
+                const sk = (d0 && d0.evidence && Array.isArray(d0.evidence.skipped))
+                    ? d0.evidence.skipped
+                    : [];
+                const hit = sk.find(s => s && s.macro === m && Array.isArray(s.candidates));
+                return {
+                    macro: m,
+                    code: d0 ? d0.code : "PLAN_REJECTED",
+                    hint: d0 && d0.hint ? d0.hint : null,
+                    observed: d0 && typeof d0.observed === "string" ? d0.observed : null,
+                    candidates: hit ? hit.candidates : null,
+                };
+            }),
         };
         /* runLog 也落一个结局 —— 否则那一轮永远停在 `planned`。 */
         markRunLog(roundNo, "failed");
