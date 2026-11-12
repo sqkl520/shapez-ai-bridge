@@ -1060,7 +1060,7 @@ test("M16 ★ 断头线比矿机距离长一个数量级 ⇒ 建议 rebind 抢�
     assert.match(d.hint, /rebind/,
         `★ 线比矿机远一个数量级时，正确动作是 rebind 抢槽，不是去修那条线。`
         + `实际 hint：${d.hint}`);
-    assert.match(d.hint, /别去修那条长线|不要.*修.*长线/,
+    assert.match(d.hint, /别.{0,3}修那条(长)?线/,
         `必须明确说「别去修那条线」—— 否则模型会像真机那样一路把它铺下去`);
     assert.ok(!/起点是 `B\d+`/.test(d.hint),
         `★ 线太长时**不许**再指「起点是 Bxx」—— 那正是让模型铺 57 格的指令。`
@@ -1099,4 +1099,58 @@ test("M17 对照：断头线**短**时，仍应建议接到它的源头（别一
     assert.ok(d, "应当有 MIXER_UNFED");
     assert.match(d.hint, /起点是|另一头/,
         `短线时应当指「接到线的源头」，实得：${d.hint}`);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M18 —— 建议 rebind 时必须同时警告**不要** allow_replace
+ *
+ * 真机 r-20261112194710-c92a（第 9 关）：模型照 hint 写了
+ *   connect {from:M2, to:C7, port:{role:"color",index:0}, opts:{rebind:true}}
+ * 并把槽抢了回来 —— 但它自己**又加了** `allow_replace:true`。
+ *
+ * `allow_replace` 允许宏重铺 feed 格上的带子，于是那两条带子被改成
+ * `r=270`（朝左），而 mixer 要的是朝上 ⇒ slot 1 变成 `belt-not-aimed`，
+ * 两个槽一起废掉。整轮 `churn`（等价替换），目标没动。
+ *
+ * 修法：抢槽只需要 `rebind`，绝不能带 `allow_replace`。hint 必须说出来。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("M18 ★ 建议 rebind 抢槽时，必须警告不要加 allow_replace", () => {
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 40, my = -40;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    /* 长断头线（30 格）—— 触发 rebind 分支 */
+    w.entities.push({
+        uid: next++, type: "belt", x: mx, y: my + 1, r: 0, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    for (let k = 1; k <= 30; k++) {
+        w.entities.push({
+            uid: next++, type: "belt", x: mx - k, y: my + 1, r: 90, variant: "default",
+            rotation_variant: 0, code: 1, layer: "regular",
+        });
+    }
+    w.resources = [];
+    for (let x = mx; x <= mx + 2; x++) for (let y = my - 3; y <= my - 2; y++) w.resources.push([x, y, "blue"]);
+    w.entities.push({
+        uid: next++, type: "miner", x: mx, y: my - 3, r: 0, variant: "default",
+        rotation_variant: 0, code: 7, layer: "regular",
+    });
+    for (let x = mx; x <= mx + 2; x++) for (let y = my - 10; y <= my - 9; y++) w.resources.push([x, y, "red"]);
+
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+    assert.match(d.hint, /rebind/, "必须建议 rebind");
+    /* ★ 核心：必须显式警告不要 allow_replace ★ */
+    assert.match(d.hint, /不要.*allow_replace|别加.*allow_replace/,
+        `★ 抢槽只能带 rebind —— 加 allow_replace 会重铺 feed 格的带子、`
+        + `把朝向改坏（真机 r-20261112194710-c92a 两个槽一起废掉就是因为它）。`
+        + `实际 hint：${d.hint}`);
+    /* 警告也要尽量靠前（prompt 只渲染 180 字） */
+    assert.ok(/allow_replace/.test(d.hint.slice(0, 320)),
+        `allow_replace 的警告不能被推到 320 字之后（会被 prompt 截掉）。实际：${d.hint}`);
 });
