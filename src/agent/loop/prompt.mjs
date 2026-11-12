@@ -2134,6 +2134,27 @@ function renderLastRound(lastRound) {
              * 而下游测试与模型都按首行找它。 */
             const obsTxt = f && f.observed ? clip(sanitize(String(f.observed)).text.trim(), 110) : "";
             const hint = f && f.hint ? clip(sanitize(String(f.hint)).text.trim(), 100) : "";
+            /* ★ `ambiguous_port` 的答案在 `candidates` 里，必须rendered ★
+             *
+             * 真机（第 9 关 r-20261112151848-86fe）：模型连 2 轮写
+             * `to:{ref:"C7", port:"color"}`，而 mixer 两个 color 槽的 role
+             * **都叫 color** ⇒ `ambiguous_port`。宏其实已经把 `{role,index,cell}`
+             * 算好了放进 `candidates`，但上一版只渲染 code + hint，
+             * 于是模型只看到「ambiguous_port」六个字，**只能猜**。
+             *
+             * 只对 `ambiguous_port` 渲染：其它错误的 candidates 往往是
+             * 「可以连的端口表」这种长列表，预算撑不住，而且不是必需的答案。 */
+            if (code === "ambiguous_port" && Array.isArray(f.candidates) && f.candidates.length) {
+                const opts = f.candidates
+                    .filter(c => c && typeof c.role === "string" && Number.isInteger(c.index))
+                    .slice(0, 4)
+                    .map(c => `{role:"${c.role}", index:${c.index}}`);
+                if (opts.length) {
+                    lines.push(`  · ${mac} → ${code}${obsTxt ? `: ${obsTxt}` : ""}`);
+                    lines.push(`    ↳ use one of: ${opts.join(" | ")}`);
+                    continue;
+                }
+            }
             lines.push(`  · ${mac} → ${code}${obsTxt ? `: ${obsTxt}` : ""}${!obsTxt && hint ? `: ${hint}` : ""}`);
             if (obsTxt && hint) lines.push(`    ↳ ${hint}`);
         }
