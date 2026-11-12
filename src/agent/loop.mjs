@@ -1814,6 +1814,42 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                 });
                 void risky;
                 const tooMuch = loss >= 20 || (loss >= 5 && pct >= 0.25);
+                /* ★ 「加了一堆死带子」也是改坏 ★
+                 *
+                 * 真机 r-20261112190707-de26（第 9 关）：模型完全按 hint 执行
+                 * `connect {from:M3, to:B57}` —— 铺了 57 格，砍掉 4 格。
+                 * 到 hub 的带子**一条没少**（这条判据放行），但死带子 394→447。
+                 *
+                 * 上面那条 `loss` 只看「现有的带子有没有被切掉」，
+                 * 而这里新增的 57 格**全都通不到 hub** —— 它把世界改坏了，
+                 * 只不过坏在「多」而不是「少」。
+                 *
+                 * 判据与上面同构，只是看另一个方向：死带子**净增** ≥20 格。
+                 * 施工确实会临时产生死带子（新铺的一段在接上源头前都是死的），
+                 * 所以门槛不设低 —— 一条 57 格的盲目铺线才是要拦的形态。 */
+                const deadGrowth = (after.belts_dead - before.belts_dead);
+                if (deadGrowth >= 20) {
+                    return reject("PLAN_REJECTED", {
+                        layer: "plan", stage: "simulate",
+                        expected: "这一步不会凭空增加大量通不到 hub 的带子",
+                        observed: `预演：死带子 ${before.belts_dead} → ${after.belts_dead}`
+                            + `（+${deadGrowth}），到 hub 的带子 ${before.belts_reaching_hub} → ${after.belts_reaching_hub}；`
+                            + `这一步是 ${txPlan.ops.length} 条 op`,
+                        evidence: {
+                            stage: "simulate",
+                            before: { reach: before.belts_reaching_hub, dead: before.belts_dead },
+                            after: { reach: after.belts_reaching_hub, dead: after.belts_dead },
+                            dead_growth: deadGrowth,
+                            /* 与上面那条闸门同名同义 —— 下游（测试与 prompt）按它取
+                               「这一步的代价」，不因为拦在哪条判据上而改变形状。 */
+                            loss,
+                        },
+                        candidates: ["connect", "remove_run", "trash_unused"],
+                        hint: `这一步新铺了 ${deadGrowth} 格**通不到 hub** 的带子 —— `
+                            + `不是"删坏了"，是"白铺了"。先确认那条线的终点能出货，再铺；`
+                            + `或者换个更近的接法。`,
+                    });
+                }
                 if (tooMuch) {
                     return reject("PLAN_REJECTED", {
                         layer: "plan", stage: "simulate",

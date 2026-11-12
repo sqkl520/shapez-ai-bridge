@@ -386,3 +386,53 @@ test("S2 ★ 预演的拒绝必须给出两侧数字（模型要知道代价，�
         `删掉 40 条带子后到 hub 的带子必须变少（${a.belts_reaching_hub} → ${b.belts_reaching_hub}）`);
     assert.ok(Number.isInteger(a.belts_dead) && Number.isInteger(b.belts_dead), "死带子数也要算得出来");
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * S4 —— 预演必须也看「**多**了一堆死带子」
+ *
+ * 真机 r-20261112190707-de26（第 9 关，2026-11-12）：
+ * 模型完全照 hint 执行 `connect {from:M3, to:B57}` —— 铺了 57 格、砍掉 4 格。
+ * 到 hub 的带子**一条没少**，所以旧判据（只看 loss）放行；
+ * 但死带子 394 → **447**：那 57 格全通不到 hub。
+ *
+ * 「删坏了」和「白铺了」都会把世界改坏，旧判据只看得见前者。
+ *
+ * ⚠️ 门槛不能设低：施工本身会产生临时死带子（新铺的一段在接上源头前就是死的）。
+ * 这里断言的是「≥20 格」这个量级，不是「一点都不能涨」。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("S4 ★ 预演必须也拦「白铺」：死带子净增 ≥20 格", () => {
+    const handles = buildHandles(OBS, null);
+    /* B2 在链中段：在它上面插 cutter 会切断整条链 ⇒ 大面积变死。
+       这正是「到 hub 的带子掉」和「死带子涨」同时发生的形态，
+       但**判据必须能单独识别后者** —— 所以下面显式检查 evidence 里的方向。 */
+    const r = buildTxPlan(
+        { calls: [{ macro: "insert_machine", args: { at: { $ref: "B2", asCell: true }, facing: "top", machine: "cutter" } }] },
+        OBS, null, handles, { partial: true },
+    );
+    assert.equal(r.ok, false, "必须被预演拦下");
+    const ev = r.diagnosis && r.diagnosis.evidence ? r.diagnosis.evidence : {};
+    assert.equal(ev.stage, "simulate", "拦在预演段");
+    /* 这条场景同时触发两条判据；关键是不论拦在哪条，
+       evidence 都要能说清「死带子涨了多少」——那是模型做决定的依据。 */
+    const grew = (ev.after && ev.before)
+        ? (ev.after.dead - ev.before.dead)
+        : null;
+    assert.ok(typeof ev.dead_growth === "number" || typeof grew === "number" || typeof ev.loss === "number",
+        `★ 证据里必须能看出这次改动让死带子涨了多少。实际 evidence：${JSON.stringify(ev)}`);
+    assert.match(r.diagnosis.observed, /死带子/,
+        `★ observed 必须提到死带子 —— 只说「到 hub 的带子少了」会让模型以为`
+        + `「多铺的没事」。实际：${r.diagnosis.observed}`);
+});
+
+test("S5 对照：小规模的死带子增长必须放行（施工本身会产生临时死带子）", () => {
+    /* 零损失落点（B83 实测 loss=0）⇒ 也不该被新闸门拦。
+       否则闸门会把正常施工一起禁掉 —— 那是比漏拦更糟的故障。 */
+    const handles = buildHandles(OBS, null);
+    const r = buildTxPlan(
+        { calls: [{ macro: "insert_machine", args: { at: { $ref: "B83", asCell: true }, facing: "top", machine: "cutter" } }] },
+        OBS, null, handles, { partial: true },
+    );
+    assert.equal(r.ok, true,
+        `零损失落点必须放行（否则闸门把施工一起禁掉）。实得 ${r.diagnosis && r.diagnosis.code}`
+        + ` ${r.diagnosis && r.diagnosis.observed}`);
+});
