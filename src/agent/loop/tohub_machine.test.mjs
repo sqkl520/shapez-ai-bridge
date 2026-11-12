@@ -47,10 +47,27 @@ const ROOT = path.resolve(HERE, "../../..");
 const SAVES = path.join(ROOT, "test/fixtures/saves");
 const load = f => JSON.parse(fs.readFileSync(path.join(SAVES, f), "utf8"));
 
-/** 45 实体的完整产线（矿机 → balancer → cutter → 带子 → hub），由主线程构造。 */
-const SCENARIO = JSON.parse(fs.readFileSync(path.join(ROOT, ".tmpverify/capacity-scenario.json"), "utf8"));
-const SCENARIO_OBS = SCENARIO.obs;
-const SCENARIO_TABLE = buildHandles(SCENARIO_OBS, SCENARIO.items || null);
+/** 45 实体的完整产线（矿机 → balancer → cutter → 带子 → hub），由主线程构造。
+ *
+ * ⚠️ 这份夹具是 `.tmpverify/` 下的**未跟踪**文件，2026-11-12 清理临时目录时被一并删掉。
+ *    它不能从仓库里恢复，重建又必须精确满足下面 0/A/A2 三条钉住的结构约束
+ *    （37 带子、物理口径 36/37 通、旧口径严格更悲观），所以这里做成
+ *    **缺文件就跳过**而不是整文件报错 —— 让同一个文件里那些不依赖它的测试
+ *    （B/C/D/E，用的是 tracked 夹具）继续有牙齿。
+ *
+ *    重建指引：`research/ai-plan/EXPERIENCE-AB-PLAN.md:132` 记着它的量
+ *    （miners 3 / belts 37 / manhattanSum 27 / 绕路率 1.37），
+ *    `AB-PROMPT-RESULT.md:260` 说明它只含 `RuRuRuRu`。 */
+const SCENARIO_PATH = path.join(ROOT, ".tmpverify/capacity-scenario.json");
+const SCENARIO = fs.existsSync(SCENARIO_PATH)
+    ? JSON.parse(fs.readFileSync(SCENARIO_PATH, "utf8"))
+    : null;
+const SCENARIO_OBS = SCENARIO && SCENARIO.obs;
+const SCENARIO_TABLE = SCENARIO_OBS ? buildHandles(SCENARIO_OBS, SCENARIO.items || null) : null;
+/** 依赖 SCENARIO 的用例统一用它注册：缺夹具时打成 skipped 并写明原因。 */
+const scenarioTest = (name, fn) => test(name, SCENARIO_OBS
+    ? fn
+    : { skip: "缺 .tmpverify/capacity-scenario.json（未跟踪夹具，2026-11-12 被清理误删）" });
 
 /** 真实半成品存档：`B34@(1,-6)` 是断头，断点在 `(1,-6)` 之后。 */
 const HALF = load("half-L4-obs.json");
@@ -147,7 +164,7 @@ function footprintOf(e) {
 
 /* ═══════════════════════════ 0. 夹具自检 ═══════════════════════════ */
 
-test("0. 夹具：capacity-scenario 是一条**穿机器**才通的产线（否则下面的正例恒真）", () => {
+scenarioTest("0. 夹具：capacity-scenario 是一条**穿机器**才通的产线（否则下面的正例恒真）", () => {
     const reach = flowReachable(SCENARIO_OBS, indexOf(SCENARIO_OBS));
     const uids = beltUids(SCENARIO_OBS);
     const ok = uids.filter(u => reach.has(u)).length;
@@ -175,7 +192,7 @@ test("0. 夹具：capacity-scenario 是一条**穿机器**才通的产线（否�
  * 允许的差异只有一个方向，且必须说明：**渲染里没出现**的带子不管
  * （`STATE_BELTS_MAX=12` 的预算只给 12 条，剩下的 25 条走不到模型眼前）。
  */
-test("A. 正例：capacity-scenario 上，标记与物理口径逐个 uid 一致", () => {
+scenarioTest("A. 正例：capacity-scenario 上，标记与物理口径逐个 uid 一致", () => {
     const section = beltsSection(SCENARIO_OBS, SCENARIO_TABLE);
     const reach = flowReachable(SCENARIO_OBS, indexOf(SCENARIO_OBS));
     const H = handleMap(SCENARIO_TABLE);
@@ -207,7 +224,7 @@ test("A. 正例：capacity-scenario 上，标记与物理口径逐个 uid 一致
         + "修复前这里是 11 条，全在 cutter 上游");
 });
 
-test("A2. 对照：物理口径本身在 capacity-scenario 上不是恒真/恒假", () => {
+scenarioTest("A2. 对照：物理口径本身在 capacity-scenario 上不是恒真/恒假", () => {
     /* 一个"谁都能到"的实现过不了 C/D；一个"谁都到不了"的实现过不了这条。
        这里同时钉住两头，证明 A 的判据有牙齿。 */
     const reach = flowReachable(SCENARIO_OBS, indexOf(SCENARIO_OBS));
@@ -257,7 +274,7 @@ test("B. 正例：半成品存档里，断点之后的带子标「到不了」�
         `★ 半成品存档的 34 条带子全部到不了 hub（断口在 B34 之后）`);
 });
 
-test("B2. 对照：同一份存档**补上那 3 格**之后，上游带子必须变成「能到」", () => {
+scenarioTest("B2. 对照：同一份存档**补上那 3 格**之后，上游带子必须变成「能到」", () => {
     /* `.tmpverify/capacity-scenario.json` 就是「半成品 + 断口那 3 格带子」：
        B34 出口 (1,-5) → (1,-4) → (1,-3) → hub。补上之后整条链通。
        这条证明 B 的判据不是恒真的：同一个上游带子在两处给出不同答案。 */
@@ -414,7 +431,9 @@ test("E. 回归：belt 名额用满、prompt 字符数没有变差", () => {
     const cases = [
         { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4520 },
         { name: "half", obs: HALF_OBS, tbl: HALF_TABLE, maxChars: 3400 },
-        { name: "capacity", obs: SCENARIO_OBS, tbl: SCENARIO_TABLE, maxChars: 3530 },
+        /* 缺 SCENARIO 夹具时跳过这一档（见文件头对那份未跟踪夹具的说明）。
+           不静默改数值 —— 缺就是缺。 */
+        ...(SCENARIO_OBS ? [{ name: "capacity", obs: SCENARIO_OBS, tbl: SCENARIO_TABLE, maxChars: 3530 }] : []),
     ];
     for (const c of cases) {
         const p = buildPrompt({

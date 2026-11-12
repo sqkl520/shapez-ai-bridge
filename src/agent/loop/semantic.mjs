@@ -1340,26 +1340,112 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
              *
              * 只给「最近的那一格」和距离，不给整张矿图（预算）。
              * 无矿图时如实说读不到，不编。 */
+            /* ★ 「这种矿上有几台矿机」必须按**连通矿脉**算，不是按矿种 ★
+             *
+             * 第一版把所有 `red` 矿机加在一起，第 9 关报出「红矿已有 3 台」——
+             * 而最近的**那片**红矿 (8,5) 上一台都没有；那 3 台在 44 格外的
+             * 另一片 (52,21) 矿区。把两片矿合并计数，模型会以为「红矿那边已经就绪，
+             * 只要接线」，实际要接的那片是空的。
+             *
+             * 所以：先把同种的矿格按 4-邻接并成矿脉，取离 mixer 最近的那条矿脉，
+             * 只数**站在那条矿脉上**的矿机。 */
+            const veinsOf = (() => {
+                const cache = new Map();
+                return (pig) => {
+                    if (cache.has(pig)) return cache.get(pig);
+                    const cells = [];
+                    for (const [k, kind] of engine.ore) {
+                        if (kind !== pig) continue;
+                        const [x, y] = k.split(",").map(Number);
+                        cells.push([x, y]);
+                    }
+                    const set = new Set(cells.map(c => `${c[0]},${c[1]}`));
+                    const seen = new Set();
+                    const veins = [];
+                    for (const c of cells) {
+                        const k0 = `${c[0]},${c[1]}`;
+                        if (seen.has(k0)) continue;
+                        const grp = [];
+                        const stack = [c];
+                        seen.add(k0);
+                        while (stack.length) {
+                            const [x, y] = stack.pop();
+                            grp.push([x, y]);
+                            for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+                                const nk = `${x + dx},${y + dy}`;
+                                if (set.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push([x + dx, y + dy]); }
+                            }
+                        }
+                        const d = grp.reduce((mn, p) => Math.min(mn, Math.abs(p[0] - m.x) + Math.abs(p[1] - m.y)), Infinity);
+                        const near = grp.reduce((a, p) => (Math.abs(p[0] - m.x) + Math.abs(p[1] - m.y)
+                            < Math.abs(a[0] - m.x) + Math.abs(a[1] - m.y) ? p : a), grp[0]);
+                        veins.push({ cells: grp, d, at: near });
+                    }
+                    veins.sort((a, b) => a.d - b.d);
+                    cache.set(pig, veins);
+                    return veins;
+                };
+            })();
+
+            const minerOnPigment = (() => {
+                const byPig = new Map();
+                for (const e of idx.ent) {
+                    if (e.type !== "miner") continue;
+                    const kind = engine.ore instanceof Map ? engine.ore.get(`${e.x},${e.y}`) : null;
+                    if (typeof kind !== "string") continue;
+                    const rec = byPig.get(kind) || [];
+                    rec.push({ handle: handleOf(handles, e.uid), cell: [e.x, e.y] });
+                    byPig.set(kind, rec);
+                }
+                return byPig;
+            })();
+
             const oreHint = (() => {
                 if (!engine.resourcesPresent) return { text: "the observation carries no resource map, so where to mine a pigment cannot be read", sites: [] };
                 const wantPig = [...new Set(wantColors)].map(c => String(c).replace(/^color:/, ""));
-                const mx = m.x, my = m.y;
                 const nearest = [];
                 for (const pig of wantPig) {
-                    let best = null;
-                    for (const [k, kind] of engine.ore) {
-                        if (kind !== pig) continue;
-                        const [ox, oy] = k.split(",").map(Number);
-                        const d = Math.abs(ox - mx) + Math.abs(oy - my);
-                        if (!best || d < best.d) best = { d, at: [ox, oy] };
-                    }
-                    nearest.push({ pigment: `color:${pig}`, ...(best ? { distance: best.d, at: best.at } : { distance: null }) });
+                    const veins = veinsOf(pig);
+                    const best = veins.length ? veins[0] : null;
+                    const all = minerOnPigment.get(pig) || [];
+                    /* 只数站在**最近那条矿脉**上的矿机，别把 44 格外那片算进来 */
+                    const onVein = best
+                        ? all.filter(mm => best.cells.some(c => c[0] === mm.cell[0] && c[1] === mm.cell[1]))
+                        : [];
+                    nearest.push({
+                        pigment: `color:${pig}`,
+                        ...(best ? { distance: best.d, at: best.at } : { distance: null }),
+                        /* `miners` = 最近那条矿脉上的台数（这是「这一步该不该放矿机」的依据） */
+                        miners: onVein.length,
+                        miner_handles: onVein.map(x => x.handle),
+                        /* `miners_anywhere` = 全图该矿种的台数，仅作参考 */
+                        miners_anywhere: all.length,
+                        vein_cells: best ? best.cells.length : 0,
+                        veins: veins.length,
+                    });
                 }
                 const missing = nearest.filter(n => n.distance === null);
+                /* ★ 按「这一步要做什么」排序，不按颜料在配方里的顺序 ★
+                 *
+                 * prompt 只渲染 hint 的前 180 字符。第 9 关的形态是
+                 * 「蓝：5 格 / 已有 7 台矿机」「红：44 格 / 0 台」——
+                 * 蓝那半句是**已经做完的事情**（矿机在，只是没接），
+                 * 红那半句才是**这一轮要动手的**（矿区是空的）。
+                 * 按配方顺序写，红矿永远被截掉。
+                 *
+                 * ⇒ 缺矿机的（可推进的）排前面，已有矿机的（只剩接线的）排后面。 */
+                const rank = n => (n.miners > 0 ? 1 : 0);
+                const ordered = [...nearest].sort((a, b) => rank(a) - rank(b));
                 const text = missing.length
                     ? `no ${missing.map(n => n.pigment).join("/")} ore exists in the observed region at all`
-                    : nearest.map(n => `${n.pigment} ore is ${n.distance} tile(s) away`).join("; ");
-                return { text, sites: nearest };
+                    : ordered.map(n => {
+                        const where = `${n.pigment} ore is ${n.distance} tile(s) away`
+                            + (n.veins > 1 ? ` (${n.veins} separate patches)` : "");
+                        return n.miners
+                            ? `${where}; that patch already has ${n.miners} miner(s) (${n.miner_handles.slice(0, 3).join("/")}…)`
+                            : `${where}; NO miner on it yet`;
+                    }).join("; ");
+                return { text, sites: nearest, ordered };
             })();
 
             /* ★ 必须点名**哪一个** color 槽，否则模型只能瞎猜 ★
@@ -1438,8 +1524,13 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                     mix_inputs: mixStep ? mixStep.inputs : null,
                 },
                 /* 可施工的下一步：那条缺的/重复的颜料得从别处的矿拉过来。
-                   `connect` 能铺路；`insert_machine` 能补一台矿机；`replace_run` 能就地改线。 */
-                candidates: ["connect", "insert_machine", "replace_run"],
+                   `connect` 能铺路；`insert_machine` 能补一台矿机；`replace_run` 能就地改线。
+                   ⚠️ **两种**矿的最近矿区上都已有矿机时把 `insert_machine` 拿掉 ——
+                   第 9 关实测，留着它模型就一直放矿机（7 次），一次都没接线。
+                   只有**某种**矿的空矿区还等着放矿机时，才保留它。 */
+                candidates: oreHint.sites.every(n => n.miners > 0 || n.distance === null)
+                    ? ["connect", "replace_run"]
+                    : ["connect", "insert_machine", "replace_run"],
                 /* ★ 顺序是**按重要性**排的，因为 prompt 只给 hint 前 180 字符 ★
                  *
                  * 实测（第 9 关）：矿距信息原来排在最后，被 `clip(…, 180)` 整个切掉 ——
@@ -1451,11 +1542,30 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                  * 排在后面被截掉也不致命。 */
                 hint: anyUnresolved
                     ? `配方要 ${[...new Set(wantColors)].join(" + ")}。**颜料从哪来**：${oreHint.text}。`
-                        + (oreHint.sites.some(n => Number.isInteger(n.distance) && n.distance > 20)
-                            ? `最近的那种在 20 格以外 —— 这不是「接一根线」，是一条要单独规划的长支线：`
-                                + `先在那片矿区放一台矿机（insert_machine），再用 connect 一路接过来。`
-                                + `反复改现有那条线没用，它接的还是同一台矿机。`
-                            : `找另一种颜色的矿，用 connect 把它的线接过来。`)
+                        + (() => {
+                            /* 「放矿机」只在**确实还没有矿机**的那一种上才该说。
+                               第 9 关实测：这条提示连说 7 轮，模型就真放了 7 次，
+                               蓝矿挤满矿机而一条线都没接成。
+                               现在**分矿种**给动作，因为蓝矿和红矿的欠缺完全不同：
+                               蓝矿「矿机在，缺线」，红矿「矿区是空的，缺矿机」。 */
+                            const ready = oreHint.sites.filter(n => n.miners > 0);
+                            const empty = oreHint.sites.filter(n => !n.miners && n.distance !== null);
+                            const parts = [];
+                            /* 空矿区（要放机器）排前面 —— 那是**这一轮能推进的动作**。
+                               已有矿机的只需接线，是第二步。 */
+                            if (empty.length) {
+                                const far = empty.some(n => n.distance > 20);
+                                parts.push(`${empty.map(n => n.pigment).join("/")} 的最近矿区**一台矿机都没有**`
+                                    + `（${empty.map(n => `${n.distance} 格外`).join("，")}），`
+                                    + `先 \`insert_machine\` 放一台${far ? "——这路要单独规划，是长支线，不是接一根线" : ""}`);
+                            }
+                            if (ready.length) {
+                                parts.push(`${ready.map(n => n.pigment).join("/")} 那边矿机已经在了（`
+                                    + `${ready.map(n => n.miner_handles.slice(0, 3).join("/")).join("，")}）——`
+                                    + `**别再放**，只做接线：\`connect\` 到 \`{ref:"${mh}", port:{role:"color", index:0}}\` 或 \`index:1\`，撞到带子加 \`allow_replace\``);
+                            }
+                            return parts.length ? parts.join("；") + "。" : "";
+                        })()
                         + `${slotHint}`
                         + (facingFix.length
                             ? ` \`belt-not-aimed\` 的那一格是**方向错了、不是没接**：`
