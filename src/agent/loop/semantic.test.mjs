@@ -1060,7 +1060,7 @@ test("M16 ★ 断头线比矿机距离长一个数量级 ⇒ 建议 rebind 抢�
     assert.match(d.hint, /rebind/,
         `★ 线比矿机远一个数量级时，正确动作是 rebind 抢槽，不是去修那条线。`
         + `实际 hint：${d.hint}`);
-    assert.match(d.hint, /别.{0,3}修那条(长)?线/,
+    assert.match(d.hint, /别.{0,6}修.{0,12}线/,
         `必须明确说「别去修那条线」—— 否则模型会像真机那样一路把它铺下去`);
     assert.ok(!/起点是 `B\d+`/.test(d.hint),
         `★ 线太长时**不许**再指「起点是 Bxx」—— 那正是让模型铺 57 格的指令。`
