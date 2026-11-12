@@ -58,3 +58,6 @@ dist/
 # Bridge runtime logs (written by the background process, never committed)
 .bridge-out.log
 .bridge-err.log
+
+# 临时 obs dump（抓实时世界状态用，机器相关）
+research/ai-plan/.obs*.json
