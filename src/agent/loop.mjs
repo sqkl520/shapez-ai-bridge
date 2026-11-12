@@ -1362,6 +1362,46 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
 
     /* ③ 逐条 macro：先过契约校验（结构错误 = LLM_ARGS），再调**真宏** */
     const executed = [];
+    /* ★ 「同一批里还有谁要把这个喂料格接上」★
+     *
+     * 真机 r-20261112210803-e1a3（第 9 关）：模型**同时**提交了两条
+     *   connect {M2 → C7:color0, rebind} + connect {M3 → C7:color1, rebind}
+     * —— 完全正确的做法（我的 hint 就是这么教的）。
+     *
+     * 但它们逐条独立规划，每条都看到「另一条槽的喂料格上还压着旧线」，
+     * 于是 auto_relax 的守卫把**两条都拒了** —— 接 A 会穿 B、接 B 会穿 A，
+     * 形成死锁。
+     *
+     * 而在这个批次里，那个「别人的喂料格」**本来就会被同一个 tx 重新接上**。
+     * 所以先把这批调用要接的槽格算出来传给智能宏：被覆盖的格子若在这份名单里，
+     * 就不算「拆掉别人的产线」。
+     *
+     * 只传目标机器的槽格（feed cell），不是整个 footprint ——
+     * 判据要窄，宁可不豁免。 */
+    const scratchFeedCells = (() => {
+        const out = [];
+        /* ⚠️ 不能用 `partialMode` —— 它在下面才定义（TDZ）。
+           这里直接读 opts，语义相同：豁免只在「可能会部分执行」时才有意义。 */
+        if (!(opts && opts.partial === true)) return out;
+        for (const c of res.calls) {
+            if (c.macro !== "connect") continue;
+            const to = c.args && c.args.to;
+            const uid = to && (typeof to.uid === "number" ? to.uid
+                : (to.ref && handles && handles.byHandle && handles.byHandle.get(String(to.ref))
+                    ? handles.byHandle.get(String(to.ref)).uid : null));
+            if (!Number.isInteger(uid)) continue;
+            const m = (o.entities || []).find(e => e && e.uid === uid);
+            if (!m || m.type === "belt" || m.type === "underground_belt") continue;
+            let slots = null;
+            try {
+                slots = slotsOf(m.type, m.variant || "default", m.x, m.y, m.r || 0, beltRvOf(m));
+            } catch { continue; }
+            for (const sl of (slots && slots.inputs) || []) {
+                if (Array.isArray(sl.cell)) out.push(sl.cell);
+            }
+        }
+        return out;
+    })();
     /* partial 模式下收集失败（见 ③b）；非 partial 模式恒为空。 */
     const macroFailures = [];
     for (let i = 0; i < res.calls.length; i++) {
@@ -1392,7 +1432,12 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
             /* 传**解析后的原始 args**（不是 v.value）：`validateMacroCall` 会补默认值
                （例如 replace_run 给 building 补 `confirm_waste:false`），而那个默认值
                与「LLM 没写」是两件事 —— 宏自己也会再校验一次，传原文更接近事实。 */
-            r = fn(c.args, { entities: o.entities || [] });
+            r = fn(c.args, {
+                entities: o.entities || [],
+                /* 同批里会被本 tx 重新接上的喂料格 —— 见上面 scratchFeedCells 的注释。
+                   智能宏用它判断「覆盖这格算不算拆别人产线」。 */
+                ...(scratchFeedCells.length ? { scratch_feed_cells: scratchFeedCells } : {}),
+            });
         } catch (e) {
             return reject("INTERNAL", {
                 layer: "plan", stage: "macro",
