@@ -637,7 +637,46 @@ test("M6 ★ evidence.slots 必须给出可直接用的 port 选择器信息（�
     assert.ok(slots.every(s => s.role === "color"));
     assert.ok(slots.every(s => Array.isArray(s.slot) && s.slot.length === 2), "每槽都要给槽格坐标");
     assert.ok(slots.every(s => Array.isArray(s.feed_cell) && s.feed_cell.length === 2), "每槽都要给喂料格");
-    assert.match(d.hint, /role:"color", index:/, "hint 必须给出可直接抄进 connect 的选择器");
+    /* ★ hint 里的选择器**只在槽是空的**时才该出现 ★
+     *
+     * 本夹具的两条带子紧贴 mixer、`head.len === 0`（它们自己就是流头），
+     * 属于「线对准了但源头断」，此时正确动作是去接**线的另一端**，而不是
+     * connect 到 mixer 的槽（那会 `target_already_fed`）。
+     * 所以这里断言的是「**不**出现反向建议」，见 M13。 */
+});
+
+test("M13 ★ 有断头时 hint 不许同时说「connect 到 mixer 槽」（两句自相矛盾）", () => {
+    /* 真机 r-20261112175721-48ca：hint 前半说「去线的起点补」，后半说
+       「connect 到 index:0」—— 槽 0 上已经压着那条断头线，后者必然
+       `target_already_fed`。模型挑了更具体的那句，三轮全撞在上面，
+       整轮 run `inert`（0 落盘）。
+
+       正确行为：有断头 ⇒ 只给「接线另一端」这一个方向，
+       并且**显式警告**不要 connect 到 mixer 槽。 */
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 14, my = -30;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    /* 槽 0 的 feed 格上放一条朝上的带子 —— 它对准了 mixer，但自己就是流头 */
+    w.entities.push({
+        uid: next++, type: "belt", x: mx, y: my + 1, r: 0, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+
+    /* 断头存在 ⇒ 必须有「不要 connect 到 mixer 槽」的警告 */
+    assert.match(d.hint, /不要.*connect.*port|target_already_fed/,
+        `★ 有断头却没警告「别 connect 到 mixer 槽」—— 模型会照做然后撞 target_already_fed。`
+        + `实际：${d.hint}`);
+    assert.match(d.hint, /另一头|起点|上游/, "必须指向「线的另一端」这个唯一正确方向");
+    /* 并且**不许**出现「connect 时写 port:{role,index:N}」那种反向建议 */
+    assert.ok(!/connect 时写|connect 时用/.test(d.hint),
+        `★ 有断头时还在说「connect 时写 port:{role,index}」= 两句自相矛盾。实际：${d.hint}`);
 });
 
 test("M7 ★ 建议的 facing 必须指向 mixer 那一侧（槽朝向的反面，不是照抄槽朝向）", () => {
@@ -771,8 +810,17 @@ test("M9 ★ 矿上已有矿机时 hint 必须说「别再放」，不能只说�
     assert.equal(site("red").miners, 0, "红矿最近那片上是空的");
 
     /* ★ 核心断言：蓝矿那句必须明确「别再放」，红矿那句必须指向 insert_machine ★ */
-    assert.match(d.hint, /别再放|矿机已经在了/,
-        `已有矿机的矿种必须明确说「别再放」——否则模型会继续放。实得 hint：${d.hint}`);
+    /* ★ 断言的是**语义**，不是某一句具体措辞 ★
+     *
+     * 有断头时这条诊断走「去接线的另一端」那个分支，它会说
+     * 「color:blue 的矿机（M1/M3/M2）输出口是空的，把它接到那条线的起点」——
+     * 那**同样**是「别再放矿机了」，只是换了个说法（而且更可执行）。
+     * 钉死某一句会把正确行为判红。 */
+    assert.match(d.hint, /别再放|矿机已经在了|输出口是空的/,
+        `已有矿机的矿种必须让模型知道「那台矿机可以用」，而不是再放一台。实得 hint：${d.hint}`);
+    /* 关键：必须点名**已有矿机的句柄**，模型才知道接哪台 */
+    assert.ok(d.hint.includes("M1") || d.hint.includes("M3") || d.hint.includes("M2"),
+        `必须点名已有矿机的句柄（否则模型不知道接哪台）。实得：${d.hint}`);
     assert.match(d.hint, /一台矿机都没有/,
         "空矿区必须明确说「没有矿机」，否则模型不知道要放");
     assert.match(d.hint, /insert_machine/, "空矿区的动作是 insert_machine，必须点出来");
