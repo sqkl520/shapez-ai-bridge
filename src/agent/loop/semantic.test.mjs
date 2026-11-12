@@ -1154,3 +1154,54 @@ test("M18 ★ 建议 rebind 抢槽时，必须警告不要加 allow_replace", ()
     assert.ok(/allow_replace/.test(d.hint.slice(0, 320)),
         `allow_replace 的警告不能被推到 320 字之后（会被 prompt 截掉）。实际：${d.hint}`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M19 —— 建议就近抢槽时，必须提醒「两个槽分开接」
+ *
+ * 真机 r-20261112202028-8e5a（第 9 关）：模型照 hint 写了
+ *   connect {from:M2, to:C7, port:{role:"color",index:0}, opts:{rebind:true}}
+ * 这次**没加** allow_replace（上一条修复生效了），connect 也成功了。
+ *
+ * 但 slot 0 那 5 格路正好穿过 slot 1 的喂料格 (35,-12)：
+ *   · slot 0 落盘正确（code=3 corner，exitDir=top）✅
+ *   · slot 1 被覆盖成 code=1 直线、exit=left ⇒ 货吐回 slot 0 的格子 ❌
+ * 两个槽一起废掉，整轮 `churn`。
+ *
+ * 离线实测：`M6 → slot1` 只要 5 格且能成功 —— 正确做法是**一次接两个不同的矿机**。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("M19 ★ 建议抢槽时必须提醒「两个槽分开接、用不同矿机」", () => {
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 40, my = -40;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    w.entities.push({
+        uid: next++, type: "belt", x: mx, y: my + 1, r: 0, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    for (let k = 1; k <= 30; k++) {
+        w.entities.push({
+            uid: next++, type: "belt", x: mx - k, y: my + 1, r: 90, variant: "default",
+            rotation_variant: 0, code: 1, layer: "regular",
+        });
+    }
+    w.resources = [];
+    for (let x = mx; x <= mx + 2; x++) for (let y = my - 3; y <= my - 2; y++) w.resources.push([x, y, "blue"]);
+    w.entities.push({
+        uid: next++, type: "miner", x: mx, y: my - 3, r: 0, variant: "default",
+        rotation_variant: 0, code: 7, layer: "regular",
+    });
+    for (let x = mx; x <= mx + 2; x++) for (let y = my - 10; y <= my - 9; y++) w.resources.push([x, y, "red"]);
+
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+    assert.match(d.hint, /两个槽|另一个槽|分开接/,
+        `★ 必须提醒两个槽要分开接 —— 只接一个的话，路径会穿过另一个槽的喂料格 `
+        + `把它覆盖成死线（真机 r-20261112202028-8e5a 两个槽一起废掉）。实际：${d.hint}`);
+    /* 这条必须在 prompt 的渲染窗口内 */
+    assert.ok(/两个槽|另一个槽/.test(d.hint.slice(0, 220)),
+        `「两个槽分开接」必须靠近前面（prompt 只渲染 180 字）。实际前 220：${d.hint.slice(0, 220)}`);
+});
