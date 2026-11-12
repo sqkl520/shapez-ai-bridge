@@ -54,3 +54,7 @@ nul
 research/ai-plan/runs/
 research/ai-plan/tmp/
 dist/
+
+# Bridge runtime logs (written by the background process, never committed)
+.bridge-out.log
+.bridge-err.log
