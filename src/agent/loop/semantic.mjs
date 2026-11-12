@@ -1328,6 +1328,18 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
              * 坐标不进 hint（硬约束），只进 evidence。 */
             const upstreamOf = (feedCell) => {
                 if (!Array.isArray(feedCell)) return null;
+                /* ★ 起始格就是空的 ⇒ 这里**没有线**，不是「线断了」★
+                 *
+                 * 两者的修法不同：
+                 *   · feed 格空        ⇒ 槽上什么都没有，要**新建**一条线过来
+                 *                        （这种情形 `slot_why` 已经是 `feed-cell-empty`，
+                 *                          hint 那侧的端口选择器才有意义）
+                 *   · feed 格上有带子   ⇒ 线存在但源头不通，要去**接线的另一端**
+                 *
+                 * 混为一谈会让空槽也收到「那条线源头是断的」+「别 connect 到 mixer 槽」
+                 * —— 而空槽恰恰**必须** connect 到 mixer 槽。实测 M9 的夹具
+                 * （mixer 四周全空）就被误导成这个形态。 */
+                if (!at(idx, feedCell)) return null;
                 const seen = new Set();
                 let cur = feedCell;
                 let len = 0;
@@ -1348,8 +1360,14 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                         if (sameCell(exitCellOf(n), cur)) feeder = n;
                     }
                     if (!feeder) {
-                        /* 流头但格子上是带子/隧道 ⇒ 它就是这条线的起点，前面没东西 */
-                        return { len, head: "head", headCell: cur, headUid: e.uid, headIsBelt: true };
+                        /* 流头但格子上是带子/隧道 ⇒ 它就是这条线的起点，前面没东西。
+                           把它的句柄带出去 —— 模型要指的正是这一格，而没有句柄它只能猜。 */
+                        return {
+                            len, head: "head", headCell: cur,
+                            headUid: e.uid, headType: e.type,
+                            headHandle: handleOf(handles, e.uid),
+                            headIsBelt: true,
+                        };
                     }
                     cur = [feeder.x, feeder.y];
                     len++;
@@ -1614,7 +1632,16 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                      * `slot_why` 全是 null 时（带子对准了、mixer 也接受），
                      * 问题只可能在上游。这里如实给出：格数 + 源头类型。
                      * `head: "empty"` = 那条线是断头，源头是空地。 */
-                    upstream: ups.map(u => (u ? { len: u.len, head: u.head, ...(u.headType ? { head_type: u.headType } : {}) } : null)),
+                    upstream: ups.map(u => (u ? {
+                        len: u.len, head: u.head,
+                        ...(u.headType ? { head_type: u.headType } : {}),
+                        /* ★ 源头那一格的句柄 ★
+                         *
+                         * 模型要「把矿机接到那条线的起点」，可它只有句柄、
+                         * 没有坐标。不说出这一格叫什么，它就只能反复
+                         * connect 到 mixer 那一端（必然 target_already_fed）。 */
+                        ...(u.headHandle ? { head_handle: u.headHandle } : {}),
+                    } : null)),
                     need_slot: badSlots.length === 1 ? badSlots[0] : null,
                     want_colors: [...new Set(wantColors)].sort(),
                     /* 每种要的颜料最近在哪、多远 —— 见上方 oreHint 的注释。 */
@@ -1650,15 +1677,22 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                          *
                          * 所以：有断头 ⇒ 断头排第一；没断头 ⇒ 矿信息排第一。 */
                         const lead = deadEnds.length
-                            ? `**槽 ${deadEnds.map(x => x.i).join(" / ")} 的带子对准了、mixer 也接受，但那条线源头是断的**`
+                            ? `配方要 ${[...new Set(wantColors)].join(" + ")}，`
+                                + `**槽 ${deadEnds.map(x => x.i).join(" / ")} 的带子对准了、mixer 也接受，但那条线源头是断的**`
                                 + `（${deadEnds.map(x => `槽 ${x.i} 上游 ${x.u.len} 格`).join("，")}）——`
-                                + `问题不在 mixer 这一端，别再调端口。去那条线的**起点**补上：`
-                                + `\`insert_machine\` 放矿机，或 \`connect\` 把它接到已有矿机上。`
+                                + `问题不在 mixer 这一端，别再调端口。`
                             : "";
                         const oreLead = `配方要 ${[...new Set(wantColors)].join(" + ")}。**颜料从哪来**：${oreHint.text}。`;
-                        return lead
-                            ? lead + (oreLead.length < 200 ? oreLead : "")
-                            : oreLead;
+                        /* ★ 有断头时**不**插矿信息 ★
+                         *
+                         * 那段有 100 多字符（「蓝矿 5 格 / 红矿 44 格，N 片矿区」），
+                         * 插在中间会把「接线的方向：起点是 B57」推出前 180 字 ——
+                         * 而那才是这一轮唯一可执行的动作（M14 抓到的正是这个）。
+                         *
+                         * 矿信息不会丢：后面的动作块照样会说
+                         * 「color:blue 的矿机（M2/M6/M8，输出口空着）」和
+                         * 「color:red 的最近矿区一台矿机都没有」。 */
+                        return lead || oreLead;
                     })()
                         + (() => {
                             /* 「放矿机」只在**确实还没有矿机**的那一种上才该说。
@@ -1669,8 +1703,14 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             const ready = oreHint.sites.filter(n => n.miners > 0);
                             const empty = oreHint.sites.filter(n => !n.miners && n.distance !== null);
                             const parts = [];
-                            /* 空矿区（要放机器）—— 断头那条已经提到最前面了 */
-                            if (empty.length) {                                const far = empty.some(n => n.distance > 20);
+                            /* ★ 有断头时，「空矿区要放矿机」这句**也要让位** ★
+                             *
+                             * 它比断头警告更长（会说两个距离、还会说「长支线」），
+                             * 插在前面就把真正的指令推出 180 字（M14 抓到）。
+                             * 断头时放置矿机仍然在动作块里出现（「先在矿上放一台」），
+                             * 不会丢信息 —— 只是不抢占前 180 字。 */
+                            if (empty.length && !deadEnds.length) {
+                                const far = empty.some(n => n.distance > 20);
                                 parts.push(`${empty.map(n => n.pigment).join("/")} 的最近矿区**一台矿机都没有**`
                                     + `（${empty.map(n => `${n.distance} 格外`).join("，")}），`
                                     + `先 \`insert_machine\` 放一台${far ? "——这路要单独规划，是长支线，不是接一根线" : ""}`);
@@ -1699,13 +1739,25 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                              *   · 没矿机 ⇒ 先在矿上放一台，再把线接到它 */
                             if (deadEnds.length) {
                                 const firstIdx = deadEnds[0].i;
+                                const d0 = deadEnds[0].u;
+                                /* ★ 必须点名**源头那一格的句柄** ★
+                                 *
+                                 * 真机 r-20261112184112-017a：模型四轮都在说
+                                 * 「接到那条线的源头」，可它只有句柄没有坐标 ——
+                                 * 不知道该指哪一格，于是四轮四种写法全被拒
+                                 * （target_already_fed / bad_type / occupied / ambiguous_port）。
+                                 *
+                                 * 源头那一格其实**是条带子**（不是空地），有句柄。
+                                 * 说出来，模型就知道 `connect from M3 to <那个句柄>`。 */
+                                const headH = d0 && d0.headHandle ? d0.headHandle : null;
                                 const who = ready.length
-                                    ? `${ready[0].pigment} 的矿机（${ready[0].miner_handles.slice(0, 3).join("/")}）输出口是空的，把**它**接到那条线的起点`
-                                    : `先在矿上放一台矿机，再把那条线的起点接到它`;
-                                parts.push(`${who}。`
+                                    ? `${ready[0].pigment} 的矿机（${ready[0].miner_handles.slice(0, 3).join("/")}，输出口空着）`
+                                    : `先在矿上放一台矿机，再把`;
+                                parts.push(`**接线的方向**：起点是 \`${headH || "那条线最上游那一格"}\` —— `
+                                    + `把 ${who}接**到它**`
+                                    + `（\`connect {from:{...矿机}, to:{ref:"${headH || "..."}"}}\`）。`
                                     + `⚠️ **不要** connect 到 \`{ref:"${mh}", port:{role:"color", index:${firstIdx}}}\` —— `
-                                    + `那个槽上已经压着这条断头线，会报 \`target_already_fed\`。`
-                                    + `要接的是**线的另一头**（上游起点那一端）。`);
+                                    + `那个槽上已经压着这条线，会报 \`target_already_fed\``);
                             }
                             return parts.length ? parts.join("；") + "。" : "";
                         })()

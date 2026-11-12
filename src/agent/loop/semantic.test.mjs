@@ -816,7 +816,7 @@ test("M9 ★ 矿上已有矿机时 hint 必须说「别再放」，不能只说�
      * 「color:blue 的矿机（M1/M3/M2）输出口是空的，把它接到那条线的起点」——
      * 那**同样**是「别再放矿机了」，只是换了个说法（而且更可执行）。
      * 钉死某一句会把正确行为判红。 */
-    assert.match(d.hint, /别再放|矿机已经在了|输出口是空的/,
+    assert.match(d.hint, /别再放|矿机已经在了|输出口空着|输出口是空的/,
         `已有矿机的矿种必须让模型知道「那台矿机可以用」，而不是再放一台。实得 hint：${d.hint}`);
     /* 关键：必须点名**已有矿机的句柄**，模型才知道接哪台 */
     assert.ok(d.hint.includes("M1") || d.hint.includes("M3") || d.hint.includes("M2"),
@@ -942,4 +942,66 @@ test("M12 ★ 断头信息必须排进 hint 前 180 字符（否则被「矿在�
     const head = d.hint.slice(0, 180);
     assert.match(head, /断的|断头|DED-ENDS|dead-end/i,
         `★ 断头必须在前 180 字符里出现，否则 prompt 会把它截掉。实际前 180 字：${head}`);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M14 —— 断头线的**源头句柄**必须送到 prompt 里
+ *
+ * 真实缺陷（第 9 关 r-20261112184112-017a，2026-11-12）：
+ * 模型四轮全在说「我要从空闲矿机接到那条线的源头」—— **它理解对了**。
+ * 但四轮四种写法全被拒：target_already_fed / bad_type / occupied / ambiguous_port。
+ *
+ * 因为它只有句柄、没有坐标，而诊断只说了「上游 49 格」，**没说那一格叫什么**。
+ * 模型只能猜，猜法每次不同。
+ *
+ * 源头那一格其实是**一条带子**（B57），有句柄 —— 只是没人告诉它。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("M14 ★ 断头线的源头句柄必须出现在 hint 里（否则模型只能猜着 connect）", () => {
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 14, my = -30;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    /* feed 格上那条朝上的带子，它自己就是流头（上游是空地）。 */
+    const headUid = next++;
+    w.entities.push({
+        uid: headUid, type: "belt", x: mx, y: my + 1, r: 0, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    const h = handlesOf(w);
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", h, { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+
+    const u0 = d.evidence.upstream[0];
+    assert.ok(u0 && typeof u0.head_handle === "string" && u0.head_handle.length,
+        `★ evidence.upstream 必须带源头句柄。实得：${JSON.stringify(u0)}`);
+    assert.match(d.hint, new RegExp(u0.head_handle),
+        `★ hint 必须点名源头那一格（${u0.head_handle}）—— `
+        + `只说「上游 N 格」模型不知道该指哪。实际：${d.hint}`);
+    assert.ok(d.hint.slice(0, 180).includes(u0.head_handle),
+        `源头句柄必须在前 180 字里（prompt 只渲染那么多）。实际前 180：${d.hint.slice(0, 180)}`);
+});
+
+test("M15 对照：源头是空地（不是带子）时，不许编一个句柄", () => {
+    /* 如果那条线的源头格上**什么都没有**，就没有句柄可说。
+       这时如实说「最上游那一格」，绝不编一个不存在的句柄 ——
+       编了会让模型去 connect 一个不存在的对象。 */
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 14, my = -30;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    /* feed 格是空地 —— 这条槽压根没接东西。 */
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+    const u0 = d.evidence.upstream[0];
+    assert.ok(!u0 || !u0.head_handle, `源头是空地时不该有 head_handle，实得 ${JSON.stringify(u0)}`);
+    assert.ok(!/to:\{ref:""\}/.test(d.hint), "不许出现空的 ref");
 });
