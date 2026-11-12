@@ -1678,8 +1678,8 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                          * 所以：有断头 ⇒ 断头排第一；没断头 ⇒ 矿信息排第一。 */
                         const lead = deadEnds.length
                             ? `配方要 ${[...new Set(wantColors)].join(" + ")}，`
-                                + `**槽 ${deadEnds.map(x => x.i).join(" / ")} 的带子对准了、mixer 也接受，但那条线源头是断的**`
-                                + `（${deadEnds.map(x => `槽 ${x.i} 上游 ${x.u.len} 格`).join("，")}）。`
+                                + `**槽 ${deadEnds.map(x => x.i).join(" / ")} 的线源头是断的**`
+                                + `（${deadEnds.map(x => `槽 ${x.i} ${x.u.len} 格`).join("，")}）。`
                             : "";
                         const oreLead = `配方要 ${[...new Set(wantColors)].join(" + ")}。**颜料从哪来**：${oreHint.text}。`;
                         /* ★ 有断头时**不**插矿信息 ★
@@ -1766,13 +1766,15 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                 if (longOnes.length && ready.length) {
                                     const t = longOnes[0];
                                     const ti = t.i;
-                                    /* 直接抢槽 —— 比修那条长线短一个数量级 */
-                                    parts.push(`**槽 ${ti} 的线有 ${t.u.len} 格且源头是空的**，而 `
-                                        + `${ready[0].pigment} 的矿机（${ready[0].miner_handles[0]}）离 mixer 只有 ${nearDist} 格。`
-                                        + `**别修那条长线**，就地抢槽：`
+                                    /* 直接抢槽 —— 比修那条长线短一个数量级。
+                                       ⚠️ 警告必须在**前 180 字**内：prompt 只渲染那么多，
+                                       真机 r-20261112200904-e728 里它落在第 240 字，
+                                       模型没看到，于是照样加了 allow_replace。 */
+                                    parts.push(`**别修那条 ${t.u.len} 格的长线** —— `
+                                        + `${ready[0].pigment} 的矿机（${ready[0].miner_handles[0]}）离 mixer 只 ${nearDist} 格，就地抢槽。`
+                                        + `**只要 rebind，别加 allow_replace**（它会重铺带子、把朝向改坏）：`
                                         + `\`connect {from:{ref:"${ready[0].miner_handles[0]}"}, to:{ref:"${mh}", `
-                                        + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\``
-                                        + `（**不要** \`allow_replace\`，它会重铺 feed 格的带子、把朝向改坏）`);
+                                        + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\``);
                                 } else {
                                     const headH = d0 && d0.headHandle ? d0.headHandle : null;
                                     const who = ready.length
