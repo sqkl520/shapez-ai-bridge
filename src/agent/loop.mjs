@@ -2439,13 +2439,15 @@ export async function runLoop(opts = {}) {
                 const sk = (d0 && d0.evidence && Array.isArray(d0.evidence.skipped))
                     ? d0.evidence.skipped
                     : [];
-                const hit = sk.find(s => s && s.macro === m && Array.isArray(s.candidates));
+                const hit = sk.find(s => s && s.macro === m);
                 return {
                     macro: m,
-                    code: d0 ? d0.code : "PLAN_REJECTED",
-                    hint: d0 && d0.hint ? d0.hint : null,
+                    /* 用宏自己的错误码（见上面 plan_rejected 分支的同款说明）——
+                       汇总诊断的 `NO_REVERSIBLE_CALL` 对「怎么改」没有信息。 */
+                    code: (hit && hit.code) ? hit.code : (d0 ? d0.code : "PLAN_REJECTED"),
+                    hint: (hit && hit.hint) || (d0 && d0.hint ? d0.hint : null),
                     observed: d0 && typeof d0.observed === "string" ? d0.observed : null,
-                    candidates: hit ? hit.candidates : null,
+                    candidates: hit && Array.isArray(hit.candidates) ? hit.candidates : null,
                 };
             }),
         };
@@ -3331,12 +3333,46 @@ export async function runLoop(opts = {}) {
                              * 数字算出来了、写进了 diagnosis，却没进 prompt。 */
                             const observed = (p.diagnosis && typeof p.diagnosis.observed === "string"
                                 && p.diagnosis.observed) ? p.diagnosis.observed : null;
-                            return st.lastMacros.map((m, k) => (
-                                k === failIdx
-                                    ? { macro: m, code: p.diagnosis.code, hint: p.diagnosis.hint || null,
-                                        ...(observed ? { observed } : {}) }
-                                    : { macro: m, code: "unverified", hint: null }
-                            ));
+                            /* ★ 哪些宏**真的**失败了：`call_index` 或 skipped 名单 ★
+                             *
+                             * `MACRO_REFUSED` 这类单调用失败带 `call_index`；
+                             * 而 `NO_REVERSIBLE_CALL` 是**多调用汇总**诊断，
+                             * 它的 evidence 里**没有** `call_index`，只有
+                             * `skipped: [{macro, reason, code, candidates}]`。
+                             *
+                             * 上一版只认 `call_index` ⇒ 汇总诊断下 `failIdx === -1`
+                             * ⇒ **每个宏都被标成 `unverified`**，于是：
+                             *   · 模型看到「都没被检验」，以为不必换（实际全失败了）；
+                             *   · 挂在那里的 candidates 永远渲染不出来。
+                             * 实测第 9 关 r-20261112155503-1dae：连 3 轮 ambiguous_port，
+                             * evidence 里明明有 {role,index}，模型一次都没看到。 */
+                            const sk = Array.isArray(ev.skipped) ? ev.skipped : [];
+                            const failedNames = new Set(sk
+                                .filter(s => s && s.reason === "macro_failed")
+                                .map(s => s.macro));
+                            return st.lastMacros.map((m, k) => {
+                                const failed = (failIdx >= 0) ? (k === failIdx) : failedNames.has(m);
+                                if (!failed) return { macro: m, code: "unverified", hint: null };
+                                const hit = sk.find(s => s && s.macro === m);
+                                /* ★ 用**宏自己的**错误码，不是汇总诊断的码 ★
+                                 *
+                                 * `NO_REVERSIBLE_CALL` 只说明「没有可撤销的调用」，
+                                 * 它对「该怎么改」零信息。真正有用的是宏报的
+                                 * `ambiguous_port` / `blocked_by_machine` / `occupied` ——
+                                 * 那才是模型要改的东西，也是 prompt 选择渲染方式的依据
+                                 * （只有 `ambiguous_port` 会渲染候选清单）。
+                                 *
+                                 * 实测 r-20261112155503-1dae：prompt 里写的是
+                                 * `connect → NO_REVERSIBLE_CALL`，模型完全看不出
+                                 * 真正撞的是端口歧义，于是又一次写 `port:"color"`。 */
+                                const macroCode = (hit && hit.code) ? hit.code : p.diagnosis.code;
+                                return {
+                                    macro: m, code: macroCode,
+                                    hint: (hit && hit.hint) || p.diagnosis.hint || null,
+                                    ...(observed ? { observed } : {}),
+                                    ...(hit && Array.isArray(hit.candidates) ? { candidates: hit.candidates } : {}),
+                                };
+                            });
                         })(),
                     };
                     tr.write("repair_decide", roundNo, {
