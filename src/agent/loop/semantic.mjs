@@ -1679,8 +1679,7 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                         const lead = deadEnds.length
                             ? `配方要 ${[...new Set(wantColors)].join(" + ")}，`
                                 + `**槽 ${deadEnds.map(x => x.i).join(" / ")} 的带子对准了、mixer 也接受，但那条线源头是断的**`
-                                + `（${deadEnds.map(x => `槽 ${x.i} 上游 ${x.u.len} 格`).join("，")}）——`
-                                + `问题不在 mixer 这一端，别再调端口。`
+                                + `（${deadEnds.map(x => `槽 ${x.i} 上游 ${x.u.len} 格`).join("，")}）。`
                             : "";
                         const oreLead = `配方要 ${[...new Set(wantColors)].join(" + ")}。**颜料从哪来**：${oreHint.text}。`;
                         /* ★ 有断头时**不**插矿信息 ★
@@ -1737,27 +1736,54 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                              * 它说的是同一件事的两种情形：
                              *   · 有矿机 ⇒ 把**它**接到线的起点
                              *   · 没矿机 ⇒ 先在矿上放一台，再把线接到它 */
+                            /* ★ 断头线太长时，**不要**教模型去接它的源头 ★
+                             *
+                             * 真机 r-20261112190707-de26 / r-20261112193013-99fb：
+                             * 诊断说「起点是 B57，把它接上」，模型照做，铺了 57 格 ——
+                             * 全通不到 hub，死带子 394→447；下一轮上游从 49 格涨到 106 格，
+                             * 因为它接到的地方又是一条新的断头。
+                             *
+                             * 而那些矿机**就在 mixer 旁边**：M2 距 mixer 只有 5 格，
+                             * 而 B306 在 7 格外、它那条线有 106 格。
+                             * 正确动作不是「把矿机接到那条长线的源头」，是
+                             * **把槽从那条死线手里抢过来，直接就近接** ——
+                             * `connect {from:M2, to:C7, port:{role:"color",index:0}, opts:{rebind:true}}`，
+                             * 5 格就完事（离线实测这两次 connect 都 OK，len=5/6）。
+                             *
+                             * 判据：断头线长度 > 最近矿机到 mixer 的距离 × 3 时，
+                             * 修那条线就是绕远路。这是数量级的差别（106 vs 5），
+                             * 乘 3 是留余量，避免把「线只长一点点」也判成绕路。 */
+                            const nearDist = ready.length
+                                ? Math.min(...ready.map(n => n.distance))
+                                : (oreHint.sites.length ? Math.min(...oreHint.sites.map(n => n.distance === null ? 999 : n.distance)) : 999);
+                            /* ⚠️ 用 `some` 不是 `every` —— 只要**有一个**槽的线长得离谱，
+                               修它就是绕远路。第 9 关的形态是 106 格 vs 3 格：
+                               `every` 会因为那个 3 格的正常槽而整条判假。 */
+                            const longOnes = deadEnds.filter(x => x.u.len > nearDist * 3);
                             if (deadEnds.length) {
                                 const firstIdx = deadEnds[0].i;
                                 const d0 = deadEnds[0].u;
-                                /* ★ 必须点名**源头那一格的句柄** ★
-                                 *
-                                 * 真机 r-20261112184112-017a：模型四轮都在说
-                                 * 「接到那条线的源头」，可它只有句柄没有坐标 ——
-                                 * 不知道该指哪一格，于是四轮四种写法全被拒
-                                 * （target_already_fed / bad_type / occupied / ambiguous_port）。
-                                 *
-                                 * 源头那一格其实**是条带子**（不是空地），有句柄。
-                                 * 说出来，模型就知道 `connect from M3 to <那个句柄>`。 */
-                                const headH = d0 && d0.headHandle ? d0.headHandle : null;
-                                const who = ready.length
-                                    ? `${ready[0].pigment} 的矿机（${ready[0].miner_handles.slice(0, 3).join("/")}，输出口空着）`
-                                    : `先在矿上放一台矿机，再把`;
-                                parts.push(`**接线的方向**：起点是 \`${headH || "那条线最上游那一格"}\` —— `
-                                    + `把 ${who}接**到它**`
-                                    + `（\`connect {from:{...矿机}, to:{ref:"${headH || "..."}"}}\`）。`
-                                    + `⚠️ **不要** connect 到 \`{ref:"${mh}", port:{role:"color", index:${firstIdx}}}\` —— `
-                                    + `那个槽上已经压着这条线，会报 \`target_already_fed\``);
+                                if (longOnes.length && ready.length) {
+                                    const t = longOnes[0];
+                                    const ti = t.i;
+                                    /* 直接抢槽 —— 比修那条长线短一个数量级 */
+                                    parts.push(`**槽 ${ti} 那条线有 ${t.u.len} 格、源头还是空的** —— 而 `
+                                        + `${ready[0].pigment} 的矿机（${ready[0].miner_handles.slice(0, 3).join("/")}）`
+                                        + `离 mixer 只有 ${nearDist} 格。**别去修那条长线**，就地接：`
+                                        + `\`connect {from:{ref:"${ready[0].miner_handles[0]}"}, to:{ref:"${mh}", `
+                                        + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\` `
+                                        + `—— \`rebind\` 把那个槽从死线手里抢过来（旧线断流，但它本来就是死的）。`);
+                                } else {
+                                    const headH = d0 && d0.headHandle ? d0.headHandle : null;
+                                    const who = ready.length
+                                        ? `${ready[0].pigment} 的矿机（${ready[0].miner_handles.slice(0, 3).join("/")}，输出口空着）`
+                                        : `先在矿上放一台矿机`;
+                                    parts.push(`**接线的方向**：起点是 \`${headH || "那条线最上游那一格"}\` —— `
+                                        + `把 ${who}接**到它**`
+                                        + `（\`connect {from:{...矿机}, to:{ref:"${headH || "..."}"}}\`）。`
+                                        + `⚠️ **不要** connect 到 \`{ref:"${mh}", port:{role:"color", index:${firstIdx}}}\` —— `
+                                        + `那个槽上已经压着这条线，会报 \`target_already_fed\``);
+                                }
                             }
                             return parts.length ? parts.join("；") + "。" : "";
                         })()
