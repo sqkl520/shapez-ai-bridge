@@ -1363,6 +1363,14 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             const shapeOfVal = v => (v ? v.join("+") : null);
             /* 每条喂料线的上游：多少格、源头是什么。见 upstreamOf 的注释。 */
             const ups = feeds.map(f => (f && Array.isArray(f.cell) ? upstreamOf(f.cell) : null));
+            /* ★ 「线对准了但源头断了」的那几个槽 ★
+             *
+             * 一次性算出来给三处用（lead / describeSlot / hint 的动作块）——
+             * 分头算会让它们**各自说不同的话**，而第 9 关的教训正是
+             * 「两条自相矛盾的建议，模型只会挑更具体的那条」。 */
+            const deadEnds = ups
+                .map((u, i) => ({ u, i, f: feeds[i] }))
+                .filter(x => x.u && (x.u.head === "empty" || x.u.head === "head" || x.u.head === "loop"));
             /* ★ `describeSlot` 必须把**上游断在哪**说出来 ★
              *
              * `f.why === null` 表示「紧邻那一格对准了、mixer 也接受了」——
@@ -1559,13 +1567,23 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 if (!face) continue;
                 facingFix.push({ slot: i, belt: h, face });
             }
-            const slotHint = (badSlots.length === 1)
-                ? `缺料的是第 ${badSlots[0]} 个 color 槽 —— connect 时写 `
-                    + `\`to:{..., port:{role:"color", index:${badSlots[0]}}}\`（该槽槽格 ${JSON.stringify(feeds[badSlots[0]].slot)}）。`
-                : badSlots.length
-                    ? `两个 color 槽都没有已知来料（索引 0 与 1）；connect 时用 `
-                        + `\`port:{role:"color", index:0}\` 或 \`{role:"color", index:1}\` 指定是哪一个。`
-                    : "";
+            /* ★ 断头存在时，这段必须闭嘴 ★
+             *
+             * 它说的是「connect 时写 port:{role,index:N}」—— 而断头时
+             * 那个槽上已经压着线，connect 到它必然 `target_already_fed`。
+             * 两句话同时出现时模型只会挑更具体的这句（实测
+             * r-20261112175721-48ca：三轮全撞在 target_already_fed 上）。
+             *
+             * 端口选择器只在「槽是空的、需要新建一条线进来」时才有意义。 */
+            const slotHint = deadEnds.length
+                ? ""
+                : (badSlots.length === 1)
+                    ? `缺料的是第 ${badSlots[0]} 个 color 槽 —— connect 时写 `
+                        + `\`to:{..., port:{role:"color", index:${badSlots[0]}}}\`（该槽槽格 ${JSON.stringify(feeds[badSlots[0]].slot)}）。`
+                    : badSlots.length
+                        ? `两个 color 槽都没有已知来料（索引 0 与 1）；connect 时用 `
+                            + `\`port:{role:"color", index:0}\` 或 \`{role:"color", index:1}\` 指定是哪一个。`
+                        : "";
             out.push({
                 code: "MIXER_UNFED",
                 layer: "L4",
@@ -1631,9 +1649,6 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                          * 而真正该做的是**去那条线的起点补上**。
                          *
                          * 所以：有断头 ⇒ 断头排第一；没断头 ⇒ 矿信息排第一。 */
-                        const deadEnds = ups
-                            .map((u, i) => ({ u, i, f: feeds[i] }))
-                            .filter(x => x.u && (x.u.head === "empty" || x.u.head === "head" || x.u.head === "loop"));
                         const lead = deadEnds.length
                             ? `**槽 ${deadEnds.map(x => x.i).join(" / ")} 的带子对准了、mixer 也接受，但那条线源头是断的**`
                                 + `（${deadEnds.map(x => `槽 ${x.i} 上游 ${x.u.len} 格`).join("，")}）——`
@@ -1655,16 +1670,42 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             const empty = oreHint.sites.filter(n => !n.miners && n.distance !== null);
                             const parts = [];
                             /* 空矿区（要放机器）—— 断头那条已经提到最前面了 */
-                            if (empty.length) {
-                                const far = empty.some(n => n.distance > 20);
+                            if (empty.length) {                                const far = empty.some(n => n.distance > 20);
                                 parts.push(`${empty.map(n => n.pigment).join("/")} 的最近矿区**一台矿机都没有**`
                                     + `（${empty.map(n => `${n.distance} 格外`).join("，")}），`
                                     + `先 \`insert_machine\` 放一台${far ? "——这路要单独规划，是长支线，不是接一根线" : ""}`);
                             }
-                            if (ready.length) {
+                            if (ready.length && !deadEnds.length) {
                                 parts.push(`${ready.map(n => n.pigment).join("/")} 那边矿机已经在了（`
                                     + `${ready.map(n => n.miner_handles.slice(0, 3).join("/")).join("，")}）——`
                                     + `**别再放**，只做接线：\`connect\` 到 \`{ref:"${mh}", port:{role:"color", index:0}}\` 或 \`index:1\`，撞到带子加 \`allow_replace\``);
+                            }
+                            /* ★ 有断头时**不许**再说「connect 到 mixer 的槽」★
+                             *
+                             * 真机 r-20261112175721-48ca（第 9 关）：hint 前半段说
+                             * 「去那条线的起点补」，后半段说「connect 到 index:0」。
+                             * 两者**互相矛盾** —— 槽 0 上已经压着一条带子（就是那条断头线），
+                             * `connect` 到它必然 `target_already_fed`。模型选了更具体的那句，
+                             * 于是三轮全撞在 `target_already_fed` / `ambiguous_port` 上，
+                             * 整轮 run `inert`（0 落盘）。
+                             *
+                             * ⚠️ 这条警告**不能**挂在 `ready.length` 上 ——
+                             * 断头本身就是「别接 mixer 这一端」的理由，
+                             * 与世界上有没有矿机无关。第一版挂在 ready 里，
+                             * M13（无矿机的夹具）当场判红。
+                             *
+                             * 它说的是同一件事的两种情形：
+                             *   · 有矿机 ⇒ 把**它**接到线的起点
+                             *   · 没矿机 ⇒ 先在矿上放一台，再把线接到它 */
+                            if (deadEnds.length) {
+                                const firstIdx = deadEnds[0].i;
+                                const who = ready.length
+                                    ? `${ready[0].pigment} 的矿机（${ready[0].miner_handles.slice(0, 3).join("/")}）输出口是空的，把**它**接到那条线的起点`
+                                    : `先在矿上放一台矿机，再把那条线的起点接到它`;
+                                parts.push(`${who}。`
+                                    + `⚠️ **不要** connect 到 \`{ref:"${mh}", port:{role:"color", index:${firstIdx}}}\` —— `
+                                    + `那个槽上已经压着这条断头线，会报 \`target_already_fed\`。`
+                                    + `要接的是**线的另一头**（上游起点那一端）。`);
                             }
                             return parts.length ? parts.join("；") + "。" : "";
                         })()
