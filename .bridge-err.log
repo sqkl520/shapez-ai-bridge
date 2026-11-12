@@ -1,0 +1,17 @@
+[bridge/info] 
+  shapez-ai-bridge  •  bridge running
+  ─────────────────────────────────────────────
+  Mod endpoint   : ws://127.0.0.1:7777/mod     (game mod connects here)
+  Client WS      : ws://127.0.0.1:7777/client  (tools/agents, events)
+  HTTP           : http://127.0.0.1:7777/health | /status | POST /rpc
+  Read-only      : false
+  Token          : (none)
+  Snapshots      : D:\Projects\rea\Project work\shapez\snapshots
+  Saves dir      : C:\Users\Administrator\AppData\Roaming\shapez.io\saves
+  Supported game : 1.5.6
+  ─────────────────────────────────────────────
+  Next: start shapez.io (mod installed) and load a savegame.
+        Then: node scripts/smoke_test.mjs
+
+[bridge/info] mod connected from 127.0.0.1:12414
+[bridge/info] mod ready: game 1.5.6, mod 0.1.0, features [observe,act,batch,step,await,blueprint,screenshot,save,new_game,entity_snapshot,tx,delete_by_uid]
