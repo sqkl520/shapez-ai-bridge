@@ -1005,3 +1005,98 @@ test("M15 对照：源头是空地（不是带子）时，不许编一个句柄"
     assert.ok(!u0 || !u0.head_handle, `源头是空地时不该有 head_handle，实得 ${JSON.stringify(u0)}`);
     assert.ok(!/to:\{ref:""\}/.test(d.hint), "不许出现空的 ref");
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M16 —— 断头线太长时，正确动作是**抢槽就近接**，不是去修那条长线
+ *
+ * 真机 r-20261112190707-de26 → r-20261112193013-99fb（第 9 关）：
+ *   诊断说「起点是 B57，把它接上」，模型照做，一次铺了 57 格；
+ *   下一轮上游从 49 格涨到 **106 格** —— 它接到的地方又是一条新断头。
+ *
+ * 而真相是：矿机 M2 离 mixer 只有 **5 格**，那条线却有 106 格。
+ * 正确动作是 `connect {from:M2, to:C7, port:{role:"color",index:0}, opts:{rebind:true}}`，
+ * 5 格搞定（离线实测 len=5/6，两次都 OK）。
+ *
+ * 判据：断头线长度 > 最近矿机距离 × 3 ⇒ 修线就是绕远路。
+ * ⚠️ 用 `some` 不是 `every` —— 第 9 关的形态是 106 格 + 3 格并存，
+ * `every` 会因为那个正常的 3 格槽而整条判假（第一版就是这么错的）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("M16 ★ 断头线比矿机距离长一个数量级 ⇒ 建议 rebind 抢槽，不是去修那条线", () => {
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 40, my = -40;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    /* 槽 0 的 feed 格上拉一条**很长的**断头线（30 格，全是朝上/朝右的裸带子）。 */
+    w.entities.push({
+        uid: next++, type: "belt", x: mx, y: my + 1, r: 0, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    for (let k = 1; k <= 30; k++) {
+        w.entities.push({
+            uid: next++, type: "belt", x: mx - k, y: my + 1, r: 90, variant: "default",
+            rotation_variant: 0, code: 1, layer: "regular",
+        });
+    }
+    /* 蓝矿就在 mixer 旁边 3 格，上面站一台矿机 —— 正是「矿机很近、线很长」的形态。 */
+    w.resources = [];
+    for (let x = mx; x <= mx + 2; x++) for (let y = my - 3; y <= my - 2; y++) w.resources.push([x, y, "blue"]);
+    const minerUid = next++;
+    w.entities.push({
+        uid: minerUid, type: "miner", x: mx, y: my - 3, r: 0, variant: "default",
+        rotation_variant: 0, code: 7, layer: "regular",
+    });
+    /* 红矿远一点，但也要有（配方要两种）。 */
+    for (let x = mx; x <= mx + 2; x++) for (let y = my - 10; y <= my - 9; y++) w.resources.push([x, y, "red"]);
+
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+
+    /* ★ 核心：必须建议 rebind 抢槽，而不是「去修那条长线」 ★ */
+    assert.match(d.hint, /rebind/,
+        `★ 线比矿机远一个数量级时，正确动作是 rebind 抢槽，不是去修那条线。`
+        + `实际 hint：${d.hint}`);
+    assert.match(d.hint, /别去修那条长线|不要.*修.*长线/,
+        `必须明确说「别去修那条线」—— 否则模型会像真机那样一路把它铺下去`);
+    assert.ok(!/起点是 `B\d+`/.test(d.hint),
+        `★ 线太长时**不许**再指「起点是 Bxx」—— 那正是让模型铺 57 格的指令。`
+        + `实际：${d.hint}`);
+});
+
+test("M17 对照：断头线**短**时，仍应建议接到它的源头（别一律 rebind）", () => {
+    /* 线只比矿机远一点点时，「接到它的源头」是对的做法 ——
+       rebind 会把一条本来好好的线断掉。这条防止 M16 的收紧做过头。 */
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 40, my = -40;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    /* 短链：只有 2 格 */
+    w.entities.push({
+        uid: next++, type: "belt", x: mx, y: my + 1, r: 0, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    w.entities.push({
+        uid: next++, type: "belt", x: mx - 1, y: my + 1, r: 90, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    w.resources = [];
+    for (let x = mx; x <= mx + 2; x++) for (let y = my - 3; y <= my - 2; y++) w.resources.push([x, y, "blue"]);
+    w.entities.push({
+        uid: next++, type: "miner", x: mx, y: my - 3, r: 0, variant: "default",
+        rotation_variant: 0, code: 7, layer: "regular",
+    });
+    for (let x = mx; x <= mx + 2; x++) for (let y = my - 10; y <= my - 9; y++) w.resources.push([x, y, "red"]);
+
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+    assert.match(d.hint, /起点是|另一头/,
+        `短线时应当指「接到线的源头」，实得：${d.hint}`);
+});
