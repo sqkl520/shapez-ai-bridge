@@ -952,3 +952,94 @@ console.log("\n── 13. loop 必须向 mod 要 resources ──");
     ok(seen.filter(p => p && p.max_entities >= 50000).length > 0,
         "至少一次 obs 的 max_entities ≥ 50000", seen.map(p => p.max_entities));
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 5b3. ★ ambiguous_port 的 {role,index} 必须真的进到下一轮的 prompt 里
+ *
+ * 真机 r-20261112155503-1dae（第 9 关，2026-11-12）：
+ * 模型连 3 轮写 `connect to:{ref:"C7", port:"color"}`，mixer 两个 color 槽
+ * 的 role 都叫 color ⇒ ambiguous_port。`connect` 每次都在错误里算好了
+ * `candidates: [{role:"color",index:0},{role:"color",index:1}]`，
+ * transcript 的 evidence 里**确实有**，但 prompt 里一次都没渲染。
+ *
+ * 根因有两处，缺一条就断链：
+ *   ① `NO_REVERSIBLE_CALL` 是**多调用汇总**诊断，evidence 里**没有**
+ *      `call_index` ⇒ `failIdx === -1` ⇒ 每个宏都被标 `unverified`
+ *      ⇒ 那条「带 candidates」的分支永远走不到；
+ *   ② prompt 侧只对 `ambiguous_port` 渲染候选（H16 已守）。
+ *
+ * 这条测的是**端到端**：第 2 轮 LLM 收到的 user 文本里必须有候选写法。
+ * 只测渲染函数（H16）不够 —— 那测不出 ① 那种「上游没送到」的断链。
+ * ══════════════════════════════════════════════════════════════════════════ */
+console.log("\n── 5b3. ambiguous_port 的候选必须送达下一轮 prompt ──");
+{
+    const dir = tmpRoot();
+    /* ★ 夹具必须**真的有 mixer**，否则这条测试是假绿 ★
+     *
+     * 第一版直接用 `l4Game()` 然后断言「拿到了 ambiguous_port 就检查」——
+     * 结果 L4 没有 mixer、`C1` 解析不到、根本没产生那条诊断，
+     * 于是走进了 `else { console.log("skip") }` 分支、测试报 PASS。
+     * 那正是本项目反复踩的假绿形态：**测试通过 ≠ 被测行为发生了**。
+     *
+     * 现在显式往 L4 的副本里插一台 mixer（两个 color 输入槽 role 相同），
+     * 并把夹具写到临时目录给 FakeGame 读。 */
+    const obsPath = path.join(dir, "L4-mixer-obs.json");
+    {
+        const obs = JSON.parse(fs.readFileSync(L4, "utf8"));
+        const w = JSON.parse(JSON.stringify(obs.result || obs));
+        const next = Math.max(...w.entities.map(e => e.uid)) + 1;
+        /* 远离既有结构的一块空地，`r=0` ⇒ 两个 color 输入槽在 `(x,y+1)`。 */
+        const mx = 14, my = -30;
+        w.entities.push({
+            uid: next, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+            rotation_variant: 0, code: 12, layer: "regular",
+        });
+        /* 一台工厂里必然拿到的句柄：B81 是 L4 上 (4,-13) 那条带子。 */
+        fs.writeFileSync(obsPath, JSON.stringify(obs.result ? { ...obs, result: w } : w), "utf8");
+    }
+    const g = FakeGame.fromFiles(obsPath, null, { goal: "RuRu----" });
+    /* 找出那台 mixer 的句柄 —— handles 是确定性的，但别硬编码编号。 */
+    const mxEnt = g.obs.entities.find(e => e.type === "mixer");
+    ok(mxEnt, "夹具里必须有一台 mixer");
+    const handles = (await import("./loop/handles.mjs")).buildHandles(g.obs, null);
+    const mixerHandle = [...handles.byHandle.values()]
+        .find(e => e.uid === mxEnt.uid);
+    ok(mixerHandle, "mixer 必须有句柄");
+    const MH = mixerHandle.handle;
+
+    /* 连到 mixer 的 `port:"color"` —— 两个槽 role 都是 color ⇒ ambiguous_port。 */
+    const plan = {
+        say: "feed the mixer",
+        calls: [{
+            macro: "connect",
+            args: { from: { $ref: "B81" }, to: { $ref: MH, port: "color" } },
+            why: "x",
+        }],
+    };
+    const client = new ScriptedClient([plan, plan]);
+    const res = await runLoop({
+        reader: g.reader(), goal: "RuRu----",
+        llmClient: client,
+        mode: "mock", runDir: dir, game: g,
+        budget: { ROUNDS_MAX: 3, LLM_CALLS_MAX: 4, TX_MAX: 2 },
+    });
+    const rows = transcriptOf(res);
+    const rejected = rows.filter(r => r.kind === "plan" && r.data && r.data.rejected);
+    const amb = rejected.find(r => {
+        const sk = (r.data.rejected.evidence || {}).skipped || [];
+        return sk.some(s => s && s.code === "ambiguous_port");
+    });
+    ok(amb, `★ 必须真的产生 ambiguous_port（实际 ${rejected.map(r => r.data.rejected.code).join(",")}）—— `
+        + "拿不到说明夹具没生效，后面的断言会变成假绿");
+
+    /* ★ 关键断言：第 2 轮送给模型的 user 文本里必须有候选写法 ★ */
+    ok(client.bundles.length >= 2, `至少问 2 轮（实际 ${client.bundles.length}）`);
+    const second = client.bundles[1];
+    ok(second && typeof second.user === "string", "第 2 轮必须有 prompt");
+    ok(/use one of:/.test(second.user),
+        "★ 第 2 轮 prompt 必须渲染 ambiguous_port 的候选（`use one of:`）——"
+        + "缺了它模型只能再猜一遍");
+    ok(/role:"color", index:0/.test(second.user), "必须给出可抄的完整写法 index:0");
+    ok(/role:"color", index:1/.test(second.user), "index:1 也要给（只给 0 会让模型以为只有一个槽）");
+    cleanup(dir);
+}
