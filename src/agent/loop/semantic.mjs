@@ -1311,10 +1311,82 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             if (!needDistinct) continue;
             if (!anyUnresolved && !bothSame) continue;         // 两路不同 ⇒ 正常
 
+            /* ★ `slot_why === null` ≠ 「没问题」★
+             *
+             * 实测（2026-11-12 第 9 关，实时 obs）：两条喂料带**方向完全正确**、
+             * 也确实被 mixer 接受了 ⇒ `inputSlotValue` 返回 `why: null`，
+             * 诊断于是只说「no known incoming pigment」——
+             * 模型看不出问题在哪，只能反复去改**端口**（那是对的）。
+             *
+             * 真实原因在几十格之外：slot 0 那条链有 **50 格**，
+             * 一路开到 `(7,-32)` —— 而那里**什么都没有**，是个断头。
+             * 「紧邻那一格对不对准」和「这条线通不通」是两个问题，
+             * `inputSlotValue` 只答前者。
+             *
+             * 这里补上后者：从 feed 格反向走，找到流头，如实说
+             * 「上游 N 格之后断在 (x,y)」或「源头是 X 号矿机」。
+             * 坐标不进 hint（硬约束），只进 evidence。 */
+            const upstreamOf = (feedCell) => {
+                if (!Array.isArray(feedCell)) return null;
+                const seen = new Set();
+                let cur = feedCell;
+                let len = 0;
+                while (len < 200) {
+                    const k = `${cur[0]},${cur[1]}`;
+                    if (seen.has(k)) return { len, head: "loop", headCell: cur };
+                    seen.add(k);
+                    const e = at(idx, cur);
+                    if (!e) return { len, head: "empty", headCell: cur };
+                    if (!isBelt(e) && !isTunnel(e)) {
+                        return { len, head: "machine", headCell: cur, headType: e.type, headUid: e.uid };
+                    }
+                    /* 找谁喂这一格 */
+                    let feeder = null;
+                    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+                        const n = at(idx, [cur[0] + dx, cur[1] + dy]);
+                        if (!n || !isBelt(n)) continue;
+                        if (sameCell(exitCellOf(n), cur)) feeder = n;
+                    }
+                    if (!feeder) {
+                        /* 流头但格子上是带子/隧道 ⇒ 它就是这条线的起点，前面没东西 */
+                        return { len, head: "head", headCell: cur, headUid: e.uid, headIsBelt: true };
+                    }
+                    cur = [feeder.x, feeder.y];
+                    len++;
+                }
+                return { len, head: "too-long", headCell: cur };
+            };
+
             const mh = handleOf(handles, m.uid);
             const feedHandles = feeds.map(f => (f && Number.isInteger(f.beltUid) ? handleOf(handles, f.beltUid) : null))
                 .filter(Boolean);
             const shapeOfVal = v => (v ? v.join("+") : null);
+            /* 每条喂料线的上游：多少格、源头是什么。见 upstreamOf 的注释。 */
+            const ups = feeds.map(f => (f && Array.isArray(f.cell) ? upstreamOf(f.cell) : null));
+            /* ★ `describeSlot` 必须把**上游断在哪**说出来 ★
+             *
+             * `f.why === null` 表示「紧邻那一格对准了、mixer 也接受了」——
+             * 它**不**表示这条线有货。第 9 关 slot 0 的链有 50 格，
+             * 源头 (7,-32) 是空的；旧文案只说 "no known incoming pigment"，
+             * 模型于是反复去改端口（那本来就没错）。
+             *
+             * 新文案按「断在哪」分四类说清楚：
+             *   · 上游源头是空的      ⇒ 这条线是断头，要补源头
+             *   · 上游源头是机器      ⇒ 机器有输出但形状推不出来
+             *   · 上游成环            ⇒ 环里没有源
+             *   · 上游太长            ⇒ 不判定（不猜）
+             * 坐标不进 hint（硬约束），只进 evidence.upstream。 */
+            const describeUp = (i) => {
+                const u = ups[i];
+                if (!u) return "";
+                if (u.head === "empty") return `its line is ${u.len} tile(s) long and DEAD-ENDS (nothing feeds the far end)`;
+                if (u.head === "head") return `its line is ${u.len} tile(s) long and starts at a bare belt with nothing feeding it`;
+                if (u.head === "machine") {
+                    return `its line is ${u.len} tile(s) long and starts at a ${u.headType || "machine"} whose output shape could not be derived`;
+                }
+                if (u.head === "loop") return `its line is ${u.len} tile(s) long and loops back on itself with no source`;
+                return "";
+            };
             /* 有值的那个槽也要报，否则「两个槽都是 null」时模型不知道该修哪个。 */
             const describeSlot = i => {
                 const f = feeds[i];
@@ -1322,7 +1394,9 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 if (f.value === null && f.why) return `color slot ${i}: ${f.why}`;
                 if (Array.isArray(f.value) && f.value.length) return `color slot ${i}: ${shapeOfVal(resolved[i])}`;
                 if (f.machineType) return `color slot ${i}: fed by ${f.machineType} whose output shape is not derived`;
-                return `color slot ${i}: no known incoming pigment`;
+                /* ★ 走到底了但没货 —— 说清楚上游断在哪 ★ */
+                const up = describeUp(i);
+                return `color slot ${i}: no known incoming pigment${up ? ` — ${up}` : ""}`;
             };
             const why = anyUnresolved
                 ? `${describeSlot(0)}; ${describeSlot(1)}`
@@ -1517,6 +1591,12 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                     })),
                     slot_values: resolved.map(shapeOfVal),
                     slot_why: feeds.map(f => (f ? (f.why || null) : "slot-missing")),
+                    /* ★ 每条喂料线的上游：多长、源头是什么 ★
+                     *
+                     * `slot_why` 全是 null 时（带子对准了、mixer 也接受），
+                     * 问题只可能在上游。这里如实给出：格数 + 源头类型。
+                     * `head: "empty"` = 那条线是断头，源头是空地。 */
+                    upstream: ups.map(u => (u ? { len: u.len, head: u.head, ...(u.headType ? { head_type: u.headType } : {}) } : null)),
                     need_slot: badSlots.length === 1 ? badSlots[0] : null,
                     want_colors: [...new Set(wantColors)].sort(),
                     /* 每种要的颜料最近在哪、多远 —— 见上方 oreHint 的注释。 */
@@ -1541,7 +1621,30 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                  * 不是接线问题）。所以它必须排在最前面。端口索引是「怎么调」的细节，
                  * 排在后面被截掉也不致命。 */
                 hint: anyUnresolved
-                    ? `配方要 ${[...new Set(wantColors)].join(" + ")}。**颜料从哪来**：${oreHint.text}。`
+                    ? (() => {
+                        /* ★ 前缀不是固定的：**断头**必须抢在「矿在哪」之前 ★
+                         *
+                         * prompt 只渲染前 180 字符。第 9 关实测：两槽的线都对准了、
+                         * mixer 也接受，只是源头断头 —— 而 `oreHint.text` 那段
+                         * 「蓝矿 5 格 / 红矿 44 格」有 100 多字符，把断头整段挤掉。
+                         * 模型看到的是「颜料从哪来」，于是又去研究矿，
+                         * 而真正该做的是**去那条线的起点补上**。
+                         *
+                         * 所以：有断头 ⇒ 断头排第一；没断头 ⇒ 矿信息排第一。 */
+                        const deadEnds = ups
+                            .map((u, i) => ({ u, i, f: feeds[i] }))
+                            .filter(x => x.u && (x.u.head === "empty" || x.u.head === "head" || x.u.head === "loop"));
+                        const lead = deadEnds.length
+                            ? `**槽 ${deadEnds.map(x => x.i).join(" / ")} 的带子对准了、mixer 也接受，但那条线源头是断的**`
+                                + `（${deadEnds.map(x => `槽 ${x.i} 上游 ${x.u.len} 格`).join("，")}）——`
+                                + `问题不在 mixer 这一端，别再调端口。去那条线的**起点**补上：`
+                                + `\`insert_machine\` 放矿机，或 \`connect\` 把它接到已有矿机上。`
+                            : "";
+                        const oreLead = `配方要 ${[...new Set(wantColors)].join(" + ")}。**颜料从哪来**：${oreHint.text}。`;
+                        return lead
+                            ? lead + (oreLead.length < 200 ? oreLead : "")
+                            : oreLead;
+                    })()
                         + (() => {
                             /* 「放矿机」只在**确实还没有矿机**的那一种上才该说。
                                第 9 关实测：这条提示连说 7 轮，模型就真放了 7 次，
@@ -1551,8 +1654,7 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             const ready = oreHint.sites.filter(n => n.miners > 0);
                             const empty = oreHint.sites.filter(n => !n.miners && n.distance !== null);
                             const parts = [];
-                            /* 空矿区（要放机器）排前面 —— 那是**这一轮能推进的动作**。
-                               已有矿机的只需接线，是第二步。 */
+                            /* 空矿区（要放机器）—— 断头那条已经提到最前面了 */
                             if (empty.length) {
                                 const far = empty.some(n => n.distance > 20);
                                 parts.push(`${empty.map(n => n.pigment).join("/")} 的最近矿区**一台矿机都没有**`

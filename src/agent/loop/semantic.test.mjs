@@ -803,3 +803,95 @@ test("M10 ★ 矿机计数必须按**矿脉**分开，不能把 44 格外的另�
     /* 距离必须是**最近那片**的，不是远那片 */
     assert.ok(red.distance < 20, `最近的红矿区应该很近，实得 ${red.distance}`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M11 / M12 —— 「带子对准了但没货」必须指出**上游断头**
+ *
+ * 真实缺陷（第 9 关实时 obs，2026-11-12 21:5x）：
+ *
+ *   mixer C7 的两个 color 槽，喂料带 `B207` / `B208` **方向完全正确**，
+ *   也确实被 mixer 接受了 ⇒ `inputSlotValue` 返回 `why: null`。
+ *   诊断于是只说 "no known incoming pigment"，模型看不出问题在哪。
+ *
+ *   真实原因是那条链有 **49 格**，一路开到 `(7,-32)` —— 那里什么都没有，
+ *   是个断头。模型围着 mixer 这一端反复调端口，而该修的在 49 格外。
+ *
+ * 判据：从 feed 格反向走，走到「前一个格没有东西」为止，把
+ *   · 走了多少格、
+ *   · 源头是什么（空 / 裸带子 / 机器 / 环）
+ * 都如实说出来。坐标不进 hint（硬约束），只进 evidence.upstream。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("M11 ★ 槽对准但上游断头 ⇒ observed 必须说「线有多长、源头是断的」", () => {
+    /* 造一条 6 格的裸带子链，末端接到 mixer 的 color 槽。
+       源头那格**没有东西喂它** —— 正是真机 (7,-32) 的形态。 */
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 14, my = -30;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    /* 槽 0 的 feed 格是 (mx, my+1)，mixer 要求那条带子**朝上**吐进 (mx, my)。
+     *
+     * ⚠️ `r=0` 的退出方向是 **top**（见 `beltExit`），不是「右」。第一版
+     * 我以为 r=0 朝右、把链往右铺，结果那条带子根本没对准 mixer，
+     * 测出来的是 `belt-not-aimed` 而不是「对准了但上游断头」——
+     * 测的是一个完全不同的分支（连 validation 都过了但 ability=0 时才发现）。
+     *
+     * 正确铺法：**同一条竖线的上方**需要那条朝上的带子，而它的上游只能来自
+     * 左右相邻格。所以让链横着铺，最右端那格朝上吐进槽里会撞到自己 —— 不行。
+     * 改成：feed 格上是一条朝上的带子（r=0），它的上游在左边那些朝右的带子。
+     * 但朝右的带子吐向右边，而 feed 格在它们右边 ⇒ 正好接上。 */
+    w.entities.push({
+        uid: next++, type: "belt", x: mx, y: my + 1, r: 0, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",   // 朝上吐进 mixer 槽
+    });
+    for (let k = 1; k <= 5; k++) {
+        w.entities.push({
+            uid: next++, type: "belt", x: mx - k, y: my + 1, r: 90, variant: "default",
+            rotation_variant: 0, code: 1, layer: "regular",   // 朝右，把货推向下一条
+        });
+    }
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+
+    /* ★ 核心：observed 必须说到「源头断了」，不能只说 no known incoming pigment ★ */
+    assert.match(d.observed, /DEAD-ENDS|starts at a bare belt|loops back/,
+        `★ observed 必须指出上游断在哪 —— 只说 "no known incoming pigment" `
+        + `对模型零信息（它会去调已经被接受的端口）。实际：${d.observed}`);
+    assert.match(d.observed, /\d+ tile\(s\) long/, "必须给出上游长度（模型据此判断这是短线还是长支线）");
+
+    /* evidence 里要有结构化数据 */
+    assert.ok(Array.isArray(d.evidence.upstream), "evidence.upstream 必须是数组");
+    const u0 = d.evidence.upstream[0];
+    assert.ok(u0 && typeof u0.len === "number" && u0.len > 0, "槽 0 的上游格数要被量出来");
+    assert.ok(["empty", "head", "machine", "loop", "too-long"].includes(u0.head),
+        `head 必须是已知类型，实得 ${u0 && u0.head}`);
+});
+
+test("M12 ★ 断头信息必须排进 hint 前 180 字符（否则被「矿在哪」挤掉）", () => {
+    /* prompt 只渲染 hint 前 180 字。第 9 关实测：`oreHint.text`（「蓝矿 5 格 /
+       红矿 44 格」）有 100 多字符，把断头整段挤到 180 字之外，
+       模型看到的全是矿的位置，而该修的是 49 格外的断头。 */
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid)) + 1;
+    const mx = 14, my = -30;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    for (let k = 0; k < 6; k++) {
+        w.entities.push({
+            uid: next++, type: "belt", x: mx + k, y: my + 1, r: 0, variant: "default",
+            rotation_variant: 0, code: 1, layer: "regular",
+        });
+    }
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "应当有 MIXER_UNFED");
+    const head = d.hint.slice(0, 180);
+    assert.match(head, /断的|断头|DED-ENDS|dead-end/i,
+        `★ 断头必须在前 180 字符里出现，否则 prompt 会把它截掉。实际前 180 字：${head}`);
+});
