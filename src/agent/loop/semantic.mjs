@@ -1767,14 +1767,19 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                     const t = longOnes[0];
                                     const ti = t.i;
                                     /* 直接抢槽 —— 比修那条长线短一个数量级。
-                                       ⚠️ 警告必须在**前 180 字**内：prompt 只渲染那么多，
-                                       真机 r-20261112200904-e728 里它落在第 240 字，
-                                       模型没看到，于是照样加了 allow_replace。 */
+                                       ⚠️ 两条警告都必须落在**前 180 字**内：
+                                         · 别加 allow_replace（会重铺带子改坏朝向）；
+                                         · **一次把两个槽都接上** —— 第 9 关实测：
+                                           只接 slot 0 的那 5 格路正好穿过 slot 1 的喂料格，
+                                           把它的线覆盖成朝左的死线，两个槽一起废掉。 */
+                                    const near3 = ready[0].miner_handles.slice(0, 3).join("/");
                                     parts.push(`**别修那条 ${t.u.len} 格的长线** —— `
-                                        + `${ready[0].pigment} 的矿机（${ready[0].miner_handles[0]}）离 mixer 只 ${nearDist} 格，就地抢槽。`
-                                        + `**只要 rebind，别加 allow_replace**（它会重铺带子、把朝向改坏）：`
+                                        + `矿机（${near3}）离 mixer 只 ${nearDist} 格，就地抢槽。`
+                                        + `**只要 rebind，别加 allow_replace**（会重铺带子、改坏朝向）；`
+                                        + `**两个槽分开接、用不同矿机**（只接一个的话，路径会穿过另一个槽的喂料格）：`
                                         + `\`connect {from:{ref:"${ready[0].miner_handles[0]}"}, to:{ref:"${mh}", `
-                                        + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\``);
+                                        + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\`，`
+                                        + `另一个槽同样写法、换 index 和一台**不同的**矿机`);
                                 } else {
                                     const headH = d0 && d0.headHandle ? d0.headHandle : null;
                                     const who = ready.length
