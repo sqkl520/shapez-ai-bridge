@@ -280,3 +280,80 @@ check("O14 $ore 选出的格子必须真的放得下（与 insert_machine 一致
     assert(ok, `$ore 选了 ${JSON.stringify(hit.cell)}，但四个朝向都放不下 —— `
         + `判据与 insert_machine 不一致（这正是 r-20261112083132 的形态）`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * O15 —— 颜料矿的参照物必须是 **mixer**，不能是任意消费者
+ *
+ * 真实缺陷（第 9 关真机 `r-20261112141704-642e`，2026-11-12）：
+ *
+ *   红矿有两片：
+ *     · `(8,5)`   —— 离 mixer C7 **44 格**（MIXER_UNFED 说的就是这片）
+ *     · `(52,21)` —— 离 C7 **52 格**，但旁边 3 格有一台 **painter**
+ *
+ *   锚点原来是「任意消费者取最近」⇒ `(52,21)` 距离 3、`(8,5)` 距离 17
+ *   ⇒ **永远选远的那片**。
+ *
+ *   于是诊断和 `$ore` 各说一片矿：诊断让去 (8,5) 放，`$ore` 放到 (52,21)，
+ *   下一轮诊断看去 (8,5) 还是「0 台」⇒ 模型以为没放成，**再放一台**。
+ *   一个 run 里因此堆了 7 台红矿机，**一台都没接到 mixer**。
+ *
+ * 判据：有 mixer 时只锚 mixer —— painter 是次级消费者（它抹的颜料
+ * 本该由 mixer 先混好）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+check("O15 ★ 颜料矿锚 mixer，不锚更近的 painter（否则与 MIXER_UNFED 各说一片矿）", () => {
+    const obs = {
+        entities: [
+            /* 真正要吃这份颜料的 mixer，在 (0,0) */
+            { uid: 1, type: "mixer", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0 },
+            /* 一台离「远矿」很近的 painter —— 这正是把 $ore 带偏的东西 */
+            { uid: 2, type: "painter", x: 52, y: 20, r: 0, variant: "default", rotation_variant: 0 },
+        ],
+        hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+        resources: [
+            /* 近矿：离 mixer 4 格，但离 painter 52 格 */
+            [0, 4, "red"], [1, 4, "red"], [0, 5, "red"], [1, 5, "red"],
+            /* 远矿：离 mixer 52 格，但离 painter 2 格 */
+            [52, 22, "red"], [53, 22, "red"], [52, 23, "red"], [53, 23, "red"],
+        ],
+    };
+    const hit = nearestOreCell(obs, "red");
+    assert(hit, "必须选出某一格");
+    const dToMixer = Math.abs(hit.cell[0] - 0) + Math.abs(hit.cell[1] - 0);
+    assert(dToMixer <= 6,
+        `★ 颜料矿必须选**离 mixer 近**的那片（实得 ${JSON.stringify(hit.cell)}，离 mixer ${dToMixer} 格）—— `
+        + `锚到 painter 会让 $ore 和诊断指向两片不同的矿，模型会一直放矿机`);
+});
+
+check("O16 对照：一台 mixer 都没有时，才退到 painter", () => {
+    /* 没有 mixer 的世界上，颜料总有去处（painter 直接抹），
+       这时锚 painter 是对的 —— 别把 O15 的收紧做成「颜料矿找不到位置」。 */
+    const obs = {
+        entities: [{ uid: 2, type: "painter", x: 52, y: 20, r: 0, variant: "default", rotation_variant: 0 }],
+        hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+        resources: [[0, 4, "red"], [1, 4, "red"], [52, 22, "red"], [53, 22, "red"]],
+    };
+    const hit = nearestOreCell(obs, "red");
+    assert(hit, "没有 mixer 时仍要选出格子（退到 painter）");
+    const dToPainter = Math.abs(hit.cell[0] - 52) + Math.abs(hit.cell[1] - 20);
+    assert(dToPainter <= 3,
+        `没有 mixer ⇒ 应当锚 painter（实得 ${JSON.stringify(hit.cell)}，离 painter ${dToPainter} 格）`);
+});
+
+check("O17 形状矿不受影响：仍锚最近的 cutter/rotater", () => {
+    /* O15 的收窄只针对颜料。形状矿（Cu/Ru）的消费者是 cutter/rotater/painter，
+       这条防止「颜料优先 mixer」被写成「所有矿都只锚 mixer」。 */
+    const obs = {
+        entities: [
+            { uid: 1, type: "cutter", x: 30, y: 30, r: 0, variant: "default", rotation_variant: 0 },
+            { uid: 2, type: "mixer", x: -30, y: -30, r: 0, variant: "default", rotation_variant: 0 },
+        ],
+        hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+        resources: [[30, 33, "CuCuCuCu"], [31, 33, "CuCuCuCu"], [-30, -27, "CuCuCuCu"]],
+    };
+    const hit = nearestOreCell(obs, "Cu");
+    assert(hit, "必须选出某一格");
+    const dToCutter = Math.abs(hit.cell[0] - 30) + Math.abs(hit.cell[1] - 30);
+    assert(dToCutter <= 5,
+        `形状矿必须锚 cutter（实得 ${JSON.stringify(hit.cell)}，离 cutter ${dToCutter} 格）—— `
+        + `O15 的收窄只该针对颜料`);
+});

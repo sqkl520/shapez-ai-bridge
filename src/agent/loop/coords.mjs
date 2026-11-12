@@ -356,6 +356,25 @@ export function argKindOf(macro, path) {
  * `obs.entities` 里「吃形状的机器」= cutter / rotater / stacker / mixer / painter。
  * 全都没有时退回 hub（空世界的冷启动场景）。
  *
+ * ★ 颜料矿的参照物只能是 **mixer / painter**，不能算上 cutter / rotater ★
+ *
+ * 实测（2026-11-12 第 9 关，`r-20261112141704-642e`）：
+ *   · 红矿有两片：`(8,5)` 那片离 mixer C7 **44 格**，`(52,21)` 那片离 C7 **52 格**；
+ *   · 但 `(52,21)` 旁边 3 格有一台 **painter**；
+ *   · 锚点是「任意消费者 ⇒ 取最近」⇒ `(52,21)` 的距离是 3、`(8,5)` 是 17
+ *     ⇒ **永远选远的那片**。
+ *
+ * 后果不是「选得不够短」，是**诊断和 `$ore` 各说一片矿**：
+ *   · MIXER_UNFED 说「红矿 44 格外、最近那片没有矿机」⇒ 让模型去 (8,5) 放；
+ *   · `$ore:"red"` 把矿机放到 (52,21)；
+ *   · 下一轮诊断看去 (8,5)，还是「0 台」⇒ 模型以为没放成，**再放一台**。
+ *   实测一个 run 里因此堆了 7 台红矿机，一台都没接到 mixer。
+ *
+ * 「这台机器吃什么」决定了矿机该靠近谁：
+ *   · 颜料（`red` / `blue` / …）只被 **mixer** 直接吃，painter 吃的是「形状 + 颜料」
+ *     里的形状那一路 —— 所以颜料矿的参照物是 mixer，退一步是 painter；
+ *   · 形状矿（`Cu` / `Ru` / …）被 cutter / rotater / stacker / painter 吃。
+ *
  * @param {object} obs 世界快照（要 `resources`；可选 `entities` / `hub`）
  * @param {string} prefix 两字母矿种前缀，如 `"Cu"`
  * @returns {{cell:[number,number], kind:string, count:number, to:number}|null}
@@ -365,15 +384,31 @@ export function nearestOreCell(obs, prefix) {
     const list = obs && Array.isArray(obs.resources) ? obs.resources : null;
     if (!list || !list.length) return null;
 
-    /* 参照点：所有「吃形状的机器」的位置。矿机的合理位置是**靠近它们**。 */
-    const CONSUMERS = new Set(["cutter", "rotater", "stacker", "mixer", "painter", "hub"]);
+    /* 参照点：所有「吃这种矿的机器」的位置。矿机的合理位置是**靠近它们**。
+       ⚠️ 颜料和形状矿的消费者不是同一批 —— 见上方注释，
+          错用「任意消费者」会让 `$ore` 和 MIXER_UNFED 指向**两片不同的矿**。
+
+       ★ 颜料还要再分一层：**mixer 优先于 painter** ★
+       只把两者都放进锚点还不够 —— `(52,21)` 那片红矿旁边 3 格有台 painter，
+       而真正要吃这份颜料的 mixer C7 在 52 格外。两者同权 ⇒ painter 赢
+       ⇒ 还是选错片。颜料的**直接**消费者是 mixer；painter 是次级消费者
+       （它把颜料抹在形状上，但那时颜料应该已经由 mixer 混好了）。
+       所以：有 mixer 就只锚 mixer，一台 mixer 都没有时才退到 painter，
+       连 painter 都没有才退到 hub。 */
+    const PIGMENTS = new Set(["red", "green", "blue", "cyan", "purple", "yellow", "white"]);
+    const layers = PIGMENTS.has(prefix)
+        ? [new Set(["mixer"]), new Set(["painter"]), new Set(["hub"])]
+        : [new Set(["cutter", "rotater", "stacker", "painter", "mixer", "hub"])];
     const anchors = [];
-    for (const e of (obs && obs.entities) || []) {
-        if (!e || !CONSUMERS.has(e.type)) continue;
-        if (!Number.isInteger(e.x) || !Number.isInteger(e.y)) continue;
-        anchors.push([e.x, e.y]);
+    for (const layer of layers) {
+        for (const e of (obs && obs.entities) || []) {
+            if (!e || !layer.has(e.type)) continue;
+            if (!Number.isInteger(e.x) || !Number.isInteger(e.y)) continue;
+            anchors.push([e.x, e.y]);
+        }
+        if (anchors.length) break;         // 这一层有机器就别往下退
     }
-    /* 一台机器都没有（全新世界）⇒ 退回 hub 中心。 */
+    /* 一层都没有（全新世界）⇒ 退回 hub 中心。 */
     if (!anchors.length) {
         const h = obs && obs.hub;
         const hx = h && Number.isFinite(h.x) ? h.x + ((Number.isFinite(h.w) ? h.w : 4) - 1) / 2 : 0;
