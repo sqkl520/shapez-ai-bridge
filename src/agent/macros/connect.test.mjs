@@ -507,10 +507,19 @@ t("占用检查·★行为变更★：踩旧带子且未给 allow_replace ⇒ �
      *   · 矿机在 (0,6)，出口格 (0,5)；切割机在 (0,0)，入口格 (0,1)。
      *   · 两条旧带子放在 (0,3)、(0,2) —— **不贴矿机出口**，所以不会先命中更早的
      *     port_already_bound（见上一条用例的注释）。
-     *   · 两个 balancer 放在 (±1, 1..4)，把两侧堵死，让"绕开旧带子"在 max_cells 内无解；
-     *     这样只剩"踩着旧带子走过去"这一条候选。
-     *     注意用 `variant: "merger"`（1×1）；`default` balancer 是 2×1，右半边会盖到 (0,·) 上，
-     *     冲突会先落到"机器"而不是"旧带子".
+     *   · 两侧各放一排**带子**（不是 balancer）把路堵死，让"绕开旧带子"在 max_cells 内无解。
+     *
+     *     ⚠️ 2026-11-13 改：原来这里用的是两个 balancer（x=±1）。
+     *     `connect` 的 auto_relax 现在还多一道守卫：**不许覆盖别的机器的输入口**
+     *     （真机 r-20261112202028-8e5a：那 5 格路正好穿过 mixer 的另一个槽，
+     *     把它覆盖成死线，两个槽一起废掉）。而 balancer 在 (1,2) 的入口格
+     *     恰好就是 (0,2) —— 和旧带子同格，于是守卫正确地把这一整类场景判成
+     *     「不能自动放宽」。
+     *
+     *     那条守卫是对的，是**夹具**不巧撞上了它。改用带子当墙：
+     *     语义完全一样（堵路 + 只能踩旧带走），但墙本身没有"输入口"，
+     *     测的就是「踩普通带子会自动放宽」这件事本身。
+     *
      *   · `max_cells: 6` 让 7 格以上的绕行方案也出局，夹具因此是**确定性**的。
      *   · rebind:true 是为了让判据落到占用检查，而不是更早的端口占用判据。 */
     const ents = [
@@ -520,9 +529,11 @@ t("占用检查·★行为变更★：踩旧带子且未给 allow_replace ⇒ �
         { uid: 11, type: "belt", x: 0, y: 2, r: 0, rotation_variant: 0 },
     ];
     let uid = 100;
-    for (let y = 1; y <= 4; y++) {
-        ents.push({ uid: uid++, type: "balancer", variant: "merger", x: -1, y, r: 0 });
-        ents.push({ uid: uid++, type: "balancer", variant: "merger", x: 1, y, r: 0 });
+    /* 两侧各一排带子当墙（不是 balancer —— 见上面那段 2026-11-13 的说明）。 */
+    for (let y = 1; y <= 5; y++) {
+        for (const x of [-1, 1]) {
+            ents.push({ uid: uid++, type: "belt", x, y, r: 90, rotation_variant: 0 });
+        }
     }
 
     const r = connect({ from: { uid: 1 }, to: { uid: 2, port: "primary" }, opts: { rebind: true, max_cells: 6 } }, { entities: ents });
@@ -944,6 +955,49 @@ t("R180-6 r=90 与 r=270 也各有端口，且方向互不相同", () => {
     }
     assert.notEqual(faces[90], faces[270], `r=90 与 r=270 的输入面必须不同，实际 ${JSON.stringify(faces)}`);
     assert.notEqual(faces[90], "bottom", "r=90 的输入面不该还是模板原值");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 2026-11-13 —— 自动放宽**不许**覆盖别的机器的输入口
+ *
+ * 真机 r-20261112202028-8e5a（第 9 关）：
+ *   模型照 hint 写了 `connect {from:M2, to:C7, port:{role:"color",index:0}, opts:{rebind:true}}`
+ *   —— **没有** allow_replace。但 auto_relax 替它打开了（min_replace: 6），
+ *   那 5 格直路正好穿过 mixer 的**另一个** color 槽的喂料格，
+ *   把它覆盖成朝左的直线带：
+ *     slot 0 落盘正确（code=3 corner, exitDir=top）✅
+ *     slot 1 变成 code=1 直线, exit=left ⇒ 货吐回 slot 0 的格子 ❌
+ *   两个槽一起废掉。
+ *
+ * 「撞带子」和「撞另一台机器的输入口」不是一回事：
+ *   · 前者是可以让步的既有走线（放宽是对的，实测 212/340 条只差 1 格）；
+ *   · 后者是**别人专用的位置**，覆盖它等于把另一条产线拆掉。
+ * ══════════════════════════════════════════════════════════════════════════ */
+t("★ 自动放宽不许覆盖别的机器的输入口（真机 r-20261112202028 的形态）", () => {
+    /* mixer 在 (0,0)，两个 color 输入口朝下 ⇒ 喂料格 (0,-1) 与 (1,-1)。
+       两条喂料格上都放既有带子，矿机在 (4,-4)。 */
+    const ents = [
+        { uid: 1, type: "mixer", x: 0, y: 0, r: 0, variant: "default" },
+        { uid: 2, type: "miner", x: 4, y: -4, r: 0 },
+        { uid: 20, type: "belt", x: 1, y: -1, r: 0, rotation_variant: 0 },
+        { uid: 21, type: "belt", x: 0, y: -1, r: 0, rotation_variant: 0 },
+    ];
+    const r = connect(
+        { from: { uid: 2 }, to: { uid: 1, port: { role: "color", index: 0 } }, opts: { rebind: true } },
+        { entities: ents },
+    );
+    if (r.ok) {
+        const covered = (r.changed && r.changed.removed_uids) || [];
+        assert(!covered.includes(20),
+            `★ 不许覆盖 uid 20（mixer 的 slot 1 喂料格）—— 那会把另一个槽一起废掉`);
+    } else {
+        assert.equal(r.error.code, "occupied",
+            `应当是 occupied（撞了别人的输入口），实得 ${r.error.code}`);
+        assert(/输入口|喂料格/.test(r.error.message),
+            `消息必须说清是「另一个输入口」，实得：${r.error.message}`);
+        assert(/先把那个口接好|换一条/.test(r.error.hint || ""),
+            `hint 必须给出可执行的下一步，实得：${r.error.hint}`);
+    }
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
