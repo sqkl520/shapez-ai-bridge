@@ -1767,12 +1767,12 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                     const t = longOnes[0];
                                     const ti = t.i;
                                     /* 直接抢槽 —— 比修那条长线短一个数量级 */
-                                    parts.push(`**槽 ${ti} 那条线有 ${t.u.len} 格、源头还是空的** —— 而 `
-                                        + `${ready[0].pigment} 的矿机（${ready[0].miner_handles.slice(0, 3).join("/")}）`
-                                        + `离 mixer 只有 ${nearDist} 格。**别去修那条长线**，就地接：`
+                                    parts.push(`**槽 ${ti} 的线有 ${t.u.len} 格且源头是空的**，而 `
+                                        + `${ready[0].pigment} 的矿机（${ready[0].miner_handles[0]}）离 mixer 只有 ${nearDist} 格。`
+                                        + `**别修那条长线**，就地抢槽：`
                                         + `\`connect {from:{ref:"${ready[0].miner_handles[0]}"}, to:{ref:"${mh}", `
-                                        + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\` `
-                                        + `—— \`rebind\` 把那个槽从死线手里抢过来（旧线断流，但它本来就是死的）。`);
+                                        + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\``
+                                        + `（**不要** \`allow_replace\`，它会重铺 feed 格的带子、把朝向改坏）`);
                                 } else {
                                     const headH = d0 && d0.headHandle ? d0.headHandle : null;
                                     const who = ready.length
