@@ -751,6 +751,47 @@ export function verifyChain(cells) {
  * @returns {{ok:boolean, firstConflict:null|{x,y,what,uid?}, replaceable:number,
  *            belts:number, firstBelt:null|object, firstMachine:null|object, selfOverlap:null|{x,y}}}
  */
+/**
+ * 这些被覆盖的带子里，有没有落在**别的机器的输入槽格**上。
+ *
+ * 「撞带子」和「撞别人机器的输入口」不是一回事：
+ *   · 前者是可以让步的既有走线（`auto_relax` 替调用方放宽是对的）；
+ *   · 后者是**别人专用的位置**——覆盖它等于把另一条产线拆掉。
+ *
+ * 真机 r-20261112202028-8e5a：M2→slot0 那 5 格直路正好穿过 slot1 的喂料格，
+ * 把它覆盖成朝左的直线带；slot0 正确、slot1 变死线，两个槽一起废掉。
+ *
+ * @returns {{uid:number,x:number,y:number,what:string,handle?:string}|null} 第一个受害者
+ */
+function this_feedsOfOtherMachine(replacedUids, world, spec) {
+    if (!world || !Array.isArray(replacedUids) || !replacedUids.length) return null;
+    const sp = spec || loadSpec();
+    const dead = new Set(replacedUids);
+    /* 每台机器的 input 槽的 `cell`（= 喂料格）就是「别人专用」的位置。 */
+    for (const rec of world.byUid.values()) {
+        if (!rec || rec.type === "belt" || rec.type === "underground_belt" || rec.type === "hub") continue;
+        let ports;
+        /* ⚠️ 不静默吞异常 —— 辅助函数的「找不到」和「算不出来」是两回事。
+           第一版写 `catch { continue }`，结果 `portsOf` 因为 spec 拿不到而抛，
+           全被吞掉 ⇒ victim 恒 null ⇒ 守卫形同虚设（测出来 ok:true 才发现）。 */
+        ports = portsOf(rec, sp);
+        /* ⚠️ 字段叫 **`accept`**，不是 `inputs` —— `portsOf` 用的是「eject/accept」
+           这一套命名（从货流视角：这台机器接受什么、吐出什么）。
+           第一版按 `inputs`/`outputs` 写，恒空 ⇒ victim 恒 null ⇒ 守卫形同虚设。 */
+        for (const p of (ports && ports.accept) || []) {
+            if (!p || !Array.isArray(p.cell)) continue;
+            const occ = world.cells.get(key(p.cell[0], p.cell[1]));
+            if (occ && dead.has(occ.uid)) {
+                return {
+                    uid: occ.uid, x: p.cell[0], y: p.cell[1],
+                    what: `${rec.type}#${rec.uid} 的 ${p.role} 输入口`,
+                };
+            }
+        }
+    }
+    return null;
+}
+
 function checkOccupancy(cells, world, opts) {
     const seen = new Set();
     let replaceable = 0;      // allow_replace 打开时，被覆盖的带子格数（旧口径，不改）
@@ -1195,6 +1236,39 @@ export function connect(a, b, c, d) {
         if (hasBelt && !opts.allow_replace && opts.auto_relax !== false) {
             const retry = connect({ from: fe, to: te, opts: { ...opts, allow_replace: true } }, ctx);
             if (retry && retry.ok) {
+                /* ★ 自动放宽不能覆盖**别的机器的喂料格** ★
+                 *
+                 * 真机 r-20261112202028-8e5a（第 9 关）：模型照 hint 写了
+                 * `connect {from:M2, to:C7, port:{role:"color",index:0}, opts:{rebind:true}}`，
+                 * **没有** allow_replace —— 但这里替它打开了（`min_replace: 6`），
+                 * 于是那 5 格直路把 **slot 1 的喂料格 (35,-12)** 覆盖成朝左的直线带。
+                 * slot 0 落盘正确，slot 1 变成死线，两个槽一起废掉。
+                 *
+                 * 「撞带子」和「撞另一台机器的输入口」不是一回事：
+                 *   · 前者是可以让步的既有走线（放宽是对的，实测 212/340 条只差 1 格）；
+                 *   · 后者是**别人专用的位置**，覆盖它等于把另一条产线拆掉。
+                 *
+                 * 所以放宽前查一遍：被覆盖的带子里，有没有落在别的机器的
+                 * **输入槽格**上。有就**不替它放宽**，让调用方自己决定 ——
+                 * 那种选择必须由它明说（传 allow_replace / 换目标），
+                 * 不该被一次自动重试悄悄做掉。 */
+                /* ⚠️ 字段是 `changed.removed_uids`（不是 `replaced_uids`）——
+                   `replaced_uids` 只在 warning 的 detail 里出现，那是给人看的。
+                   第一版按名字猜成 `replaced_uids`，`replaced` 恒空，
+                   守卫永远不触发（测出来 ok:true 才发现）。 */
+                const replaced = Array.isArray(retry.changed && retry.changed.removed_uids)
+                    ? retry.changed.removed_uids : [];
+                const victim = replaced.length ? this_feedsOfOtherMachine(replaced, world) : null;
+                if (victim) {
+                    return failure({
+                        code: "occupied", field: "to",
+                        message: `路径必须覆盖 ${victim.handle || victim.uid}，而它是另一个输入口专用的喂料格（${victim.what}）`,
+                        hint: `换一条不经过 ${victim.what} 的路，或者先把那个口接好再动这里。`
+                            + `自动放宽不会替你覆盖别人机器的输入口 —— 那等于拆掉另一条产线。`,
+                        firstConflict: { x: victim.x, y: victim.y, what: victim.what, uid: victim.uid },
+                        detail: { replaced_uids: replaced, victim },
+                    });
+                }
                 return {
                     ...retry,
                     warnings: [
