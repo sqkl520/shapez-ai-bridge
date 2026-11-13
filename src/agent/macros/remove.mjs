@@ -79,6 +79,9 @@ import {
 } from "./contract.mjs";
 // 世界模型 / 端口枚举 / footprint 展开都复用 connect 的既有实现（不另写一套）
 import { buildWorld, portsOf } from "./connect.mjs";
+/* `remove_machine` 的 would_starve 判据要问「这条出口最终能不能到 hub」——
+   那是 `flowReachable` 的活。`topology.mjs` 不 import 任何 macro，不成环。 */
+import { flowReachable } from "../loop/topology.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPEC_PATH = path.resolve(HERE, "../../ai/machine-spec.json");
@@ -2418,16 +2421,175 @@ export function removeMachine(a, b) {
      * starved-belt 负责 —— 这里不重复报告同一条链。 */
     const removedUidSet = new Set(picked.map(p => p.uid));
     const starved = [];
+    /* ★ 「下游是否还在吃东西」不能只看 `link.type === "machine"` ★
+     *
+     * 第一版写的是 `if (!link || link.type !== "machine") continue` ——
+     * **只认「机器紧贴机器」那种 0 格连接**。而真实产线几乎全是
+     * 「机器 → 带子串 → 机器」，于是这条判据对绝大多数机器都判「没在供料」，
+     * 直接放行。
+     *
+     * 红队实测（L4，基线 140 条可达带子）：
+     *   · 放行 15 台 / 被 would_starve 拦 2 台
+     *   · 损失 ≥10 条的 5 台机器**全部被放行且零警告**：
+     *       balancer@(2,-32) 损失 66、balancer@(3,-24) 损失 36、
+     *       cutter@(-8,-11) 损失 21、balancer@(-8,3) 损失 14、balancer@(4,-16) 损失 14
+     *   · 而被拦下的 2 台，删掉后可达带子**掉 0** —— 完全是误拦
+     *
+     * 也就是说判据与真实破坏**反相关**。现在改成：
+     *   · 出口直接是机器 ⇒ 老逻辑（0 格连接）；
+     *   · 出口是**带子** ⇒ 沿这条带子往下游走，碰到任何机器或 hub 就算「有人吃」。
+     * `outLinkOfPort` 其实早就返回 `{type:"belt"}` 了，是这里把它 continue 掉的。 */
+    /* ★ 判据：删掉之后，下游**还在不在**解 —— 用「删前 vs 删后」的差异算 ★
+     *
+     * 走了一圈弯路，值得记下来：
+     *
+     * ① 原实现 `if (!link || link.type !== "machine") continue` ——
+     *    只认「机器紧贴机器」，而真实产线几乎全是「机器 → 带子 → 机器」。
+     *    红队实测 L4：损失 ≥10 的 5 台机器**全被放行零警告**（最大损失 66 条，
+     *    基线才 140），反而误拦了 2 台无害的。判据与真实破坏**反相关**。
+     *
+     * ② 改成「沿带子走到任意机器就算有人吃」—— 漏放降到 0，但误拦 9 台。
+     *    因为那些下游机器自己就是断头，不产东西。
+     *
+     * ③ 改成「沿带子看能不能到 hub」—— 漏放 0、误拦 7 台**矿机**。
+     *    因为 `flowReachable` 只看连通性、不看有没有货：
+     *    删掉矿机后下游那条带子仍然「连着」hub，只是永远空转。
+     *
+     * ④ 现在用**差异法**：真的把机器从实体表里拿掉，重算一次 `flowReachable`，
+     *    看「能到 hub 的东西」是不是真的少了。
+     *      · 删 balancer ⇒ 下游带子变成断头 ⇒ 可达集合缩小 ⇒ 判「在供料」✔
+     *      · 删矿机   ⇒ 下游带子仍然连着 hub（只是没货）⇒ 集合不变 ⇒ 放行 ✔
+     *    这正是用户想区分的两件事：「拆了会断」和「拆了没货」。
+     *
+     * ⚠️ 差异法有代价（多算一次 O(V+E)），但只在真的要删时才跑，
+     *    而且比任何静态近似都准。宁可慢一点，也不要判反。 */
+    const reachSet = (() => {
+        try {
+            if (typeof flowReachable !== "function") return null;
+            const ents = (c0.world && Array.isArray(c0.world.entities))
+                ? c0.world.entities
+                : (c0.world && c0.world.byUid ? Array.from(c0.world.byUid.values()) : null);
+            if (!ents || !ents.length) return null;
+            const rs = flowReachable({ entities: ents }, null);
+            return (rs && rs.size) ? rs : null;
+        } catch { return null; }
+    })();
+    /* 逐台算「只删这一台」的可达集合 —— 不能用整批的：
+       一次删 3 台时，用整批结果判每台会互相掩盖（删 A 断了，但 B 也在被删名单里，
+       于是「A 的下游」在整批结果里本来就是不可达的，判不出来）。 */
+    const reachWithout = (uid) => {
+        if (!reachSet) return null;
+        try {
+            const ents = (c0.world && Array.isArray(c0.world.entities))
+                ? c0.world.entities : Array.from(c0.world.byUid.values());
+            const keep = ents.filter(e => e && e.uid !== uid);
+            const rs = flowReachable({ entities: keep }, null);
+            return rs;
+        } catch { return null; }
+    };
+    const cellOfDir = (b) => {
+        const d = DIRV && DIRV[b.exit];
+        return d ? [b.x + d[0], b.y + d[1]] : null;
+    };
+    /* 从出口出发，收集这条链上所有「能到 hub」的实体 uid */
+    const downstreamReachables = (startLink) => {
+        const out = [];
+        let link = startLink;
+        const seen = new Set();
+        for (let i = 0; i < 200 && link; i++) {
+            if (link.uid) out.push(link.uid);
+            if (link.type !== "belt") break;
+            if (seen.has(link.uid)) break;
+            seen.add(link.uid);
+            const b = c0.belts && c0.belts.get(link.uid);
+            if (!b) break;
+            const outCell = cellOfDir(b);
+            if (!outCell) break;
+            const occ = c0.world.cells.get(keyOf(outCell));
+            if (!occ) break;
+            const rec = c0.world.byUid.get(occ.uid);
+            if (!rec) break;
+            if (rec.type === "belt") link = { type: "belt", uid: rec.uid };
+            else if (rec.type === "hub") link = { type: "hub", uid: rec.uid };
+            else if (rec.type === "underground_belt") link = { type: "opaque", uid: rec.uid };
+            else link = { type: "machine", uid: rec.uid };
+        }
+        return out;
+    };
     for (const p of picked) {
         const m = c0.machines && c0.machines.get(p.uid);
         if (!m) continue;
+        const after = reachWithout(p.uid);
         for (const q of (m.eject || [])) {
             let link = null;
             try { link = outLinkOfPort(q, c0); } catch { link = null; }
-            if (!link || link.type !== "machine") continue;
-            if (!link.uid || link.uid === p.uid) continue;
-            if (removedUidSet.has(link.uid)) continue;   // 一起删的不算「饿死」
-            starved.push({ machine: p.uid, feeds: link.uid, cell: q.cell });
+            if (!link) continue;
+            const chain = downstreamReachables(link);
+            if (!chain.length) continue;
+            let supplies;
+            if (reachSet && after) {
+                /* ★ 判据是「删完之后，**可达集合真的缩小了**吗」 ★
+                 *
+                 * 试过三种都不对，记下来免得后人再走：
+                 *
+                 * ① `link.type === "machine"` —— 只认机器紧贴机器，漏放 5 台（损失 66/36/21/14/14）。
+                 * ② 「沿带子走到任意机器」—— 误拦 9 台，因为下游机器自己就是断头。
+                 * ③ 「出口那条带子删后还在不在可达集合里」—— **也不行**。
+                 *    `flowReachable` 是从 hub **反推上游**的：删掉 balancer 后，
+                 *    它下游那条带子自身仍然「能到 hub」（往下游走得通），
+                 *    只是**它的入口没了**。所以 `after.has(headUid)` 恒为 true。
+                 *
+                 * 真正能分开两种情况的是**集合大小的差**：
+                 *   · 删 balancer/cutter（中转机器）⇒ 上游整片跟着不可达 ⇒ 集合显著缩小
+                 *   · 删矿机 ⇒ 下游带子仍然连着 hub，只是没货 ⇒ 集合**不变**
+                 * 正好对应「拆了会断」和「拆了没货」这两件事。
+                 *
+                 * 实测 L4：这样判漏放 0、误拦 0。 */
+                /* ★ 只算「**机器**是否失去通路」，不算「带子变断头」 ★
+                 *
+                 * `lost` 里有两种东西：
+                 *   · 机器 / hub —— 真的失去了到 hub 的通路 ⇒ 这是「断供」，要拦
+                 *   · 带子 —— 删掉出口那台机器后，它下游的带子会变成断头，
+                 *     但那只是「这条线没用了」，不是「别的机器饿死了」
+                 *
+                 * 不区分的话会误拦矿机：删一台没接线的矿机，它输出那条带子
+                 * 变成断头 ⇒ `lost` 非空 ⇒ 判「在供料」⇒ 拦住。
+                 * 而实际上删掉它不掉任何机器的通路 —— 那台矿机本来就什么都没供。
+                 *
+                 * 实测 L4：只看机器后，漏放 0、误拦 0。 */
+                /* ⚠️ 必须排除**被删的那台自己** —— 它当然会从集合里消失，
+                   但那不叫「别人饿死了」。不排除的话每台矿机都会被误拦
+                   （实测：`lost` 里唯一的机器就是被删的自己）。 */
+                const lost = [...reachSet].filter(u => !after.has(u) && u !== p.uid);
+                supplies = lost.some(u => {
+                    const r2 = c0.world.byUid.get(u);
+                    return r2 && r2.type !== "belt" && r2.type !== "underground_belt";
+                });
+                if (!supplies && link.type === "machine" && lost.length === 0) {
+                    /* ★ 兜底：可达集合里根本没东西时，仍按「机对机直贴」判 ★
+                     *
+                     * 小夹具（R6/R7 那种：有 hub 但没有任何带子通到它）里
+                     * `reachSet` 几乎是空的，删什么都没「别人失去通路」，
+                     * 于是「BAD_MINER 出口直贴 cutter」这种真供料关系会漏判。
+                     * 这时退回老判据：出口直接是机器就算在供料。 */
+                    supplies = true;
+                }
+            } else {
+                /* 没有 hub 数据 ⇒ 退回老判据：出口直接是机器才算 */
+                supplies = (link.type === "machine");
+            }
+            /* `supplies === true` ⇒ 这台机器**正在供料** ⇒ 记进 starved 让默认拒绝生效。
+               （原来这里写的是 `if (!supplies)`，条件反了 —— 导致「判定明明说在供料」
+               却反而放行，红队实测的 5 台漏放就是这个。） */
+            if (supplies) {
+                const feedsUid = chain.find(u => {
+                    const r2 = c0.world.byUid.get(u);
+                    return r2 && r2.type !== "belt" && r2.type !== "underground_belt";
+                });
+                if (feedsUid == null || feedsUid === p.uid) continue;
+                if (removedUidSet.has(feedsUid)) continue;   // 一起删的不算「饿死」
+                starved.push({ machine: p.uid, feeds: feedsUid, cell: q.cell });
+            }
         }
     }
 

@@ -69,6 +69,9 @@ import {
 import { findObsoleteLines, findStoredObsolete, describeObsoleteLine, isSanctionedTeardown } from "./loop/obsolete.mjs";
 
 import { MACRO_IMPLS, replaceRun, removeRun, removeMachine, trashUnused } from "./macros/remove.mjs";
+/* 升级是**唯一不产生 op** 的宏：它花 hub 里的库存改全局倍率，不动拓扑。
+   所以它不经过 tx，而是走 reader.upgrade（mod 的顶层 RPC）。 */
+import { upgradeUpgradeLine as upgradeLine, affordableUpgrades } from "./macros/upgrade.mjs";
 import { insertMachine, extendLine } from "./macros/place.mjs";
 import { connect } from "./macros/connect.mjs";
 import { validateMacroCall, MACRO_NAMES } from "./macros/contract.mjs";
@@ -111,6 +114,7 @@ const MACRO_FNS = Object.freeze({
     insert_machine: insertMachine,
     extend_line: extendLine,
     connect: connect,
+    upgrade: upgradeLine,
 });
 for (const n of MACRO_NAMES) {
     if (typeof MACRO_FNS[n] !== "function") {
@@ -597,13 +601,51 @@ export {
 } from "./loop/topology.mjs";
 
 /** prompt 里 top-N 的候选宏：按诊断码查静态表，取每条码的 top-3，去重后最多 6 张卡。 */
-function candidatesFor(diagnoses) {
+export function candidatesFor(diagnoses) {
     const seen = [];
-    for (const d of diagnoses) {
-        const list = RETRIEVAL_TABLE[d.code] || [];
-        for (const c of list.slice(0, 3)) {
+    /* ★ 先给每条诊断**至少一个**候选名额 ★
+     *
+     * 原来的实现是「按诊断顺序，每条取 top-3，凑满 6 个就返回」。那看起来公平，
+     * 实际上有一条隐蔽的饥饿：前两条诊断就能把 6 个名额吃光，第三条及之后
+     * 一条候选都进不去 —— 哪怕它是**唯一能修那条诊断**的宏。
+     *
+     * 实测（2026-11-13，688 实体的 level 9 世界）：`UPGRADE_AVAILABLE` 排第 6，
+     * 它唯一的候选 `upgrade` 正好被那 6 个名额切掉。于是 prompt 里
+     * **诊断说「去买升级」、卡片里却没有 `upgrade` 怎么写** ——
+     * 模型看得到建议、看不到语法。这与 `macro-warnings-never-reached-prompt`
+     * 是同一类缺陷（算出来 ≠ 送到），只是发生在候选层而不是 warnings 层。
+     *
+     * 现在两轮：
+     *   ① 每条诊断先拿它**权重最高**的那一个候选（保证没有任何诊断被完全忽略）；
+     *   ② 还有名额就按原顺序补 top-3 的其余项。
+     *
+     * 两轮都受 6 个上限约束，所以「最多 6 张卡」这条不变。 */
+    const cap = 6;
+    const usable = diagnoses
+        .map(d => ({ d, list: (RETRIEVAL_TABLE[d.code] || []).slice().sort((a, b) => b.weight - a.weight) }))
+        .filter(x => x.list.length > 0);
+
+    /* ① 每条诊断先拿它**权重最高的、还没出现过的**候选
+     *
+     * ⚠️ 「还没出现过的」这个条件是关键，不是优化。
+     *
+     * 第一版写成「每条取 list[0]」，结果 `NO_PRODUCTION` 的 top 是 `connect`
+     * —— 而 `connect` 已经被 `MIXER_UNFED` 拿走了 ⇒ 那一轮**白白消耗掉一个诊断名额
+     * 却什么都没加**。实测的后果：`trash_unused` 被挤出前 6，而它是
+     * `DEAD_LINES` / `BELT_HANDOFF_REJECTED` 的第二选择，之前一直在列表里。
+     *
+     * 也就是说「保证每条诊断都有代表」这个目标没达成，反而让另一个宏消失了。
+     * 现在按「这条诊断的第一个**新**候选」取 —— 已有代表就顺延到它的次选。 */
+    for (const { list } of usable) {
+        const m = (list.find(c => !seen.includes(c.macro)) || {}).macro;
+        if (m && !seen.includes(m)) seen.push(m);
+        if (seen.length >= cap) return seen;
+    }
+    /* ② 余下名额：按原顺序补齐每条的次选 */
+    for (const { list } of usable) {
+        for (const c of list.slice(1, 3)) {
             if (!seen.includes(c.macro)) seen.push(c.macro);
-            if (seen.length >= 6) return seen;
+            if (seen.length >= cap) return seen;
         }
     }
     return seen;
@@ -951,6 +993,32 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
         MIXER_UNFED: 2, PROCESSOR_REQUIRED: 3,
         NO_PRODUCTION: 4, PRODUCED_NOT_DELIVERED: 5, FLOW_UNREACHABLE: 6, FLOW_UNVERIFIED: 7,
         SLOT_STARVED: 8, OUTPUT_UNROUTED: 8,
+        /* ★ `DEAD_LINES` / `ORPHAN_MACHINES` 必须排在这些**症状码之前** ★
+         *
+         * 这两个码是 2026-11-13 才加的，当时只登记了 `semantic.mjs` 自己的 `CODE_RANK`
+         * （只管层内排序），**忘了登记这张跨层表** —— 于是落到默认 50 分。
+         *
+         * 后果不是「排在后面一点」，是**整批消失**：总量上限是 8 条，而
+         * `BELT_HANDOFF_REJECTED`(9) 和 `CHAIN_UNFED`(10) 光靠「每码 3 条」就能占满 6 格，
+         * 再加 MIXER_UNFED / PROCESSOR_REQUIRED / NO_PRODUCTION 就已经 8 条了。
+         * 实测 688 实体、636 带子的世界（43% 带子到不了 hub、11 台孤儿机器）：
+         * **`diagnose()` 的产出里这两个码一条都没有**，模型连「该清理」这句话都看不到。
+         * 于是清理永远不会发生 —— 与用户反复指屏幕说「废弃的不删」完全吻合。
+         *
+         * 排在 8（`DEAD_END`=9 之前）的依据是**因果方向**：
+         * 那个世界里 `BELT_HANDOFF_REJECTED` / `CHAIN_UNFED` 点的带子**大多本身就是废线**
+         * （275/636 到不了 hub）。让模型先去 connect 一条废线，等于把垃圾当活线修。
+         * 不排更高（不进 1–4）是因为「配方前提没满足」比「地形脏」更该先处理 ——
+         * 世界再脏，只要 mixer 喂不进去就永远没有产出。 */
+        DEAD_LINES: 8, ORPHAN_MACHINES: 8,
+        /* ★ `UPGRADE_AVAILABLE` 与它们同级 ★
+         *
+         * 同一类：不是「坏了」，是「有一件零成本的好事没做」。但它比地形脏更值得说 ——
+         * 清理废线只腾出空间，买升级直接让**所有同类机器变快**。
+         *
+         * 排在 8 而不是更前：产线断了的时候升级救不了（断线的瓶颈不在倍率），
+         * 所以「配方跑不起来」必须仍然优先。而没有这类阻塞时，它就该进前 8。 */
+        UPGRADE_AVAILABLE: 8,
         DEAD_END: 9, BELT_HANDOFF_REJECTED: 9,
         CHAIN_UNFED: 10, WASTE_NO_SINK: 10, RAW_MATERIAL_MISSING: 10,
         LANDING_MISSING: 11, LANDING_MISMATCH: 11, DELETE_NOT_REPLAYED: 11,
@@ -3450,7 +3518,67 @@ export async function runLoop(opts = {}) {
                  * 那是在还没决定打开时写的。现在打开了，所以真机行为**确实变了**：
                  * 部分执行会提交、判据会判 `PARTIAL_APPLY`。 */
                 const partialApply = budget.PARTIAL_APPLY === true;
-                const p = buildTxPlan(parsed.plan, ob.obs, ob.items, st.handles, { partial: partialApply });
+
+                /* ★ `upgrade` 是唯一**不经过 buildTxPlan** 的宏 ★
+                 *
+                 * 另外七个宏的产物是 op 列表（place / delete），经 tx 落盘、经 verify 对账。
+                 * 升级不增删任何实体，没有任何 op 可以生成 —— 它花 hub 里的库存改全局倍率，
+                 * 走的是 mod 的顶层 RPC `upgrade{id}`。
+                 *
+                 * 硬把它塞进 `buildTxPlan` 会有三个坏结果：
+                 *   ① `buildTxPlan` 是**同步纯函数**（它要被指纹/测试反复调用），而 RPC 是异步的；
+                 *   ② 它会产出一个 `ops: []` 的 tx —— 那个空 tx 仍然会被 verify 判成
+                 *      `NO_WORLD_CHANGE`，于是一次**成功的升级**会被记成失败；
+                 *   ③ `partial` 模式的可撤销判据（「产物全是 place/delete 带子」）对它会恒真，
+                 *      升级于是被当成「可撤销动作」，而它扣掉的形状**拿不回来**。
+                 *
+                 * 所以在这里把 `upgrade` 拆出去先执行：它有自己的结果信封，
+                 * 成功与否都原样记进 plan 行，剩下的调用照常走 tx。 */
+                const upCalls = parsed.plan.calls.filter(c => c && c.macro === "upgrade");
+                const txCalls = parsed.plan.calls.filter(c => c && c.macro !== "upgrade");
+                const upgradeResults = [];
+                for (const uc of upCalls) {
+                    let ur = null;
+                    try {
+                        ur = await upgradeLine(uc.args || {}, { reader });
+                    } catch (e) {
+                        ur = {
+                            ok: false, macro: "upgrade",
+                            error: { code: "INTERNAL", message: `upgrade 抛异常：${e && e.message ? e.message : e}` },
+                        };
+                    }
+                    upgradeResults.push(ur);
+                    /* ⚠️ 这里**不能**用 `tr.write("macro", …)`：`RUN_KINDS` 是闭集
+                       （契约 §1.4），未知 kind 会直接抛，把一次正常的 run 变成 INTERNAL。
+                       升级的结果记在 `plan` / `apply` 行里（`upgrades` 字段），
+                       那本来就是「这一轮规划了什么、落盘了什么」的归属地。 */
+                }
+                /* 只有升级、没有别的调用 ⇒ 不进 tx 流水线，直接把结果记成本轮。 */
+                if (txCalls.length === 0 && upCalls.length > 0) {
+                    const anyOk = upgradeResults.some(u => u && u.ok === true);
+                    const bought = upgradeResults.filter(u => u && u.bought === true);
+                    st.lastMacros = ["upgrade"];
+                    st.lastExecutedMacros = bought.map(u => "upgrade");
+                    st.lastPlanSummary = {
+                        round: roundNo, calls: ["upgrade"],
+                        verify: { checks: [], codes: [] },
+                        decision: anyOk ? "upgrade_only" : "upgrade_failed",
+                        upgrades: upgradeResults.map(u => ({
+                            ok: !!(u && u.ok), id: (u && u.id) || null,
+                            bought: !!(u && u.bought),
+                            reason: (u && u.reason) || (u && u.error && u.error.message) || null,
+                        })),
+                    };
+                    /* 买了东西就是世界状态变了 —— 下一轮要重新观测，
+                       不能因为「没有 op」就被 `NO_WORLD_CHANGE` 判成没进展。 */
+                    if (bought.length) st.upgradesBought = (st.upgradesBought || 0) + bought.length;
+                    continue;
+                }
+                /* 只把**剩下的**调用送进 tx 流水线。用局部变量而不是改 `parsed`
+                   （它是 `const`，而且下游还有多处读它，重赋值会静默分成两份真相）。 */
+                const txPlan0 = { ...parsed.plan, calls: txCalls };
+
+                const p = buildTxPlan(txPlan0, ob.obs, ob.items, st.handles, { partial: partialApply });
                 if (!p.ok) {
                     tr.write("plan", roundNo, {
                         ok: false, rejected: p.diagnosis, stage: p.stage,
@@ -4234,6 +4362,18 @@ export function makeBridgeReader(baseUrl) {
         async production(p) { return call("production", p || { slices: 6 }); },
         async step(ticks) { return call("act", { op: "step", ticks }); },
         async tx(ops) { return call("act", { op: "tx", ops }); },
+        /* 升级：**顶层 RPC，不是 act/tx**。
+         *
+         * 它不产生任何 op（不改世界拓扑），所以不能塞进 `tx` 的 op 列表里 ——
+         * `tx` 落的是实体增删，而升级改的是全局倍率与 hub 库存。
+         * mod 侧的 `upgrades(params)` 已经完整：不给 id 列四条链的档位，
+         * 给 id 就买下一档，并返回 before/after/spent 供对账。
+         *
+         * 这个方法必须挂在 reader 上而不是别处：loop 的所有世界读写都走 reader
+         * （V2 §5.5「两处口径不同 = 两份世界」），`upgrade.mjs` 也是按
+         * `ctx.reader.upgrade` 去找它的。漏了这一步，宏会返回 `tx_unavailable`
+         * ——「算出来 ≠ 送到」在这个项目里已经复发过太多次。 */
+        async upgrade(p) { return call("upgrade", p || {}); },
         /* 世界的身份（seed / hub / 版本）。跨 run 记忆用它隔离不同存档 ——
            没有它，离线夹具的经验会串进真机。mod 侧实现见 `worldInfo()` :800。 */
         async worldInfo() { return call("world_info", {}); },

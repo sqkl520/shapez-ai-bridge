@@ -1,4 +1,4 @@
-import fs from "fs";
+import fs from "node:fs";
 import { indexOf, at, isBelt } from "../../src/agent/loop/topology.mjs";
 import { buildHandles } from "../../src/agent/loop/handles.mjs";
 import { slotsOf, beltRvOf } from "../../src/agent/verify_runtime.mjs";
@@ -22,9 +22,26 @@ import { templateByBuildingVariant } from "../../src/ai/op-templates.mjs";
  *   node what.mjs --cell -9 1                   # 查某一格叫什么
  *   node what.mjs --shot <shot.json> <px> <py>  # 从截图像素反推
  *   node what.mjs --shot <shot.json> --list     # 这张图里有哪些机器
+ *   node what.mjs --near <shot.json> <px> <py>  # 反推 + 列出同一片区域的所有东西
  */
 const TILE = 32;
-const obs = JSON.parse(fs.readFileSync("research/ai-plan/.obs-live.json", "utf8"));
+
+/**
+ * `.obs-live.json` 有两种来源，两种都要认：
+ *   · `curl … /rpc -d '{"method":"obs"}'` 原样重定向 ⇒ 整个 JSON-RPC 响应体
+ *   · 手工 `JSON.stringify(result)` ⇒ 已经是 result 本身
+ * 只认后者会让 `obs.entities` 是 undefined，而这个工具**曾经就是这样坏在那里的**：
+ * 报错信息是 `Cannot read properties of undefined (reading 'find')`，
+ * 看起来像「世界上没有 hub」，实际上是读错了层级。
+ */
+const RAW = JSON.parse(fs.readFileSync("research/ai-plan/.obs-live.json", "utf8"));
+const obs = RAW && RAW.result ? RAW.result : RAW;
+if (!obs || !Array.isArray(obs.entities)) {
+    console.error(`.obs-live.json 里没有 entities（顶层键：${Object.keys(RAW || {}).join(",") || "空"}）`);
+    console.error("重新抓一份：curl -s -X POST http://127.0.0.1:7777/rpc -H 'Content-Type: application/json' "
+        + "-d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"obs\",\"params\":{}}' > research/ai-plan/.obs-live.json");
+    process.exit(1);
+}
 const h = buildHandles(obs, null);
 const hOf = uid => { const e = [...h.byHandle.values()].find(x => x.uid === uid); return e ? e.handle : "?"; };
 const hub = obs.entities.find(e => e.type === "hub");
@@ -96,6 +113,10 @@ if (mode === "--map") {
     console.log("传送带 " + obs.entities.filter(e => isBelt(e)).length + " 条（不逐条列，用 --cell 查具体格）");
 } else if (mode === "--cell") {
     const x = Number(args[1]), y = Number(args[2]);
+    if (!Number.isInteger(x) || !Number.isInteger(y)) {
+        console.error("用法: --cell <x> <y>");
+        process.exit(1);
+    }
     console.log(describe(x, y) + "   [" + x + "," + y + "]");
 } else if (mode === "--shot") {
     const file = args[1];

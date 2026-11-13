@@ -1815,20 +1815,23 @@ export function renderCapacity(capacity, options = null, opts = {}) {
     /* ── 「买升级」这条路：**只有真能做的时候才提** ──
      *
      * `capacityFor` 会把 `buy-upgrade` 放进 `doNow`（`assess.mjs:520-527`），
-     * 那是"哪种办法更快吃满供给"的**策略**答案。但 loop 的执行面只有 6 个宏，
-     * 里面**没有**任何宏能买升级 —— 于是 prompt 会输出
-     * `act: buy processors T2 ⇒ 0.75/s`，而模型照着写 `{"macro":"upgrade"}`
-     * 会被 `LLM_UNKNOWN_MACRO` 拒掉。
+     * 那是"哪种办法更快吃满供给"的**策略**答案。
      *
-     * **教模型做一个不存在的动作，比不提更坏**：它浪费一轮、消耗预算，
-     * 而且会被记成"模型答错了"，掩盖真正的原因（宏缺失）。
+     * ⚠️ 这里曾经写死 `false`，注释说「loop 的执行面没有宏能买升级 ——
+     * 教模型做一个不存在的动作，比不提更坏」。那个判断当时是对的，
+     * 现在反过来了：`upgrade` 宏已经接进 `MACRO_NAMES` / `MACRO_FNS` /
+     * loop 的 plan 阶段（它不走 tx，走 `reader.upgrade`）。
      *
-     * 判据不看 `MACRO_NAMES` 里有没有 `upgrade` 这个字符串 —— 那是猜"买了升级之后
-     * 会叫什么名字"。判据是**有没有宏的产物能实现一次升级**：升级不增删实体，
-     * 所以任何只产出 place/delete 类 op 的宏都不可能做到它。
-     * 等 `upgrade` 宏真的接进 loop 的执行面，这里再加一个显式的白名单条目。
-     */
-    const canBuyUpgrade = false;   // ← 加 `upgrade` 宏并接进 `MACRO_FNS` + `doApply` 后改这里
+     * **继续写死 false 的代价比当初更大**：实测 level 9 那一刻 `miner` 与 `painting`
+     * 两档升级当场就买得起（hub 里存着 RuRuRuRu×15583 / RbRb----×7219），
+     * 白送的 ×1.5 采矿速率与涂装解锁，而 prompt 一个字都没提 ——
+     * 模型只能继续铺带子。这正是「AI 不会用更高级的方法提高效率」那条抱怨的成因。
+     *
+     * 判据不是「白名单里有没有这个字符串」（那是在猜名字），而是
+     * **有没有宏的实现能真的买一次**：`MACRO_NAMES` 与 `MACRO_FNS` 在加载时
+     * 已经断言过同集合，所以只要 `upgrade` 在 `MACRO_NAMES` 里且这里没写死，
+     * 那条建议就是可执行的。 */
+    const canBuyUpgrade = MACRO_NAMES.includes("upgrade");
     const buyNow = canBuyUpgrade ? affordable[0] : null;
 
     if (form === "short") {
@@ -1848,7 +1851,16 @@ export function renderCapacity(capacity, options = null, opts = {}) {
         }
         if (up && canBuyUpgrade) {
             const short = up.affordable ? "ready now" : `needs ${fmtShort(up.missing)}`;
-            roads.push(`${up.line} T${up.tier} (×${up.multiplierFrom}→×${up.multiplierTo}) ⇒ ${fmt(up.capacityAfter)}/s — ${short}`);
+            /* ⚠️ 必须带 `buy` 这个动词，不能只写参数。
+             *
+             * `short` 版写的是 `act: buy belt T2 ⇒ …`，而 full 版原来写
+             * `belt T2 (×1.5→×2) ⇒ 0.9/s — ready now` —— **两个版本对同一件事
+             * 用了两种说法**，而模型看到的可能是任一个（取决于预算）。
+             *
+             * 更实际的理由：这一行要和 `add N cutter` 并列出现，模型要在
+             * 「买」和「造」之间做选择。只给名词短语会让它读成「现状描述」
+             * 而不是「一个可以执行的动作」。 */
+            roads.push(`buy ${up.line} T${up.tier} (×${up.multiplierFrom}→×${up.multiplierTo}) ⇒ ${fmt(up.capacityAfter)}/s — ${short}`);
         }
         if (roads.length) {
             lines.push("options:");
@@ -2850,8 +2862,15 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
                  * 去掉「×N」「a short run from hub」这些描述性部分。
                  * 那两句是模型真正要用的：知道有矿、知道怎么指它。 */
                 const compactRes = renderMachines(tbl, diagList, obs, goalShape, { resourceCompact: true });
+                /* `s3Machines` 可能是 `null` —— 上面「带子优先」那段在 `MACHINE_STEPS`
+                   退到 0 时会把它整个撤掉（`cap === 0 ? null : …`）。那个分支以前几乎
+                   走不到（世界里的诊断很少多到需要把 MACHINES 段清空），
+                   所以 `.length` 的裸取一直没炸。加了 `DEAD_LINES`/`ORPHAN_MACHINES`
+                   之后诊断变多，这条路径被真的走到了，`TypeError: Cannot read
+                   properties of null (reading 'length')` 直接把整个 prompt 构建打挂。
+                   撤掉的状态本身就是「没有这段」，再撤一次是无操作 —— 按空串比。 */
                 if (compactRes !== s3Machines) {
-                    const savedC = s3Machines.length - compactRes.length;
+                    const savedC = (s3Machines || "").length - compactRes.length;
                     if (savedC > 0 && room + savedC >= 120) {
                         s3Machines = compactRes;
                         user = compose(s3Belts, null);
@@ -2863,7 +2882,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
             if (room < 120) {
                 const withoutRes = renderMachines(tbl, diagList, obs, goalShape, { includeResource: false });
                 if (withoutRes !== s3Machines) {
-                    const saved = s3Machines.length - withoutRes.length;
+                    const saved = (s3Machines || "").length - withoutRes.length;
                     if (room + saved >= 120) {
                         s3Machines = withoutRes;
                         user = compose(s3Belts, null);
@@ -2877,7 +2896,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
             if (room < 120) {
                 const noHint = renderMachines(tbl, diagList, obs, goalShape, { includeOreHint: false });
                 if (noHint !== s3Machines) {
-                    const savedHint = s3Machines.length - noHint.length;
+                    const savedHint = (s3Machines || "").length - noHint.length;
                     if (room + savedHint >= 120) {
                         s3Machines = noHint;
                         user = compose(s3Belts, null);

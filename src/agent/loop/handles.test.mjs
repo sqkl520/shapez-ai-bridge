@@ -263,8 +263,15 @@ ok(l4.goal.requirement.shape === "RuRu----" && l5.goal.requirement.shape === "Cu
      *
      * 所以 desc 现在同时给方位和角色：`输入=bottom:primary(←B97)`，
      * 并在末尾补 `in.port=primary` 告诉它**参数该填什么**。
-     * 这条断言因此改为要求「方位 + 角色」都在。 */
-    ok(/^C\d+ cutter 输入=bottom:primary\(←/.test(cs),
+     * 这条断言因此改为要求「方位 + 角色」都在。
+     *
+     * 2026-11-13：机器 desc 中间多了一段**人话方位** `· hub 西北 15 格`。
+     * 用户的原话是「和人交流不能去看句柄，需要为每一个格子起名字」——
+     * 而人看图只会说「西北那片」，不会说 `C2`。方位就是人和模型之间那个
+     * 一直缺失的共同指代物（见 `handles.mjs` 的 `bearingOf`）。
+     * 所以锚点从 `^C\d+ cutter 输入=` 放开成「句柄 + 类型 + 可选方位」，
+     * 但**仍然钉住**后半段（角色与 in.port），那才是这条测试真正守的东西。 */
+    ok(/^C\d+ cutter( · hub [^ ]+ \d+ 格)? 输入=bottom:primary\(←/.test(cs),
         `cutter 短语含 input 方位与角色（模型要照着填 port），实得：${cs}`, cs);
     ok(/in\.port=primary/.test(cs),
         `cutter 输入端口角色单独标出（与输出的 left|right 不同名），实得：${cs}`, cs);

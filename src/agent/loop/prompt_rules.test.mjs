@@ -98,7 +98,16 @@ export function parseRules(system) {
 const RULES_BEFORE = Object.freeze([
     "1. Output RAW JSON only: no markdown fence, no prose before/after, no comments, no trailing commas.",
     "2. calls must be an array with 1 to 6 entries. An empty calls array is rejected as a failed plan.",
-    "3. The ONLY allowed macro names are: connect, insert_machine, remove_run, remove_machine, extend_line, replace_run, trash_unused.\n"
+    /* ⚠️ 2026-11-13：规则 3 的宏名列表加了 `upgrade`。
+     *
+     * 这条快照是**故意硬编码**的（快照一自动更新就永远绿、永远不守任何东西）。
+     * 所以新增一个宏必须同时改这里 —— 那正是这条测试的作用：
+     * 让「白名单变了」这件事**必须被人看见一次**，而不是悄悄扩大。
+     *
+     * `upgrade` 值得扩：它是唯一能提高**已有产线**效率的动作（花 hub 库存买全局倍率），
+     * 而实测那一刻 level 9 上 `miner` 和 `painting` 两档都买得起却从来没人买。
+     * 另外七个宏只会改拓扑，改不动「同样的线跑多快」。 */
+    "3. The ONLY allowed macro names are: connect, insert_machine, remove_run, remove_machine, extend_line, replace_run, trash_unused, upgrade.\n"
         + "   Never emit build_line, paste_blueprint, or any other name: they are not part of this loop.",
     "4. NEVER output coordinates, positions, rotations, rotation variants, angles, or uids.\n"
         + "   No x/y numbers. No arrays of two or four numbers. Refer to existing things ONLY by handle.",

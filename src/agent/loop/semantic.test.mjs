@@ -475,13 +475,26 @@ test("P-a 产出的每个码都在 DIAG_CODES 闭集里，且 severity ∈ {bloc
     }
 });
 
-test("P-a 只产出这 5 个码（越界即红：别顺手加了没登记的东西）", () => {
+test("P-a 只产出已登记的码（越界即红：别顺手加了没登记的东西）", () => {
     /* `MIXER_UNFED` 是第 5 个。加它的理由是可测的：`PROCESSOR_REQUIRED` 只数
        「工厂里有几台 mixer」，于是「有一台、但两个 color 槽喂的是同一条线」
-       会让诊断彻底消失 —— 而配方要的是两种**不同**的颜料。第 9 关就是这么卡住的。 */
+       会让诊断彻底消失 —— 而配方要的是两种**不同**的颜料。第 9 关就是这么卡住的。
+     *
+     * 2026-11-13：补登 `DEAD_LINES` / `ORPHAN_MACHINES` / `UPGRADE_AVAILABLE`。
+     *
+     * 这三个是同一批加的，而这份白名单当时**没跟上** —— 于是它本该守住的东西
+     * （「语义层不许产出没登记的码」）在这三个码上失效了：它们能产出、测试却是绿的，
+     * 因为夹具（L4 / L5+ore）里根本没有废线堆和满库存。白名单没覆盖 ≠ 那条纪律不存在。
+     *
+     * 三条各有实测依据：
+     *   · DEAD_LINES      —— 用户两次指屏幕说「废弃的不删」，而 403/646 条带子到不了 hub；
+     *   · ORPHAN_MACHINES —— 同上那次，57 台机器里 45 台一根带子都没接；
+     *   · UPGRADE_AVAILABLE ——「AI 不会用更高级的方法提高效率」：实机 miner/painting
+     *                          两档当场买得起，而 prompt 一个字都没提。 */
     const OWNED = new Set([
         "PROCESSOR_REQUIRED", "WRONG_SHAPE_AT_HUB", "DISCARDED_INTERMEDIATE",
         "SHAPE_UNKNOWN", "MIXER_UNFED",
+        "DEAD_LINES", "ORPHAN_MACHINES", "UPGRADE_AVAILABLE",
     ]);
     for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {
         for (const d of run(obs, rec, { level: 5 })) {

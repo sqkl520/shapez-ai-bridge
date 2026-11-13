@@ -369,6 +369,51 @@ function ref(handle, role) {
 }
 
 /**
+ * 人话方位：`hub 东北 47 格`。
+ *
+ * ## 为什么这件事必须由**世界**提供，而不是让人自己看图
+ *
+ * 用户两次贴截图说「左上角那些残留物要清掉」，而模型手里只有 `M13` / `C7` 这样的句柄 ——
+ * 人和模型之间**没有任何共同的指代物**。截图上的位置、句柄、世界坐标三者对不上，
+ * 于是每一轮都要人肉翻译一遍。
+ *
+ * 方位是那个缺失的共同指代物：人看图说「东北角那片」，模型看到 `hub 东北 47 格 · mixer C1`
+ * 就能对上同一台机器。它比世界坐标更接近人的说法，又比句柄更接近世界的真相。
+ *
+ * ## 为什么不是坐标
+ *
+ * 契约 §Q3.2 禁止 prompt 里出现 `x,y` 形态的数字 —— 那会让模型开始自己算几何。
+ * 曼哈顿距离是**一个**数字，不匹配坐标正则，也不会被它拿去当坐标用；
+ * 它只是排序和「远不远」的粗粒度信号（孤儿机器诊断正是按「离 hub 超过 40 格」分档的）。
+ *
+ * @param {number} x
+ * @param {number} y
+ * @param {{x:number,y:number}|null} hub
+ * @param {{minDistance?:number}} [opts] `minDistance`：曼哈顿距离小于它就返回空串
+ *        （贴近 hub 的实体用句柄就够，方位只是噪声）
+ * @returns {string} `hub 东北 47 格` / `hub 本身` / 空串（没有 hub、或太近）
+ */
+export function bearingOf(x, y, hub, opts = {}) {
+    if (!hub || !Number.isInteger(hub.x) || !Number.isInteger(hub.y)) return "";
+    if (!Number.isInteger(x) || !Number.isInteger(y)) return "";
+    const dx = x - hub.x, dy = y - hub.y;
+    if (dx === 0 && dy === 0) return "hub 本身";
+    const dist = Math.abs(dx) + Math.abs(dy);
+    const min = Number.isFinite(opts.minDistance) ? opts.minDistance : 0;
+    if (dist < min) return "";
+    const ns = dy < 0 ? "北" : dy > 0 ? "南" : "";
+    const ew = dx < 0 ? "西" : dx > 0 ? "东" : "";
+    return `hub ${(ns && ew) ? ew + ns : (ns || ew)} ${dist} 格`;
+}
+
+/** 句柄表里的 hub（世界只有一个；没有就 null）。 */
+function hubOf(table) {
+    if (!table || !table.byHandle) return null;
+    for (const e of table.byHandle.values()) if (e.type === "hub") return e;
+    return null;
+}
+
+/**
  * 一个实体在**当前世界**里的短语。输出形如：
  *   `B7 belt 上游=无 下游=C1.left 货=0 段=3`
  *   `C1 cutter 输入=bottom(←B12) 输出=top:left(→无)/top:right(→B9)`
@@ -388,6 +433,24 @@ export function describeEntity(e, obs, items = null, table = null) {
     const h = self || "?";
     const idx = pathIndex(items);
     const type = e.type;
+    /* 人话方位（`hub 东北 47 格`）。挂在哪、为什么不挂在哪：
+     *
+     *   · **带子不挂** —— 它数量最多（L9 实测 636 条），位置由上下游决定，
+     *     挂上去只是 12 个名额里重复消耗预算。人对「某条带子在哪」的问法一定是
+     *     「谁到谁之间」，那条信息 `上游=/下游=` 已经给了。
+     *   · **hub 不挂** —— 它就是原点，`hub 本身` 是废话。
+     *   · **机器挂** —— 那正是人指着截图说「左上角那片残留物」时指的东西，
+     *     而模型手里只有 `M13`。方位是这两者之间唯一能对上的指代物。
+     *
+     * 只在这台机器**确实散在外面**时才挂：方位是给「人指着截图说那片」用的，
+     * 而一整个紧凑厂区（L4 夹具：17 台机器全在 7~34 格内）每台都挂一遍，
+     * 换来的只是 109 字符的预算，挤掉的却是带子名额。
+     *
+     * 阈值 40 与孤儿机器诊断同口径（`ORPHAN_MACHINES` 的 `far_from_hub` 就是 >40）——
+     * 那个数来自真实需求的形状：要清理的正是散在远处、早已没人管的那些。
+     * 两处共用同一个数不是巧合，是「该定位的东西」和「该清理的东西」本来就是同一批。 */
+    const bear = (type === "belt" || type === "underground_belt" || type === "hub")
+        ? "" : bearingOf(e.x, e.y, hubOf(tbl), { minDistance: 40 });
 
     /* ── 带子 / 隧道：上下游 + 货量 + 段长 ── */
     if (type === "belt" || type === "underground_belt") {
@@ -465,7 +528,7 @@ export function describeEntity(e, obs, items = null, table = null) {
         const other = handleAt(tbl, sl.cell);
         return `${sl.dir}:${sl.role}(→${other || "无"})`;
     });
-    const bits = [`${h} ${type}`];
+    const bits = [bear ? `${h} ${type} · ${bear}` : `${h} ${type}`];
     if (inParts.length) bits.push(`输入=${inParts.join("/")}`);
     /* ⚠️ 输出槽的写法必须点明「port 参数该填什么」。
      *

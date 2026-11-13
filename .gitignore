@@ -66,3 +66,4 @@ research/ai-plan/.obs*.json
 research/ai-plan/.*.mjs
 .gitmsg.tmp
 
+.tmpx/

@@ -124,6 +124,15 @@ export const DIAG_CODES = Object.freeze({
        截图上是一排垃圾桶和孤立的 cutter/rotater，一根带子都没接。
        `DEAD_LINES` 只数带子，**完全没看机器**：57 台机器里 45 台是孤儿。 */
     ORPHAN_MACHINES: "L2: machines sit on the map with nothing connected to them (both their inputs and outputs are empty); they are leftover attempts that will never run and only get in the way of pathing",
+    /* 2026-11-13：用户说「AI 不会用更高级的方法提高效率」。
+       实测 level 9 那一刻 `miner` 与 `painting` 两档升级**当场就买得起**
+       （hub 里存着 RuRuRuRu×15583、RbRb----×7219），白送的 ×1.5 采矿速率
+       与涂装解锁，而 prompt 一个字都没提 —— 模型只能继续铺带子。
+
+       这个码和别的码不是一类：它不是「坏了」，是「有一件零成本的好事没做」。
+       所以 severity 是 warn 而不是 blocker，而且**必须**带 `upgrade` 候选卡
+       （没有卡片的话模型看得到建议、看不到写法，仍然是「算出来 ≠ 送到」）。 */
+    UPGRADE_AVAILABLE: "L5: an upgrade tier is already paid for by the shapes stored in the hub; buying it costs no map space and improves every machine of that kind",
 
     NO_PRODUCTION: "L4: nothing produced",
     WRONG_SHAPE_PRODUCED: "L4: production exists but under a different shape key",
@@ -491,6 +500,13 @@ export const RETRIEVAL_TABLE = Object.freeze({
     ORPHAN_MACHINES: cand([
         ["remove_machine", 8],
         ["remove_run", 3],
+    ]),
+    /* 买得起升级 ⇒ 唯一的候选就是 `upgrade`。
+       **权重给满**（10）不是因为它最急，而是因为它是**唯一**能处理这条诊断的宏：
+       候选表是「这条码该怎么修」的答案，不是「谁更常用」的排名。
+       混进别的宏只会让模型在一条「花掉库存换倍率」的建议面前去铺带子。 */
+    UPGRADE_AVAILABLE: cand([
+        ["upgrade", 10],
     ]),
     WRONG_SHAPE_AT_HUB: cand([
         ["replace_run", 8],

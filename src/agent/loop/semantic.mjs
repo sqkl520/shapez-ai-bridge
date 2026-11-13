@@ -69,6 +69,10 @@ import {
     accepts, runEnd, hubReachable, sourceEntityOf,
 } from "./topology.mjs";
 import { LIMITS, subjectOf, handleOf } from "./structural.mjs";
+/* 升级链的「下一档要什么」唯一真值在 `rules.mjs` —— 已与实机的 `upgrade` RPC
+   逐项对过（miner T2 = RuRuRuRu×740 + Cu------×800、painting T1 = RbRb----×600，
+   四条链全一致）。不在这里抄第二份。 */
+import { UPGRADES, UPGRADE_MULTIPLIERS } from "../rules.mjs";
 
 /* ══════════════════════════════════════════════════════════════════════════
  * 0. 小工具
@@ -2482,7 +2486,87 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
         }
     }
 
-    /* ── 排序（确定性）：severity → 码优先级 → subject 句柄 → uid ── */
+    /* ────────────────────────────────────────────────────────────────────
+     * ③d UPGRADE_AVAILABLE —— hub 里存着的形状已经够买下一档升级
+     *
+     * 用户的原话：「AI 不会用更高级的方法提高效率」。
+     *
+     * 实测（2026-11-13，level 9 实机）：
+     *
+     *     miner     L1  下一档需 RuRuRuRu×740 + Cu------×800    can_buy=true
+     *     painting  L0  下一档需 RbRb----×600                    can_buy=true
+     *
+     * 而 hub 里存着 RuRuRuRu×15583、Cu------×34332、RbRb----×7219。
+     * **两档白送的升级躺在那里没人拿**，因为 prompt 里从来没提过。
+     *
+     * 判据完全离线：`rules.mjs` 的 `UPGRADES` 表给了每档要什么
+     * （已对过实机的 `upgrade` RPC，四条链逐项一致），`obs.hub.stored_shapes`
+     * 给了现在有多少。能买 ⇒ 报。
+     *
+     * ⚠️ 为什么 `severity: "warn"` 而不是 blocker：
+     *    它**不是坏了**，是「有一件零成本的好事没做」。判成 blocker 会把它顶到
+     *    `MIXER_UNFED` 那种「配方跑不起来」的前面，那方向是错的 ——
+     *    产线断了的时候，升级救不了。
+     *
+     * ⚠️ 为什么只报**买得起**的，不报「离买得起还差多少」：
+     *    差多少是 `CAPACITY` 段的事（它已经在算 `needs …`）。
+     *    这条诊断的唯一职责是「现在就能做、而且划算」，那才值得占一个候选名额。
+     * ──────────────────────────────────────────────────────────────────── */
+    {
+        const stored = (o.hub && o.hub.stored_shapes) || null;
+        const lvls = (o.goal && o.goal.upgrade_levels) || null;
+        if (stored && lvls) {
+            const affordable = [];
+            for (const [line, tiers] of Object.entries(UPGRADES)) {
+                const cur = lvls[line] || 0;
+                const next = tiers.find(t => t.tier === cur + 1);
+                if (!next) continue;                       // 满级或未登记
+                const missing = next.required
+                    .map(req => ({ shape: req.shape, amount: req.amount, have: stored[req.shape] || 0 }))
+                    .filter(m => m.have < m.amount);
+                if (missing.length === 0) {
+                    affordable.push({ line, tier: next.tier, from: cur, mult: UPGRADE_MULTIPLIERS });
+                }
+            }
+            if (affordable.length) {
+                /* 按「花掉的库存越少越优先」排 —— 便宜的升级先买，
+                 * 因为所有升级都是全局倍率，先买便宜的能更早开始收益。 */
+                affordable.sort((a, b) => {
+                    const cost = x => (UPGRADES[x.line].find(t => t.tier === x.tier).required || [])
+                        .reduce((s, r) => s + r.amount, 0);
+                    return cost(a) - cost(b);
+                });
+                const top = affordable[0];
+                const costOf = x => (UPGRADES[x.line].find(t => t.tier === x.tier).required || [])
+                    .map(r => `${r.shape}×${r.amount}`).join(" + ");
+                const detail = affordable
+                    .map(x => `${x.line} T${x.tier}（要 ${costOf(x)}）`)
+                    .join("，");
+                out.push({
+                    code: "UPGRADE_AVAILABLE",
+                    layer: "L5",
+                    severity: "warn",
+                    subject: subjectOf(handles, hub ? hub.uid : null, "hub"),
+                    expected: "shapes banked in the hub are spent on upgrades that make every machine of that kind faster",
+                    observed: `${affordable.length} upgrade tier(s) are already paid for by the hub's stored shapes: ${detail}`,
+                    evidence: {
+                        handles: hub ? [handleOf(handles, hub.uid)].filter(Boolean) : [],
+                        affordable: affordable.map(x => ({ line: x.line, tier: x.tier, cost: costOf(x) })),
+                        note: "buying an upgrade costs no map space and is not undoable — spend deliberately",
+                    },
+                    candidates: ["upgrade"],
+                    hint: `hub 里的形状已经够买 **${top.line} T${top.tier}** 了（要 ${costOf(top)}）—— `
+                        + `用 \`upgrade {id:"${top.line}"}\` 买它：零占格、全图生效，`
+                        + `比再铺一条线便宜得多。`
+                        + (affordable.length > 1
+                            ? `这一档之外还有：${affordable.slice(1).map(x => `${x.line} T${x.tier}`).join("、")}。`
+                            : "")
+                        + `⚠️ 库存一旦花掉拿不回来 —— 但如果现在不买，那些形状只是躺在 hub 里。`,
+                });
+            }
+        }
+    }
+
     out.sort((a, b) => {
         const sa = SEVERITY_RANK[a.severity] ?? 9;
         const sb = SEVERITY_RANK[b.severity] ?? 9;

@@ -160,6 +160,16 @@ export const ERROR_CODES = Object.freeze({
     unsupported_building: "该 building 在本宏的 v1 支持矩阵之外",
     out_of_scope: "超出 v1 范围（多层 / 隧道 / wire / 旋转机器的某一面）",
     tx_unavailable: "mod 未提供事务能力，原子执行不可保证 → 拒绝执行而不是半做",
+    /* `upgrade` 专属：hub 里的库存不够付下一档。
+     *
+     * 为什么不复用 `precondition_failed`：那个码说的是「前置条件不满足，见 detail」，
+     * 而这里有一个**决策上完全不同**的性质 —— 库存是**游戏状态**，会随生产涨，
+     * 下一轮可能就够了。把它混进 `precondition_failed`（那一类多半是确定性失败，
+     * 重试一百次也一样）会让模型在该等的时候放弃。
+     *
+     * 与之相对的「满级」不是错误，是一条 ok:true + reason:"already-maxed" 的成功
+     * —— 那才是终局，永远不用再来。两种「买不了」必须分开。 */
+    game_rejected: "游戏拒绝了这次动作（库存不够 / 状态在读取与执行之间变了）",
     precondition_failed: "前置条件不满足（详见 error.detail）",
     partial_apply: "只做成了一部分 —— 事务层失职，必须立刻回滚并上报",
     verification_failed: "落地后读回与计划不一致（first_mismatch 给出第一处）",
@@ -1229,6 +1239,59 @@ export function validateTrashUnusedArgs(args) {
     });
 }
 
+/**
+ * 四条升级链。**这是闭集**，不是「随便传个字符串，买不到再说」。
+ *
+ * 名字取自游戏本身（`root.gameMode.getUpgrades()` 的键），不是我们发明的别名。
+ * 拼错的代价在别处已经太高：`rotator` vs `rotater` 那个坑在 insert_machine 上
+ * 反复绊过模型（`LEGAL_VALUES` 里专门为它写了一句提示）。这里不重犯。
+ */
+export const UPGRADE_LINES = Object.freeze(["belt", "miner", "processors", "painting"]);
+
+/**
+ * `upgrade` 的入参校验。
+ *
+ * 为什么**不接受** `uids` / `at` / `cells` 之类的坐标类参数：升级不落到任何格子上，
+ * 它是全局的。一旦 ABI 里留了位置参数，模型就会开始思考「升哪一台」——
+ * 那不是游戏语义，它只有「升这条链」这一个维度。
+ *
+ * @param {object} args
+ * @returns {Validation}
+ */
+export function validateUpgradeArgs(args) {
+    const A = "upgrade";
+    if (!isObj(args)) return fail("bad_type", null, `${A} 的入参必须是对象`);
+    const unk = rejectUnknownKeys(args, ["id", "opts"], A);
+    if (unk) return unk;
+
+    if (args.id === undefined) {
+        return fail("missing_field", "id", `${A} 缺 id`,
+            `id 必须是这四条链之一：${UPGRADE_LINES.join(" | ")}`);
+    }
+    if (typeof args.id !== "string") {
+        return fail("bad_type", "id", `${A}.id 必须是字符串（链名，不是形状、不是句柄）`,
+            `合法值：${UPGRADE_LINES.join(" | ")}`);
+    }
+    if (!UPGRADE_LINES.includes(args.id)) {
+        return fail("bad_type", "id",
+            `${A}.id="${args.id}" 不是已知的升级链`,
+            `合法值：${UPGRADE_LINES.join(" | ")}。注意 processors 是复数、painting 不是 painter。`);
+    }
+
+    const opts = args.opts === undefined ? {} : args.opts;
+    if (!isObj(opts)) return fail("bad_type", "opts", `${A}.opts 必须是对象`);
+    for (const k of Object.keys(opts)) {
+        if (!["dry_run"].includes(k)) {
+            return fail("unknown_field", `opts.${k}`, `${A}.opts 不认识 '${k}'`);
+        }
+    }
+    if (opts.dry_run !== undefined && typeof opts.dry_run !== "boolean") {
+        return fail("bad_type", "opts.dry_run", "dry_run 必须是布尔");
+    }
+
+    return ok({ id: args.id, opts: { dry_run: opts.dry_run === true } });
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * 4. 宏注册表（规格）
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1638,6 +1701,60 @@ export const MACRO_SPECS = Object.freeze({
             "trash 必须正好落在喷口格；偏一格就完全收不到货（4 边全收，但不同格就是不同实体）。带子 outlet 的喷口格 = 带子格 + exit 单位向量。",
         ],
     },
+
+    upgrade: {
+        name: "upgrade",
+        summary: "花掉 hub 里已经存着的形状，买一档全局升级（采矿/传送/加工/涂装）。**不增删实体**，一次生效于全图。",
+        /* 为什么这个宏必须存在（它和其他七个不是一回事）
+         *
+         * 另外七个宏都在改**拓扑**：多一点带子、少一台机器。而玩家真正的效率提升
+         * 从来不只是「再多接一条线」—— 是**同样的线跑得更快**。游戏里那是四条
+         * 升级链（belt / miner / processors / painting），每条最高 ×2，
+         * 靠 hub 里存着的形状去买。
+         *
+         * 实测（2026-11-13，level 9 现场）：`miner` 和 `painting` 两档**当时就买得起**
+         * —— hub 里存着 RuRuRuRu×15583、Cu------×34332、RbRb----×7219，而所需分别是
+         * 740+800 和 600。白送的 ×1.5 采矿速率与涂装解锁，躺在那里没人拿。
+         *
+         * 而 agent 侧当时是**写死买不了**的：`prompt.mjs` 里 `canBuyUpgrade = false`，
+         * 注释写着「等 `upgrade` 宏真的接进 loop 的执行面，这里再打开」。
+         * 于是 `assess.mjs` 算出的 `buy-upgrade` 建议被整条丢弃，模型连
+         * 「有件事你现在就能做」都不知道，只能继续铺带子。
+         *
+         * 桥和 mod 那边**早就完整支持**了（`upgrades(params)`：列档位 / 购买 / dry_run，
+         * 带 before·after·spent 对账），缺的只是 agent 这一侧的一个入口。 */
+        whenToUse: [
+            "**hub 里存着的形状已经够买下一档升级**：`CAPACITY` 段说某条线 `ready now`，或诊断里出现 `UPGRADE_AVAILABLE` —— 买它零占格、全图生效，比再接一条线便宜得多。",
+            "**瓶颈是「机器吃不下供给」而不是「供给不够」**：`CAPACITY` 说 `bottleneck: processors`，买 processors 档比再放一台机器更快。",
+        ],
+        params: [
+            {
+                name: "id", type: "string", required: true,
+                description: "升级链名，字符串字面量。合法值 ∈ {belt | miner | processors | painting}。"
+                    + "这四个是游戏的四条链，不是形状名；写错会在宏层被拒（不会拿你的库存乱花）。",
+            },
+            { name: "opts.dry_run", type: "boolean", required: false, description: "只报告会扣什么、不真买。默认 false。" },
+        ],
+        preconditions: [
+            "id ∈ {belt, miner, processors, painting}；否则 bad_type，**不会**回退到任何默认链。",
+            "该链未满级（maxed）—— 满级时返回 bought:false, reason:\"already-maxed\"，不是错误。",
+            "hub 里的库存够付下一档。不够 → game_rejected 并列出还差什么（不是宏层拒绝：这是游戏状态，会随生产变化）。",
+        ],
+        whenNotToUse: [
+            "**买不起时不要反复试**：`can_buy:false` 是当前库存的事实，同一个 tick 里重问不会变。先去看 `CAPACITY` 说该增产什么。",
+            "**不要用它绕开建造**：升级只让已有的线变快，一条断掉的线升到满级照样不产货。诊断里有 `blocker` 时先修拓扑。",
+            "**不要猜 id**：四条链是 belt/miner/processors/painting，不是 `speed` / `mining` / `painter`。写错整单拒绝。",
+        ],
+        returns: "MacroResult + {id, bought:boolean, spent:[{shape,amount}], before:{level,multiplier,maxed,can_buy}, after:{...}, upgrades:{line:{level,multiplier,maxed,can_buy,next}}}"
+            + "（`before`/`after` 让调用方对账，不必再发一次 obs 猜「到底买成功没有」）",
+        lowerOps: ["obs（读 hub.stored_shapes 判断买不买得起）", "upgrade{id}（mod 的顶层 RPC，不是 act/tx）"],
+        sideEffects: ["扣掉 hub 库存里的一批形状", "该链的全局倍率提高一档（影响所有同类实体，不只是新放的）"],
+        invariants: [
+            "**不产生任何 place/delete op** —— 升级不改世界拓扑，只改全局倍率。",
+            "扣掉的形状与 `spent` 逐项相等（mod 侧用 `tryUnlockUpgrade` 的返回值，不是自己算）。",
+            "失败时库存零变动（`dry_run` 与「买不起」都不写）。",
+        ],
+    },
 });
 
 /** 宏名列表（稳定顺序，供 LLM 层与文档共用） */
@@ -1794,6 +1911,7 @@ export const MACRO_VALIDATORS = Object.freeze({
     extend_line: validateExtendLineArgs,
     replace_run: validateReplaceRunArgs,
     trash_unused: validateTrashUnusedArgs,
+    upgrade: validateUpgradeArgs,
 });
 
 /**
@@ -2538,7 +2656,7 @@ if (isMain) {
     t("lint：connect 带 x/y 报红", !lintNoBareCoords("connect", { from: { uid: 1 }, to: { uid: 2 }, x: 3 }).ok);
     t("lint：合法调用为绿", lintNoBareCoords("connect", { from: { uid: 1 }, to: { uid: 2 } }).ok);
     t("lint：remove_run 的 cells 是契约点名，放行", lintNoBareCoords("remove_run", { cells: [[0, 0]] }).ok);
-    t("宏名齐全", MACRO_NAMES.length === 7);
+    t("宏名齐全", MACRO_NAMES.length === 8);   // upgrade 于 2026-11-13 加入
     t("insert_machine `{cell}` 形态归一", (() => {
         const r = V(validateInsertMachineArgs, { at: { cell: [4, -13] }, facing: "top", machine: "cutter" });
         return r.ok && r.value.at.kind === "any-cell" && r.value.at.cell[0] === 4;

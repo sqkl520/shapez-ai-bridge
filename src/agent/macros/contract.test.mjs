@@ -381,7 +381,7 @@ t("硬伤 3：真实返回值里所有 warning 都过 validateMacroResult（闭�
 
 t("每个宏的校验器都挂在 MACRO_VALIDATORS 上，且与 MACRO_SPECS 一一对应", () => {
     eq(Object.keys(MACRO_VALIDATORS).sort(), [...MACRO_NAMES].sort());
-    eq(MACRO_NAMES.length, 7);
+    eq(MACRO_NAMES.length, 8);   // upgrade 于 2026-11-13 加入
 });
 
 t("每个校验器都拒绝未知参数（含裸坐标键），且错误码是 unknown_field", () => {
@@ -558,6 +558,15 @@ const WHEN_NOT_TO_USE_ANCHORS = Object.freeze({
         ["接 hub", ["port_already_bound", "endpoint_not_a_port"]],
         ["缓冲/合流", ["occupied"]],
         ["端口已经接了东西", ["port_already_bound"]],
+    ],
+    /* upgrade 的三条禁令各有**真实**的拒绝路径，不是修辞：
+     *   · 买不起 ⇒ 宏返回 game_rejected（库存是游戏状态，同一 tick 重试无意义）
+     *   · 想靠升级绕开建造 ⇒ 那条断线照样不产货，失败在别处先发生（out_of_scope）
+     *   · 拼错链名 ⇒ 校验器 bad_type（四条链是闭集，不猜） */
+    upgrade: [
+        ["买不起时不要反复试", ["game_rejected"]],
+        ["不要用它绕开建造", ["out_of_scope"]],
+        ["不要猜 id", ["bad_type"]],
     ],
 });
 
