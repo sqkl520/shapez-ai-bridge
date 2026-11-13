@@ -1098,3 +1098,40 @@ console.log("\n── 12b. dry-run 不许真买升级 ──");
     eq(res.reason, "DRY_RUN", "reason = DRY_RUN");
     cleanup(dir);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 12c. upgrade 的参数错误必须走**正常的 plan 拒绝路径**
+ *
+ * 真机（2026-11-13，产线跑到 537/600 时）：模型写
+ *   `upgrade {machine: {$ref:"C2"}}`
+ * —— 它以为升级是**针对某台机器**的（合理的误解：「提升 painter 的吞吐」
+ * 听起来就是升级那台机器）。
+ *
+ * 而 `upgrade` 在 `buildTxPlan` **之前**执行（它不产生 op，走顶层 RPC），
+ * 所以它从未经过 `validateMacroCall`。参数错误于是只在 `upgradeLine` 内部爆掉，
+ * 而那里的失败只记进 `upgradeResults`，**从来没当作 plan 拒绝报给模型**。
+ *
+ * 结果：整轮 `outcome=error reason=INTERNAL`，模型连
+ * 「允许的参数：id, opts」这句 hint 都没看到 —— 而宏早就写好了那句话。
+ * ══════════════════════════════════════════════════════════════════════════ */
+console.log("\n── 12c. upgrade 参数错误要报给模型 ──");
+{
+    const dir = tmpRoot();
+    const g = l4Game();
+    const PLAN_BAD = JSON.stringify({
+        say: "upgrade the painter",
+        calls: [{ macro: "upgrade", args: { machine: { $ref: "C2" } }, why: "painter is the bottleneck" }],
+    });
+    const res = await runLoop({
+        reader: g.reader(), goal: "RuRu----",
+        llmClient: new ScriptedClient([PLAN_BAD]),
+        mode: "mock", runDir: dir, game: g,
+    });
+    eq(res.outcome, "halt", `★ 参数错误不该让整轮变成 error（实得 ${res.outcome} / ${res.reason}）`);
+    const prow = transcriptOf(res).find(r => r.kind === "plan");
+    ok(prow && prow.data.ok === false, "必须写一条 plan 行记下拒绝");
+    eq(prow.data.rejected.code, "LLM_ARGS", "拒绝码必须是 LLM_ARGS");
+    ok(/id/.test(prow.data.rejected.hint || ""),
+        `hint 必须告诉它该写什么参数：${prow.data.rejected.hint}`);
+    cleanup(dir);
+}

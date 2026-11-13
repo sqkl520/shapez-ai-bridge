@@ -3674,8 +3674,70 @@ export async function runLoop(opts = {}) {
                 const upCalls = parsed.plan.calls.filter(c => c && c.macro === "upgrade");
                 const txCalls = parsed.plan.calls.filter(c => c && c.macro !== "upgrade");
                 const upgradeResults = [];
+                /* 参数校验失败 ⇒ 不再走下面的 upgrade-only 分支（那会把
+                   `lastPlanSummary` 覆盖成 `upgrade_failed`，把真实的拒绝码弄丢）。 */
+                let upgradeArgsRejected = false;
                 for (const uc of upCalls) {
                     let ur = null;
+                    /* ★ 参数必须先过契约校验 —— 升级绕过了 buildTxPlan ★
+                     *
+                     * 真机实测（2026-11-13，产线跑到 537/600 时）：模型写
+                     *   `upgrade {machine: {$ref:"C2"}}`
+                     * —— 它以为升级是**针对某台机器**的（合理的误解：
+                     * 「提升 painter 的吞吐」听起来就是升级那台机器）。
+                     *
+                     * 而 `upgrade` 在 `buildTxPlan` **之前**执行（它不产生 op，
+                     * 走顶层 RPC），所以它从未经过 `validateMacroCall`。
+                     * 参数错误于是只在 `upgradeLine` 内部爆掉，而那里的失败
+                     * 只记进 `upgradeResults`，**从来没有当作 plan 拒绝报给模型**。
+                     *
+                     * 结果：整轮 `outcome=error reason=INTERNAL`，模型连
+                     * 「允许的参数：id, opts」这句 hint 都没看到 ——
+                     * 而那句话是宏早就写好的。
+                     *
+                     * 这里补上前置校验：失败就按正常的 plan 拒绝路径走，
+                     * 让 hint 进 LAST ROUND，模型下一轮就知道该写什么。 */
+                    const vc = validateMacroCall("upgrade", uc.args || {});
+                    if (!vc.ok) {
+                        const d = mkDiag("LLM_ARGS", {
+                            layer: "plan", stage: "macro_args",
+                            expected: "upgrade 的参数在契约里",
+                            observed: `${vc.error.code}: ${vc.error.message}`,
+                            hint: vc.error.hint || "允许的参数：id, opts",
+                            evidence: { macro: "upgrade", args: Object.keys(uc.args || {}) },
+                            candidates: ["upgrade"],
+                        });
+                        tr.write("plan", roundNo, {
+                            ok: false, rejected: d, stage: "macro_args",
+                            calls: parsed.plan.calls.map(c => c.macro),
+                            tx_plan: null, ops: 0,
+                        });
+                        st.diagnoses = [d];
+                        st.lastMacros = parsed.plan.calls.map(c => c.macro);
+                        st.lastExecutedMacros = [];
+                        st.lastPlanSummary = {
+                            round: roundNo, calls: st.lastMacros.slice(),
+                            verify: { checks: [], codes: ["LLM_ARGS"] },
+                            decision: "plan_rejected",
+                            failures: [{ macro: "upgrade", code: vc.error.code, hint: vc.error.hint || null }],
+                        };
+                        /* ★ 设标记后 `break`，并让外层知道这一轮已经处理完 ★
+                         *
+                         * `break` 只是跳出内层 LLM 重试环。回到外层的 `if (!planned)`
+                         * 分支时，那条分支会读 `st.lastPlanSummary` 决定 outcome。
+                         *
+                         * ⚠️ 这里踩过一个坑：`innerDecided = true` 时外层会 `break`
+                         * 出整个 run，而 `outcome`/`reason` 还停在**初始化值**
+                         * （`error` / `INTERNAL`）—— 真机那次就是这么变成
+                         * `outcome=error reason=INTERNAL` 的，模型什么都没看到。
+                         *
+                         * 所以现在外层那条分支会从 `lastPlanSummary` 里取真实的
+                         * decision 和 codes 来定 outcome。这里只要保证两者的形状对得上：
+                         * `decision: "plan_rejected"` + `verify.codes: [真实码]`。 */
+                        upgradeArgsRejected = true;
+                        innerDecided = true;
+                        break;
+                    }
                     /* ★ `dryRun` 必须在这里拦，不能等到 tx 阶段 ★
                      *
                      * 红队实测（2026-11-13）：`--dry-run` 模式下模型提议
@@ -3713,7 +3775,7 @@ export async function runLoop(opts = {}) {
                        那本来就是「这一轮规划了什么、落盘了什么」的归属地。 */
                 }
                 /* 只有升级、没有别的调用 ⇒ 不进 tx 流水线，直接把结果记成本轮。 */
-                if (txCalls.length === 0 && upCalls.length > 0) {
+                if (!upgradeArgsRejected && txCalls.length === 0 && upCalls.length > 0) {
                     const anyOk = upgradeResults.some(u => u && u.ok === true);
                     const bought = upgradeResults.filter(u => u && u.bought === true);
                     st.lastMacros = ["upgrade"];
@@ -3887,8 +3949,45 @@ export async function runLoop(opts = {}) {
                 break;
             }
             if (!planned) {
-                /* 内层既没给计划也没定 outcome ⇒ 计划被拒（零写入）。回外层：换动作/换世界。 */
+                /* 内层既没给计划也没定 outcome ⇒ 计划被拒（零写入）。回外层：换动作/换世界。
+                 *
+                 * ⚠️ `innerDecided === true` 表示「内层已经定了结果」（halt / error /
+                 * 只有升级的轮次 / 参数校验失败），此时 `break` 是对的 —— 但
+                 * `reason` 不能就这么留在初始化值 `"INTERNAL"` 上。
+                 *
+                 * 真机实测（2026-11-13，产线 537/600）：模型写 `upgrade {machine:…}`
+                 * 参数错，新加的前置校验正确地写了 plan 行（code=LLM_ARGS）、
+                 * 也把 hint 记进了 lastPlanSummary —— 然后整轮还是
+                 * `outcome=error reason=INTERNAL`。因为这里 `break` 之后
+                 * 没人再给 `reason` 赋值。
+                 *
+                 * 把「内层已经明确说过的结果」如实搬出来：
+                 *   · lastPlanSummary.decision 说明这一轮是怎么结束的；
+                 *   · verify.codes 里有具体诊断码时用那个。
+                 * 两者都没有才退回 INTERNAL。 */
                 if (!innerDecided) continue;
+                /* ⚠️ 不能用 `outcome !== "error"` 当「这一轮还没定结果」的判据 ——
+                 * `outcome` 的**初始值**就是 `"error"`（第 2639 行 `let outcome = "error"`）。
+                 * 从没赋过值时它也是 "error"，于是这个守卫会把该修的情况全跳过。
+                 * 真正的判据是 `lastErr === null`：只有 catch 到异常时它才非 null。 */
+                if (lastErr === null) {
+                    const dec = st.lastPlanSummary && st.lastPlanSummary.decision;
+                    const codes = (st.lastPlanSummary && st.lastPlanSummary.verify
+                        && Array.isArray(st.lastPlanSummary.verify.codes))
+                        ? st.lastPlanSummary.verify.codes : [];
+                    if (dec === "plan_rejected" && codes.length) {
+                        /* 计划被拒 ≠ 这次 run 出错了。它是一个**正常的诊断结果**：
+                           模型写错了、宏拒了、下一轮会看到 hint。记 halt 并带上真实码。 */
+                        outcome = "halt";
+                        reason = codes[0];
+                    } else if (dec === "upgrade_failed") {
+                        /* 升级失败不是 run 出错 —— 它是「这一轮模型提了个做不到的事」。
+                           归到 `NO_WORLD_CHANGE`（闭集里已有，语义是「这一轮世界没动」），
+                           而不是新造一个码破闭集。 */
+                        outcome = "halt";
+                        reason = "NO_WORLD_CHANGE";
+                    }
+                }
                 break;
             }
             /* ★ 记进本次 run 的任务日志（见 st.runLog 的注释）★
