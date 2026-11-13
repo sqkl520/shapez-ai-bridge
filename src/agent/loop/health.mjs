@@ -155,6 +155,17 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
     const produced = obj(production && production.produced_total);
     const stored = obj(o && o.hub && o.hub.stored_shapes);
 
+    /* 升级档位。**必须进健康快照**，否则「买了升级」在净效果里不存在。
+     *
+     * 真机实测（r-20261113180132-31ba，2026-11-13）：模型买了 painting T1，
+     * 实机上 hub 的 painting 从 L0 变成 L1、库存扣了 RbRb----×600 ——
+     * 而 `classifyNetEffect` 判的是 `inert`（「世界没有任何变化」）。
+     *
+     * 那不是措辞问题：升级**不产生任何 op**，所以所有拓扑指标一个都不动，
+     * 而三次真实的、不可逆的库存支出被判成「什么都没做」。
+     * 下一次排查会看到「模型说要买升级 → 世界没变」，与事实正好相反。 */
+    const upLevels = obj(o && o.goal && o.goal.upgrade_levels);
+
     return {
         /* 形态指纹（区分 churn / inert 的唯一依据） */
         shape: shapeHash(o),
@@ -167,6 +178,9 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
         progress: num(req.progress),
         stored_goal: (gs && stored && num(stored[gs]) !== null) ? stored[gs] : null,
         produced_goal: (gs && produced && num(produced[gs]) !== null) ? produced[gs] : null,
+
+        /* 升级档位（★ 见上面那段：没有它，买升级会被判成「什么都没做」） */
+        upgrade_levels: upLevels ? { ...upLevels } : null,
 
         /* 规模 */
         entities: ents.length,
@@ -217,6 +231,52 @@ export function healthDelta(before, after) {
         if (k === "by_type" || k === "dead_by_source" || k === "produced" || k === "stored") continue;
         const b = before[k], a = after[k];
         if (b === a) continue;
+
+        /* ★ 对象型指标要逐键 diff，不能走 num() ★
+         *
+         * 已有的两个例子：`upgrade_levels`（`{belt:1, miner:2,…}`）与
+         * `redundancy`（`{belts, safe, breaking, safe_pct, …}`）。
+         * `num()` 对它们返回 null，于是掉进「不可比」分支，最后被 `formatDelta`
+         * 印成 `[object Object]→[object Object]` —— 真机日志里两样都是这么写的
+         * （r-20261113180536-5070 的 miner L1→L2、r-20261113180840-edab 的 redundancy）。
+         *
+         * 统一展开成可读串。判方向的规则按指标自己的语义定：
+         *   · upgrade_levels —— 涨了就是好事（`delta` = 涨了的链数）；
+         *   · redundancy     —— **没有方向**（它说「有几格带子删了不伤下游」；
+         *     安全可删变多既可能是清理机会变多，也可能是废线变多，不构成好坏）。
+         *     所以它的 `sign` 是 `0`，只在 `all:true` 时打印。 */
+        if (b && a && typeof b === "object" && typeof a === "object" && !Array.isArray(b)) {
+            const diff = [];
+            for (const key of new Set([...Object.keys(b), ...Object.keys(a)])) {
+                const x = b[key], y = a[key];
+                if (x === y) continue;
+                if (x === null || y === null || typeof x === "object" || typeof y === "object") continue;
+                diff.push(`${key} ${x}→${y}`);
+            }
+            if (!diff.length) continue;
+            const isUpgrade = k === "upgrade_levels";
+            /* `delta` 的取舍：
+             *   · upgrade_levels —— 涨了几条链（有方向，positive）；
+             *   · 其它对象指标 —— 给 0 而不是 null。
+             *     给 null 会被 `formatDelta` 的 keep 判据当成「不可比」而**总是打印**，
+             *     但 redundancy 的变化（`safe 0→2`）绝大多数轮次都在抖动，
+             *     不属于「每轮都该出现在时间线上」的那种事实。
+             *     给 0 ⇒ `sign: "0"` ⇒ 只在 `all:true` 时出现，需要时也查得到。 */
+            const upGained = isUpgrade ? diff.filter(s => {
+                const m = /(\d+)→(\d+)$/.exec(s);
+                return m && +m[2] > +m[1];
+            }).length : 0;
+            out.push({
+                metric: k,
+                before: diff.join(","), after: "",
+                delta: upGained,
+                dir: "changed",
+                sign: isUpgrade ? "+" : "0",
+                detail: diff,
+            });
+            continue;
+        }
+
         const nb = num(b), na = num(a);
         if (nb === null || na === null) {
             /* 一边读不到 ⇒ 不可比。**照样报出来**，标 `changed` + `sign:null`：
@@ -316,6 +376,32 @@ export function classifyNetEffect(before, after, delta = null) {
         return { kind: "cleanup", why, delta: d };
     }
 
+    /* ── 升级：一种**不体现在拓扑上**的正向变化 ──
+     *
+     * 升级不增删实体（它改全局倍率、扣 hub 库存），所以上面所有指标一个都不会动。
+     * 不加这一条，一次真实的升级会被判成 `inert`（「世界没有任何变化」）——
+     * 实测就是这么发生的（r-20261113180132-31ba：买了 painting T1，
+     * `classifyNetEffect` 说 inert，而 hub 里实实在在少了 600 个形状）。
+     *
+     * 为什么是 `positive` 而不是新加一种 kind：
+     *   · 已有的 `positive` 语义就是「这一轮让局面变好了」，升级正是；
+     *   · 加第六种 kind 会让所有 `switch` 的老调用方（timeline / 汇总 / 测试）
+     *     都要改，而它们没理由关心「好」是来自交付还是来自升级。
+     * 但 `why` 里必须说清是升级 —— 否则读日志的人会以为目标交付涨了。 */
+    const upBefore = (before && before.upgrade_levels) || null;
+    const upAfter = (after && after.upgrade_levels) || null;
+    if (upBefore && upAfter) {
+        const gained = [];
+        for (const line of new Set([...Object.keys(upBefore), ...Object.keys(upAfter)])) {
+            const a = upBefore[line] || 0, b = upAfter[line] || 0;
+            if (b > a) gained.push(`${line} L${a}→L${b}`);
+        }
+        if (gained.length) {
+            why.push(`买了升级（${gained.join("、")}）—— 不改拓扑，但倍率全图生效`);
+            return { kind: "positive", why, delta: d };
+        }
+    }
+
     /* 尺寸与连通性都没动 ⇒ 看形态指纹。变了就是「原地打转」（拆了重建一个等价的、
        把死带子挪个位置、改了一条带子的朝向……），没变才是真的什么都没做。
        这一条必须用指纹而不是 delta：上面所有指标对「A→B 与 B→A」都不敏感。 */
@@ -394,6 +480,10 @@ export function formatDelta(delta, { all = false } = {}) {
     if (!rows.length) return "无变化";
     return rows.map(x => {
         const mark = x.sign === "+" ? "▲" : (x.sign === "-" ? "▼" : "·");
+        /* 对象型指标（`upgrade_levels`）自带可读展开，别走数字那套 */
+        if (Array.isArray(x.detail) && x.detail.length) {
+            return `${mark} ${x.metric} ${x.detail.join(",")}`;
+        }
         if (x.delta === null) return `${mark} ${x.metric} ${x.before}→${x.after}`;
         const shown = Number.isInteger(x.delta) ? x.delta : Math.round(x.delta * 1000) / 1000;
         return `${mark} ${x.metric} ${x.before}→${x.after}(${shown > 0 ? "+" : ""}${shown})`;

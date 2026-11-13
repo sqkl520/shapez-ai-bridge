@@ -3584,6 +3584,32 @@ export async function runLoop(opts = {}) {
                         ok: false, rejected: p.diagnosis, stage: p.stage,
                         calls: parsed.plan.calls.map(c => c.macro),
                         tx_plan: null, ops: 0,
+                        /* ★ 已经执行过的升级必须单独记下来 ★
+                         *
+                         * 升级在 `buildTxPlan` **之前**就落盘了（它不走 tx），
+                         * 所以 tx 侧被拒**不会**撤销它。真机实测
+                         * （r-20261113180132-31ba，2026-11-13）：
+                         * 模型同一批提了 `upgrade{id:"painting"}` + 一条 `connect`，
+                         * connect 因 `bad_type` 被拒 ⇒ 整批判 `NO_REVERSIBLE_CALL`，
+                         * plan 行只写了 `calls:[upgrade, connect]` + 拒绝原因。
+                         * 而实机上 painting **已经从 L0 变成 L1** —— 库存扣了、倍率涨了。
+                         *
+                         * 后果不是「数据不好看」：run 结束时的净效果判成 `inert`
+                         * （「世界没有任何变化」），因为没有任何 op 落地。于是
+                         * **一次真实的、不可逆的库存支出，在 transcript 里不存在**。
+                         * 下次排查会看到「模型说要买升级 → 计划被拒 → 什么都没发生」，
+                         * 与事实正好相反。
+                         *
+                         * 这是本项目最高频缺陷（「算出来 ≠ 送到」）的镜像：
+                         * 这次是「做了 ≠ 记下」。 */
+                        ...(upgradeResults.length ? {
+                            upgrades: upgradeResults.map(u => ({
+                                ok: !!(u && u.ok), id: (u && u.id) || null,
+                                bought: !!(u && u.bought),
+                                spent: (u && u.spent) || [],
+                                reason: (u && u.reason) || (u && u.error && u.error.message) || null,
+                            })),
+                        } : {}),
                     });
                     st.diagnoses = [p.diagnosis];
                     st.lastMacros = parsed.plan.calls.map(c => c.macro);

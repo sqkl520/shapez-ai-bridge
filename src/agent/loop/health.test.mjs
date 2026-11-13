@@ -220,6 +220,79 @@ test("H17b 存量从 null 变成数**不许**判 positive（不可比就是不�
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * 3b. 升级：唯一不体现在拓扑上的正向变化
+ *
+ * 这一组是**真机暴露出来的**，不是推演出来的。
+ * 2026-11-13 r-20261113180132-31ba：模型买了 painting T1，实机上 hub 的
+ * painting 从 L0 变成 L1、库存扣了 RbRb----×600，而 `classifyNetEffect`
+ * 判的是 `inert` ——「世界没有任何变化」。
+ *
+ * 原因：升级**不产生任何 op**，所有拓扑指标一个都不动，而那次支出是真实的、
+ * 不可逆的。判成 inert 会让排查方向整个反过来。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("H17c 买了升级 ⇒ positive（不是 inert），且 why 说清是升级而不是交付涨了", () => {
+    const before = clone(L5);
+    before.goal = { ...(before.goal || {}), upgrade_levels: { belt: 1, miner: 1, processors: 0, painting: 0 } };
+    const after = clone(L5);
+    after.goal = { ...(after.goal || {}), upgrade_levels: { belt: 1, miner: 1, processors: 0, painting: 1 } };
+
+    const b = worldHealth({ obs: before, items: L5_ITEMS });
+    const a = worldHealth({ obs: after, items: L5_ITEMS });
+    assert.ok(b.upgrade_levels && b.upgrade_levels.painting === 0, "健康快照里必须有升级档位");
+    const e = classifyNetEffect(b, a, healthDelta(b, a));
+    assert.equal(e.kind, "positive", `判定=${e.kind} why=${e.why.join("/")}`);
+    assert.ok(e.why.some(w => /升级/.test(w)), `why 必须说清是升级：${e.why.join("/")}`);
+    assert.ok(e.why.some(w => /painting L0→L1/.test(w)), `why 要点名具体涨了哪条链：${e.why.join("/")}`);
+});
+
+test("H17d 升级档位没动 ⇒ 该 inert 还是 inert（这条不能误伤）", () => {
+    /* 加 H17c 的风险是「只要有 upgrade_levels 字段就判 positive」——
+       那会让什么都没做的轮次全都变绿。这里钉住反面。 */
+    const before = clone(L5);
+    before.goal = { ...(before.goal || {}), upgrade_levels: { belt: 1, painting: 1 } };
+    const after = clone(L5);
+    after.goal = { ...(after.goal || {}), upgrade_levels: { belt: 1, painting: 1 } };
+    const b = worldHealth({ obs: before, items: L5_ITEMS });
+    const a = worldHealth({ obs: after, items: L5_ITEMS });
+    const e = classifyNetEffect(b, a, healthDelta(b, a));
+    assert.equal(e.kind, "inert", `档位没变就不该判 positive，实得 ${e.kind} why=${e.why.join("/")}`);
+});
+
+test("H17f 时间线上升级要印成 `miner 1→2`，不许是 [object Object]", () => {
+    /* 真机日志（r-20261113180536-5070）原来印的是
+     *   `upgrade_levels [object Object]→[object Object]`
+     * —— 而那一刻 miner 真的从 L1 买到了 L2。一次不可逆的库存支出，
+     * 人读日志时完全看不出来。
+     *
+     * 根因：`upgrade_levels` 是对象，`num()` 对它返回 null ⇒ 掉进
+     * 「不可比」分支 ⇒ 两边都被字符串化成 `[object Object]`。
+     * 现在对象型指标走逐键 diff，展开成可读串。 */
+    const before = { upgrade_levels: { belt: 1, miner: 1, processors: 0, painting: 0 }, entities: 148, shape: "a" };
+    const after = { upgrade_levels: { belt: 1, miner: 2, processors: 0, painting: 1 }, entities: 155, shape: "b" };
+    const line = formatDelta(healthDelta(before, after));
+    assert.ok(!/object Object/.test(line), `不许出现 [object Object]：${line}`);
+    assert.match(line, /miner 1→2/, `要点名涨了哪条链：${line}`);
+    assert.match(line, /painting 0→1/, `两条链都涨了就要都列：${line}`);
+    assert.match(line, /entities 148→155/, `别的项不许被这个改动弄丢：${line}`);
+});
+
+test("H17e 升级与拓扑同时改善 ⇒ 仍然只说升级（不重复计数成正向）", () => {
+    /* 判定顺序：先看交付/存量，再看升级，最后才是拓扑。
+       升级排在拓扑之前是有意的：「买升级」是**主动决策**，
+       而拓扑改善可能只是副作用。混在一起说会让模型把升级的功劳归给带子。 */
+    const before = clone(L5);
+    before.goal = { ...(before.goal || {}), upgrade_levels: { painting: 0 } };
+    const after = clone(L5);
+    after.goal = { ...(after.goal || {}), upgrade_levels: { painting: 1 } };
+    const b = worldHealth({ obs: before, items: L5_ITEMS });
+    const a = worldHealth({ obs: after, items: L5_ITEMS });
+    const e = classifyNetEffect(b, a, healthDelta(b, a));
+    assert.equal(e.kind, "positive");
+    assert.ok(e.why.some(w => /升级/.test(w)));
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
  * 4. delta 的形状与浮点
  * ══════════════════════════════════════════════════════════════════════════ */
 
