@@ -1853,15 +1853,27 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
              * r-20261112175721-48ca：三轮全撞在 target_already_fed 上）。
              *
              * 端口选择器只在「槽是空的、需要新建一条线进来」时才有意义。 */
-            const slotHint = deadEnds.length
-                ? ""
-                : (badSlots.length === 1)
-                    ? `缺料的是第 ${badSlots[0]} 个 color 槽 —— connect 时写 `
-                        + `\`to:{..., port:{role:"color", index:${badSlots[0]}}}\`（该槽槽格 ${JSON.stringify(feeds[badSlots[0]].slot)}）。`
-                    : badSlots.length
-                        ? `两个 color 槽都没有已知来料（索引 0 与 1）；connect 时用 `
-                            + `\`port:{role:"color", index:0}\` 或 \`{role:"color", index:1}\` 指定是哪一个。`
-                        : "";
+            /* ★ 拆成两句：`indexHint` 恒说，`slotHint` 只在非断头时说 ★
+             *
+             * 原实现是 `deadEnds.length ? "" : …` —— 断头时整段关掉。
+             * 关掉的理由是对的：断头时那个槽上已经压着线，`connect` 到它必然
+             * `target_already_fed`（M13 守的就是这个）。
+             *
+             * 但整段关掉把**另一件事**也关掉了：mixer 两个槽的 role **都叫 color**，
+             * 所以任何涉及 mixer 的 `connect` 都必须给 `index`，否则 `ambiguous_port`。
+             * 真机 r-20261113190330-c440：模型在修槽 0，写 `port:"color"` ⇒ ambiguous_port；
+             * 宏算好的 `{role,index}` 要等**下一轮**的 LAST ROUND 才送到它眼前，
+             * 这一轮它只能猜 —— 而它猜错了。
+             *
+             * 所以拆开：
+             *   · `indexHint` —— 恒说（「两个槽同名，要写 index」）。这是**语法**信息，
+             *     与「该不该接到这个槽」无关，断头时同样成立；
+             *   · `slotHint` —— 只在**非断头**时说（「就接到这个槽」）。断头时这会引它撞车。 */
+            const indexHint = badSlots.length
+                ? `mixer 两个 color 槽同名 —— connect 时写 \`port:{role:"color", index:0}\` 或 \`index:1\` 指槽`
+                    + `（**只写 \`port:"color"\` 会报 ambiguous_port**）。`
+                : "";
+            const slotHint = deadEnds.length ? "" : indexHint;
             out.push({
                 code: "MIXER_UNFED",
                 layer: "L4",
@@ -2295,6 +2307,19 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             return parts.length ? parts.join("；") + "。" : "";
                         })()
                         + `${slotHint}`
+                        /* ⚠️ `indexHint` **不在断头时出现**。
+                         *
+                         * 我本来想在断头时也留一句「语法上要写 index」，理由是
+                         * 「模型可能在接别的地方」。但 M13 直接证伪了：
+                         * hint 里同时有「**不要** connect 到 {port:{role:"color",index:0}}」
+                         * 和「connect 时写 port:{role:"color",index:0}」——
+                         * 读起来就是自相矛盾，哪怕两句话说的是不同的事。
+                         *
+                         * 这个仓库的实测反复证明：两条矛盾的建议，模型只挑**更具体**的那条。
+                         * 而断头时那个更具体的动作是「接到槽上」= 必然 target_already_fed。
+                         *
+                         * 所以断头时宁可不提 index。真正需要 index 的场合（槽是空的、
+                         * 要新建一条线进来）`slotHint` 已经覆盖了。 */
                         /* `facingFix` 的正文已经提到 hint **最前面**（`facingLead`）——
                            那里才是唯一能进前 180 字的位置。这里不再重复：
                            同一句话说两遍只会把别的内容挤出去。 */
