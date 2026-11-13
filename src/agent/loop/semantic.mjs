@@ -1662,12 +1662,43 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
              * 这个分支要靠 obs 被裁剪或 mod 侧 hub 丢失才会触发 —— 但误判的
              * 代价是模型被引向错误动作，宁可保守。 */
             const reachUsable = reach && typeof reach.size === "number" && reach.size > 0;
+            /* ★ 但「不在 reach 里」≠「这条线是死的」★
+             *
+             * `hubReachable` 的语义是「货能不能**原样**流到 hub」。而一条喂料线
+             * 进了一台机器之后，货就**变成别的东西**了 —— 它不在那个集合里，
+             * 但它完全正常。
+             *
+             * 真机实测（2026-11-13，产线跑起来之后）：119 条带子里 111 条
+             * 不在 `reach` 里，而那 111 条**全都在工作** —— 红矿→mixer、
+             * mixer→painter 两条长链，货一直在流，hub 的交付稳定在涨（193/600）。
+             *
+             * 如果照旧判它们「到不了 hub」，模型每轮都会被告知「别在死线上花功夫」，
+             * 而那条线正是它刚修好的。实测那一轮模型的第一反应就是
+             * 「B87 出口无接收方，去桥接它到画家」—— 而画家早就接好了。
+             *
+             * 所以补一条：**下游链上有机器 ⇒ 不算死线**。
+             * 那台机器会把货变成别的形状，那时「到不到得了 hub」由它的输出决定，
+             * 不归这条带子管。 */
+            const downstreamHitsMachine = (startUid) => {
+                let cur = idx.byUid.get(startUid);
+                const seen = new Set();
+                for (let i = 0; i < 200 && cur; i++) {
+                    if (seen.has(cur.uid)) return false;        // 成环，没机器
+                    seen.add(cur.uid);
+                    const ex = exitCellOf(cur);
+                    const n = ex ? at(idx, ex) : null;
+                    if (!n) return false;                       // 空地
+                    if (!isBelt(n)) return true;                // 机器 / hub / trash
+                    cur = n;
+                }
+                return false;
+            };
             const feedLineDead = feeds.map((f) => {
                 if (!reachUsable) return false;
                 if (!f || !Number.isInteger(f.beltUid)) return false;
-                /* 只看 feed 带本身在不在可达集里 —— `reach` 是「能到 hub 的实体」，
-                   由 hubReachable 反向 BFS 得出，语义正好。 */
-                return !reach.has(f.beltUid);
+                if (reach.has(f.beltUid)) return false;         // 货能原样到 hub ⇒ 显然不死
+                /* 下游有机器 ⇒ 货会被加工，这条路正常 */
+                return !downstreamHitsMachine(f.beltUid);
             });
             /* ★ `describeSlot` 必须把**上游断在哪**说出来 ★
              *
