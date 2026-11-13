@@ -1370,11 +1370,23 @@ test("M21 ★ 大量带子到不了 hub ⇒ DEAD_LINES（一条，给总数和�
     const w = JSON.parse(fs.readFileSync(f, "utf8"));
     const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
     const dl = byCode(ds, "DEAD_LINES")[0];
-    assert.ok(dl, "那份快照有 43% 的带子到不了 hub，必须报 DEAD_LINES。codes=" + ds.map(d => d.code).join(","));
+    assert.ok(dl, "那份快照有成规模的纯垃圾，必须报 DEAD_LINES。codes=" + ds.map(d => d.code).join(","));
     assert.equal(dl.severity, "warn", "地形问题不该挤掉 blocker");
-    assert.ok(dl.evidence.dead_count > 100,
-        "必须给出废线总数，实得 " + dl.evidence.dead_count);
-    assert.ok(dl.evidence.ratio > 0.3, "必须给出占比，实得 " + dl.evidence.ratio);
+    /* ⚠️ 2026-11-13 判据改了：不再数「所有到不了 hub 的带子」，只数**纯垃圾**。
+     *
+     * 现场实测（level 9，清理前）：66 条死带子里 **62 条的源头是一台机器**
+     * （59 条来自 mixer），那是正在施工的主干，删了等于把进度倒回去 ——
+     * 正是用户强调的「不是删有用的流水线！！」。
+     *
+     * 旧判据把它们一起数进去，于是「占比 31%」达不到 35% 的阈值，
+     * 诊断整条不出现，**连真垃圾也没人管** —— 这就是「残留物什么时候修」
+     * 一直没有答案的原因。
+     *
+     * 新判据下这份夹具的纯垃圾是 21 条（636 带子里的 3.3%）。
+     * 断言跟着改，但**守的东西更强了**：它现在要求「数的是纯垃圾」。 */
+    assert.ok(dl.evidence.dead_count >= 12,
+        `必须给出纯垃圾总数（≥12），实得 ${dl.evidence.dead_count}`);
+    assert.ok(dl.evidence.ratio >= 0.02, "必须给出占比，实得 " + dl.evidence.ratio);
     assert.ok(Array.isArray(dl.evidence.patches) && dl.evidence.patches.length > 0,
         "必须给出最密的几片（remove_run 一片一片拆的对象）");
     /* 判据必须能被满足：提示要指向 remove_run */

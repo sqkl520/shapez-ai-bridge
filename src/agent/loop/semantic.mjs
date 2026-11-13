@@ -2549,9 +2549,64 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
     if (!o.truncated) {
         const beltsAll = idx.ent.filter(b => isBelt(b));
         if (beltsAll.length >= 40) {                 // 小世界里不值得报
-            const dead = beltsAll.filter(b => !reach.has(b.uid));
+            /* ★ 判据必须是「纯垃圾」，不是「所有到不了 hub 的带子」 ★
+             *
+             * 用户三次问「残留物什么时候修」。而这条诊断一直没触发，因为
+             * 它数的是**所有**死带子 —— 实测 level 9 那 66 条死带子里：
+             *
+             *   · 62 条的**源头是一台机器**（59 条来自 mixer，3 条来自矿机）；
+             *   · 只有 1 条两端都不接机器。
+             *
+             * 那 62 条是**正在施工的主干**（mixer 的紫还没接完、矿机刚放上去），
+             * 删掉等于把进度倒回去 —— 正是用户强调的「不是删有用的流水线！！」。
+             * 而它们占 31%，恰好低于 0.35 的阈值，于是诊断整条不出现，
+             * 连那 35 条真垃圾也没人管。
+             *
+             * 现在只数**两端都不接机器的**：正向走到空/空、反向走到空/空。
+             * 那个集合才是「拆了不会有任何损失」的。 */
+            const isMachine = e => e && !isBelt(e) && e.type !== "hub" && e.type !== "underground_belt";
+            const junk = [];
+            for (const b of beltsAll) {
+                if (reach.has(b.uid)) continue;                 // 到得了 hub ⇒ 肯定有用
+                /* 反向：它的上游链上有没有机器 */
+                let cur = b, backMachine = false;
+                const backSeen = new Set();
+                for (let i = 0; i < 80 && cur; i++) {
+                    if (backSeen.has(cur.uid)) break;
+                    backSeen.add(cur.uid);
+                    const en = entryCellOf(cur);
+                    const tIn = en ? at(idx, en) : null;
+                    if (tIn && isMachine(tIn)) { backMachine = true; break; }
+                    cur = (tIn && isBelt(tIn)) ? tIn : null;
+                }
+                if (backMachine) continue;                      // 源头是机器 ⇒ 施工中，不动
+                /* 正向：它的下游链上有没有机器 */
+                let fwd = b, fwdMachine = false;
+                const fwdSeen = new Set();
+                for (let i = 0; i < 80 && fwd; i++) {
+                    if (fwdSeen.has(fwd.uid)) break;
+                    fwdSeen.add(fwd.uid);
+                    const ex = exitCellOf(fwd);
+                    const tOut = ex ? at(idx, ex) : null;
+                    if (tOut && isMachine(tOut)) { fwdMachine = true; break; }
+                    fwd = (tOut && isBelt(tOut)) ? tOut : null;
+                }
+                if (fwdMachine) continue;                       // 通向机器 ⇒ 施工中，不动
+                junk.push(b);
+            }
+            const dead = junk;
             const ratio = dead.length / beltsAll.length;
-            if (dead.length >= 30 && ratio >= 0.35) {
+            /* 阈值的依据（两份实机快照的实测值）：
+             *
+             *   level9-mixer-obs（688 实体脏世界）: 636 带子 / 21 条纯垃圾 = 3.3%
+             *   level 9 现场（清理前）:              210 带子 / 147 条纯垃圾 = 70%
+             *   清理后的世界:                          70 带子 /  0 条纯垃圾
+             *
+             * 12 条 + 2.5% 两条都满足第一份；第三份是 0，静默。
+             * 门槛不能只看比例：小世界里 2 条垃圾也是 3%，不值得占一个诊断名额；
+             * 也不能只看绝对数：大世界里 20 条纯垃圾混在 5000 条里无关痛痒。
+             * 两条同时满足才算「成规模」。 */
+            if (dead.length >= 12 && ratio >= 0.02) {
                 /* 按 12×12 聚类，给出最密的几片 —— 那片就是一轮 remove_run 的对象 */
                 const buckets = new Map();
                 for (const b of dead) {
