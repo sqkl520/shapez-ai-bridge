@@ -623,7 +623,7 @@ export function candidatesFor(diagnoses) {
      * 两轮都受 6 个上限约束，所以「最多 6 张卡」这条不变。 */
     const cap = 6;
     const usable = diagnoses
-        .map(d => ({ d, list: (RETRIEVAL_TABLE[d.code] || []).slice().sort((a, b) => b.weight - a.weight) }))
+        .map((d, i) => ({ d, i, list: (RETRIEVAL_TABLE[d.code] || []).slice().sort((a, b) => b.weight - a.weight) }))
         .filter(x => x.list.length > 0);
 
     /* ① 每条诊断先拿它**权重最高的、还没出现过的**候选
@@ -636,8 +636,67 @@ export function candidatesFor(diagnoses) {
      * `DEAD_LINES` / `BELT_HANDOFF_REJECTED` 的第二选择，之前一直在列表里。
      *
      * 也就是说「保证每条诊断都有代表」这个目标没达成，反而让另一个宏消失了。
-     * 现在按「这条诊断的第一个**新**候选」取 —— 已有代表就顺延到它的次选。 */
-    for (const { list } of usable) {
+     * 现在按「这条诊断的第一个**新**候选」取 —— 已有代表就顺延到它的次选。
+     *
+     * ★ 但「每条一个」只在诊断数 ≤ cap 时才真的公平 ★
+     *
+     * 红队实测（2026-11-13）：7 条诊断时，前 6 条各拿一个，第 7 条
+     * （`UPGRADE_AVAILABLE`，跨层 RANK 8，与 `DEAD_LINES`/`ORPHAN_MACHINES` 同分
+     * 但按码名字母序排在最后）**第一轮就出局**。8 条时同样。
+     *
+     * 也就是说上一轮的修复只是把饥饿的阈值从「前 2 条」推到「前 6 条」——
+     * 真实 level 9 世界（废线 + 孤儿机并存）正好有 7 条诊断，`upgrade` 仍然看不见。
+     * 那正是「AI 不会用更高级的方法提高效率」这条抱怨没被真正解决的原因。
+     *
+     * 所以第一轮不能只是「按顺序每条一个」—— 那在诊断数 > cap 时等于
+     * 「最后几条永远没代表」。真实 level 9 有 7 条诊断，`UPGRADE_AVAILABLE`
+     * 排最后（RANK 8 但码名字母序靠后），永远出局。
+     *
+     * 修法：**给稀有候选优先权**。
+     *
+     * 观察：`connect` / `replace_run` / `insert_machine` 这类通用宏会出现在
+     * 很多条诊断的候选表里；而 `upgrade` 只出现在 `UPGRADE_AVAILABLE` 一条里，
+     * `remove_machine` 只出现在 `ORPHAN_MACHINES`。后者才是「只有这一个入口」的
+     * 稀缺资源 —— 挤掉它就等于让那条诊断**完全无解**。
+     *
+     * 所以第一轮按「该宏在整张 RETRIEVAL_TABLE 里出现的次数」升序：
+     * 专有宏先占位，通用宏留到第二轮（它们后面还有机会）。
+     *
+     * 这不是启发式调参，是「候选名额应该优先给不可替代的东西」这条原则的落地：
+     * 挤掉 `connect` 的代价是「少一个选择」，挤掉 `upgrade` 的代价是
+     * 「那条诊断这一轮没有任何可执行动作」。 */
+    const rarity = (() => {
+        const freq = new Map();
+        for (const list of Object.values(RETRIEVAL_TABLE)) {
+            for (const c of list) freq.set(c.macro, (freq.get(c.macro) || 0) + 1);
+        }
+        return m => freq.get(m) || 0;
+    })();
+    const byPriority = [...usable].sort((a, b) => {
+        /* 首要键必须是**诊断的紧迫度**，不是宏的稀有度。
+         *
+         * 只按稀有度排会把 `upgrade` 顶到第一位（它只出现在一条诊断里），
+         * 于是「该买升级了」压过「这台 mixer 永远跑不起来」。那是错的方向：
+         * 买升级只让已有产线变快，产线断了它救不了。
+         *
+         * `diagnoses` 已经按跨层 RANK 排好，所以 `a.i` 就是紧迫度序。
+         * 但**直接按 `a.i` 排又会回到原问题**（第 7 条永远出局）。
+         *
+         * 折中：先按「紧迫度分档」，同档内按稀有度。
+         * 分档用 `a.i < cap` —— 也就是说「本来就在前 6 名之内」的诊断
+         * 占前面的档，第 7 名及之后进后档；后档里稀有的先上，
+         * 这样 `upgrade` 能在「前 6 条都已代表」之后抢到剩下的名额，
+         * 而不会压过任何一条急的诊断。 */
+        const ta = a.i < cap ? 0 : 1;
+        const tb = b.i < cap ? 0 : 1;
+        if (ta !== tb) return ta - tb;
+        const ra = a.list.length ? rarity(a.list[0].macro) : 0;
+        const rb = b.list.length ? rarity(b.list[0].macro) : 0;
+        if (ra !== rb) return ra - rb;      // 同档内：越稀有越先拿名额
+        return a.i - b.i;                    // 同稀有度按诊断原序（= 跨层 RANK）
+    });
+
+    for (const { list } of byPriority) {
         const m = (list.find(c => !seen.includes(c.macro)) || {}).macro;
         if (m && !seen.includes(m)) seen.push(m);
         if (seen.length >= cap) return seen;
