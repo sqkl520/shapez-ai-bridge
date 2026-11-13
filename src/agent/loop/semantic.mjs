@@ -1677,9 +1677,12 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                          *
                          * 所以：有断头 ⇒ 断头排第一；没断头 ⇒ 矿信息排第一。 */
                         const lead = deadEnds.length
-                            ? `配方要 ${[...new Set(wantColors)].join(" + ")}，`
-                                + `**槽 ${deadEnds.map(x => x.i).join(" / ")} 的线源头是断的**`
-                                + `（${deadEnds.map(x => `槽 ${x.i} ${x.u.len} 格`).join("，")}）。`
+                            ? `配方 ${[...new Set(wantColors)].join("+")}，`
+                                + `**槽 ${deadEnds.map(x => x.i).join("/")} 的线源头断了**`
+                                /* 上游 0 格 = feed 格自己就是流头，说「0 格」没意义 */
+                                + (deadEnds.every(x => x.u.len === 0)
+                                    ? ""
+                                    : `（${deadEnds.map(x => `${x.u.len} 格`).join("/")}）`)
                             : "";
                         const oreLead = `配方要 ${[...new Set(wantColors)].join(" + ")}。**颜料从哪来**：${oreHint.text}。`;
                         /* ★ 有断头时**不**插矿信息 ★
@@ -1805,18 +1808,31 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                         return null;
                                     })();
                                     const pairHint = tooClose
-                                        ? `；**${tooClose.join(" 和 ")} 挨得太近，别拿它们各接一个槽** —— `
-                                            + `路线会重叠，游戏落盘时把朝向改成直线，槽就废了。`
-                                            + `挑两台隔得远的（从不同方向进 mixer）`
+                                        ? `**${tooClose.join(" 和 ")} 挨得太近，别拿它们各接一个槽**`
+                                            + `（路线重叠，游戏落盘会把朝向改直线，槽就废）。`
+                                            + `挑两台从**不同方向**进 mixer 的`
                                         : "";
-                                    parts.push(`**别修那条 ${t.u.len} 格的长线** —— `
-                                        + `矿机（${near3}）离 mixer 只 ${nearDist} 格，就地抢槽。`
-                                        + `**只要 rebind，别加 allow_replace**（会重铺带子、改坏朝向）；`
-                                        + `**两个槽分开接、用不同矿机**（只接一个的话，路径会穿过另一个槽的喂料格）：`
-                                        + `\`connect {from:{ref:"${ready[0].miner_handles[0]}"}, to:{ref:"${mh}", `
-                                        + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\`，`
-                                        + `另一个槽同样写法、换 index 和一台**不同的**矿机`
-                                        + pairHint);
+                                    /* ★ 顺序 = 「错了就白干」的那条最先 ★
+                                     *
+                                     * prompt 只渲染前 180 字。真机 r-20261113091844-77ce：
+                                     * 「别选挨太近的」写在末尾，模型没看到，于是照旧选 M2+M3，
+                                     * 落盘 `L1-landing: want 3, got 1`（朝向被游戏按邻居改掉）。
+                                     *
+                                     * 前面那几句（别修长线 / 别加 allow_replace）说错也只是
+                                     * 多花几格；「选错矿机对」会让整步白干 —— 它必须在前。 */
+                                    parts.push(pairHint
+                                        ? pairHint + `。然后把两台**各接一个槽**：`
+                                            + `\`connect {from:{ref:"<矿机A>"}, to:{ref:"${mh}", port:{role:"color", index:0}}, opts:{rebind:true}}\``
+                                            + ` + 同样写法换 index:1 和矿机B。`
+                                            + `**只要 rebind，别加 allow_replace**（会重铺带子、改坏朝向）；`
+                                            + `别去修那条 ${t.u.len} 格的长线（矿机就在 ${nearDist} 格外）`
+                                        : `**别修那条 ${t.u.len} 格的长线** —— `
+                                            + `矿机（${near3}）离 mixer 只 ${nearDist} 格，就地抢槽。`
+                                            + `**只要 rebind，别加 allow_replace**（会重铺带子、改坏朝向）；`
+                                            + `**两个槽分开接、用不同矿机**（只接一个的话，路径会穿过另一个槽的喂料格）：`
+                                            + `\`connect {from:{ref:"${ready[0].miner_handles[0]}"}, to:{ref:"${mh}", `
+                                            + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\`，`
+                                            + `另一个槽同样写法、换 index 和一台**不同的**矿机`);
                                 } else {
                                     const headH = d0 && d0.headHandle ? d0.headHandle : null;
                                     const who = ready.length
