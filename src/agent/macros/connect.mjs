@@ -290,11 +290,50 @@ export function portsOf(rec, spec) {
 
     /* 角色名真值 = op-templates（contract.PORT_FORMS 的枚举就是它：primary/secondary/
        left/right/lower/upper/shape/color/out）。spec 的 acceptor/ejector 只有 tile+dir+filter，
-       没有 role，所以按 (tile,dir) 去模板里配；配不上才退化到合成的 out/in<i>。 */
+       没有 role，所以按 (tile,dir) 去模板里配；配不上才退化到合成的 out/in<i>。
+     *
+     * ★ 坐标系：模板是 **r=0 的快照**，传进来的 tile/dir 是 **旋转之后**的 ★
+     *
+     * `portSlots()` 已经把 spec 的 tile/dir 按 r 旋转过了（它必须这么做，否则端口格子
+     * 会落到世界里的错误位置）。而 `templateByBuildingVariant()` 读的是 op-templates
+     * 里的静态表 —— 那是 (r=0, rv=0) 的快照，**不含旋转**。
+     *
+     * 这里原来直接拿旋转后的 (tile, dir) 去比 r=0 的 cell/dir，于是 **r≠0 的机器一律配不上**
+     * ⇒ role 退化成合成的 `in0` / `in1`。
+     *
+     * 真机后果（2026-11-13，level 9，目标 CpCpCpCp）：
+     *   · painter 是 r=270 ⇒ 它的两个输入 role 变成 `in0` / `in1`；
+     *   · 而 `slotsOf()`（提示词里的 MACHINES 段用的就是它）给出的是 `shape` / `color`；
+     *   · 模型照提示词写 `connect {to:{ref:"C2", port:"color"}}`，宏回
+     *     `to.port="color" 不是合法角色`，candidates 是 `[{role:"in0"},{role:"in1"}]`。
+     *
+     * 也就是说：**提示词告诉它一个名字，宏只认另一个名字**。而这条边（mixer 的紫色
+     * → painter 的 color 口）正是整个 CpCpCpCp 配方的最后一环 —— 它接不上，
+     * 目标就永远是 0/600。三轮真机全部卡在这里。
+     *
+     * 修法：把传进来的 (tile, dir) **逆旋转回 r=0 坐标系**再配。
+     * 不改成「拿模板旋转后去配」是因为旋转方向的真值在 belt-rules（`rotateLocal`），
+     * 而这里只是**查表用的坐标换算**，逆着算更直接，也不需要再引一份方向规则。 */
     const tpl = templateByBuildingVariant(rec.type, rec.variant);
+    const rSelf = (((rec.r || 0) % 360) + 360) % 360;
+    const INV_DIR = { top: "bottom", bottom: "top", left: "right", right: "left" };
+    /** 世界（已旋转）坐标 → r=0 的局部坐标。是 `portSlots` 那条旋转的逆运算。 */
+    const unrotCell = ([dx, dy]) => {
+        switch (rSelf) {
+            case 90: return [dy, -dx];
+            case 180: return [-dx, -dy];
+            case 270: return [-dy, dx];
+            default: return [dx, dy];
+        }
+    };
     const roleAt = (list, tile, dir) => {
         if (!Array.isArray(list)) return null;
-        const hit = list.find(s => s && Array.isArray(s.cell) && s.cell[0] === tile[0] && s.cell[1] === tile[1] && s.dir === dir);
+        const [ux, uy] = unrotCell(tile);
+        /* 方向：`rotateLocal(d, r)` 是 r=0 → 世界的正向，所以逆变换就是 `rotateLocal(d, -r)`。
+           用同一个真值函数（belt-rules 的 `rotateLocal`）而不是在这里再写一套 90 度表 ——
+           这个仓库已经因为「两份方向真值」出过事故。 */
+        const ud = rSelf === 0 ? dir : rotateLocal(dir, -rSelf);
+        const hit = list.find(s => s && Array.isArray(s.cell) && s.cell[0] === ux && s.cell[1] === uy && s.dir === ud);
         return hit && typeof hit.role === "string" ? hit.role : null;
     };
 

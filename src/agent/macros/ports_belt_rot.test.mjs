@@ -47,6 +47,7 @@ import assert from "node:assert/strict";
 
 import { portsOf, connect, buildWorld } from "./connect.mjs";
 import { ORDER, OPP, DIRV, beltEntry, beltExit } from "../../ai/belt-rules.mjs";
+import { slotsOf } from "../verify_runtime.mjs";
 
 const SPEC = JSON.parse(
     (await import("node:fs")).readFileSync(
@@ -257,4 +258,85 @@ test("自证：12 组合的 eject.vel 与 accept.vel 都落在 ORDER 的四个�
             assert.ok(ORDER.includes(pp.accept[0].face));
         }
     }
+});
+
+/* ═════════════ 机器的 role 必须与 slotsOf 一致（旋转机器曾整批退化成 in0/in1）═════════════
+ *
+ * ## 这个 bug 是什么（实测，2026-11-13，level 9 目标 CpCpCpCp）
+ *
+ * `roleAt()` 拿 **(tile, dir)** 去 op-templates 里配角色名，但：
+ *   · 传进来的 `tile`/`dir` 来自 `portSlots()`，**已经按 r 旋转过**；
+ *   · op-templates 的 `cell`/`dir` 是 **(r=0, rv=0) 的静态快照**，不含旋转。
+ *
+ * r≠0 时两边坐标系不同 ⇒ 一律配不上 ⇒ role 退化成合成的 `in0` / `in1`。
+ *
+ * 真机后果：painter 是 r=270，`portsOf` 报 `in0`/`in1`，而提示词里的 MACHINES 段
+ * （走 `slotsOf`）写的是 `shape`/`color`。模型照提示词写 `port:"color"` ⇒
+ * `to.port="color" 不是合法角色`。那条边正是 CpCpCpCp 配方的最后一环，
+ * 接不上 ⇒ 目标永远 0/600。三轮真机全部卡死在这里。
+ *
+ * ## 为什么之前 632 个测试全绿
+ *
+ * 已有的端口测试只覆盖**带子**（`beltRec`），机器的 role 一条都没断言过。
+ * 所以这一组测试的判据不是「portsOf 能跑」，而是 **portsOf 的 role 集合
+ * 必须等于 slotsOf 的 role 集合** —— 后者是提示词的真值来源，两者分叉就是
+ * 「提示词说一个名字、宏只认另一个」。
+ */
+
+/** 造一台机器的 rec（形状与 buildWorld 产出的一致）。 */
+function machineRec(type, x, y, r, variant = "default") {
+    return { uid: 900, type, x, y, r, rv: 0, variant };
+}
+
+test("★ painter r=270 的输入 role 是 shape/color，不是 in0/in1", () => {
+    const p = portsOf(machineRec("painter", -9, 1, 270), SPEC);
+    const roles = p.accept.map(a => a.role).sort();
+    assert.deepEqual(roles, ["color", "shape"],
+        `painter 的输入 role 应是 [color, shape]，实得 ${JSON.stringify(roles)}`);
+});
+
+test("★ mixer r=0 的两个 color 槽 role 都是 color（index 0/1 区分）", () => {
+    const p = portsOf(machineRec("mixer", 34, -13, 0), SPEC);
+    const roles = p.accept.map(a => a.role);
+    assert.deepEqual(roles, ["color", "color"], `实得 ${JSON.stringify(roles)}`);
+    assert.deepEqual(p.accept.map(a => a.index), [0, 1], "同名角色必须靠 index 消歧");
+});
+
+test("★ 对每种支持旋转的机器 × 四个朝向：portsOf 的 role 恒等于 slotsOf 的 role", () => {
+    /* 这是**结构性**断言，不是针对 painter 的特例。
+       只要两者用同一套真值，任何朝向都不该分叉；反过来，谁改坏了都会在这里红。 */
+    const cases = [
+        ["painter", "default"], ["painter", "mirrored"],
+        ["mixer", "default"], ["cutter", "default"],
+        ["stacker", "default"], ["rotater", "default"],
+    ];
+    for (const [type, variant] of cases) {
+        for (const r of [0, 90, 180, 270]) {
+            const rec = machineRec(type, 0, 0, r, variant);
+            const ports = portsOf(rec, SPEC);
+            const sl = slotsOf(type, variant, 0, 0, r, 0);
+            if (!sl) continue;
+            const fromPorts = ports.accept.map(a => a.role).sort();
+            const fromSlots = sl.inputs.map(s => s.role).sort();
+            assert.deepEqual(fromPorts, fromSlots,
+                `${type}/${variant} r=${r} 的输入 role 分叉：portsOf=${JSON.stringify(fromPorts)} slotsOf=${JSON.stringify(fromSlots)}`);
+            const ePorts = ports.eject.map(a => a.role).sort();
+            const eSlots = sl.outputs.map(s => s.role).sort();
+            assert.deepEqual(ePorts, eSlots,
+                `${type}/${variant} r=${r} 的输出 role 分叉：portsOf=${JSON.stringify(ePorts)} slotsOf=${JSON.stringify(eSlots)}`);
+        }
+    }
+});
+
+test("★ 端到端：模型照提示词写 `port:\"color\"` 必须能连通 mixer → painter", () => {
+    /* 复刻三轮真机上模型逐字写的那条调用。修复前它报
+       `to.port="color" 不是合法角色`，candidates 是 [{role:"in0"},{role:"in1"}]。 */
+    const ents = [
+        { uid: 1, type: "hub", x: 40, y: 40, r: 0, variant: "default" },
+        { uid: 2, type: "mixer", x: 0, y: 0, r: 0, variant: "default" },
+        { uid: 3, type: "painter", x: 10, y: 10, r: 270, variant: "default" },
+    ];
+    const r = connect({ from: { uid: 2 }, to: { uid: 3, port: "color" } }, { entities: ents });
+    assert.equal(r.ok, true,
+        `照提示词写 color 必须成功，实得 ${r.ok ? "ok" : r.error && r.error.code + ": " + r.error.message}`);
 });
