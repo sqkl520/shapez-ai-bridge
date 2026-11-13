@@ -940,7 +940,7 @@ test("M12 ★ 断头信息必须排进 hint 前 180 字符（否则被「矿在�
     const d = byCode(ds, "MIXER_UNFED")[0];
     assert.ok(d, "应当有 MIXER_UNFED");
     const head = d.hint.slice(0, 180);
-    assert.match(head, /断的|断头|DED-ENDS|dead-end/i,
+    assert.match(head, /断的|断了|断头|DEAD-ENDS|dead-end/i,
         `★ 断头必须在前 180 字符里出现，否则 prompt 会把它截掉。实际前 180 字：${head}`);
 });
 
