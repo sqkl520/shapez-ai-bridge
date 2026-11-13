@@ -1963,6 +1963,57 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                 .map((isDead, i) => (isDead ? i : -1))
                                 .filter(i => i >= 0);
                             if (!dead.length) return "";
+                            /* ★ 流头恰好在矿上 ⇒ 这是**一步就能做完**的正解，必须说 ★
+                             *
+                             * 真机现场（2026-11-13，level 9）：蓝矿在 (38,-12)，
+                             * 距 mixer 只有 **5 格**，而**那条断头链的流头正好就是这一格**。
+                             *
+                             * 也就是说：在 (38,-12) 放一台矿机，槽 1 立刻就有料了。
+                             * 全部信息诊断都有（`ore_reach[].at` 给了坐标、
+                             * `miners: 0` 说明那儿没机器、`upstream[].headHandle` 给了流头），
+                             * **但从来没有一句话把它们连起来说过**。
+                             *
+                             * 模型于是每轮都在「接到 B2 / 改朝向 / 铺一条 47 格的长线」
+                             * 之间打转 —— 而正解是「在 5 格外的矿上放一台矿机」。
+                             *
+                             * 判据：某个死线的流头格**就是**某个所需颜料的最近矿点。
+                             * 那就直接说「在那儿放矿机」，用 `$ore` 指矿（它不用坐标）。 */
+                            const headOnOre = (() => {
+                                for (const i of dead) {
+                                    const u = ups[i];
+                                    if (!u) continue;
+                                    /* ⚠️ 要比的是**流头之前那一格**，不是流头带子自己那格。
+                                     *
+                                     * `u.headCell` 是流头带子所在的格（例如 B48 @(38,-13)），
+                                     * 而「源头是空的」指的是它**入口格**（(38,-12)）上没有东西
+                                     * —— 那一格才是模型要补的位置，也是可能长着矿的那一格。
+                                     *
+                                     * 第一版直接拿 `u.headCell` 去和矿点坐标比，于是
+                                     * 明明 (38,-12) 有蓝矿、B48 的入口格也正是 (38,-12)，
+                                     * 却永远配不上（差一格）。 */
+                                    const headBelt = Number.isInteger(u.headUid)
+                                        ? idx.byUid.get(u.headUid) : null;
+                                    const holeCell = headBelt && isBelt(headBelt)
+                                        ? entryCellOf(headBelt)
+                                        : u.headCell;
+                                    if (!Array.isArray(holeCell)) continue;
+                                    const site = (oreHint.sites || []).find(s =>
+                                        Array.isArray(s.at) && s.at[0] === holeCell[0] && s.at[1] === holeCell[1]);
+                                    if (site && site.miners === 0) {
+                                        const pig = String(site.pigment).replace(/^color:/, "");
+                                        return { slot: i, pigment: pig, distance: site.distance };
+                                    }
+                                }
+                                return null;
+                            })();
+                            if (headOnOre) {
+                                return `配方 ${[...new Set(wantColors)].join("+")}，`
+                                    + `**槽 ${headOnOre.slot} 的线流头就在 ${headOnOre.pigment} 矿上`
+                                    + `（${headOnOre.distance} 格外）** —— `
+                                    + `就地放一台矿机即可：\`insert_machine {at:{"$ore":"${headOnOre.pigment}"}, `
+                                    + `facing:<朝 mixer 那一侧>, machine:"miner"}\`，`
+                                    + `不用铺新线（矿机输出直接进现有的链）。`;
+                            }
                             /* 长度预算：prompt 只渲染前 180 字符，而后面紧跟着
                                「接线的方向：起点是 `B15`」—— 那个句柄是这一轮唯一可执行的
                                抓手（M14 就是为它设的），**不能被这句挤出去**。
