@@ -244,7 +244,38 @@ function collectTopologyFacts(idx) {
         }
 
         const hit = at(idx, cell);
-        if (!hit) { deadEnds.push({ uid: e.uid, kind: isTunnel(e) ? "tunnel" : "belt", cell, dir: d }); continue; }
+        if (!hit) {
+            /* ★ 出口格是某台机器的**槽位本体** ⇒ 不是死端 ★
+             *
+             * `at()` 用的是 footprint 索引。而「槽位本体格」不总是落在 footprint 里 ——
+             * painter 就是这样：它在 (-9,1)（r=270），color 槽的 `slot` 是 (-9,0)，
+             * 而 (-9,0) 不在它的 footprint 范围内。于是 `at()` 返回 null，
+             * 一条**正确接好的**喂料带被判成 DEAD_END。
+             *
+             * 真机实测（2026-11-13，产线跑到 270/600 时）：B87 @(-10,0) 是
+             * mixer→painter 那条 59 格长链的最后一格，出口格正是 painter 的 color 槽本体。
+             * 产线在稳定交货，而诊断说它是死端。
+             *
+             * 模型连着两轮照做（「B87 出口无接收方，去桥接它到画家」）——
+             * 而画家早就接好了。它在修一条完全正常的线。
+             *
+             * 判据：扫这一格的四个邻居机器，看它是不是任何一台的槽位本体。 */
+            const isSlotBody = (() => {
+                for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+                    const m = at(idx, [cell[0] + dx, cell[1] + dy]);
+                    if (!m || isBelt(m) || isTunnel(m)) continue;
+                    let ms = null;
+                    try { ms = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m)); } catch { ms = null; }
+                    if (!ms) continue;
+                    const all = [...(ms.inputs || []), ...(ms.outputs || [])];
+                    if (all.some(sl => Array.isArray(sl.slot) && sl.slot[0] === cell[0] && sl.slot[1] === cell[1])) return true;
+                }
+                return false;
+            })();
+            if (isSlotBody) continue;                 // 货进机器了，正常终点
+            deadEnds.push({ uid: e.uid, kind: isTunnel(e) ? "tunnel" : "belt", cell, dir: d });
+            continue;
+        }
         const acc = accepts(idx, cell, d);
         if (acc.opaque) continue;                         // 未知建筑：不判（宁可漏报）
         if (!acc.ok) {
