@@ -277,10 +277,15 @@ test("H17f 时间线上升级要印成 `miner 1→2`，不许是 [object Object]
     assert.match(line, /entities 148→155/, `别的项不许被这个改动弄丢：${line}`);
 });
 
-test("H17e 升级与拓扑同时改善 ⇒ 仍然只说升级（不重复计数成正向）", () => {
-    /* 判定顺序：先看交付/存量，再看升级，最后才是拓扑。
-       升级排在拓扑之前是有意的：「买升级」是**主动决策**，
-       而拓扑改善可能只是副作用。混在一起说会让模型把升级的功劳归给带子。 */
+test("H17e 只升级、拓扑没动 ⇒ positive 且 why 只说升级", () => {
+    /* ⚠️ 2026-11-13 红队指出：这条测试原来的标题是
+     *   「升级与拓扑同时改善 ⇒ 仍然只说升级」
+     * 但夹具里 `before`/`after` 的 entities 完全相同 —— **拓扑根本没改善**。
+     * 也就是说它实际测的是「只升级」，而标题描述的行为从未被测过。
+     *
+     * 标题改成它真正测的东西。而「升级与拓扑同轮」那个真实行为，
+     * 由 H17g 用实测数据钉住（红队的结论是：那种情况落到 regressive /
+     * constructive，升级分支根本进不去 —— 这本身就是设计上的一个缺口）。 */
     const before = clone(L5);
     before.goal = { ...(before.goal || {}), upgrade_levels: { painting: 0 } };
     const after = clone(L5);
@@ -288,8 +293,42 @@ test("H17e 升级与拓扑同时改善 ⇒ 仍然只说升级（不重复计数�
     const b = worldHealth({ obs: before, items: L5_ITEMS });
     const a = worldHealth({ obs: after, items: L5_ITEMS });
     const e = classifyNetEffect(b, a, healthDelta(b, a));
-    assert.equal(e.kind, "positive");
-    assert.ok(e.why.some(w => /升级/.test(w)));
+    assert.equal(e.kind, "positive", `实得 ${e.kind}`);
+    assert.ok(e.why.some(w => /升级/.test(w)), `why 应点名升级：${e.why.join("/")}`);
+});
+
+test("H17g 升级与拓扑**同时**发生时，判定是什么（红队实测的行为）", () => {
+    /* 红队实测（2026-11-13）：
+     *   upgrade + 1 条带子（同轮）  ⇒ regressive  | 死带子 27→28
+     *   upgrade + 一台孤立机器       ⇒ constructive
+     *   只升级                        ⇒ positive
+     *
+     * 原因：`classifyNetEffect` 里升级分支排在 regressive / constructive
+     * **之后**。而升级总是和其他 op 同批发生（loop 先执行 upgrade 再走 tx），
+     * 所以真实的升级轮次几乎从不会落到升级分支。
+     *
+     * 这条测试**不判对错**，只是把这个行为钉住 —— 它是个已知缺口，
+     * 在补「升级是主动决策，应与副作用分开记账」之前，至少不许悄悄变化。 */
+    const before = clone(L5);
+    before.goal = { ...(before.goal || {}), upgrade_levels: { painting: 0 } };
+    const b = worldHealth({ obs: before, items: L5_ITEMS });
+
+    const after = clone(L5);
+    after.goal = { ...(after.goal || {}), upgrade_levels: { painting: 1 } };
+    /* 同一轮还多了台孤立机器 —— 这是 "constructive" 的触发条件 */
+    const nextUid = Math.max(...after.entities.map(e => e.uid || 0)) + 1;
+    after.entities.push({
+        uid: nextUid, type: "cutter", x: 90, y: 90, r: 0,
+        variant: "default", rotation_variant: 0, code: 12, layer: "regular",
+    });
+    const a = worldHealth({ obs: after, items: L5_ITEMS });
+    const e = classifyNetEffect(b, a, healthDelta(b, a));
+
+    /* 已知缺口：结构变了就把升级的功劳盖掉。钉住它，防止「以为改了其实是抖动」。 */
+    assert.ok(["constructive", "regressive"].includes(e.kind),
+        `同轮结构性变化会盖过升级 —— 当前实现应当落在 constructive/regressive，实得 ${e.kind}`);
+    assert.ok(!e.why.some(w => /升级/.test(w)),
+        `★ 已知缺口：升级的贡献在这条路径上不会被说出来。实得：${e.why.join("/")}`);
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
