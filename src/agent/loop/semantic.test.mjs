@@ -1318,3 +1318,46 @@ test("M20 ★ 蓝矿机喂一条链 ⇒ slot_values 必须是 color:blue（不�
         + " null 说明形状传播的结果没被读到（Set 被当成非数组）。实际：" + JSON.stringify(vals)
         + " observed=" + d.observed);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M21 —— 废线堆成山时必须报 DEAD_LINES
+ *
+ * 用户 2026-11-13 直接指着屏幕说「这么多废弃的路线都没有拆」。
+ * 那一刻的世界：646 条带子里 **403 条到不了 hub**（72%）。
+ *
+ * V-health 早就在数这个数（「死带子 480」），但它只是个**健康度指标** ——
+ * 判红之后既不回滚、也不产生任何可执行动作。这是「测出来了 ≠ 有人去修」。
+ *
+ * 判据：hubReachable 反推出来的集合就是「能到 hub 的实体」；
+ * 不在里面、且下游没有机器在吃的，就是纯废。
+ * ⚠️ 聚成**一条**诊断（给总数 + 最密三片），不逐条报 ——
+ *    403 条按每码 ≤3 的额度只会出 3 条，模型看不出规模。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("M21 ★ 大量带子到不了 hub ⇒ DEAD_LINES（一条，给总数和最密三片）", () => {
+    const f = path.join(SAVES, "level9-mixer-obs.json");
+    if (!fs.existsSync(f)) { console.log("  (skip) 缺 level9-mixer-obs.json 快照"); return; }
+    const w = JSON.parse(fs.readFileSync(f, "utf8"));
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const dl = byCode(ds, "DEAD_LINES")[0];
+    assert.ok(dl, "那份快照有 43% 的带子到不了 hub，必须报 DEAD_LINES。codes=" + ds.map(d => d.code).join(","));
+    assert.equal(dl.severity, "warn", "地形问题不该挤掉 blocker");
+    assert.ok(dl.evidence.dead_count > 100,
+        "必须给出废线总数，实得 " + dl.evidence.dead_count);
+    assert.ok(dl.evidence.ratio > 0.3, "必须给出占比，实得 " + dl.evidence.ratio);
+    assert.ok(Array.isArray(dl.evidence.patches) && dl.evidence.patches.length > 0,
+        "必须给出最密的几片（remove_run 一片一片拆的对象）");
+    /* 判据必须能被满足：提示要指向 remove_run */
+    assert.ok(dl.candidates.includes("remove_run"), "首要修法是 remove_run");
+    assert.match(dl.hint, /remove_run/, "hint 要给出可执行的拆法");
+});
+
+test("M22 对照：干净的世界不报 DEAD_LINES（不许把正常世界判成垃圾堆）", () => {
+    /* 清理之后 159/159 条带子都能到 hub —— 这时必须闭嘴，
+       否则模型会去拆自己的正解。 */
+    const f = path.join(SAVES, "level9-clean-obs.json");
+    if (!fs.existsSync(f)) { console.log("  (skip) 缺 level9-clean-obs.json 快照"); return; }
+    const w = JSON.parse(fs.readFileSync(f, "utf8"));
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    assert.equal(byCode(ds, "DEAD_LINES").length, 0,
+        "干净世界不该报 DEAD_LINES。codes=" + ds.map(d => d.code).join(","));
+});

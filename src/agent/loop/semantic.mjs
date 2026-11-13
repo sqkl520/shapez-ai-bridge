@@ -1042,6 +1042,15 @@ const CODE_RANK = Object.freeze({
     MIXER_UNFED: 2,
     PROCESSOR_REQUIRED: 3,
     SHAPE_UNKNOWN: 4,
+    /* ★ `DEAD_LINES` 排在**最后** ★
+     *
+     * 它是「地形问题」，不是「配方问题」。世界里有 400 条废线时，
+     * 光靠调 hint 让 connect 绕开是没用的 —— 但也不能让它把
+     * 「mixer 没料」这种直接阻塞挤掉。
+     *
+     * 排在最后 = 只在没有更急的事时提醒；而 `severity: "warn"` 保证它
+     * 不会像 blocker 那样占掉 prompt 的第一位。 */
+    DEAD_LINES: 9,
 });
 
 /**
@@ -2313,6 +2322,72 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             },
             candidates: [],
         });
+    }
+
+    /* ────────────────────────────────────────────────────────────────────
+     * ③b DEAD_LINES —— 到不了 hub 的带子堆成了山
+     *
+     * 用户直接指着屏幕说「这么多废弃的路线都没有拆」。
+     * 实测那一刻的世界：646 条带子里 **403 条到不了 hub**（72%）。
+     *
+     * `V-health` 早就在数这个数（「死带子 480」），但它只是个**健康度指标** ——
+     * 判红之后既不回滚、也不产生任何可执行动作。模型每轮看着它跳红，
+     * 下一轮继续铺新线。这就是「测出来了 ≠ 有人去修」。
+     *
+     * 判据：`hubReachable` 反推出来的集合就是「能到 hub 的实体」。
+     * 不在里面、且下游也没有任何机器在吃它的带子，就是纯废。
+     *
+     * ⚠️ **不报单条**。403 条按每码 ≤3 的额度只会出 3 条，
+     * 模型根本看不出规模。所以聚成**一条**诊断，给出总数 + 最密的三片区域。
+     * 修复动作是 `remove_run` 一片一片拆，不是逐条删。
+     * ──────────────────────────────────────────────────────────────────── */
+    if (!o.truncated) {
+        const beltsAll = idx.ent.filter(b => isBelt(b));
+        if (beltsAll.length >= 40) {                 // 小世界里不值得报
+            const dead = beltsAll.filter(b => !reach.has(b.uid));
+            const ratio = dead.length / beltsAll.length;
+            if (dead.length >= 30 && ratio >= 0.35) {
+                /* 按 12×12 聚类，给出最密的几片 —— 那片就是一轮 remove_run 的对象 */
+                const buckets = new Map();
+                for (const b of dead) {
+                    const k = `${Math.floor(b.x / 12) * 12},${Math.floor(b.y / 12) * 12}`;
+                    const rec = buckets.get(k) || { n: 0, handles: [] };
+                    rec.n++;
+                    if (rec.handles.length < 3) {
+                        const hh = handleOf(handles, b.uid);
+                        if (hh) rec.handles.push(hh);
+                    }
+                    buckets.set(k, rec);
+                }
+                const hot = [...buckets.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 3);
+                const hotHandles = hot.flatMap(([, v]) => v.handles);
+                out.push({
+                    code: "DEAD_LINES",
+                    layer: "L3",
+                    severity: "warn",
+                    subject: subjectOf(handles, null, "belt"),
+                    expected: "every belt on the map feeds something that eventually reaches the hub",
+                    observed: `${dead.length} of ${beltsAll.length} belts (${Math.round(ratio * 100)}%) `
+                        + `do not reach the hub — leftover scaffolding from earlier attempts, `
+                        + `densest patches: ${hot.map(([k, v]) => `${k} has ${v.n}`).join("; ")}`,
+                    evidence: {
+                        handles: hotHandles,
+                        uids: dead.slice(0, 8).map(b => b.uid),
+                        dead_count: dead.length,
+                        belt_count: beltsAll.length,
+                        ratio: Number(ratio.toFixed(2)),
+                        patches: hot.map(([k, v]) => ({ at: k, belts: v.n, handles: v.handles })),
+                    },
+                    /* 拆废线的首要修法就是 remove_run；trash_unused 也能顺手清 */
+                    candidates: ["remove_run", "trash_unused"],
+                    hint: `${dead.length} 条带子到不了 hub（占全部 ${Math.round(ratio * 100)}%）—— `
+                        + `这是早年反复试错留下的脚手架，不拆它会让后来每一次 connect 都撞到它。`
+                        + `用 \`remove_run {region:$path_of([${hotHandles.slice(0, 4).join(",")}])}\` `
+                        + `一片一片拆（最密的三片：${hot.map(([k, v]) => `${k} 有 ${v.n} 条`).join("，")}）。`
+                        + `**拆之前先别铺新线** —— 空间腾出来之后，正解往往只要几格。`,
+                });
+            }
+        }
     }
 
     /* ── 排序（确定性）：severity → 码优先级 → subject 句柄 → uid ── */
