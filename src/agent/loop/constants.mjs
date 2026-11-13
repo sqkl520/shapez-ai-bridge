@@ -116,6 +116,10 @@ export const DIAG_CODES = Object.freeze({
     WRONG_SHAPE_AT_HUB: "L4: a stream reaching the hub carries a shape that is one rotation away from the goal (in orbit(goal) but not goal); the fix is upstream, not at the inlet",
     DISCARDED_INTERMEDIATE: "L4: a multi-output machine sends a useful half (in orbit(goal) or the recipe closure) into trash/nowhere while the other half is delivered and is not the goal",
     SHAPE_UNKNOWN: "L4: shape propagation stopped (no-resources/tunnel/unknown-op/unverified-rotation/cycle/unknown-color); info only, never a blocker and never fed to the LLM as an action",
+    /* 2026-11-13：用户直接指着屏幕说「这么多废弃的路线都没有拆」。
+       世界从 646 条带子涨到 704 个实体，其中 **403 条到不了 hub**（72%）。
+       这是 `V-health` 早就在数、但**没有任何诊断把它变成可执行动作**的那类问题。 */
+    DEAD_LINES: "L3: belts that no longer reach the hub (and whose downstream has no use for them) have accumulated; they are leftover scaffolding from earlier attempts and should be torn down",
 
     NO_PRODUCTION: "L4: nothing produced",
     WRONG_SHAPE_PRODUCED: "L4: production exists but under a different shape key",
@@ -472,6 +476,12 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["connect", 8],
         ["replace_run", 5],
         ["insert_machine", 4],
+    ]),
+    /* 废线堆成山时，**先拆再铺** —— 不拆的话下一次 connect 还是撞在它们身上。
+       `trash_unused` 作为次要选项：它能顺手把没有下游的碎片收掉。 */
+    DEAD_LINES: cand([
+        ["remove_run", 8],
+        ["trash_unused", 6],
     ]),
     WRONG_SHAPE_AT_HUB: cand([
         ["replace_run", 8],
