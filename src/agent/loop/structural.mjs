@@ -248,24 +248,38 @@ function collectTopologyFacts(idx) {
         const acc = accepts(idx, cell, d);
         if (acc.opaque) continue;                         // 未知建筑：不判（宁可漏报）
         if (!acc.ok) {
-            /* ★ `intoDir` 必须是**接收方唯一接受的那个来向**，不是本带自己的方向 ★
+            /* ★ 正确朝向 = 让**本带的出口格正好落在接收方那一格**的方向 ★
              *
-             * 原实现写的是 `intoDir: d` —— 也就是 `dir` 的副本，零信息。
-             * 而 hint 直接把它当「B52 该朝哪喷」用，会给出**错的方向**：
-             * 实测 B52 已经朝 left、出口格正是 B51 那格，但 B51 的入口在
-             * (35,-11)，要的是从 bottom 来 —— 照 hint 改成 left 是原地踏步。
+             * 这里踩了两个坑，都记下来：
              *
-             * 正确算法：把四个方向都喂给 `accepts`，取那些**真的被接受**的。
-             * 恰好一个 ⇒ 那就是唯一解，可以直说；
-             * 零个或多个 ⇒ 不猜（`acceptDir: null`），让 hint 退化成两种改法并列。 */
+             * 坑 1（原实现）：`intoDir: d` 是 `dir` 的副本，零信息。
+             *    hint 拿它当「该朝哪喷」，于是输出「朝 left」——
+             *    而 B52 **已经**朝 left，照做等于原地踏步。
+             *
+             * 坑 2（第一版修复）：拿 `accepts(idx, cell, dd)` 去试四个方向。
+             *    **那是错的** —— `accepts` 的 `dd` 是「货**到达该格时**的行进方向」，
+             *    不是「本带该朝哪」。于是给出「朝 top」，模型照做，
+             *    而 B52 朝 top 后出口格变成 (36,-13)，**根本没指向 B51**（在 (35,-12)）。
+             *    比原来更糟：原本只是被拒，改完是彻底断开。
+             *
+             * 正确的换算：本带在 `e` 这一格，接收方在 `hit` 那一格
+             * （= `cell`，也就是 `exitCellOf(e)`）。让本带朝某个方向 `dd` 时，
+             * 它的新出口格是 `e + DIRV[dd]`。要它仍然落在 `hit`，就必须
+             * `e + DIRV[dd] === hit`，也就是 `dd = 从 e 指向 hit 的方向`。
+             * 那个方向唯一确定，不需要试探。
+             *
+             * 再用 `accepts()` 复核一次「到了之后收不收」—— 复核不过就不给值。 */
+            const e0 = idx.byUid.get(e.uid) || e;
             let acceptDir = null;
             try {
-                const okDirs = ["top", "right", "bottom", "left"].filter(dd => {
-                    if (dd === d) return false;              // 现在这个不行（上一行已判）
-                    const a2 = accepts(idx, cell, dd);
-                    return a2 && a2.ok === true && !a2.opaque;
-                });
-                if (okDirs.length === 1) acceptDir = okDirs[0];
+                const ddx = hit.x - e0.x, ddy = hit.y - e0.y;
+                const cand = ddy < 0 ? "top" : ddy > 0 ? "bottom" : ddx > 0 ? "right" : ddx < 0 ? "left" : null;
+                if (cand) {
+                    /* 复核：货沿 `cand` 进到 `hit` 那一格时，接收方接受吗？
+                       —— 行进方向就是 `cand` 本身（货是朝那个方向走的）。 */
+                    const a2 = accepts(idx, [hit.x, hit.y], cand);
+                    if (a2 && a2.ok === true && !a2.opaque) acceptDir = cand;
+                }
             } catch { acceptDir = null; }
             rejected.push({
                 uid: e.uid, kind: isTunnel(e) ? "tunnel" : "belt", cell, dir: d,

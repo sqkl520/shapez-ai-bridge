@@ -30,8 +30,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { semanticDiagnoses, beltsCarryingShape } from "./semantic.mjs";
+import { structuralDiagnoses } from "./structural.mjs";
 import { buildHandles } from "./handles.mjs";
-import { indexOf } from "./topology.mjs";
+import { indexOf, accepts } from "./topology.mjs";
 import { replaceRun } from "../macros/remove.mjs";
 import { DIAG_CODES } from "./constants.mjs";
 
@@ -1439,20 +1440,71 @@ test("M23 ★ 没有 hub 的世界 ⇒ 不许说「到不了 hub」（读不到 
  * 于是 hint 会给出「朝 left」—— 而它**已经**朝 left，照做等于原地踏步。
  * 现在用 accepts() 实测四个方向，只在那唯一解时才给具体值。
  * ══════════════════════════════════════════════════════════════════════════ */
-test("M24 ★ BELT_HANDOFF_REJECTED 要给出唯一正确的 facing", () => {
-    const w = clone(L4);
-    let next = Math.max(...w.entities.map(e => e.uid || 0)) + 1;
-    const ax = 60, ay = -60;
-    w.entities.push({ uid: next++, type: "belt", x: ax, y: ay, r: 270, variant: "default", rotation_variant: 0, code: 1, layer: "regular" });
-    w.entities.push({ uid: next++, type: "belt", x: ax - 1, y: ay, r: 0, variant: "default", rotation_variant: 0, code: 1, layer: "regular" });
-    w.resources = [];
+test("M24 ★ BELT_HANDOFF_REJECTED 的 facing 必须能真的接上（不能比原来更糟）", () => {
+    /* 真实几何（这个组合在真机上出现过，也是本条的触发条件）：
+     *   上游 (0,0) r=270 → 出口 left → 落点 (-1,0)
+     *   下游 (-1,0) r=0  → 入口 bottom → 它要的是从 (-1,1) 来
+     *   所以 accepts([-1,0], "left") = false ⇒ BELT_HANDOFF_REJECTED
+     *
+     * ⚠️ 这条测试的历史（两次假绿，都值得记）：
+     *
+     * 1. 第一版夹具用 L4 + 一条自造带子，但那个世界**根本不产这条码** ——
+     *    `const d = byCode(...)[0]; if (!d) return;` 于是测试每次都提前返回，
+     *    从来没断言过任何东西。
+     * 2. 第二版把断言改成「hint 里要有具体 facing」。它能过，但过的是
+     *    **占位符分支** —— 还是没测到「那个 facing 到底对不对」。
+     *
+     * 现在这一版：夹具造出真实的拒绝几何，并且**模拟改完之后**验算。
+     * 这是我第一版实现的 bug：拿 `accepts(idx, cell, dd)` 试方向，
+     * 而它的第三参数是「货**到达该格时**的行进方向」，不是「本带该朝哪」。
+     * 于是给出「朝 top」—— 而改完之后出口格跑到别处，比原来更糟。
+     */
+    /* 直接构造一个最小世界，并手工算好期望，不依赖 L4。 */
+    const w = {
+        level: 9,
+        goal: { level: 9, requirement: { shape: "CpCpCpCp", required: 600, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 10, y: 10, r: 0, variant: "default", layer: "regular" },
+            { uid: 2, type: "belt", x: 0, y: 0, r: 270, rotation_variant: 0, code: 1, variant: "default", layer: "regular" },
+            { uid: 3, type: "belt", x: -1, y: 0, r: 0, rotation_variant: 0, code: 1, variant: "default", layer: "regular" },
+        ],
+        resources: [],
+    };
+    const idx0 = indexOf(w);
+    /* 先确认这个几何**真的**触发拒绝 —— 否则下面的断言没有意义。 */
+    assert.equal(accepts(idx0, [-1, 0], "left").ok, false,
+        "夹具前提：上游朝 left 落进下游、下游不收 —— 必须成立，否则这条测试测不到东西");
 
-    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const ds = structuralDiagnoses(w, null, "CpCpCpCp", handlesOf(w), {});
     const d = byCode(ds, "BELT_HANDOFF_REJECTED")[0];
-    if (!d) return;
-    assert.ok(d.hint, `这条码必须给 hint —— 没有它模型只能猜方向。实得：${d.hint}`);
-    assert.match(d.hint, /replace_run/, "必须给出可抄的就地改朝向写法");
-    assert.match(d.hint, /opts:\{facing:"(top|right|bottom|left)"\}/,
-        `必须给出**具体的** facing（不是占位符）：${d.hint}`);
-    assert.match(d.hint, /契约允许/, "要说明 opts.facing 不违反「禁止坐标」");
+    assert.ok(d, "★ 这个几何必须产出 BELT_HANDOFF_REJECTED（否则夹具又白造了）");
+
+    assert.ok(d.hint, `★ 这条码必须给 hint —— 没有它模型只能猜方向。实得：${d.hint}`);
+    assert.match(d.hint, /replace_run|connect/, "必须给出可抄的改法");
+
+    /* ★ 核心断言：若 hint 给了具体 facing，它必须**真的能接上** ★
+     *
+     * 「有 facing」不等于「facing 对」。第一版实现的错就在这一层：
+     * 给出朝 top，模型照做，出口格跑到 (0,-1)，根本没指向 (0,0)。
+     * 只断言「有 facing」抓不到这种错。 */
+    const m = /opts:\{facing:"(top|right|bottom|left)"\}/.exec(d.hint);
+    if (m) {
+        const facing = m[1];
+        const DIRV = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
+        const subj = idx0.byUid.get(d.subject.uid);
+        const newExit = [subj.x + DIRV[facing][0], subj.y + DIRV[facing][1]];
+        const intoUid = (d.evidence && d.evidence.uids && d.evidence.uids[1]);
+        const into = intoUid !== undefined ? idx0.byUid.get(intoUid) : null;
+        assert.ok(into, "必须能拿到接收方实体");
+        assert.deepEqual(newExit, [into.x, into.y],
+            `★ 照 hint 改成朝 ${facing} 之后，出口格是 ${JSON.stringify(newExit)}，`
+            + `而接收方在 ${JSON.stringify([into.x, into.y])} —— 还是没接上。`
+            + `这比原来更糟：原本只是被拒，改完是彻底断开。hint=${d.hint}`);
+        assert.equal(accepts(idx0, [into.x, into.y], facing).ok, true,
+            `★ 改完之后接收方仍不接受这个来向。hint=${d.hint}`);
+    } else {
+        /* 拿不到唯一解时，hint 必须给「两种改法并列」，不许瞎猜一个方向。 */
+        assert.match(d.hint, /两种改法|先试/,
+            `★ 拿不到唯一方向时必须给两条路，不许瞎猜。实得：${d.hint}`);
+    }
 });
