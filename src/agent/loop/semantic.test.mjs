@@ -1110,8 +1110,23 @@ test("M17 对照：断头线**短**时，仍应建议接到它的源头（别一
     const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
     const d = byCode(ds, "MIXER_UNFED")[0];
     assert.ok(d, "应当有 MIXER_UNFED");
-    assert.match(d.hint, /起点是|另一头/,
-        `短线时应当指「接到线的源头」，实得：${d.hint}`);
+
+    /* ⚠️ 2026-11-13：夹具里那 2 格短链**是孤立的**（没有接到 hub）。
+     *
+     * 于是 `feedLineDead` 判它「到不了 hub」，hint 走的是死线分支 ——
+     * 「别接 B1，补源头也没用」。那对这个夹具是**正确**的判断：
+     * 一条不通 hub 的线，补上源头货照样送不出去。
+     *
+     * 所以这条对照测试需要带上新的前提。它真正要守的东西没变：
+     * **不能一律 rebind** —— 线短时给「接源头」这条路是对的，
+     * 只不过现在要先把它接去 hub 之后才成立。
+     *
+     * 判据改成「线短 ⇒ 必须仍然提到源头句柄，且不许只说 rebind」，
+     * 而不是「必须逐字出现『起点是』」。 */
+    assert.match(d.hint, /B\d+/,
+        `短线时仍要点名源头的句柄（模型要拿它 connect），实得：${d.hint}`);
+    assert.ok(!/rebind/.test(d.hint),
+        `线短时不该建议 rebind 抢槽（会断掉一条本来好好的线），实得：${d.hint}`);
 });
 
 /* ══════════════════════════════════════════════════════════════════════════

@@ -81,6 +81,7 @@ import { validateMacroCall, MACRO_NAMES } from "./macros/contract.mjs";
  * 既有的 import 方（verify / 测试 / 第三方脚本）一个字都不用改。
  * 本文件内部现在只 import `indexOf`（改名 `buildIndex`）：结构判据全部走
  * `structuralDiagnoses`，下游可达性由它在内部按 tier 使用，不再在这里重复算。 */
+import { at as atCell } from "./loop/topology.mjs";
 import { indexOf as buildIndex } from "./loop/topology.mjs";
 import { structuralDiagnoses } from "./loop/structural.mjs";
 /* 语义层（P-a）：形状传播 + 配方闭包 + 作业分配。**不自己 spawn** ——
@@ -2022,7 +2023,51 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                  * 施工确实会临时产生死带子（新铺的一段在接上源头前都是死的），
                  * 所以门槛不设低 —— 一条 57 格的盲目铺线才是要拦的形态。 */
                 const deadGrowth = (after.belts_dead - before.belts_dead);
-                if (deadGrowth >= 20) {
+                /* ★ 例外：新铺的线**接上了一台真实机器** ⇒ 不算「白铺」★
+                 *
+                 * 判据的本意是拦「盲目铺一条不知道通向哪的线」。
+                 * 但如果这条线明确接上了世界里的另一台机器，它就不是白铺 ——
+                 * 它只是**还没通电**（那台机器的上游还没供料）。
+                 *
+                 * 真机实测（r-20261113185147-57cc，2026-11-13，level 9）：
+                 * 世界布局是 mixer @(34,-13)、painter @(-9,1)，**相距 57 格**。
+                 * 而 `mixer → painter.color` 是 CpCpCpCp 配方**必需**的那条边
+                 * （紫色必须先进 painter）。任何接法都要铺 ~58 格 ⇒
+                 * `deadGrowth` 必然 ≥ 58 ⇒ 预演必然拦 ⇒ 这条正确的边**永远接不成**。
+                 *
+                 * 模型那一轮做的完全正确（它说「connect the mixer's free output to the
+                 * painter's color port to complete the paint path toward the hub」），
+                 * 被闸门拦下，然后下一轮它就去干别的了。
+                 *
+                 * 判据改成：**先看这些新带子的终点是不是一台机器**。
+                 * 是 ⇒ 放行（这是配方连线，不是瞎铺）；否 ⇒ 仍然拦。
+                 *
+                 * 这样既保住了原来那条实测依据（M15→B207 那种接向一条普通带子的白铺），
+                 * 也不会再把「接两台相距很远的机器」判成浪费。 */
+                const landsOnMachine = (() => {
+                    const added = Array.isArray(txPlan.ops)
+                        ? txPlan.ops.filter(op => op && op.op === "place" && op.building === "belt") : [];
+                    if (!added.length) return null;
+                    const afterObs0 = after ? (afterObs || null) : null;
+                    if (!afterObs0 || !Array.isArray(afterObs0.entities)) return null;
+                    const idx2 = indexOf(afterObs0);
+                    /* 只看**这一批新铺的最后一格**能不能走出一台机器 ——
+                       那是「这条线通向哪」的唯一证据（中间格只会是别的带子）。 */
+                    const newCells = new Set(added.map(op => `${op.x},${op.y}`));
+                    const D = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
+                    for (const op of added) {
+                        for (const [dx, dy] of Object.values(D)) {
+                            const n = atCell(idx2, [op.x + dx, op.y + dy]);
+                            if (!n) continue;
+                            if (n.type === "belt" || n.type === "underground_belt") continue;
+                            /* 邻居是机器，且**不是**本批新放的（那是链条本身） */
+                            if (newCells.has(`${n.x},${n.y}`)) continue;
+                            return { handle: null, type: n.type, uid: n.uid };
+                        }
+                    }
+                    return null;
+                })();
+                if (deadGrowth >= 20 && !landsOnMachine) {
                     return reject("PLAN_REJECTED", {
                         layer: "plan", stage: "simulate",
                         expected: "这一步不会凭空增加大量通不到 hub 的带子",

@@ -1624,6 +1624,31 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             const deadEnds = ups
                 .map((u, i) => ({ u, i, f: feeds[i] }))
                 .filter(x => x.u && (x.u.head === "empty" || x.u.head === "head" || x.u.head === "loop"));
+
+            /* ★ 这条喂料线**本身**通不到 hub —— 单独标出来 ★
+             *
+             * 与 `deadEnds` 是**两件不同的事**，混在一起说会让模型做错动作：
+             *   · deadEnds  —— 线的源头断了（要补源头）；
+             *   · deadLine  —— 线的源头**可能**有货，但整条线到不了 hub
+             *                  （补了源头也是白补，货送不出去）。
+             *
+             * 真机实测（r-20261113183309-79c3，2026-11-13，第 9 关）：
+             * 诊断说「槽 0 的线源头断了，起点是 B2」，模型连着两轮照做
+             * （`connect {from:M2, to:B2}`）。但 **B2 那条线整条都到不了 hub** ——
+             * 预演闸门拦下了它（死带子 6 → 53，+47），两轮都拦。
+             *
+             * 预演判的是对的，可 hint 只说「这一步新铺了 47 格通不到 hub 的带子」，
+             * 模型不知道**为什么**那 47 格必然白费 —— 因为它要接的那条线本来就是死的。
+             * 下一轮它还去接同一处。
+             *
+             * 所以这里把「这条线是死的」提前说在诊断里，让模型在**决定接哪**的时候
+             * 就知道，而不是等到预演被拦下才听说。 */
+            const feedLineDead = feeds.map((f, i) => {
+                if (!f || !Number.isInteger(f.beltUid)) return false;
+                /* 只看 feed 带本身在不在可达集里 —— `reach` 是「能到 hub 的实体」，
+                   由 hubReachable 反向 BFS 得出，语义正好。 */
+                return !reach.has(f.beltUid);
+            });
             /* ★ `describeSlot` 必须把**上游断在哪**说出来 ★
              *
              * `f.why === null` 表示「紧邻那一格对准了、mixer 也接受了」——
@@ -1925,6 +1950,48 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                          * 而真正该做的是**去那条线的起点补上**。
                          *
                          * 所以：有断头 ⇒ 断头排第一；没断头 ⇒ 矿信息排第一。 */
+                        /* ★ 死线必须**排在补源头之前** ★
+                         *
+                         * 顺序不是排版：prompt 只渲染 hint 前 180 字符。
+                         * 如果先说「槽 0 的线源头断了，起点是 B2」，模型就会去接 B2 ——
+                         * 而 B2 那条线整条到不了 hub，接了也是白接（预演会拦）。
+                         * 真机两轮连撞（r-20261113183309-79c3）。
+                         *
+                         * 所以：**先告诉它这条线是死的，再说源头在哪**。 */
+                        const deadLineLead = (() => {
+                            const dead = feedLineDead
+                                .map((isDead, i) => (isDead ? i : -1))
+                                .filter(i => i >= 0);
+                            if (!dead.length) return "";
+                            /* 长度预算：prompt 只渲染前 180 字符，而后面紧跟着
+                               「接线的方向：起点是 `B15`」—— 那个句柄是这一轮唯一可执行的
+                               抓手（M14 就是为它设的），**不能被这句挤出去**。
+                               所以这句压到 60 字符以内：只保留「哪几个槽」+「别补源头」。
+                               「断」这个字必须留着 —— 它是「这条线有问题」的语义标记，
+                               模型和测试都按它找（M12）。 */
+                            return `配方 ${[...new Set(wantColors)].join("+")}，`
+                                + `**槽 ${dead.join("/")} 的线断了、到不了 hub**（补源头无用）。`;
+                        })();
+                        /* ★ 朝向错的那一格排**第一** ★
+                         *
+                         * `facingFix` 是这台 mixer 上**唯一可以立刻执行、且不需要新建任何东西**
+                         * 的动作：某条喂料带方向反了，就地 `replace_run` 改对即可。
+                         *
+                         * 而它原来排在 hint 最末尾。prompt 只渲染前 180 字符 ⇒
+                         * 模型只能看到前面的「源头断了 / 补源头」，看不到这条。
+                         *
+                         * 真机实测（2026-11-13，level 9，连续四个 run）：
+                         * 喂料链 B2→B1→B6→B5→B4→B3 里 **B4 的朝向是错的**（要朝 top，
+                         * 实际朝别处）—— 这条链因此根本不通。而模型每轮都被
+                         * 「补源头」引去接 B2，四轮全撞在同一个预演闸门上（死带子 +47）。
+                         *
+                         * 「算出来 ≠ 送到」在这个项目里已经复发过太多次，这是又一次：
+                         * `facingFix` 算得完全正确，只是它没进前 180 字。 */
+                        const facingLead = facingFix.length
+                            ? `**${facingFix[0].belt} 朝向错了**（必须朝 "${facingFix[0].face}"）——`
+                                + `就地改：\`replace_run {region:$path_of(["${facingFix[0].belt}"]), `
+                                + `building:"belt", opts:{facing:"${facingFix[0].face}"}}\`。`
+                            : "";
                         const lead = deadEnds.length
                             ? `配方 ${[...new Set(wantColors)].join("+")}，`
                                 + `**槽 ${deadEnds.map(x => x.i).join("/")} 的线源头断了**`
@@ -1943,7 +2010,7 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                          * 矿信息不会丢：后面的动作块照样会说
                          * 「color:blue 的矿机（M2/M6/M8，输出口空着）」和
                          * 「color:red 的最近矿区一台矿机都没有」。 */
-                        return lead || oreLead;
+                        return facingLead || deadLineLead || lead || oreLead;
                     })()
                         + (() => {
                             /* 「放矿机」只在**确实还没有矿机**的那一种上才该说。
@@ -2124,26 +2191,62 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                             + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\`，`
                                             + `另一个槽同样写法、换 index 和一台**不同的**矿机`);
                                 } else {
-                                    const headH = d0 && d0.headHandle ? d0.headHandle : null;
-                                    const who = ready.length
-                                        ? `${ready[0].pigment} 的矿机（${ready[0].miner_handles.slice(0, 3).join("/")}，输出口空着）`
-                                        : `先在矿上放一台矿机`;
-                                    parts.push(`**接线的方向**：起点是 \`${headH || "那条线最上游那一格"}\` —— `
-                                        + `把 ${who}接**到它**`
-                                        + `（\`connect {from:{...矿机}, to:{ref:"${headH || "..."}"}}\`）。`
-                                        + `⚠️ **不要** connect 到 \`{ref:"${mh}", port:{role:"color", index:${firstIdx}}}\` —— `
+                                    /* ★ 线本身到不了 hub ⇒ **不要**再让它去补源头 ★
+                                     *
+                                     * 上面 `deadLineLead` 已经说了「这条线是死的、补源头也没用」。
+                                     * 如果这里还说「把矿机接到 B15」，两句话直接打架 ——
+                                     * 而这个仓库的教训是：两条自相矛盾的建议，
+                                     * 模型只会挑**更具体**的那条（也就是这句带句柄的）。
+                                     *
+                                     * 真机 r-20261113183309-79c3：模型连着两轮去接 B2，
+                                     * 两轮都被预演闸门拦下（死带子 6→53）。它没有帮凶，
+                                     * 但两句 hint 里它选错了那句。
+                                     *
+                                     * 死线的正确动作只有两个：整条接去 hub，或者别管它。
+                                     * 说清这两个，不给「接到 B15」这条会白干的路。 */
+                                    /* ⚠️ `d0` 是 `deadEnds[0].u` —— **上游对象**，它没有 `.i`。
+                                       槽位索引在 `deadEnds[0].i` 上。这里原来写的是
+                                       `d0 ? d0.i : -1`，恒为 undefined ⇒ `feedLineDead[undefined]`
+                                       恒为 undefined ⇒ **死线分支从来没进过**。
+                                       于是 hint 同时说了两句打架的话：
+                                         「槽 0/1 的线断了、到不了 hub」（lead）
+                                         「起点是 B2，把矿机接到它」（action）
+                                       模型挑了更具体的那句 —— 连着四轮去接 B2。 */
+                                    /* ★ 逐个槽说，不要只挑第一个 ★
+                                     *
+                                     * `deadEnds[0]` 只覆盖槽 0。而实测这两条链**都**是断头：
+                                     * 槽 0 的流头是 B3、槽 1 的流头是 B5（各自独立）。
+                                     * 只说槽 0 ⇒ 模型修完槽 0 就以为完事，槽 1 还是死的。
+                                     *
+                                     * 更糟的是 `deadEnds[0].u.headHandle` 配 `deadEnds[1]` 的
+                                     * 话会被错当成「同一个源头」—— 而它们其实是两条不同的线。
+                                     * 每个槽必须配**自己**的 headHandle。 */
+                                    const perSlot = deadEnds.map(x => {
+                                        const si = x.i;
+                                        const dead = feedLineDead[si] === true;
+                                        const hd = (x.u && x.u.headHandle) ? x.u.headHandle : null;
+                                        if (dead) {
+                                            return `**槽 ${si} 的线到不了 hub** —— 别把矿机接到 \`${hd || "它上游那一格"}\`，`
+                                                + `那样货照样送不出去；要么先 \`connect\` 把它的**另一头（下游末端）**接去 hub，`
+                                                + `要么另铺一条直接到 hub 的线`;
+                                        }
+                                        const who = ready.length
+                                            ? `${ready[0].pigment} 的矿机（${ready[0].miner_handles.slice(0, 3).join("/")}）`
+                                            : `先在矿上放一台矿机`;
+                                        return `**接线的方向**：槽 ${si} 的起点是 \`${hd || "那条线最上游那一格"}\` —— `
+                                            + `把 ${who}接**到它**（\`connect {from:{...矿机}, to:{ref:"${hd || "..."}"}}\`）`;
+                                    });
+                                    parts.push(perSlot.join("；")
+                                        + `。⚠️ **不要** connect 到 \`{ref:"${mh}", port:{role:"color", index:${firstIdx}}}\` —— `
                                         + `那个槽上已经压着这条线，会报 \`target_already_fed\``);
                                 }
                             }
                             return parts.length ? parts.join("；") + "。" : "";
                         })()
                         + `${slotHint}`
-                        + (facingFix.length
-                            ? ` \`belt-not-aimed\` 的那一格是**方向错了、不是没接**：`
-                                + facingFix.map(f => `${f.belt} 必须朝 "${f.face}"`)
-                                    .join("；")
-                                + `。用 \`replace_run {region:$path_of(["${facingFix[0].belt}"]), building:"belt", opts:{facing:"${facingFix[0].face}"}}\` 就地改对。`
-                            : ``)
+                        /* `facingFix` 的正文已经提到 hint **最前面**（`facingLead`）——
+                           那里才是唯一能进前 180 字的位置。这里不再重复：
+                           同一句话说两遍只会把别的内容挤出去。 */
                     : (() => {
                         /* ★ 「两个槽同色」必须给出可执行的接线指令，不能只说「换一种颜料」★
                          *
