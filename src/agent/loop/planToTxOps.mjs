@@ -648,6 +648,25 @@ export function planToTxOps(calls, ctx = {}) {
     const derived = [];
     const warnings = [];
     const placeList = [];
+    /* ★ 同一格被多条 connect 复用时，只保留**最后**那条的版本 ★
+     *
+     * 真机 r-20261112210803-e1a3（第 9 关）：模型同时提交
+     *   connect {M2 → C7:color0} + connect {M3 → C7:color1}
+     * 第二条在主循环里看见了第一条铺好的带子，于是**复用它**并把它改成 corner
+     * （`(35,-12)` 从直线变成朝上的拐角 —— 那是正确行为）。
+     *
+     * 但两条的 `cells[]` 都包含那几格 ⇒ `placeList` 里同一格出现两次 ⇒ R5。
+     *
+     * R5 本身是对的（同一格不能放两次）。缺的是**去重规则**：
+     * 后一条 connect 对同一格的版本**更晚、更准**（它看见了前一条的结果），
+     * 所以留后不留前。
+     *
+     * ⚠️ 只对 connect/extend_line 之间去重。跨宏（比如 insert_machine 与 connect）
+     * 撞同一格仍然是真冲突，必须让 R5 报出来。 */
+    const claimByConnect = new Map();   // cellKey → 产生它的那条调用 id
+    /* 用 WeakMap 记「这条 place 属于哪条带宏」——
+       不要挂成 `p._xxx`，placeList 的元素会直接变成 tx op 的字段。 */
+    const stripOwner = new WeakMap();
 
     for (const c of normalized) {
         for (const uid of selfReportedDestroys(c.result)) destroys.add(uid);
@@ -660,7 +679,31 @@ export function planToTxOps(calls, ctx = {}) {
         }
         const col = collectPlaces(c, tplFor);
         if (col.error) return reject("R4", "op_shape", `宏 ${c.macro}: ${col.error}`);
-        for (const p of col.places) { p.reversePath = !!col.reversePath; placeList.push(p); }
+        /* 纯铺带宏之间按格去重：后一条的版本更新（它看见了前一条的结果）。
+           见上面 claimByConnect 的注释。 */
+        const isStrip = c.macro === "connect" || c.macro === "extend_line";
+        const stripId = `${c.macro}#${normalized.indexOf(c)}`;
+        for (const p of col.places) {
+            p.reversePath = !!col.reversePath;
+            if (isStrip && Number.isInteger(p.x) && Number.isInteger(p.y)) {
+                const k = K([p.x, p.y]);
+                if (claimByConnect.has(k)) {
+                    /* 前一条带宏也放了这一格 ⇒ 剔掉它那条（后者更新） */
+                    for (let j = placeList.length - 1; j >= 0; j--) {
+                        const q = placeList[j];
+                        if (q.x === p.x && q.y === p.y && q.kind === p.kind
+                            && stripOwner.get(q) !== undefined && stripOwner.get(q) !== stripId) {
+                            placeList.splice(j, 1);
+                            stripOwner.delete(q);
+                            break;
+                        }
+                    }
+                }
+                claimByConnect.set(k, stripId);
+                stripOwner.set(p, stripId);
+            }
+            placeList.push(p);
+        }
         for (const w of (c.result.warnings || [])) {
             warnings.push({ ...w, source: "macro", macro: c.macro });
         }
