@@ -248,7 +248,29 @@ function collectTopologyFacts(idx) {
         const acc = accepts(idx, cell, d);
         if (acc.opaque) continue;                         // 未知建筑：不判（宁可漏报）
         if (!acc.ok) {
-            rejected.push({ uid: e.uid, kind: isTunnel(e) ? "tunnel" : "belt", cell, dir: d, into: hit, intoDir: d });
+            /* ★ `intoDir` 必须是**接收方唯一接受的那个来向**，不是本带自己的方向 ★
+             *
+             * 原实现写的是 `intoDir: d` —— 也就是 `dir` 的副本，零信息。
+             * 而 hint 直接把它当「B52 该朝哪喷」用，会给出**错的方向**：
+             * 实测 B52 已经朝 left、出口格正是 B51 那格，但 B51 的入口在
+             * (35,-11)，要的是从 bottom 来 —— 照 hint 改成 left 是原地踏步。
+             *
+             * 正确算法：把四个方向都喂给 `accepts`，取那些**真的被接受**的。
+             * 恰好一个 ⇒ 那就是唯一解，可以直说；
+             * 零个或多个 ⇒ 不猜（`acceptDir: null`），让 hint 退化成两种改法并列。 */
+            let acceptDir = null;
+            try {
+                const okDirs = ["top", "right", "bottom", "left"].filter(dd => {
+                    if (dd === d) return false;              // 现在这个不行（上一行已判）
+                    const a2 = accepts(idx, cell, dd);
+                    return a2 && a2.ok === true && !a2.opaque;
+                });
+                if (okDirs.length === 1) acceptDir = okDirs[0];
+            } catch { acceptDir = null; }
+            rejected.push({
+                uid: e.uid, kind: isTunnel(e) ? "tunnel" : "belt", cell, dir: d,
+                into: hit, intoDir: d, acceptDir,
+            });
         }
     }
 
@@ -382,6 +404,45 @@ export function structuralDiagnoses(obs, items, goal, handles, opts = {}) {
                 cells: [r.cell],
             },
             candidates: ["connect", "replace_run", "trash_unused"],
+            /* ★ 这条码原来**没有 hint** —— 而解法是完全确定的 ★
+             *
+             * 真机实测（r-20261113200359-7c7e，2026-11-13，level 9）：
+             * 诊断说「B52 把货推向 B51，但 B51 不收这个来向」，
+             * 模型完全读懂了（它的 say 是对的），然后写了一个**不带 facing** 的
+             * `replace_run`，被宏回 `precondition_failed`：「只有一侧有邻居证据，
+             * 这一格的方向有 3 种合法解，宏不猜」。
+             * 下一轮它换成 `connect`，又撞 `NO_REVERSIBLE_CALL`。
+             *
+             * 而正确的方向是**唯一确定的**：B51 只接受从某个特定面来的货，
+             * 所以 B52 必须朝那个方向喷。诊断手里有 `r.intoDir`（接收方接受的来向），
+             * 只是从来没说过。
+             *
+             * 两个可选动作都直接写出来：
+             *   · 原地改朝向（`replace_run` + `opts:facing`）—— 不新建任何东西；
+             *   · 换一条接法（`connect` + `opts.rebind`）—— 当距离远或中间有障碍时。
+             *
+             * 「opts.facing 是选一个面，不是坐标」这点值得说 —— 模型可能以为
+             * 那违反了「不许给坐标」的禁令。契约明确允许（`PORT_FORMS`）。 */
+            hint: (() => {
+                const me = handleOf(handles, r.uid);
+                if (!me) return null;
+                /* `acceptDir` 由 `accepts()` 实测得出（四个方向里唯一被接受的那个）。
+                 * 拿不到就退化成「两种改法并列」，绝不猜一个方向 —— 猜错比不说更糟：
+                 * 模型会照着改、改完还是不行、然后开始怀疑诊断本身。 */
+                const intoH = handleOf(handles, r.into.uid);
+                if (r.acceptDir) {
+                    return `${me} 要把货朝 **${r.acceptDir}** 喷，才能进 ${labelOf(handles, r.into)}`
+                        + `（它现在朝 ${r.dir}，那个落点不收）。就地改朝向就行，不用坐标：`
+                        + `\`replace_run {region:$path_of(["${me}"]), building:"belt", opts:{facing:"${r.acceptDir}"}}\` —— `
+                        + `\`opts.facing\` 是**选一个面**，契约允许。`
+                        + `这条路不碰别的带子，**先试它**。`;
+                }
+                return `${me} 推向 ${labelOf(handles, r.into)} 的那个落点不收这个来向。`
+                    + `两种改法（都不用坐标）：`
+                    + `① 就地改朝向 \`replace_run {region:$path_of(["${me}"]), building:"belt", opts:{facing:<那一面>}}\`；`
+                    + `② 换接法 \`connect {from:{ref:"${me}"}, to:{ref:"${intoH || "目标"}", port:<该槽 role>}, opts:{rebind:true}}\`。`
+                    + `先试 ① —— 它不碰别的带子。`;
+            })(),
         });
     }
 

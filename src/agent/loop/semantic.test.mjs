@@ -1424,3 +1424,35 @@ test("M23 ★ 没有 hub 的世界 ⇒ 不许说「到不了 hub」（读不到 
     assert.ok(!/到不了 hub/.test(d.hint),
         `★ 没有 hub 时「到不了 hub」是不可判定的事实，不许这么说。实得：${d.hint}`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M24 —— BELT_HANDOFF_REJECTED 必须给出**可直接抄**的修复方向
+ *
+ * 真机（r-20261113200359-7c7e，2026-11-13，level 9）：这条诊断原来**没有 hint**。
+ * 模型读懂了问题（它说 "B52 pushes goods toward B51 but B51 rejects that
+ * direction"），然后写了个不带 facing 的 replace_run，被宏回
+ * `precondition_failed`（「这一格的方向有 3 种合法解，宏不猜」）。
+ * 下一轮换 connect，又撞 `NO_REVERSIBLE_CALL`。两轮都白费。
+ *
+ * 而正确答案是**唯一确定**的 —— 四个方向里只有一个真的被接收方接受。
+ * 更糟的是第一版的 `intoDir` 写的是 `d`（本带自己的方向）的副本，
+ * 于是 hint 会给出「朝 left」—— 而它**已经**朝 left，照做等于原地踏步。
+ * 现在用 accepts() 实测四个方向，只在那唯一解时才给具体值。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("M24 ★ BELT_HANDOFF_REJECTED 要给出唯一正确的 facing", () => {
+    const w = clone(L4);
+    let next = Math.max(...w.entities.map(e => e.uid || 0)) + 1;
+    const ax = 60, ay = -60;
+    w.entities.push({ uid: next++, type: "belt", x: ax, y: ay, r: 270, variant: "default", rotation_variant: 0, code: 1, layer: "regular" });
+    w.entities.push({ uid: next++, type: "belt", x: ax - 1, y: ay, r: 0, variant: "default", rotation_variant: 0, code: 1, layer: "regular" });
+    w.resources = [];
+
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "BELT_HANDOFF_REJECTED")[0];
+    if (!d) return;
+    assert.ok(d.hint, `这条码必须给 hint —— 没有它模型只能猜方向。实得：${d.hint}`);
+    assert.match(d.hint, /replace_run/, "必须给出可抄的就地改朝向写法");
+    assert.match(d.hint, /opts:\{facing:"(top|right|bottom|left)"\}/,
+        `必须给出**具体的** facing（不是占位符）：${d.hint}`);
+    assert.match(d.hint, /契约允许/, "要说明 opts.facing 不违反「禁止坐标」");
+});
