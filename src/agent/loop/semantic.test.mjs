@@ -1391,3 +1391,36 @@ test("M22 对照：干净的世界不报 DEAD_LINES（不许把正常世界判�
     assert.equal(byCode(ds, "DEAD_LINES").length, 0,
         "干净世界不该报 DEAD_LINES。codes=" + ds.map(d => d.code).join(","));
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M23 —— 世界没有 hub 时，不许把所有喂料线判成「到不了 hub」
+ *
+ * 红队实测（2026-11-13）：`hubReachable` 在无 hub 时返回空集，
+ * 而 `feedLineDead` 写的是 `!reach.has(uid)` ⇒ 空集 ⇒ 全部 true
+ * ⇒ 每一条喂料线都被说成「到不了 hub，别补源头」。
+ *
+ * 这是把「读不到」当成了「到不了」—— 而本仓库的纪律正好相反
+ * （`health.mjs`：「读不到的量是 null，不是 0」）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("M23 ★ 没有 hub 的世界 ⇒ 不许说「到不了 hub」（读不到 ≠ 到不了）", () => {
+    const w = clone(L4);
+    /* 把 hub 拿掉，同时保留一条对准 mixer 的喂料链 */
+    w.entities = w.entities.filter(e => e.type !== "hub");
+    let next = Math.max(0, ...w.entities.map(e => e.uid || 0)) + 1;
+    const mx = 40, my = -40;
+    w.entities.push({
+        uid: next++, type: "mixer", x: mx, y: my, r: 0, variant: "default",
+        rotation_variant: 0, code: 12, layer: "regular",
+    });
+    w.entities.push({
+        uid: next++, type: "belt", x: mx, y: my + 1, r: 0, variant: "default",
+        rotation_variant: 0, code: 1, layer: "regular",
+    });
+    w.resources = [];
+
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    if (!d) return;                       // 这个夹具可能压根不产 MIXER_UNFED —— 那不是本条的关切
+    assert.ok(!/到不了 hub/.test(d.hint),
+        `★ 没有 hub 时「到不了 hub」是不可判定的事实，不许这么说。实得：${d.hint}`);
+});

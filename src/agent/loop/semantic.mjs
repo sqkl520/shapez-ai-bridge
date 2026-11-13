@@ -1643,7 +1643,27 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
              *
              * 所以这里把「这条线是死的」提前说在诊断里，让模型在**决定接哪**的时候
              * 就知道，而不是等到预演被拦下才听说。 */
-            const feedLineDead = feeds.map((f, i) => {
+            /* ★ `reach` 为空时**不许**判死线 ★
+             *
+             * 红队实测（2026-11-13）：`hubReachable` 在**世界里没有 hub** 时
+             * 返回一个只含空集的 Set（`topology.mjs` 的 `if (!hub) return seen`）。
+             * 而这里写的是 `!reach.has(...)` —— 空集 ⇒ 全部为 true
+             * ⇒ **所有喂料线都被判成「到不了 hub」**，hint 全变成「别补源头」。
+             *
+             * 那是个彻底的误判：没有 hub 的世界里，「到不了 hub」不是一个可判定
+             * 的事实（没有 hub 就没有终点），它只是「读不到」。
+             *
+             * 这个仓库的纪律是：**读不到就说读不到，不许变成 0 / false**
+             * （`health.mjs` 里「读不到的量是 null，不是 0」是同一件事）。
+             * 所以 `reach.size === 0` 时一律 return false —— 退回旧行为
+             * （让模型去补源头），而不是给出一个基于错误前提的建议。
+             *
+             * 正常路径下 hub 总在（`obs` 的 `include_hub` 默认 true），
+             * 这个分支要靠 obs 被裁剪或 mod 侧 hub 丢失才会触发 —— 但误判的
+             * 代价是模型被引向错误动作，宁可保守。 */
+            const reachUsable = reach && typeof reach.size === "number" && reach.size > 0;
+            const feedLineDead = feeds.map((f) => {
+                if (!reachUsable) return false;
                 if (!f || !Number.isInteger(f.beltUid)) return false;
                 /* 只看 feed 带本身在不在可达集里 —— `reach` 是「能到 hub 的实体」，
                    由 hubReachable 反向 BFS 得出，语义正好。 */
