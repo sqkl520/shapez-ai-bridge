@@ -1806,7 +1806,21 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                     + `inputs ${JSON.stringify(mixStep.inputs)})`,
                 observed: why,
                 evidence: {
-                    handles: [mh, ...feedHandles].filter(Boolean),
+                    /* ★ hint 里点名的矿机句柄必须进 handles ★
+                     *
+                     * `renderMachines` 按 `referencedHandles(diagnoses)` 排序，
+                     * 只显示前 `MACHINES_MAX`（20）台。世界有 28 台矿机时，
+                     * 红矿那几台被截掉 —— 而 hint 正文却写着
+                     * `connect {from:{ref:"M17"}, ...}`。
+                     *
+                     * 真机 r-20261113141840-a195 的 say 直接点破了这件事：
+                     *   「the red miners named in the hint (M15/M16/M17) have
+                     *     no handles in this prompt」
+                     * 模型于是退回去放矿机（r3/r6）—— 因为它要指的那几台不存在于它的世界视图里。
+                     *
+                     * 把 `ore_reach` 里出现过的矿机句柄一并塞进 `handles`，
+                     * `referencedHandles` 就会把它们排到前面，不再被上限截掉。 */
+                    handles: [mh, ...feedHandles, ...oreHint.sites.flatMap(n => n.miner_handles || [])].filter(Boolean),
                     uids: [m.uid],
                     mixer_handle: mh,
                     feed_handles: feedHandles,
@@ -2061,9 +2075,41 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                     .join("；")
                                 + `。用 \`replace_run {region:$path_of(["${facingFix[0].belt}"]), building:"belt", opts:{facing:"${facingFix[0].face}"}}\` 就地改对。`
                             : ``)
-                    : `两个 color 槽接的是**同一条**线（都是 ${shapeOfVal(resolved[0])}）。`
-                        + `**颜料从哪来**：${oreHint.text}。`
-                        + `mix() 要的是两种**不同**的颜料 —— 把其中一路改接到另一种颜色的矿上。`,
+                    : (() => {
+                        /* ★ 「两个槽同色」必须给出可执行的接线指令，不能只说「换一种颜料」★
+                         *
+                         * 真机 r-20261113140707-184b（第 9 关）：这一句是
+                         *   「mix() 要的是两种不同的颜料 —— 把其中一路改接到另一种颜色的矿上。」
+                         * 模型照做了 4 轮 —— 但每轮都是 `insert_machine {$ore:"red"}`，
+                         * 连放 4 台红矿机，**一台都没接线**。红矿上的矿机从 2 台涨到 6 台。
+                         *
+                         * 两个缺失：
+                         *   ① 没直说「红矿已经有矿机了，别再放」——
+                         *      而 `candidates` 里其实已经剔掉了 `insert_machine`，
+                         *      模型没把「候选里没有它」读成「不许用它」；
+                         *   ② 没给「接哪台、接到哪个槽」的具体写法。
+                         *
+                         * 现在两件事都说：先禁放（点名红矿已有几台），再给可直接抄的 connect。 */
+                        const curPig = shapeOfVal(resolved[0]);
+                        const wantOther = [...new Set(wantColors)]
+                            .find(c => shapeOfVal([c]) !== curPig) || null;
+                        const other = wantOther
+                            ? oreHint.sites.find(n => n.pigment === wantOther)
+                            : null;
+                        const banned = other && other.miners > 0
+                            ? `**别再放矿机** —— ${other.pigment} 那片已经有 ${other.miners} 台了`
+                                + `（${other.miner_handles.slice(0, 3).join("/")}），放着不接等于白放。`
+                            : "";
+                        const recipe = other && other.miners > 0
+                            ? `把其中一台**接到另一个槽**：`
+                                + `\`connect {from:{ref:"${other.miner_handles[0]}"}, to:{ref:"${mh}", `
+                                + `port:{role:"color", index:1}}, opts:{rebind:true}}\``
+                                + `（换 index 0/1 看你抢哪个槽；**只要 rebind，别加 allow_replace**）。`
+                            : `另一种颜色的矿上还没有矿机 —— 先 \`insert_machine\` 放一台，下一轮再接过来。`;
+                        return `两个 color 槽接的是**同一条**线（都是 ${curPig}），mix() 出不了新颜色。`
+                            + banned + recipe
+                            + `**颜料从哪来**：${oreHint.text}。`;
+                    })(),
             });
         }
     }
