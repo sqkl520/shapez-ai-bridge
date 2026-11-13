@@ -1205,3 +1205,116 @@ test("M19 ★ 建议抢槽时必须提醒「两个槽分开接、用不同矿机
     assert.ok(/两个槽|另一个槽/.test(d.hint.slice(0, 220)),
         `「两个槽分开接」必须靠近前面（prompt 只渲染 180 字）。实际前 220：${d.hint.slice(0, 220)}`);
 });
+/* 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+ * M20 鈥斺€?`slot_values` 蹇呴』鐪熺殑璇诲埌褰㈢姸浼犳挱鐨勭粨鏋? *
+ * 鐪熸満锛堢 9 鍏筹紝2026-11-13锛夛細M6/M2 涓ゅ彴鐭挎満閮藉湪钃濈熆涓娿€佹暣鏉″杺鏂欓摼
+ * 姣忚烦 `sameCell` 涓?`accepts` 鍏ㄩ儴閫氳繃銆乣computeOut` 涔熺‘瀹炶繑鍥炰簡 `color:blue`
+ * 锛堝姞鏃ュ織纭杩囷細`[beltValue] 12210 => color:blue`锛夛紝
+ * 浣?`MIXER_UNFED` 鐨?`slot_values` 鎭掍负 `[null, null]`銆? *
+ * 鏍瑰洜锛歚makeShapeEngine` 鍏ㄧ▼鐢?**Set**锛岃€岃繖閲屽啓鐨勬槸 `Array.isArray(f.value)`鈥斺€? * `Array.isArray(new Set(...))` 鎭掍负 false 鈬?涓や釜妲芥案杩滆В鏋愭垚 null
+ * 鈬?璇婃柇姘歌繙璇淬€屾簮澶存柇浜嗐€嶁噿 妯″瀷鍙嶅閲嶆帴**宸茬粡鎺ュソ鐨勭嚎**銆? *
+ * 杩欐潯 bug 浠?`MIXER_UNFED` 鍐欏嚭鏉ラ偅澶╁氨鍦紝涔嬪墠涓€鐩磋鏇存棭鐨勬柇鐐归伄浣忥細
+ *   鈶?`$ore` 閫夐敊鐭匡紙鏀惧埌 44 鏍煎鐨勫彟涓€鐗囷級锛? *   鈶?`computeOut` 鐨?`rot !== 0` 鎶婄熆鏈鸿緭鍑烘帎鏂紱
+ *   鈶?`upstreamOf` 璧伴敊閭诲眳锛堜袱涓偦灞呴兘澹扮О鎸囧悜鍚屼竴鏍兼椂涓嶇湅鑷繁鐨勫叆鍙ｆ柟鍚戯級銆? * 鎶婁笂娓稿叏淇ソ涔嬪悗瀹冩墠闇插嚭鏉?鈥斺€?涔熸鍥犱负濡傛锛屽畠鏄渶闅惧畾浣嶇殑涓€灞傘€? * 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲 */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M20 —— `slot_values` 必须真的读到形状传播的结果
+ *
+ * 真机（第 9 关，2026-11-13）：M6/M2 两台矿机都在蓝矿上、整条喂料链
+ * 每跳 `sameCell` 与 `accepts` 全部通过、`computeOut` 也确实返回了 `color:blue`
+ * （加日志确认过：`[beltValue] 12210 => color:blue`），
+ * 但 `MIXER_UNFED` 的 `slot_values` 恒为 `[null, null]`。
+ *
+ * 根因：`makeShapeEngine` 全程用 **Set**，而这里写的是 `Array.isArray(f.value)` ——
+ * `Array.isArray(new Set(...))` 恒为 false ⇒ 两个槽永远解析成 null
+ * ⇒ 诊断永远说「源头断了」⇒ 模型反复重接**已经接好的线**。
+ *
+ * 这条 bug 从 `MIXER_UNFED` 写出来那天就在，之前一直被更早的断点遮住：
+ *   ① `$ore` 选错矿（放到 44 格外的另一片）；
+ *   ② `computeOut` 的 `rot !== 0` 把矿机输出掐断；
+ *   ③ `upstreamOf` 走错邻居（两个邻居都声称指向同一格时不看自己的入口方向）。
+ * 把上游全修好之后它才露出来 —— 也正因为如此，它是最难定位的一层。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M20 —— slot_values 必须真的读到形状传播的结果
+ *
+ * 真机（第 9 关，2026-11-13）：M6/M2 两台矿机都在蓝矿上、整条喂料链
+ * 每跳 sameCell 与 accepts 全部通过、computeOut 也确实返回了 color:blue
+ * （加日志确认过：beltValue 12210 => color:blue），
+ * 但 MIXER_UNFED 的 slot_values 恒为 [null, null]。
+ *
+ * 根因：makeShapeEngine 全程用 Set，而这里写的是 Array.isArray(f.value) ——
+ * Array.isArray(new Set(...)) 恒为 false ⇒ 两个槽永远解析成 null
+ * ⇒ 诊断永远说「源头断了」⇒ 模型反复重接已经接好的线。
+ *
+ * 这条 bug 从 MIXER_UNFED 写出来那天就在，之前一直被更早的断点遮住：
+ *   ① $ore 选错矿（放到 44 格外的另一片）；
+ *   ② computeOut 的 rot !== 0 把矿机输出掐断；
+ *   ③ upstreamOf 走错邻居（两个邻居都声称指向同一格时不看自己的入口方向）。
+ * 把上游全修好之后它才露出来 —— 也正因为如此，它是最难定位的一层。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M20 —— slot_values 必须真的读到形状传播的结果
+ *
+ * 真机（第 9 关，2026-11-13）：M6/M2 两台矿机都在蓝矿上、整条喂料链
+ * 每跳 sameCell 与 accepts 全部通过、computeOut 也确实返回了 color:blue
+ * （加日志确认过：beltValue 12210 => color:blue），
+ * 但 MIXER_UNFED 的 slot_values 恒为 [null, null]。
+ *
+ * 根因：makeShapeEngine 全程用 Set，而这里写的是 Array.isArray(f.value) ——
+ * Array.isArray(new Set(...)) 恒为 false ⇒ 两个槽永远解析成 null
+ * ⇒ 诊断永远说「源头断了」⇒ 模型反复重接已经接好的线。
+ *
+ * 这条 bug 从 MIXER_UNFED 写出来那天就在，之前一直被更早的断点遮住：
+ *   ① $ore 选错矿（放到 44 格外的另一片）；
+ *   ② computeOut 的 rot !== 0 把矿机输出掐断；
+ *   ③ upstreamOf 走错邻居（两个邻居都声称指向同一格时不看自己的入口方向）。
+ * 把上游全修好之后它才露出来 —— 也正因为如此，它是最难定位的一层。
+ *
+ * 几何（r=0 的 exit 是 top=y-1，r=180 的 exit 是 bottom=y+1）：
+ *   mixer (mx,my)  两个 color 槽的 feed 格在 (mx,my+1) / (mx+1,my+1)，即**下方**
+ *   ⇒ 货要从下往上推 ⇒ 链上每条带子都是 r=0（exit=top）
+ *   ⇒ 矿机在更南边 (mx, my+7)，r=180 朝下喂第一条
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * M20 —— slot_values 必须真的读到形状传播的结果
+ *
+ * 真机（第 9 关，2026-11-13）：M6/M2 两台矿机都在蓝矿上、整条喂料链
+ * 每跳 sameCell 与 accepts 全部通过、computeOut 也确实返回了 color:blue
+ * （加日志确认过：beltValue 12210 => color:blue），
+ * 但 MIXER_UNFED 的 slot_values 恒为 [null, null]。
+ *
+ * 根因：makeShapeEngine 全程用 Set，而这里写的是 Array.isArray(f.value) ——
+ * Array.isArray(new Set(...)) 恒为 false ⇒ 两个槽永远解析成 null
+ * ⇒ 诊断永远说「源头断了」⇒ 模型反复重接已经接好的线。
+ *
+ * 这条 bug 从 MIXER_UNFED 写出来那天就在，之前一直被更早的断点遮住
+ * （$ore 选错矿 / rot !== 0 掐断矿机 / upstreamOf 走错邻居）。
+ * 把上游全修好之后它才露出来 —— 也正因为如此，它是最难定位的一层。
+ *
+ * 夹具用**真机 obs 快照**（test/fixtures/saves/level9-mixer-obs.json）：
+ * 那一份里 M6/M2 的喂料链是通的，正是 bug 的现场。
+ * 手搓夹具试过两次都失败（r=0 的 exit 是 top 不是 bottom，很容易搞反）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("M20 ★ 蓝矿机喂一条链 ⇒ slot_values 必须是 color:blue（不是 null）", () => {
+    const f = path.join(SAVES, "level9-mixer-obs.json");
+    if (!fs.existsSync(f)) {
+        /* 夹具是一次性快照，不进仓库时跳过并说明原因（不静默假绿）。 */
+        console.log("  (skip) 缺 level9-mixer-obs.json 快照 —— 这条测不了");
+        return;
+    }
+    const w = JSON.parse(fs.readFileSync(f, "utf8"));
+    const ds = semanticDiagnoses(w, null, "CpCpCpCp", handlesOf(w), { recipe: RECIPE_PURPLE, level: 9 });
+    const d = byCode(ds, "MIXER_UNFED")[0];
+    assert.ok(d, "快照里应当有 MIXER_UNFED");
+
+    const vals = d.evidence.slot_values;
+    assert.ok(Array.isArray(vals), "slot_values 必须是数组");
+    assert.equal(vals[0], "color:blue",
+        "槽 0 喂的是蓝矿机，必须解析成 color:blue。"
+        + " null 说明形状传播的结果没被读到（Set 被当成非数组）。实际：" + JSON.stringify(vals)
+        + " observed=" + d.observed);
+});
