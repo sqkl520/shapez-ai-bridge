@@ -1051,6 +1051,8 @@ const CODE_RANK = Object.freeze({
      * 排在最后 = 只在没有更急的事时提醒；而 `severity: "warn"` 保证它
      * 不会像 blocker 那样占掉 prompt 的第一位。 */
     DEAD_LINES: 9,
+    /* 孤儿机器和废线是同一类「地形垃圾」，同级。 */
+    ORPHAN_MACHINES: 9,
 });
 
 /**
@@ -2387,6 +2389,96 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                         + `**拆之前先别铺新线** —— 空间腾出来之后，正解往往只要几格。`,
                 });
             }
+        }
+    }
+
+    /* ────────────────────────────────────────────────────────────────────
+     * ③c ORPHAN_MACHINES —— 一根带子都没接的机器
+     *
+     * 用户 2026-11-13 第二次指屏幕：「我的意思是这些残留物需要清理」。
+     * 截图上是一整排垃圾桶和孤立的 cutter / rotater —— 一根带子都没连。
+     *
+     * `DEAD_LINES` 只数**带子**，完全没看机器：那一刻 57 台机器里 **45 台是孤儿**
+     * （29 台矿机里有 23 台输出口空着、12 个垃圾桶大部分一个输入都没接）。
+     *
+     * 判据：`slotsOf` 给出该机器的全部输入/输出槽位，逐个查那格上有没有东西。
+     * 两端全空 ⇒ 它永远不会运转，只是占格 + 让 connect 绕路。
+     *
+     * ⚠️ 不删「半接」的机器：`mixer` 常常两槽已接、输出还没铺 ——
+     *    那是**半成品**，删了等于把进度倒回去。只有两端全空才算孤儿。
+     * ──────────────────────────────────────────────────────────────────── */
+    if (!o.truncated) {
+        const machines = idx.ent.filter(e => !isBelt(e) && e.type !== "hub");
+        const orphans = [];
+        for (const m of machines) {
+            let sl = null;
+            try {
+                sl = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m));
+            } catch { continue; }
+            if (!sl) continue;
+            const ins = Array.isArray(sl.inputs) ? sl.inputs : [];
+            const outs = Array.isArray(sl.outputs) ? sl.outputs : [];
+            if (!ins.length && !outs.length) continue;      // 无端口的（理论上没有）
+            /* ★ 两侧用**不同**的判据 ★
+             *
+             * 输出侧：接的带子必须**活着**（能到 hub）—— 否则这台机器的产物
+             *        永远送不到终点，等同于没接。
+             * 输入侧：只要格子上**有东西**就算半成品 —— 上游可能还在铺
+             *        （mixer C7 正是这样：两个槽接满蓝颜料，但那条链还没通到 hub，
+             *        用「活」判会把一台正在建的核心机器判成废物）。
+             *
+             * 两处都用「活」时，清理后的世界报出 8 台孤儿、含 mixer ——
+             * 而删掉 mixer 等于把唯一的紫色来源删了。 */
+            const hasBelt = (cell) => !!at(idx, cell);
+            const liveOut = (cell) => {
+                const t = at(idx, cell);
+                if (!t) return false;
+                if (!isBelt(t)) return true;              // 机对机直贴，算连着
+                return reach.has(t.uid);
+            };
+            const inFed = ins.filter(i => hasBelt(i.cell)).length;
+            const outFed = outs.filter(x => liveOut(x.cell)).length;
+            /* ★ 只有「两端都空」才算真孤儿 ★
+             *
+             * 清理后的世界一度报出 8 台，其中一台是 `mixer C7` —— 它两个 color 槽
+             * 都已经接上蓝颜料，只是输出还没铺到 painter。那是**进度**，删掉等于倒回去。
+             *
+             * 「有输入没输出」= 半成品，留着；「有输出没输入」= 等料，也留着
+             * （矿机正是这一类，它输出接着带子就说明有人在用它）。
+             * 只有两端全空，才是永远不会运转的废件。 */
+            if (inFed === 0 && outFed === 0) orphans.push(m);
+        }
+        /* 少于 6 台不报：零星几台可能是刚放的、还没接 */
+        if (orphans.length >= 6) {
+            const byType = new Map();
+            for (const m of orphans) byType.set(m.type, (byType.get(m.type) || 0) + 1);
+            const hs = orphans.map(m => handleOf(handles, m.uid)).filter(Boolean);
+            const hub0 = idx.ent.find(e => e.type === "hub");
+            const far = hub0 ? orphans.filter(m => Math.abs(m.x - hub0.x) + Math.abs(m.y - hub0.y) > 40).length : 0;
+            out.push({
+                code: "ORPHAN_MACHINES",
+                layer: "L2",
+                severity: "warn",
+                subject: subjectOf(handles, orphans[0].uid, orphans[0].type),
+                expected: "every machine on the map has at least one belt attached",
+                observed: `${orphans.length} of ${machines.length} machines have NOTHING connected `
+                    + `(${[...byType].map(([t, n]) => `${t}×${n}`).join(", ")}`
+                    + (far ? `; ${far} of them are more than 40 tiles from the hub` : "") + `)`,
+                evidence: {
+                    handles: hs,
+                    uids: orphans.map(m => m.uid),
+                    orphan_count: orphans.length,
+                    machine_count: machines.length,
+                    by_type: Object.fromEntries(byType),
+                    far_from_hub: far,
+                },
+                candidates: ["remove_machine", "remove_run"],
+                hint: `${orphans.length} 台机器一根带子都没接（${[...byType].map(([t, n]) => `${t}×${n}`).join("，")}）—— `
+                    + `它们永远不会运转，只占格并让 connect 绕路。`
+                    + (far ? `其中 ${far} 台离 hub 超过 40 格，更要清。` : "")
+                    + `用 \`remove_machine {uids:[${hs.slice(0, 4).join(",")}...]}\` 清掉。`
+                    + `**留最近的矿机和已经半接通的机器**（输入接了但输出没接的 mixer 是半成品，别删）。`,
+            });
         }
     }
 
