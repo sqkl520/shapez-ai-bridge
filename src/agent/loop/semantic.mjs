@@ -295,6 +295,8 @@ function makeShapeEngine(obs, idx) {
     const slotMemo = new Map();      // `${uid}:${role}` → Set|null
     const beltMemo = new Map();      // belt uid → Set|null
     const busy = new Set();
+    /* 本次递归中「撞过环」的实体 —— 它们的值是半成品，不能进 memo。见 beltValue 的注释。 */
+    const poisoned = new Set();
 
     const tplOf = e => templateByBuildingVariant(e.type, variantOf(e));
 
@@ -346,12 +348,27 @@ function makeShapeEngine(obs, idx) {
         return o ? outValue(up, o.role) : null;
     }
 
-    /** 带子的形状 = 喂它的那个输出槽的形状。 */
+    /** 带子的形状 = 喂它的那个输出槽的形状。
+     *
+     * ★ 「算完了是 null」和「暂时算不出」必须分开 ★
+     *
+     * 递归里有 `busy` 环保护：撞上正在算的祖先就返回 null。
+     * 但那个 null 原来会被**沿途每一层**当成结果缓存进 `beltMemo` ——
+     * 于是一次环检测的副作用被永久化，整条链以后永远返回 null。
+     *
+     * 实测（第 9 关 mixer C7）：M6/M2 两台矿机都在挖蓝矿、
+     * 喂料带每跳的 `sameCell` 与 `accepts` 全部通过、
+     * `computeOut(M6)` 也确实跑到了 `op==="mine"`、`kind=blue`，
+     * 但 `slot_values` 恒为 `[null,null]`，诊断于是永远说「源头断了」，
+     * 让模型反复重接已经接好的线。
+     *
+     * 现在用一个 `poisoned` 标记：本次递归中遇到过环 ⇒ 这一格的值**不可缓存**，
+     * 下次还会重算（那时环已经被打破，能算出真值）。 */
     function beltValue(b) {
         if (!isBelt(b)) return null;
         if (beltMemo.has(b.uid)) return beltMemo.get(b.uid);
         const key = `belt:${b.uid}`;
-        if (busy.has(key)) { mark("cycle", b.uid, "belt"); return null; }
+        if (busy.has(key)) { mark("cycle", b.uid, "belt"); poisoned.add(b.uid); return null; }
         busy.add(key);
         let val = null;
         const up = at(idx, entryCellOf(b));
@@ -371,7 +388,8 @@ function makeShapeEngine(obs, idx) {
             }
         }
         busy.delete(key);
-        beltMemo.set(b.uid, val);
+        /* 递归中撞过环 ⇒ 这个值是「半成品」，别写进 memo。 */
+        if (!poisoned.has(b.uid)) beltMemo.set(b.uid, val);
         return val;
     }
 
@@ -379,11 +397,12 @@ function makeShapeEngine(obs, idx) {
     function outValue(m, role) {
         const key = `${m.uid}:${role}`;
         if (slotMemo.has(key)) return slotMemo.get(key);
-        if (busy.has(key)) { mark("cycle", m.uid, m.type); return null; }
+        if (busy.has(key)) { mark("cycle", m.uid, m.type); poisoned.add(m.uid); return null; }
         busy.add(key);
         const val = computeOut(m, role);
         busy.delete(key);
-        slotMemo.set(key, val);
+        /* 与 beltValue 同理：撞过环的值是半成品，不缓存。 */
+        if (!poisoned.has(m.uid)) slotMemo.set(key, val);
         return val;
     }
 
@@ -1402,9 +1421,22 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             if (colorIdx.length < 2) continue;
 
             const feeds = colorIdx.slice(0, 2).map(i => engine.inputSlotValue(m, i));
-            const vals = feeds.map(f => (f && Array.isArray(f.value)
-                ? f.value.filter(v => typeof v === "string" && v.startsWith("color:"))
-                : []));
+            /* ★ `f.value` 是 **Set**，不是 Array ★
+             *
+             * `makeShapeEngine` 的形状传播全程用 `Set`（`beltValue` / `outValue`
+             * 都返回 `Set<string>|null`），而这里原来写的是 `Array.isArray(f.value)`。
+             * `Array.isArray(new Set(...))` 恒为 false ⇒ **两个槽永远解析成 null**。
+             *
+             * 后果（第 9 关）：M6/M2 两台矿机都在挖蓝矿、整条喂料链每跳
+             * `sameCell` 与 `accepts` 全通过、`computeOut` 也确实返回了 `color:blue`
+             * （`[beltValue] 12210 => color:blue`），但 `slot_values` 恒为 `[null,null]`
+             * ⇒ 诊断永远说「源头断了」⇒ 模型反复重接**已经接好的线**。
+             *
+             * 这条 bug 从 `MIXER_UNFED` 写出来那天就在，之前一直被更早的断点遮住
+             * （先是 `$ore` 选错矿、再是 `rot !== 0` 掐断矿机输出）。
+             * 把上游全修好之后它才露出来 —— 也正因为如此，它是最难定位的一层。 */
+            const asList = v => (v instanceof Set ? [...v] : (Array.isArray(v) ? v : []));
+            const vals = feeds.map(f => (f ? asList(f.value).filter(v => typeof v === "string" && v.startsWith("color:")) : []));
             const resolved = vals.map(v => (v.length ? v.slice().sort() : null));
             const anyUnresolved = resolved.some(v => v === null);
             const bothSame = resolved[0] && resolved[1]
@@ -1455,11 +1487,55 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                         return { len, head: "machine", headCell: cur, headType: e.type, headUid: e.uid };
                     }
                     /* 找谁喂这一格 */
+                    /* ★ 多个邻居都「指向」本格时，按本格自己的入口方向选 ★
+                     *
+                     * 世界里可以出现**两个带子都声称要喂同一格**的局面
+                     * （都是模型早期铺错的产物，游戏会给其中一个改方向，另一个变死线）。
+                     * 实测（第 9 关：(34,-11) 被 B342 从北、B302 从西同时指着）：
+                     * 旧代码「最后一个赢」—— 循环顺序是 上/右/下/左，于是**西边的 B302 赢**，
+                     * 而上游其实是北边的 B342。
+                     *
+                     * 后果：`upstreamOf` 沿 B302 一路往西跑到断头（106 格），
+                     * 诊断说「这条线源头断了」，让模型去接一条**早就接好的线**。
+                     * 实测那个 run 里模型重复执行了 4 次同样的 connect。
+                     *
+                     * `B303` 的 `entryDirOf` 是 `bottom`（货从北面来），
+                     * 所以应当选 `(34,-10)` 那格的 `B342`。判据用本格**自己的**入口格，
+                     * 而不是「谁的 exit 说指向我」—— 后者在冲突时没有优先级。 */
+                    /* ★ 入口格上是**机器** ⇒ 这条线的源头就是它，别报「断头」★
+                     *
+                     * 实测（第 9 关：(36,-9) 的 B358）：它的入口格 (37,-9) 上是 M6 矿机，
+                     * 而旧代码只找「exit 指向本格的**带子**」，找不到就报 `head`
+                     * （＝「裸带子做起点，前面没东西」）。
+                     *
+                     * 那句对模型是**误导**：它让人以为要去接一个断头，
+                     * 而实际源头是一台正在挖蓝矿的矿机 —— 也就是**已经接好了**。
+                     * 那个 run 里模型为此重复执行了 4 次同样的 connect。
+                     *
+                     * 机器不是「断」，它是**源头**。区分开：`head` 只留给人真空手的情况。 */
+                    const wantEntry0 = entryCellOf(e);
+                    if (Array.isArray(wantEntry0)) {
+                        const upM = at(idx, wantEntry0);
+                        if (upM && !isBelt(upM) && !isTunnel(upM)) {
+                            return {
+                                len, head: "machine", headCell: wantEntry0,
+                                headType: upM.type, headUid: upM.uid,
+                                headHandle: handleOf(handles, upM.uid),
+                            };
+                        }
+                    }
                     let feeder = null;
-                    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
-                        const n = at(idx, [cur[0] + dx, cur[1] + dy]);
-                        if (!n || !isBelt(n)) continue;
-                        if (sameCell(exitCellOf(n), cur)) feeder = n;
+                    const wantEntry = entryCellOf(e);
+                    if (Array.isArray(wantEntry)) {
+                        const n = at(idx, wantEntry);
+                        if (n && isBelt(n) && sameCell(exitCellOf(n), cur)) feeder = n;
+                    }
+                    if (!feeder) {
+                        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+                            const n = at(idx, [cur[0] + dx, cur[1] + dy]);
+                            if (!n || !isBelt(n)) continue;
+                            if (sameCell(exitCellOf(n), cur)) feeder = n;
+                        }
                     }
                     if (!feeder) {
                         /* 流头但格子上是带子/隧道 ⇒ 它就是这条线的起点，前面没东西。

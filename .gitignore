@@ -61,3 +61,8 @@ dist/
 
 # 临时 obs dump（抓实时世界状态用，机器相关）
 research/ai-plan/.obs*.json
+
+# 临时调试脚本（research/ai-plan/.xxx.mjs）
+research/ai-plan/.*.mjs
+.gitmsg.tmp
+
