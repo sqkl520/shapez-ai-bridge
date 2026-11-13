@@ -1043,3 +1043,58 @@ console.log("\n── 5b3. ambiguous_port 的候选必须送达下一轮 prompt 
     ok(/role:"color", index:1/.test(second.user), "index:1 也要给（只给 0 会让模型以为只有一个槽）");
     cleanup(dir);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 12b. dry-run 对 **upgrade** 也必须零写入
+ *
+ * 红队实测（2026-11-13）：`--dry-run` 下模型提议 `upgrade{id:…}` 时，
+ * `reader.upgrade({id})` **照样发出去了**，hub 库存真的被扣（购买次数 = 1）。
+ *
+ * 根因是执行顺序：升级在 tx 流水线**之前**执行（它不产生 op，走顶层 RPC），
+ * 而 `ctx.dryRun` 的闸门守在 tx 那一层 —— 中间隔了 240 行，整条 dry-run
+ * 契约对升级失效。而升级是不可逆的库存支出，恰恰是 dry-run 最该保护的动作。
+ *
+ * ⚠️ 写这条测试时踩到一个假绿：第一版的假 reader 对「读状态」返回
+ * `upgrades:{}`，于是 `upgradeLine` 在**读状态**那一步就报 unsupported_building，
+ * 永远走不到购买 —— 把闸门移除掉测试也照样绿。假 reader 必须报 `can_buy:true`，
+ * 这条测试才有意义。
+ * ══════════════════════════════════════════════════════════════════════════ */
+console.log("\n── 12b. dry-run 不许真买升级 ──");
+{
+    const dir = tmpRoot();
+    const g = l4Game();
+    let boughtCalls = 0;
+    const baseReader = g.reader();
+    const reader = {
+        ...baseReader,
+        async upgrade(p = {}) {
+            if (p && p.id !== undefined) {
+                boughtCalls++;
+                return { ok: true, bought: true, spent: [], before: {}, after: {} };
+            }
+            /* 不带 id = 读状态。**必须 can_buy:true**，否则走不到购买那一步。 */
+            return {
+                ok: true, op: "upgrade", stored: {},
+                upgrades: {
+                    miner: {
+                        level: 1, maxed: false, multiplier: 1.5, can_buy: true,
+                        next: { required: [{ shape: "RuRuRuRu", amount: 300 }] },
+                    },
+                },
+            };
+        },
+    };
+    const PLAN_UP = JSON.stringify({
+        say: "buy a tier",
+        calls: [{ macro: "upgrade", args: { id: "miner" }, why: "free capacity" }],
+    });
+    const res = await runLoop({
+        reader, goal: "RuRu----",
+        llmClient: new ScriptedClient([PLAN_UP]),
+        mode: "mock", runDir: dir, game: g, dryRun: true,
+    });
+    eq(boughtCalls, 0, "★ dry-run 下 upgrade 的购买调用次数必须是 0（不可逆扣库存）");
+    eq(g.entityCount, 181, "世界零写入（拓扑）");
+    eq(res.reason, "DRY_RUN", "reason = DRY_RUN");
+    cleanup(dir);
+}

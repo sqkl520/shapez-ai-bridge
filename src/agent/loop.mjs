@@ -1490,7 +1490,22 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
      * 只对 connect/extend_line（纯铺带）生效 —— 那是唯一会大面积新增格子、
      * 且 `planToTxOps` 无法事后合并的宏。其它宏保持原样（它们产出机器/删除，
      * 合并不适用，也不该让它们看见半成品状态）。 */
-    let worldSoFar = { entities: (o.entities || []).slice() };
+    /* ⚠️ **必须逐个浅拷贝元素**，不能只 `.slice()` 数组。
+     *
+     * `.slice()` 只复制了数组本身，元素对象仍然是调用方 `o.entities` 里的**同一批对象**。
+     * 而下面 `have.r = rot; have.rotation_variant = rv; have.code = code;`
+     * 是**原地改写** —— 它会直接改掉调用方的 obs。
+     *
+     * 后果（红队实测，2026-11-13）：`buildTxPlan` 在预演闸门里取
+     * `before = worldHealth({ obs: o })`，而 `o` 已经被前面的宏调用改写过了 ⇒
+     * 基准失真 ⇒ 算出来的 `loss` / `deadGrowth` 连**符号都是反的**。
+     * 实测某条 connect：真实是 `-76 可达带子 / +96 死带子`（两条阈值都该拦），
+     * 闸门看到的是 `loss=-24 / deadGrowth=-4`（「改善」）⇒ 放行。
+     *
+     * 这条 bug 比它掩盖的那个更老（追到 `cbba883`），但它让「预演闸门」
+     * 对**所有**改了朝向的 connect 都失去意义 —— 因为 `worldSoFar` 只在
+     * connect / extend_line 之后更新，而那正是闸门最该拦住的两类宏。 */
+    let worldSoFar = { entities: (o.entities || []).map(e => (e && typeof e === "object" ? { ...e } : e)) };
     for (let i = 0; i < res.calls.length; i++) {
         const c = res.calls[i];
         if (!MACRO_NAMES.includes(c.macro)) {
@@ -2050,20 +2065,38 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                     if (!added.length) return null;
                     const afterObs0 = after ? (afterObs || null) : null;
                     if (!afterObs0 || !Array.isArray(afterObs0.entities)) return null;
-                    const idx2 = indexOf(afterObs0);
-                    /* 只看**这一批新铺的最后一格**能不能走出一台机器 ——
-                       那是「这条线通向哪」的唯一证据（中间格只会是别的带子）。 */
+                    const idx2 = buildIndex(afterObs0);
                     const newCells = new Set(added.map(op => `${op.x},${op.y}`));
                     const D = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
-                    for (const op of added) {
-                        for (const [dx, dy] of Object.values(D)) {
-                            const n = atCell(idx2, [op.x + dx, op.y + dy]);
-                            if (!n) continue;
-                            if (n.type === "belt" || n.type === "underground_belt") continue;
-                            /* 邻居是机器，且**不是**本批新放的（那是链条本身） */
-                            if (newCells.has(`${n.x},${n.y}`)) continue;
-                            return { handle: null, type: n.type, uid: n.uid };
-                        }
+
+                    /* ★ 只看**末端**，不看任意一格 —— 这是这条豁免的关键 ★
+                     *
+                     * 第一版遍历**所有**新格、只看「邻居里有没有机器」就放行。
+                     * 红队实测（2026-11-13，L4 夹具，`connect(B?,B?)` 单调用扫描）：
+                     *
+                     *   source=机器(矿机)  铺 29 格  ⇒ ALLOWED（死带子 +29，阈值 20 本该拦）
+                     *   source=带子        铺 35 格  ⇒ REJECTED
+                     *
+                     * 同样的世界、同样的距离、同样的死带子增量，**只因为 from 是矿机**
+                     * 就放行 —— 因为线的**第一格**邻着那台矿机。
+                     *
+                     * 而 `connect` 的 from 是机器正是最常见的形态（矿机出货）。
+                     * 也就是说第一版的豁免覆盖面是「几乎所有从矿机出发的长线」，
+                     * 那正是原判据（M15→B207 实测）要拦的东西。
+                     *
+                     * 现在只认**终点**：把新铺的带子按「货能走到哪」连成链，
+                     * 取链的末端那一格，看它对面是不是一台机器。
+                     * 起点那台机器不参与判定 —— 它是**源头**，不是这条路通向的地方。 */
+                    const lastOp = added[added.length - 1];
+                    const endCell = [lastOp.x, lastOp.y];
+                    /* 从末端沿新铺格往外走一格 —— 那一格若是一台真机器，才算「接上了」。 */
+                    for (const [dx, dy] of Object.values(D)) {
+                        const n = atCell(idx2, [endCell[0] + dx, endCell[1] + dy]);
+                        if (!n) continue;
+                        if (n.type === "belt" || n.type === "underground_belt") continue;
+                        if (n.type === "hub") continue;
+                        if (newCells.has(`${n.x},${n.y}`)) continue;
+                        return { handle: null, type: n.type, uid: n.uid };
                     }
                     return null;
                 })();
@@ -3584,6 +3617,28 @@ export async function runLoop(opts = {}) {
                 const upgradeResults = [];
                 for (const uc of upCalls) {
                     let ur = null;
+                    /* ★ `dryRun` 必须在这里拦，不能等到 tx 阶段 ★
+                     *
+                     * 红队实测（2026-11-13）：`--dry-run` 模式下模型提议
+                     * `upgrade{id:…}`，`reader.upgrade({id})` **照样发出去了**，
+                     * hub 库存真的被扣（`upgrade 的真实购买次数 = 1`）。
+                     *
+                     * 原因是升级在**第 3615 行**执行，而 `ctx.dryRun` 的闸门在
+                     * **第 3856 行** —— 中间隔了 240 行，那条闸门管的是 tx 写入。
+                     * 升级不走 tx，于是整条 dry-run 契约对它失效。
+                     *
+                     * `LoopOpts.dryRun` 的注释写的是「只跑到 plan，**世界零写入**」。
+                     * 而升级是不可逆的库存支出 —— 恰恰是 dry-run 最该保护的那类动作。
+                     * 任何用 `--dry-run` 做的验证跑，只要模型提议升级，就会真扣库存。 */
+                    if (opts && opts.dryRun === true) {
+                        upgradeResults.push({
+                            ok: true, macro: "upgrade", id: (uc.args && uc.args.id) || null,
+                            bought: false, spent: [], would_spend: null,
+                            reason: "dry-run: not sent",
+                            dry_run: true,
+                        });
+                        continue;
+                    }
                     try {
                         ur = await upgradeLine(uc.args || {}, { reader });
                     } catch (e) {
@@ -3617,7 +3672,28 @@ export async function runLoop(opts = {}) {
                     /* 买了东西就是世界状态变了 —— 下一轮要重新观测，
                        不能因为「没有 op」就被 `NO_WORLD_CHANGE` 判成没进展。 */
                     if (bought.length) st.upgradesBought = (st.upgradesBought || 0) + bought.length;
-                    continue;
+                    /* ★ 必须 `break` 到**外层轮循环**，不能 `continue` 内层 ★
+                     *
+                     * 红队实测（2026-11-13）：这里原来是 `continue`，而它在一个
+                     * 12 空格缩进的**内层 LLM 重试环**里（第 3449 行）—— 不是外层
+                     * 轮循环（第 2790 行，8 空格缩进）。
+                     *
+                     * `continue` 于是跳回「再问一次 LLM」，而**不消耗轮次**：
+                     *   · `st.rounds` 不推进 ⇒ `ROUNDS_MAX` 可被 upgrade-only 轮绕过；
+                     *   · 那一轮没有 `healthBefore`/`healthAfter` 快照 ⇒
+                     *     `netEffects` 里完全没有它 ⇒ `c2f6a48` 修的
+                     *     `classifyNetEffect` 升级分支在这条路径上**从不被调用**；
+                     *   · `worldTouched` 恒 false ⇒ 收尾不重观测 ⇒
+                     *     `run_total` 判 `inert`（「世界没有任何变化」），
+                     *     而 hub 库存实实在在少了 —— 与事实相反。
+                     *
+                     * 那次的实测输出：`rounds=1 / net_effects=[] / run_total=inert /
+                     * preserved.world_state="untouched"`，而升级真的买了。
+                     *
+                     * 设 `innerDecided` 后 `break` ⇒ 走「内层已定 outcome」那条出口
+                     * 回外层，轮次正常推进，下一轮重新观测时自然会把库存变化算进去。 */
+                    innerDecided = true;
+                    break;
                 }
                 /* 只把**剩下的**调用送进 tx 流水线。用局部变量而不是改 `parsed`
                    （它是 `const`，而且下游还有多处读它，重赋值会静默分成两份真相）。 */
