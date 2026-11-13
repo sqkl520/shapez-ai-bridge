@@ -100,7 +100,24 @@ const variantOf = e => (e && e.variant) || "default";
  */
 function chooseMinerPair(obs, handles, mixer, handlesOfMiners, slotIdx, feedCells) {
     const scratch = Array.isArray(feedCells) ? feedCells : [];
+    const t0 = Date.now();
+    /* ★ 硬预算：诊断是同步跑的，不能在这儿花几百毫秒 ★
+     *
+     * 真机实测（第 9 关，2026-11-13）：8 台蓝矿机 × 2 个槽 × 2 种分配
+     * = 32 次完整 `connect` 规划，单次几十毫秒 ⇒ 一次诊断要好几秒，
+     * 而诊断每轮都跑 —— 整个 run 卡在「算配对」上。
+     *
+     * 三处收紧：
+     *   · 只试**前 4 台**矿机（够用了：不重叠的那对通常就在前几台）；
+     *   · 累计超过 1500ms 就放弃，退回通用建议；
+     *   · 命中第一对立刻返回（已有）。
+     *
+     * 放弃是安全的：调用方拿到 null 会退回「挑两台隔得远的」那句通用提示，
+     * 不会编假配对。 */
+    const MAX_MINERS = 4;
+    const MAX_MS = 1500;
     const cellsOf = (uid, idx) => {
+        if (Date.now() - t0 > MAX_MS) return null;
         const r = planConnect(
             { from: { uid }, to: { uid: mixer.uid, port: { role: "color", index: idx } }, opts: { rebind: true } },
             { entities: obs.entities, obs, scratch_feed_cells: scratch },
@@ -113,7 +130,7 @@ function chooseMinerPair(obs, handles, mixer, handlesOfMiners, slotIdx, feedCell
         const h = handleOf(handles, e.uid);
         if (h) byHandle.set(h, e);
     }
-    const ms = handlesOfMiners.map(h => ({ h, e: byHandle.get(h) })).filter(x => x.e);
+    const ms = handlesOfMiners.slice(0, MAX_MINERS).map(h => ({ h, e: byHandle.get(h) })).filter(x => x.e);
     if (ms.length < 2) return null;
     /* 每种 (slotA, slotB) 都试，允许两台各接任一槽。 */
     for (const [ia, ib] of (slotIdx.length === 2 ? [[slotIdx[0], slotIdx[1]], [slotIdx[1], slotIdx[0]]] : [])) {
