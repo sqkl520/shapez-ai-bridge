@@ -362,8 +362,35 @@ export function outputRouted(sl, idx) {
 export function upstreamFed(idx, belt) {
     if (!idx || !isBelt(belt)) return false;
     const origin = [belt.x, belt.y];
-    const up = at(idx, entryCellOf(belt));
-    if (!up) return false;
+    const entryCell = entryCellOf(belt);
+    const up = at(idx, entryCell);
+    if (!up) {
+        /* ★ 入口格是某台机器的**槽位本体** ⇒ 也算有供给 ★
+         *
+         * 与 `structural.mjs` 里 DEAD_END 的那个修法是同一个陷阱：
+         * `at()` 用 footprint 索引，而「槽位本体格」不总是落在 footprint 内。
+         *
+         * 真机实测（2026-11-13，产线跑到 437/600 时）：B79 @(-9,-1) 是
+         * painter→hub 那条链的第一格，它的入口格 (-9,0) 正是 painter 的
+         * out 槽本体。产线在交货，而 `CHAIN_UNFED` 说它「没有源头」。
+         * 模型于是连着两轮想去「把 painter 的输出接进来」—— 早就接好了。
+         *
+         * 判据：扫入口格的四个邻居机器，看它是不是任何一台的输出槽本体，
+         * 且那条输出槽的 `cell` 正好是本带的格。 */
+        if (!Array.isArray(entryCell)) return false;
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+            const m = at(idx, [entryCell[0] + dx, entryCell[1] + dy]);
+            if (!m || isBelt(m) || isTunnel(m)) continue;
+            let ms = null;
+            try { ms = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m)); } catch { ms = null; }
+            if (!ms || !Array.isArray(ms.outputs)) continue;
+            const hit = ms.outputs.some(o =>
+                Array.isArray(o.slot) && o.slot[0] === entryCell[0] && o.slot[1] === entryCell[1] &&
+                Array.isArray(o.cell) && o.cell[0] === origin[0] && o.cell[1] === origin[1]);
+            if (hit) return true;
+        }
+        return false;
+    }
 
     if (isBelt(up)) {
         const c = exitCellOf(up);
