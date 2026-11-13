@@ -1773,13 +1773,50 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                            只接 slot 0 的那 5 格路正好穿过 slot 1 的喂料格，
                                            把它的线覆盖成朝左的死线，两个槽一起废掉。 */
                                     const near3 = ready[0].miner_handles.slice(0, 3).join("/");
+                                    /* ★ 两台矿机挨得太近 ⇒ 它们接两个槽的路径会重叠 ★
+                                     *
+                                     * 真机 r-20261113084958-4e86：模型按 hint 接了 M2+M3
+                                     * （相邻两格）。两条路共用 5 个格子，游戏落盘时按邻居
+                                     * 重算了 `(35,-12)` 的 rotation_variant（计划要 corner，
+                                     * 落成直线）⇒ `L1-landing: want 3, got 1`。
+                                     *
+                                     * 离线实测：M6 / M9 给两个槽的路线**完全平行不重叠**
+                                     * （M6 走 x=34 与 x=35 两列），那才是能同时成立的一对。
+                                     *
+                                     * 这里只能给提示，不能替模型算（那要在诊断里跑两次 connect，
+                                     * 会成环）。判据取「曼哈顿 ≤ 4」= 相邻或隔一格。 */
+                                    const mineCells = (() => {
+                                        const out = [];
+                                        for (const hd of ready[0].miner_handles.slice(0, 6)) {
+                                            const e = idx.ent.find(x => x.type === "miner"
+                                                && handleOf(handles, x.uid) === hd);
+                                            if (e) out.push({ h: hd, x: e.x, y: e.y });
+                                        }
+                                        return out;
+                                    })();
+                                    const tooClose = (() => {
+                                        for (let i = 0; i < mineCells.length; i++) {
+                                            for (let j = i + 1; j < mineCells.length; j++) {
+                                                const d2 = Math.abs(mineCells[i].x - mineCells[j].x)
+                                                    + Math.abs(mineCells[i].y - mineCells[j].y);
+                                                if (d2 <= 3) return [mineCells[i].h, mineCells[j].h];
+                                            }
+                                        }
+                                        return null;
+                                    })();
+                                    const pairHint = tooClose
+                                        ? `；**${tooClose.join(" 和 ")} 挨得太近，别拿它们各接一个槽** —— `
+                                            + `路线会重叠，游戏落盘时把朝向改成直线，槽就废了。`
+                                            + `挑两台隔得远的（从不同方向进 mixer）`
+                                        : "";
                                     parts.push(`**别修那条 ${t.u.len} 格的长线** —— `
                                         + `矿机（${near3}）离 mixer 只 ${nearDist} 格，就地抢槽。`
                                         + `**只要 rebind，别加 allow_replace**（会重铺带子、改坏朝向）；`
                                         + `**两个槽分开接、用不同矿机**（只接一个的话，路径会穿过另一个槽的喂料格）：`
                                         + `\`connect {from:{ref:"${ready[0].miner_handles[0]}"}, to:{ref:"${mh}", `
                                         + `port:{role:"color", index:${ti}}}, opts:{rebind:true}}\`，`
-                                        + `另一个槽同样写法、换 index 和一台**不同的**矿机`);
+                                        + `另一个槽同样写法、换 index 和一台**不同的**矿机`
+                                        + pairHint);
                                 } else {
                                     const headH = d0 && d0.headHandle ? d0.headHandle : null;
                                     const who = ready.length
