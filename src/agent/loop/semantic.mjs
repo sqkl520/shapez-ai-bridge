@@ -56,6 +56,9 @@
  */
 import { templateByBuildingVariant, UNLOCK_LEVEL_FALLBACK } from "../../ai/op-templates.mjs";
 import { DIRV, OPP } from "../../ai/belt-rules.mjs";
+/* 只在「给模型挑一对矿机」时用（见 chooseMinerPair）——
+   connect.mjs 不 import 本文件，所以不成环（已实测）。 */
+import { connect as planConnect } from "../macros/connect.mjs";
 import { slotsOf, beltRvOf } from "../verify_runtime.mjs";
 import {
     parse, hash, cutHalf, cutQuad, rotateCW, rotateCCW, rotate180, stack, paint, ALL_COLORS,
@@ -73,6 +76,68 @@ import { LIMITS, subjectOf, handleOf } from "./structural.mjs";
 
 const sameCell = (a, b) => !!a && !!b && a[0] === b[0] && a[1] === b[1];
 const variantOf = e => (e && e.variant) || "default";
+
+/**
+ * 从候选矿机里挑一对，让它们分头喂 mixer 的两个 color 槽而**路线不重叠**。
+ *
+ * ## 为什么必须真的试算，不能靠几何近似
+ *
+ * 真机 r-20261112210803-e1a3 → r-20261113093827-cf54：模型反复选 M2+M3
+ * （相邻两格）。两条路共用 5 个格子，而 `(35,-12)` 既是 slot1 的喂料格
+ * 又是 slot0 那条线的过路格 —— 它只能有一个朝向 ⇒ 游戏落盘时按邻居重算，
+ * 计划要 corner（`code=3`）落成直线（`code=1`）⇒ `L1-landing: want 3, got 1`。
+ *
+ * 我先后试过两个近似判据，都不准：
+ *   · 「曼哈顿距离 ≤3 就冲突」—— M6/M9 相距 2 格却**不冲突**
+ *     （它们路线平行：slot0 走 x=34 一列、slot1 走 x=35 一列）；
+ *   · 「方位角要不同」—— 这一带 8 台矿机**全在东南**，角度差不出 50°。
+ *
+ * 能分开它们的只有**实际路径**。所以这里直接调 `connect` 的 dry-run
+ * 跑两两组合，取第一对不重叠的。最多 8×8 次，每次都是纯函数规划，很便宜。
+ *
+ * @returns {{a:string,b:string,idxA:number,idxB:number}|null}
+ *   找不到时返回 null（调用方退回原来的通用建议，不编）。
+ */
+function chooseMinerPair(obs, handles, mixer, handlesOfMiners, slotIdx, feedCells) {
+    const scratch = Array.isArray(feedCells) ? feedCells : [];
+    const cellsOf = (uid, idx) => {
+        const r = planConnect(
+            { from: { uid }, to: { uid: mixer.uid, port: { role: "color", index: idx } }, opts: { rebind: true } },
+            { entities: obs.entities, obs, scratch_feed_cells: scratch },
+        );
+        return (r && r.ok && Array.isArray(r.cells)) ? r.cells.map(c => `${c.x},${c.y}`) : null;
+    };
+    /* `handlesOfMiners` 是句柄名数组；转成 uid。 */
+    const byHandle = new Map();
+    for (const e of obs.entities || []) {
+        const h = handleOf(handles, e.uid);
+        if (h) byHandle.set(h, e);
+    }
+    const ms = handlesOfMiners.map(h => ({ h, e: byHandle.get(h) })).filter(x => x.e);
+    if (ms.length < 2) return null;
+    /* 每种 (slotA, slotB) 都试，允许两台各接任一槽。 */
+    for (const [ia, ib] of (slotIdx.length === 2 ? [[slotIdx[0], slotIdx[1]], [slotIdx[1], slotIdx[0]]] : [])) {
+        const cache = new Map();
+        const get = (uid, idx) => {
+            const k = `${uid}:${idx}`;
+            if (!cache.has(k)) cache.set(k, cellsOf(uid, idx));
+            return cache.get(k);
+        };
+        for (const x of ms) {
+            for (const y of ms) {
+                if (x.e.uid === y.e.uid) continue;
+                const ca = get(x.e.uid, ia);
+                if (!ca) continue;
+                const cb = get(y.e.uid, ib);
+                if (!cb) continue;
+                const setA = new Set(ca);
+                if (cb.some(k => setA.has(k))) continue;      // 重叠 ⇒ 换一对
+                return { a: x.h, b: y.h, idxA: ia, idxB: ib };
+            }
+        }
+    }
+    return null;
+}
 
 const unwrapObs = obs =>
     (obs && typeof obs === "object" && !Array.isArray(obs.entities) && obs.result
@@ -1807,11 +1872,24 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                         }
                                         return null;
                                     })();
-                                    const pairHint = tooClose
-                                        ? `**${tooClose.join(" 和 ")} 挨得太近，别拿它们各接一个槽**`
-                                            + `（路线重叠，游戏落盘会把朝向改直线，槽就废）。`
-                                            + `挑两台从**不同方向**进 mixer 的`
-                                        : "";
+                                    /* ★ 真的试算出一对不重叠的矿机 ★
+                                     *
+                                     * 几何近似（距离 / 方位角）都试过，都不准：
+                                     *   · M6/M9 只相距 2 格却不冲突（路线平行）；
+                                     *   · 这一带 8 台矿机全在东南，角度差不出 50°。
+                                     * 只有实际跑 connect 才分得开。见 chooseMinerPair。 */
+                                    const pair = chooseMinerPair(
+                                        o, handles, m, ready[0].miner_handles, colorIdx.slice(0, 2),
+                                        feeds.map(f => (f && Array.isArray(f.cell) ? f.cell : null)).filter(Boolean),
+                                    );
+                                    const pairHint = pair
+                                        ? `**用 ${pair.a} 接 index:${pair.idxA}、${pair.b} 接 index:${pair.idxB}**`
+                                            + `（实测这一对路线不重叠；挨着的那两台会重叠，落盘时朝向被改成直线）`
+                                        : (tooClose
+                                            ? `**${tooClose.join(" 和 ")} 挨得太近，别拿它们各接一个槽**`
+                                                + `（路线重叠，游戏落盘会把朝向改直线，槽就废）。`
+                                                + `挑两台从**不同方向**进 mixer 的`
+                                            : "");
                                     /* ★ 顺序 = 「错了就白干」的那条最先 ★
                                      *
                                      * prompt 只渲染前 180 字。真机 r-20261113091844-77ce：
@@ -1820,12 +1898,11 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                      *
                                      * 前面那几句（别修长线 / 别加 allow_replace）说错也只是
                                      * 多花几格；「选错矿机对」会让整步白干 —— 它必须在前。 */
-                                    parts.push(pairHint
-                                        ? pairHint + `。然后把两台**各接一个槽**：`
-                                            + `\`connect {from:{ref:"<矿机A>"}, to:{ref:"${mh}", port:{role:"color", index:0}}, opts:{rebind:true}}\``
-                                            + ` + 同样写法换 index:1 和矿机B。`
-                                            + `**只要 rebind，别加 allow_replace**（会重铺带子、改坏朝向）；`
-                                            + `别去修那条 ${t.u.len} 格的长线（矿机就在 ${nearDist} 格外）`
+                                    parts.push(pair
+                                        ? pairHint + `。照这个写：`
+                                            + `\`connect {from:{ref:"${pair.a}"}, to:{ref:"${mh}", port:{role:"color", index:${pair.idxA}}}, opts:{rebind:true}}\``
+                                            + ` + \`connect {from:{ref:"${pair.b}"}, to:{ref:"${mh}", port:{role:"color", index:${pair.idxB}}}, opts:{rebind:true}}\``
+                                            + `。**只要 rebind，别加 allow_replace**（会重铺带子、改坏朝向）`
                                         : `**别修那条 ${t.u.len} 格的长线** —— `
                                             + `矿机（${near3}）离 mixer 只 ${nearDist} 格，就地抢槽。`
                                             + `**只要 rebind，别加 allow_replace**（会重铺带子、改坏朝向）；`
