@@ -216,9 +216,25 @@ export async function upgradeUpgradeLine(a, ctx = {}) {
     try {
         res = await reader.upgrade({ id });
     } catch (e) {
+        /* ★ RPC 抛异常 ≠ 库存不够 —— 两者的正确动作正好相反 ★
+         *
+         * 红队指出：这一版把三种完全不同的事实都归到 `game_rejected`：
+         *   ① `can_buy === false`   库存不够，随生产变化 ⇒ **该等**
+         *   ② RPC 抛异常            网络/桥挂了        ⇒ **重试一百次也一样**
+         *   ③ `bought !== true`     状态在读写间变了    ⇒ **该重读**
+         *
+         * 而 ① 之所以单独要有 `game_rejected` 这个码，正是因为
+         * 「它是游戏状态、会变，把它混进确定的失败会让模型在该等的时候放弃」。
+         * 现在把 ② 也塞进同一个码，那条论证就自相矛盾了 —— 一个网络故障
+         * 会被渲染成「下一轮可能就行了」，而它永远不行。
+         *
+         * 用 `tx_unavailable`：它在这个闭集里的定义是「mod 未提供事务能力 /
+         * 写面不可达 ⇒ 拒绝执行而不是半做」，语义正好对得上「通道断了」。 */
         return failure("upgrade", {
-            code: "game_rejected", field: null,
+            code: "tx_unavailable", field: null,
             message: `upgrade RPC 抛异常：${String(e && e.message ? e.message : e)}`,
+            hint: "这不是「库存不够」（那会返回 game_rejected）。"
+                + "通道本身出了问题 —— 同一 tick 重试没有意义，先确认桥和游戏还在。",
         });
     }
     if (!res || res.ok !== true) {
@@ -233,6 +249,9 @@ export async function upgradeUpgradeLine(a, ctx = {}) {
     /* `bought:false` 且不是 maxed —— 游戏状态在两次读之间变了。
        这不是我们的失败，但必须如实报告，不能当成成功。 */
     if (res.bought !== true) {
+        /* 这一种**确实**是游戏状态（读写之间被别人改了），所以 `game_rejected`
+           在这里是准确的 —— 下一轮重读可能就好了。与上面 RPC 异常的
+           `tx_unavailable` 分开，正是为了让模型拿到正确的「该等」还是「该查」。 */
         return failure("upgrade", {
             code: "game_rejected", field: null,
             message: `游戏拒绝购买 ${id}（状态在读取与购买之间变了）`,

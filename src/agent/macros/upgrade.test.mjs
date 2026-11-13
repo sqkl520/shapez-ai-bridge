@@ -177,3 +177,31 @@ test("U13 game_rejected 在 ERROR_CODES 闭集里（新码必须登记）", () =
     ok("game_rejected" in ERROR_CODES, "game_rejected 必须是 ERROR_CODES 的成员");
     ok(/库存/.test(ERROR_CODES.game_rejected), "它的说明要提到库存这个会变的事实");
 });
+
+/* ═══════════ 4. 「买不起」与「通道坏了」必须分开 ═══════════ */
+
+test("U14 RPC 抛异常 ⇒ tx_unavailable（不是 game_rejected）", async () => {
+    /* 红队指出：这两种事实的正确动作正好相反。
+     *   · 库存不够 ⇒ 该等（游戏状态，随生产变化）
+     *   · 通道坏了 ⇒ 重试一百次也一样
+     * 混成一个码会让网络故障被渲染成「下一轮可能就行了」。 */
+    const r = {
+        async upgrade(p = {}) {
+            if (p.id === undefined) {
+                return { ok: true, upgrades: { miner: { level: 1, maxed: false, can_buy: true, multiplier: 1.5, next: { required: [] } } }, stored: {} };
+            }
+            throw new Error("ECONNREFUSED");
+        },
+    };
+    const out = await upgradeUpgradeLine({ id: "miner" }, { reader: r });
+    eq(out.ok, false);
+    eq(out.error.code, "tx_unavailable", "通道故障必须是 tx_unavailable，不是 game_rejected");
+    ok(/库存不够/.test(out.error.hint || ""), `hint 要说明它**不是**库存问题：${out.error.hint}`);
+});
+
+test("U15 库存不够 ⇒ 仍然是 game_rejected（这条不许被上面的改动带偏）", async () => {
+    const r = fakeReader({ stored: { "RuRuRuRu": 1, "Cu------": 1 } });
+    const out = await upgradeUpgradeLine({ id: "miner" }, { reader: r });
+    eq(out.ok, false);
+    eq(out.error.code, "game_rejected", "库存不够是游戏状态，会变，所以是 game_rejected");
+});
