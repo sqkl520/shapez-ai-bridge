@@ -1,0 +1,23 @@
+fix(semantic): 旋转的机器一律不推形状，把整个语义层掐断
+
+`computeOut` 开头有一行 `if (rot !== 0) { mark("unverified-rotation"); return null; }`。
+它原本是「旋转后的槽几何没验证过，不敢推」的保守判断。
+
+但 `slotsOf` 现在四种旋转全给对几何（实测 miner/cutter/mixer/painter/rotater/stacker
+在 r=0/90/180/270 下方向各不相同，与游戏一致）。这行不再保守，而是在**掐断语义层**。
+
+实测代价（第 9 关 r-20261113103514-fda0）：
+  · M6 / M2 两台矿机都接了线，喂料带都正确对准 mixer 的槽（exitCell 命中 slot 格）；
+  · 但 M6 的 r=270 ⇒ 这行直接返回 null；
+  · 蓝颜料在传播第一跳就断 ⇒ 两个槽都报 no known incoming pigment；
+  · 诊断于是永远说「源头断了」，让模型一遍遍重接**已经接好的线** ——
+    那个 run 里模型重复执行了 4 次同样的 connect。
+
+删掉之后该 run 的诊断从「MIXER_UNFED + PROCESSOR_REQUIRED + SHAPE_UNKNOWN×2」
+降到只剩 MIXER_UNFED。
+
+⚠️ 同时记一笔**我踩的坑**：为了修这个，我一度把 `ejectSlotInto` 的
+`o.dir === OPP[fromDir]` 改成 `o.dir === fromDir` —— 当场红了 8 条测试。
+那个 OPP 是对的（槽在机器下沿 ⇒ 上游在更下方 ⇒ 它往上喷，dir 是反的）。
+教训：判据红了先查数据，不要先改判据 —— 那会把「检测到问题」变成「检测不到」。
+改动已完整撤销，注释里留了记录。

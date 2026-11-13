@@ -298,7 +298,22 @@ function makeShapeEngine(obs, idx) {
 
     const tplOf = e => templateByBuildingVariant(e.type, variantOf(e));
 
-    /** 上游实体是否把货「喷进」`cell`（且方向对）。 */
+    /** 上游实体是否把货「喷进」`cell`（且方向对）。
+     *
+     * @param fromDir 宿主**槽的朝向**（`sl.dir`）或带子的**入口方向**——
+     *   两者都表示「货从这个方位进入宿主」，所以上游机器的输出方向必须是它的反面
+     *   （`OPP[fromDir]`）：槽在机器的下沿 ⇒ 上游在更下方 ⇒ 它往上喷。
+     *
+     * ⚠️ 2026-11-13：我曾把这里改成 `o.dir === fromDir`，理由是
+     * 「M3 在 B307 下方、输出 dir=bottom 却被判不匹配」。**那是错的** ——
+     * 改完 `semantic.test.mjs` 立刻红了 8 条（T1/T3/T4/T5/T8/T11…），
+     * 因为 cutter 的输入槽 `dir=bottom`、上游矿机 `dir=top`，
+     * 只有 `OPP[bottom]==="top"` 才对得上。
+     *
+     * 真实情况是 `B307` 那条线的**方向本身坏了**（游戏落盘时按邻居重算 rv），
+     * 不是判据的问题。诊断正确地指出了「这条线不通」，我不该为了让诊断闭嘴而改判据。
+     *
+     * 教训：判据红了先查数据，不要先改判据 —— 那会把「检测到问题」变成「检测不到」。 */
     function ejectSlotInto(up, cell, fromDir) {
         if (!up) return null;
         if (isBelt(up) || isTunnel(up)) return null;
@@ -376,8 +391,30 @@ function makeShapeEngine(obs, idx) {
         const tpl = tplOf(m);
         if (!tpl) { mark("unknown-op", m.uid, m.type); return null; }
         if (m.type === "trash" || m.type === "hub") return null;
+        /* ★ 2026-11-13：删掉了 `if (rot !== 0) return null` ★
+         *
+         * 那行原本的顾虑是「旋转后的槽几何没验证过，不敢推形状」。
+         * 现在 `slotsOf` 已经实测四种旋转全给对几何（见下），
+         * 这行不再是保守，而是**在破坏整个语义层**。
+         *
+         * 实测代价（第 9 关 r-20261113103514-fda0）：M6/M2 两台矿机都接了线、
+         * 喂料带都正确对准 mixer 的槽（`exitCell` 都命中 slot 格），
+         * 但 M6 的 `r=270` ⇒ 这一行直接返回 null ⇒
+         *   · 蓝颜料在传播第一跳就断掉；
+         *   · 两个槽都报 `no known incoming pigment`；
+         *   · 诊断于是永远说「源头断了」，让模型一遍遍重接**已经接好的线**。
+         *   那个 run 里模型重复执行了 4 次同样的 connect。
+         *
+         * `slotsOf(type, variant, x, y, r, rv)` 的实测结果（rot 0/90/180/270 各不同且正确）：
+         *   miner   0:out top  90:out right  180:out bottom  270:out left
+         *   cutter  0:in bottom 90:in left    180:in top      270:in right
+         *   mixer   0:in bottom×2 90:in left×2 …
+         *   painter 0:out right 90:out bottom 180:out left    270:out top
+         * 与游戏 `getTileSpaceBounds` / `Vector.rotateFastMultipleOf90` 一致。
+         *
+         * ⚠️ 保留 `rot` 变量：下面 `paint` 分支要用它决定颜色从哪一侧进
+         * （镜像 variant 的语义）。 */
         const rot = (((Number(m.r) || 0) % 360) + 360) % 360;
-        if (rot !== 0) { mark("unverified-rotation", m.uid, m.type); return null; }
         const op = tpl.op;
         const unions = (...vals) => {
             const out = new Set();
