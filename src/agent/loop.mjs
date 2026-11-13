@@ -1404,6 +1404,24 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
     })();
     /* partial 模式下收集失败（见 ③b）；非 partial 模式恒为空。 */
     const macroFailures = [];
+    /* ★ 累积世界：后面的调用要看见前面已经铺好的带子 ★
+     *
+     * 真机 r-20261112210803-e1a3（第 9 关）：模型同时提交
+     *   connect {M2 → C7:color0} + connect {M3 → C7:color1}
+     * 两条路径命中了 5 个相同的格子 —— 因为**都按原始世界规划**，
+     * 各自都不知道对方已经把那段铺掉了。落盘时 `R5: 同一格被两个 place 命中`。
+     *
+     * 「合并重叠路径」不是正解：M2 那条要走的 `(35,-12)` 正是 slot1 的喂料格，
+     * 两条线**在拓扑上就是互斥的**。真正的解法是让第二条**看见**第一条，
+     * 于是它自然会绕开或改用别的接法。
+     *
+     * 所以这里维护一份「到目前为止的世界」：每条成功的调用把它新增/删除的
+     * 实体应用进去，下一条宏读到的是更新后的版本。
+     *
+     * 只对 connect/extend_line（纯铺带）生效 —— 那是唯一会大面积新增格子、
+     * 且 `planToTxOps` 无法事后合并的宏。其它宏保持原样（它们产出机器/删除，
+     * 合并不适用，也不该让它们看见半成品状态）。 */
+    let worldSoFar = { entities: (o.entities || []).slice() };
     for (let i = 0; i < res.calls.length; i++) {
         const c = res.calls[i];
         if (!MACRO_NAMES.includes(c.macro)) {
@@ -1433,7 +1451,7 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                （例如 replace_run 给 building 补 `confirm_waste:false`），而那个默认值
                与「LLM 没写」是两件事 —— 宏自己也会再校验一次，传原文更接近事实。 */
             r = fn(c.args, {
-                entities: o.entities || [],
+                entities: worldSoFar.entities,
                 /* 同批里会被本 tx 重新接上的喂料格 —— 见上面 scratchFeedCells 的注释。
                    智能宏用它判断「覆盖这格算不算拆别人产线」。 */
                 ...(scratchFeedCells.length ? { scratch_feed_cells: scratchFeedCells } : {}),
@@ -1556,7 +1574,58 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                 evidence: { index: i, macro: c.macro },
             });
         }
-        executed.push({ macro: c.macro, args: c.args, provenance: c.provenance, result: r });
+        executed.push({
+            macro: c.macro, args: c.args, provenance: c.provenance, result: r,
+            /* 这条调用**执行时**看到的世界（`worldSoFar` 的快照）。
+               下游的单条翻译必须用它，而不是原始 obs —— 见 ③b 那段注释。
+               ⚠️ 存副本：`worldSoFar` 后面会被整体换掉，存引用会读到之后的状态。 */
+            worldBefore: { entities: worldSoFar.entities.slice() },
+        });
+        /* 累积世界：把这条 connect/extend_line 铺出来的格子并进 `worldSoFar`，
+           让**下一条**宏看见它（见 worldSoFar 的注释）。
+           ⚠️ 只处理「新增带子」这一种效果 —— 那是这里唯一会跟后续调用撞格的操作。
+           被覆盖的旧带子也要从世界里删掉，否则下一条会以为那格还占着。 */
+        if ((c.macro === "connect" || c.macro === "extend_line")
+            && Array.isArray(r.cells) && r.cells.length) {
+            const gone = new Set((r.changed && Array.isArray(r.changed.removed_uids))
+                ? r.changed.removed_uids : []);
+            /* ★ 复用原 uid，不要「删了再新建」★
+             *
+             * 第一版把 `gone` 里的实体删掉、再给新格子编 90000+ 号，
+             * 结果下游 `R7: destroys 里的 uid=12085 不在当前 obs 里` ——
+             * 因为宏报的 `removed_uids` 指的是**原来那几条带子**，
+             * 而累积世界里它们的 uid 已经被我换掉了。
+             *
+             * 实际情形是「同一格换了个朝向」：带子还是那条带子。
+             * 所以就地改 `r` / `rotation_variant` / `code`，uid 保持不变。 */
+            const byCell = new Map();
+            for (const e of worldSoFar.entities) {
+                if (e && Number.isInteger(e.x) && Number.isInteger(e.y)) {
+                    byCell.set(`${e.x},${e.y}`, e);
+                }
+            }
+            const added = [];
+            let ghost = -1;
+            for (const c2 of r.cells) {
+                if (!Number.isInteger(c2.x) || !Number.isInteger(c2.y)) continue;
+                const k = `${c2.x},${c2.y}`;
+                const rv = Number.isInteger(c2.rotationVariant) ? c2.rotationVariant : 0;
+                const rot = Number.isInteger(c2.rotation) ? c2.rotation : 0;
+                const code = Number.isInteger(c2.code) ? c2.code : 1;
+                const have = byCell.get(k);
+                if (have) {
+                    have.r = rot; have.rotation_variant = rv; have.code = code;
+                } else {
+                    added.push({
+                        uid: ghost--,          // 负数：本批内的临时号，绝不会与真实 uid 冲突
+                        type: "belt", x: c2.x, y: c2.y,
+                        r: rot, rotation_variant: rv, variant: "default", code,
+                        layer: "regular",
+                    });
+                }
+            }
+            worldSoFar = { entities: [...worldSoFar.entities, ...added] };
+        }
     }
 
     /* ③b ★ 部分执行（partial）：只留「成功 **且** 产物可撤销」的调用 ★
@@ -1631,8 +1700,20 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
         for (let i = 0; i < executed.length; i++) {
             const ex = executed[i];
             /* 单条翻译，看它产生什么 op。`planToTxOps` 对单条调用的开销很小，
-               而且这一步**不落盘**，只是推演。 */
-            const solo = planToTxOps([ex], { obs: o, items, namedUids: collectNamedUids([ex], o, handles) });
+               而且这一步**不落盘**，只是推演。
+             *
+             * ★ 必须用**这条执行时的世界**，不是原始 obs ★
+             *
+             * 真机 r-20261112210803-e1a3：模型同时提交两条 connect，
+             * 第二条在主循环里看见了第一条铺好的带子（`worldSoFar`），
+             * 于是它规划出「复用 (35,-12) 并把它改成 corner」——
+             * 但单条翻译这里用**原始 obs**，`(35,-12)` 还没带子，
+             * 于是判成 `not_translatable ops:0` ⇒ **静默丢掉第二条**。
+             * 结果 `ok:true`、只落了一条，模型完全不知道另一半没执行。
+             *
+             * `ex.worldBefore` 由主循环记录（见那里的注释）。 */
+            const soloObs = ex.worldBefore || o;
+            const solo = planToTxOps([ex], { obs: soloObs, items, namedUids: collectNamedUids([ex], soloObs, handles) });
             const ops = (solo && solo.ok === true) ? solo.ops : null;
             const rev = Array.isArray(ops) && ops.length > 0 && ops.every(op =>
                 (op.op === "delete") || (op.op === "place" && isBeltBuilding(op.building)));

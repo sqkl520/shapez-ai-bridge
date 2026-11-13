@@ -436,3 +436,61 @@ test("S5 对照：小规模的死带子增长必须放行（施工本身会产�
         `零损失落点必须放行（否则闸门把施工一起禁掉）。实得 ${r.diagnosis && r.diagnosis.code}`
         + ` ${r.diagnosis && r.diagnosis.observed}`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * S6 —— 同批两条 connect 不许撞格，且第二条必须复用第一条铺好的带子
+ *
+ * 真机 r-20261112210803-e1a3（第 9 关）：模型同时提交
+ *   connect {M2 → C7:color0} + connect {M3 → C7:color1}
+ * —— 完全正确（诊断就是这么教的）。但：
+ *   · 两条路径命中 5 个相同格子 ⇒ `R5: 同一格被两个 place 命中`；
+ *   · 修 R5 之后，第二条被判 `not_translatable ops:0` 而**静默丢弃**。
+ *
+ * 现在主循环维护一份「累积世界」：每条成功的 connect 把结果并进去
+ * （**复用原 uid**，只改 r/rv/code —— 不能删了再编新号，那会让下游
+ * 算出的 destroys 指向不存在的 uid），下一条看到的是更新后的版本；
+ * `planToTxOps` 在纯铺带宏之间按格去重，留后不留前（后者看得更晚、更准）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("S6 ★ 同批两条 connect：不撞格、不静默丢弃", () => {
+    /* 夹具用**真实存档**（L4）：真机那次的形态是「两台矿机从不同方向喂同一台机器」，
+       在小世界手搓很难复现出「路线部分重叠但都能成」的几何。
+       这里用 L4 里两台真实矿机 → 同一台 cutter 的两个入口，
+       断言的核心是**判据**而不是具体几何：
+         · 不许出现同一格被放两次（R5 的实质）；
+         · 失败的调用必须出现在 skipped 里（不许静默）。
+       「两条都成」取决于世界几何，不作为断言 —— 那是夹具的性质，不是代码的性质。 */
+    const handles = buildHandles(OBS, null);
+    const miners = [...handles.byHandle.values()].filter(e => e.type === "miner");
+    const target = [...handles.byHandle.values()].find(e => e.type === "cutter");
+    assert.ok(miners.length >= 2 && target, "L4 里至少两台矿机 + 一台 cutter");
+    const [m1, m2] = miners;
+    const r = buildTxPlan({
+        calls: [
+            { macro: "connect", args: { from: { $ref: m1.handle }, to: { $ref: target.handle, port: "primary" }, opts: { rebind: true } } },
+            { macro: "connect", args: { from: { $ref: m2.handle }, to: { $ref: target.handle, port: "secondary" }, opts: { rebind: true } } },
+        ],
+    }, OBS, null, handles, { partial: true });
+
+    if (r.ok) {
+        /* ★ 核心不变量：不许有重复格 ★ */
+        const places = r.txPlan.ops.filter(o => o.op === "place");
+        const seen = new Map();
+        for (const p of places) {
+            const k = `${p.x},${p.y}`;
+            seen.set(k, (seen.get(k) || 0) + 1);
+        }
+        const dup = [...seen.entries()].filter(([, n]) => n > 1);
+        assert.equal(dup.length, 0,
+            `★ 同一格被放两次 —— 这正是 R5 要拦的，也是累积世界要解决的。${JSON.stringify(dup)}`);
+    }
+    /* ★ 无论成败，都不许**静默**丢弃：执行的 + 跳过的 必须等于提交的 ★ */
+    const execN = r.ok ? r.calls.length : 0;
+    const skipN = r.ok ? r.skipped.length : 0;
+    if (r.ok) {
+        assert.equal(execN + skipN, 2,
+            `提交 2 条，执行的 ${execN} + 跳过的 ${skipN} 必须等于 2 —— 缺的那条是静默丢弃`);
+        for (const s of r.skipped) {
+            assert.ok(s.reason && s.macro, `跳过的必须说明是哪条、为什么：${JSON.stringify(s)}`);
+        }
+    }
+});
