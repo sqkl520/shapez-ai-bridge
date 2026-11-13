@@ -115,7 +115,10 @@ function chooseMinerPair(obs, handles, mixer, handlesOfMiners, slotIdx, feedCell
      * 放弃是安全的：调用方拿到 null 会退回「挑两台隔得远的」那句通用提示，
      * 不会编假配对。 */
     const MAX_MINERS = 4;
-    const MAX_MS = 1500;
+    /* 跨矿种配对会跑两遍（[蓝,红] 与 [红,蓝]），每次最多 4×4 组合 ⇒ 最坏 32 次规划。
+       预算给 1200ms：实测一次完整 `connect` 约 30–60ms，
+       正常情况头几组就命中；超预算就放弃，退回通用提示（不编假配对）。 */
+    const MAX_MS = 1200;
     const cellsOf = (uid, idx) => {
         if (Date.now() - t0 > MAX_MS) return null;
         const r = planConnect(
@@ -130,7 +133,29 @@ function chooseMinerPair(obs, handles, mixer, handlesOfMiners, slotIdx, feedCell
         const h = handleOf(handles, e.uid);
         if (h) byHandle.set(h, e);
     }
-    const ms = handlesOfMiners.slice(0, MAX_MINERS).map(h => ({ h, e: byHandle.get(h) })).filter(x => x.e);
+    /* ★ 候选顺序要**交错**，不能先塞满一种颜料 ★
+     *
+     * `MAX_MINERS` 只有 4，如果调用方按「[蓝蓝蓝蓝…红红红]」传进来，
+     * slice 之后只剩蓝的，配对就永远是「两台蓝」——
+     * 而 mix() 恰恰需要两种不同的颜料。
+     *
+     * 所以从第二种颜料开始，与前一种交替取：
+     *   [蓝0, 红0, 蓝1, 红1, …]
+     * 这样前 4 个里一定有至少一台红的。 */
+    const interleaved = (() => {
+        const out = [];
+        const left = handlesOfMiners.slice();
+        /* `handlesOfMiners` 的调用方约定：前一段是颜料 A，后一段是颜料 B。
+           用「取首、取尾、取次首、取次尾…」交错，无需知道分界点。 */
+        let i = 0, j = left.length - 1;
+        while (i <= j) {
+            if (i === j) { out.push(left[i]); break; }
+            out.push(left[i++]);
+            out.push(left[j--]);
+        }
+        return out;
+    })();
+    const ms = interleaved.slice(0, MAX_MINERS).map(h => ({ h, e: byHandle.get(h) })).filter(x => x.e);
     if (ms.length < 2) return null;
     /* 每种 (slotA, slotB) 都试，允许两台各接任一槽。 */
     for (const [ia, ib] of (slotIdx.length === 2 ? [[slotIdx[0], slotIdx[1]], [slotIdx[1], slotIdx[0]]] : [])) {
@@ -2022,10 +2047,39 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                      *   · M6/M9 只相距 2 格却不冲突（路线平行）；
                                      *   · 这一带 8 台矿机全在东南，角度差不出 50°。
                                      * 只有实际跑 connect 才分得开。见 chooseMinerPair。 */
-                                    const pair = chooseMinerPair(
-                                        o, handles, m, ready[0].miner_handles, colorIdx.slice(0, 2),
-                                        feeds.map(f => (f && Array.isArray(f.cell) ? f.cell : null)).filter(Boolean),
-                                    );
+                                    /* ★ 配对必须**跨矿种**：一蓝一红 ★
+                                     *
+                                     * 原来只从 `ready[0].miner_handles`（同一种颜料的那几台）里挑，
+                                     * 于是永远选出「两台蓝」—— 而 mix() 需要的是两种**不同**的颜料。
+                                     * 真机 r-20261113142544-ddbf：hint 推荐 M6+M2（都是蓝矿机），
+                                     * 模型照做两次全 `macro_failed`，整轮 `inert`。
+                                     *
+                                     * 现在先从「有矿机的那种颜料」里挑一台，
+                                     * 再从另一种颜料里挑一台 —— 顺序对两遍都试。 */
+                                    const pigmentPools = oreHint.sites
+                                        .filter(n => n.miners > 0 && Array.isArray(n.miner_handles) && n.miner_handles.length)
+                                        .map(n => ({ pigment: n.pigment, handles: n.miner_handles }));
+                                    const pair = (() => {
+                                        if (pigmentPools.length < 2) {
+                                            /* 只有一种颜料有矿机 ⇒ 退回同种内配对（至少能修一个槽） */
+                                            return chooseMinerPair(o, handles, m, ready[0].miner_handles,
+                                                colorIdx.slice(0, 2),
+                                                feeds.map(f => (f && Array.isArray(f.cell) ? f.cell : null)).filter(Boolean));
+                                        }
+                                        const scratchCells = feeds.map(f => (f && Array.isArray(f.cell) ? f.cell : null)).filter(Boolean);
+                                        /* pair 里两台必须来自**不同**的颜料池 ——
+                                           `chooseMinerPair` 只保证「路线不重叠」，不保证「矿种不同」。 */
+                                        const pigOf = new Map();
+                                        for (const p of pigmentPools) for (const h of p.handles) pigOf.set(h, p.pigment);
+                                        const [p0, p1] = pigmentPools;
+                                        for (const [x, y] of [[p0, p1], [p1, p0]]) {
+                                            const r = chooseMinerPair(o, handles, m, [...x.handles, ...y.handles],
+                                                colorIdx.slice(0, 2), scratchCells);
+                                            if (!r) continue;
+                                            if (pigOf.get(r.a) !== pigOf.get(r.b)) return r;   // 跨矿种 ⇒ 采用
+                                        }
+                                        return null;
+                                    })();
                                     const pairHint = pair
                                         ? `**用 ${pair.a} 接 index:${pair.idxA}、${pair.b} 接 index:${pair.idxB}**`
                                             + `（实测这一对路线不重叠；挨着的那两台会重叠，落盘时朝向被改成直线）`
