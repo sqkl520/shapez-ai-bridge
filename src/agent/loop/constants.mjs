@@ -120,6 +120,10 @@ export const DIAG_CODES = Object.freeze({
        世界从 646 条带子涨到 704 个实体，其中 **403 条到不了 hub**（72%）。
        这是 `V-health` 早就在数、但**没有任何诊断把它变成可执行动作**的那类问题。 */
     DEAD_LINES: "L3: belts that no longer reach the hub (and whose downstream has no use for them) have accumulated; they are leftover scaffolding from earlier attempts and should be torn down",
+    /* 2026-11-13：用户第二次指屏幕说「我的意思是这些残留物需要清理」——
+       截图上是一排垃圾桶和孤立的 cutter/rotater，一根带子都没接。
+       `DEAD_LINES` 只数带子，**完全没看机器**：57 台机器里 45 台是孤儿。 */
+    ORPHAN_MACHINES: "L2: machines sit on the map with nothing connected to them (both their inputs and outputs are empty); they are leftover attempts that will never run and only get in the way of pathing",
 
     NO_PRODUCTION: "L4: nothing produced",
     WRONG_SHAPE_PRODUCED: "L4: production exists but under a different shape key",
@@ -482,6 +486,11 @@ export const RETRIEVAL_TABLE = Object.freeze({
     DEAD_LINES: cand([
         ["remove_run", 8],
         ["trash_unused", 6],
+    ]),
+    /* 孤儿机器只能靠 `remove_machine`（`remove_run` 只处理带子）。 */
+    ORPHAN_MACHINES: cand([
+        ["remove_machine", 8],
+        ["remove_run", 3],
     ]),
     WRONG_SHAPE_AT_HUB: cand([
         ["replace_run", 8],
