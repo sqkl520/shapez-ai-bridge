@@ -1176,7 +1176,29 @@ export function connect(a, b, c, d) {
         for (const pt of usableToPorts) {
             const E = pt.cell, vE = pt.vel;
             const floor = Math.max(minTurnsPossible(v0, vE), 0);
-            const capTurns = Math.min(MAX_TURNS, Math.max(floor, bestTurns === Infinity ? MAX_TURNS : bestTurns));
+            /* ★ 长距离时按距离**降级** maxTurns ★
+             *
+             * 真机实测（2026-11-13，L10）：`connect` 从绿矿机 @(-14,-7) 到
+             * mixer 槽0 @(34,-12)（曼哈顿 53 格）**超时 120 秒没返回**，
+             * 之后桥和游戏 mod 的连接就断了。
+             *
+             * 为什么：`candidateShapes` 在 127 格距离上产出 3107 条候选
+             * （实测 1.5 s），而外层对每条跑 `poseChain`（O(n)=127 步）
+             * 和 `checkOccupancy`（O(n) bind）—— 3000 × 254 ≈ 76 万次操作，
+             * 加上 `fits` 回调逐格查世界，就进了分钟级。
+             *
+             * 而**长距离本来不需要 6 个转角**：绕行只为躲局部障碍，
+             * 曼哈顿 +8 的步数预算已经覆盖了「绕一小段」的全部需求。
+             * 距离越远，多一个转角带来的候选增长是指数级的，收益却是零。
+             *
+             * 实测依据：51 格那条路径 `connect` 自己算出来的解只有 **2 个转角**
+             * （`rotationVariant` 非 0 的格子数是 2）。给 3 个转角的上限绰绰有余。
+             *
+             * 阈值：距离 ≥40 时把上限压到 3。近处不受影响（那里的枚举本来就便宜，
+             * 而且短距离确实可能需要多个转角做「蛇形避让」）。 */
+            const dist = Math.abs(E[0] - S[0]) + Math.abs(E[1] - S[1]);
+            const farCap = dist >= 40 ? 3 : MAX_TURNS;
+            const capTurns = Math.min(farCap, Math.max(floor, bestTurns === Infinity ? farCap : bestTurns));
             for (const sh of candidateShapes(S, v0, E, vE, { fits, maxTurns: capTurns })) {
                 const cells = sh.cells;
                 const chain = poseChain(cells, v0, vE);
