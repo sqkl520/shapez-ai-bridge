@@ -1176,30 +1176,47 @@ export function connect(a, b, c, d) {
         for (const pt of usableToPorts) {
             const E = pt.cell, vE = pt.vel;
             const floor = Math.max(minTurnsPossible(v0, vE), 0);
-            /* ★ 长距离时按距离**降级** maxTurns ★
+            /* ★ 长距离时**分级**搜转角，不是一刀切压到 3 ★
              *
-             * 真机实测（2026-11-13，L10）：`connect` 从绿矿机 @(-14,-7) 到
+             * 背景（真机 2026-11-13，L10）：`connect` 从绿矿机 @(-14,-7) 到
              * mixer 槽0 @(34,-12)（曼哈顿 53 格）**超时 120 秒没返回**，
              * 之后桥和游戏 mod 的连接就断了。
              *
-             * 为什么：`candidateShapes` 在 127 格距离上产出 3107 条候选
-             * （实测 1.5 s），而外层对每条跑 `poseChain`（O(n)=127 步）
-             * 和 `checkOccupancy`（O(n) bind）—— 3000 × 254 ≈ 76 万次操作，
-             * 加上 `fits` 回调逐格查世界，就进了分钟级。
+             * 根因：`candidateShapes` 在 127 格产出 3107 条候选（1.5 s），
+             * 外层对每条跑 `poseChain`(O(n)) + `checkOccupancy`(O(n)) + `fits`，
+             * 3000 × 254 ≈ 76 万次操作，进分钟级。
              *
-             * 而**长距离本来不需要 6 个转角**：绕行只为躲局部障碍，
-             * 曼哈顿 +8 的步数预算已经覆盖了「绕一小段」的全部需求。
-             * 距离越远，多一个转角带来的候选增长是指数级的，收益却是零。
+             * ⚠️ 第一版修复是「距离 ≥40 ⇒ maxTurns 压到 3」，**那是错的**。
+             * 红队实测：dist=40 时 16 种速度方向组合里有 **3 种最短解就需要 4 个转角**
+             * （`left→left` / `left→right` / `right→left` 在 maxTurns=3 下**零解**，
+             * maxTurns=4 才有 6~84 条）。于是同一份输入、只改距离，
+             * 旧版 `ok` 新版 `occupied` —— 把本来能连的判成无解。
              *
-             * 实测依据：51 格那条路径 `connect` 自己算出来的解只有 **2 个转角**
-             * （`rotationVariant` 非 0 的格子数是 2）。给 3 个转角的上限绰绰有余。
+             * 正确的做法是**按解的可行性降级**，而不是按距离盲切：
+             *   ① 先用低上限（3）快速试 —— 长距离下绝大多数解都在 3 转以内；
+             *   ② 只有在「**一条候选都没有**」时才放开到 MAX_TURNS 重试。
+             *      「有候选但都被占」不等于「转角不够」——那是撞了障碍，
+             *      放开转角只会产生更多同样被挡的路，纯浪费时间。
              *
-             * 阈值：距离 ≥40 时把上限压到 3。近处不受影响（那里的枚举本来就便宜，
-             * 而且短距离确实可能需要多个转角做「蛇形避让」）。 */
+             * 代价对比：dist=40 时 3 转零解的三个组合会跑两遍（先 3 后 6），
+             * 但 6 转那次本来就要跑；而 13 个「3 转有解」的组合省掉了 6 转的爆炸枚举。 */
             const dist = Math.abs(E[0] - S[0]) + Math.abs(E[1] - S[1]);
-            const farCap = dist >= 40 ? 3 : MAX_TURNS;
-            const capTurns = Math.min(farCap, Math.max(floor, bestTurns === Infinity ? farCap : bestTurns));
-            for (const sh of candidateShapes(S, v0, E, vE, { fits, maxTurns: capTurns })) {
+            const firstCap = dist >= 40 ? 3 : MAX_TURNS;
+
+            const tryShapes = (cap) => {
+                const capTurns = Math.min(cap, Math.max(floor, bestTurns === Infinity ? cap : bestTurns));
+                const out = [];
+                for (const sh of candidateShapes(S, v0, E, vE, { fits, maxTurns: capTurns })) out.push(sh);
+                return out;
+            };
+
+            let shapes = tryShapes(firstCap);
+            /* 低上限下**一条都没有** ⇒ 可能只是转角不够，放开重试。
+               （`floor` 本身超过 firstCap 的情况直接跳过第一轮，省一次无用枚举。） */
+            if (!shapes.length && floor <= firstCap && firstCap < MAX_TURNS) {
+                shapes = tryShapes(MAX_TURNS);
+            }
+            for (const sh of shapes) {
                 const cells = sh.cells;
                 const chain = poseChain(cells, v0, vE);
                 if (!chain.ok) continue;
