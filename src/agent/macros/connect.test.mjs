@@ -1010,3 +1010,39 @@ for (const [st, name, msg] of results) {
 }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;
+
+/* ═══════════ 长距离 connect：分级搜索不许丢解 ═══════════
+ *
+ * 背景：`89b6e56` 为修「53 格超时 120 秒」，把「距离 ≥40 ⇒ maxTurns 压到 3」。
+ * 红队 A/B 证明那**引入正确性回归**：dist=40 时 16 种速度方向组合里
+ * 有 3 种最短解就需要 4 转角。当时 49 项全绿 —— 因为没有 dist≥40 的夹具。
+ *
+ * 这个夹具是实测挑出来的：miner(r=0) → cutter(r=0)，端口距离 42，
+ * 3 转零解 / 4 转 121 条 / 6 转 1541 条。
+ * 验证过有牙齿：禁用分级搜索后 `connect` 返回 `occupied`（错误地判无解）。
+ *
+ * ⚠️ 端口坐标必须从 `portsOf` 现算，不许写死 —— 第一版我写死了 (-41,0)，
+ * 而实际是 (-40,-1)，前提断言立刻抓到了「夹具失效」。
+ */
+{
+    const ents = [
+        { uid: 1, type: "hub", x: 80, y: 60, r: 0, variant: "default" },
+        { uid: 2, type: "miner", x: -40, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 7 },
+        { uid: 3, type: "cutter", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 9 },
+    ];
+    const w3 = world(ents);
+    const fp = portsOf(w3.byUid.get(2), SPEC);
+    const tp = portsOf(w3.byUid.get(3), SPEC);
+    const a = fp.eject[0];
+    const b = tp.accept.find(x => x.role === "primary") || tp.accept[0];
+
+    const n3 = candidateShapes(a.cell, a.vel, b.cell, b.vel, { maxTurns: 3 }).length;
+    const n6 = candidateShapes(a.cell, a.vel, b.cell, b.vel, { maxTurns: 6 }).length;
+    const premiseOk = n3 === 0 && n6 > 0;
+    console.log(`${premiseOk ? 1 : 0} 项「长距离夹具前提：3转零解/6转有解」  ${premiseOk ? `✓ (6转 ${n6} 条)` : `✗ 3转=${n3} 6转=${n6} —— 夹具失效`}`);
+    if (!premiseOk) process.exitCode = 1;
+
+    const r = connect({ from: { uid: 2 }, to: { uid: 3, port: "primary" } }, { entities: ents });
+    console.log(`${r.ok ? 1 : 0} 项「40+ 格、需 4 转角的 connect 必须连通」  ${r.ok ? `✓ (${r.cells.length} 格)` : `✗ ${r.error && r.error.code} —— 分级搜索没生效`}`);
+    if (!r.ok) process.exitCode = 1;
+}
