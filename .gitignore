@@ -72,3 +72,6 @@ research/ai-plan/.*.mjs
 .bridge.log
 .bridge.err.log
 .tmpbench/
+
+# mod 备份（280KB × N，运行时生成）
+.modbak/
