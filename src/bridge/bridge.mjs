@@ -809,6 +809,60 @@ server.listen(CFG.port, "127.0.0.1", () => {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+/* ═══════════════════════ 崩溃兜底 ═══════════════════════
+ *
+ * 这个桥是这个项目**唯一的**入口：AI 读世界、写世界、截图、推进游戏
+ * 全走它。它挂了 = 整个 agent 停摆，而且**没有任何东西会告诉用户为什么**。
+ *
+ * 实测（2026-11-14）：桥在「mod ready」之后**静默消失**，日志里没有一行
+ * 错误。查下来根因是这里只有 SIGINT/SIGTERM 两个处理器 ——
+ * 一个未捕获的异常（哪怕只是一个忘了 await 的 Promise rejection）
+ * 就能让 Node 以默认行为退出，什么线索都不留。
+ *
+ * 这类「静默死亡」比崩溃更糟：用户看到的是「AI 停止响应」，
+ * 而排查方向会被引向游戏、引向网络、引向 mod —— 全都不对。
+ *
+ * 三条纪律：
+ *   1. `uncaughtException` 不许直接退出 —— 先把栈打出来，尽力继续服务；
+ *      真正不可恢复的错误会在后续请求里再次暴露，那时才退。
+ *   2. `unhandledRejection` 同理，但要标记「这个 Promise 的结果丢了」，
+ *      因为它的语义可能已经被上游当成成功了。
+ *   3. 两者都写一条带时间戳的 `crash` 日志到 stderr ——
+ *      外部 runner 靠它判断「桥是不是刚崩过」。
+ */
+let crashCount = 0;
+function logCrash(kind, err) {
+    crashCount += 1;
+    const stamp = new Date().toISOString();
+    try {
+        console.error(`[bridge/CRASH] ${stamp} ${kind} #${crashCount}`);
+        console.error(err && err.stack ? err.stack : String(err));
+    } catch { /* 连日志都写不了就放弃 */ }
+}
+process.on("uncaughtException", (err) => {
+    logCrash("uncaughtException", err);
+    /* 不退出：让服务继续。真正的致命错误（端口被占、内存耗尽）
+       会在下一次请求时以更明确的形态再出现。 */
+});
+process.on("unhandledRejection", (reason) => {
+    logCrash("unhandledRejection", reason);
+});
+
+/**
+ * 心跳：每 30 秒往 stderr 写一行「我还活着 + 当前连接数」。
+ *
+ * 为什么需要它：桥静默死亡时，日志停在最后一条正常输出上，
+ * 无法区分「刚挂」和「闲了很久」。有了心跳，外部 runner 就能靠
+ * 「最后一条心跳距今多久」判断生死。
+ */
+setInterval(() => {
+    try {
+        const modOk = !!(mod && mod.hello);
+        console.error(`[bridge/alive] ${new Date().toISOString()} mod=${modOk ? "yes" : "no"} clients=${clients.size} crashes=${crashCount} rss_mb=${Math.round(process.memoryUsage().rss / 1048576)}`);
+    } catch { /* 心跳失败不影响服务 */ }
+}, 30000).unref();
+
 function shutdown() {
     info("shutting down...");
     try {
