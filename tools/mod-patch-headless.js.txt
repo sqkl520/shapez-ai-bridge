@@ -1,0 +1,97 @@
+    /**
+     * 无头驱动：窗口不可见 / rAF 被节流时，游戏逻辑照样前进。
+     *
+     * 为什么需要：用户问「不能后台吗」。一个必须有人盯着窗口才能跑的系统
+     * 做不了任何长时程的事 —— 不能夜间跑、不能批量实验。
+     *
+     * shapez 本身支持后台。源码有两个独立驱动源
+     * （src/js/core/animation_frame.js）：
+     *   - frameEmitted   : requestAnimationFrame，渲染驱动
+     *   - bgFrameEmitted : Web Worker 里的 setInterval(1000/30)，不受可见性影响
+     *
+     * 而 application.js:371 的分派是：
+     *   onBackgroundFrame(dt) { if (this.isRenderable()) return; ... }
+     *   isRenderable() { return !this.applicationPaused && this.pageVisible; }
+     *
+     * 那个 return 就是死锁来源：当 Chromium 认为窗口可见（pageVisible=true）
+     * 但 rAF 又被节流时（失焦 / 被遮挡 / GPU 降频），两个驱动源都不走。
+     * 真机实测 2026-11-14：status 能回、obs/act/screenshot 全无响应、
+     * 10 秒内 tick 前进 0。
+     *
+     * 做法：不 patch 游戏类（风险高），改成从外部订阅 bgFrameEmitted，
+     * 在 rAF 缺席时手动派发 onRender(dt) 给当前状态 —— 这正是
+     * application.js:398 里 onFrameEmitted 做的事，只是换驱动源。
+     *
+     * 三条纪律：默认只在 rAF 死掉时接管；用「上次派发距今多久」判活；
+     * rAF 恢复后主动交还，避免双重驱动（tick 走两倍速）。
+     */
+    installHeadlessDriver(opts) {
+        if (this._headlessInstalled) return this._headlessStats;
+        const o = opts || {};
+        this._headlessInstalled = true;
+
+        const stats = {
+            installed_at: Date.now(),
+            forced: o.force === true,
+            stale_ms: Number.isInteger(o.staleMs) ? o.staleMs : 1500,
+            dispatched: 0,
+            driving: false,
+            last_dispatch_at: null,
+            takeovers: 0,
+            handbacks: 0,
+            error: null,
+        };
+        this._headlessStats = stats;
+
+        const app = this.app;
+        if (!app || !app.ticker) {
+            stats.error = "app.ticker 不可用（还没加载完？）";
+            return stats;
+        }
+        const ticker = app.ticker;
+
+        if (!this._headlessBound) {
+            this._headlessBound = true;
+            const self = this;
+            ticker.bgFrameEmitted.add(function (dt) {
+                const st = self._headlessStats;
+                if (!st) return;
+                try {
+                    const now = performance.now();
+                    const hidden = (() => { try { return document.hidden === true; } catch (e) { return false; } })();
+                    const sinceDispatch = st.last_dispatch_at === null ? Infinity : (now - st.last_dispatch_at);
+                    const shouldDrive = st.forced || hidden || sinceDispatch > st.stale_ms;
+
+                    if (!shouldDrive) {
+                        if (st.driving) { st.driving = false; st.handbacks += 1; }
+                        return;
+                    }
+                    if (!st.driving) { st.driving = true; st.takeovers += 1; }
+
+                    const state = app.stateMgr && app.stateMgr.getCurrentState
+                        ? app.stateMgr.getCurrentState() : null;
+                    if (state && typeof state.onRender === "function") {
+                        state.onRender(dt);
+                        st.dispatched += 1;
+                        st.last_dispatch_at = now;
+                    }
+                } catch (e) {
+                    st.error = String(e && e.message ? e.message : e);
+                }
+            });
+        }
+
+        return stats;
+    }
+
+    /** 读无头驱动的统计（给 RPC 用）。 */
+    headlessStats() {
+        const st = this._headlessStats;
+        if (!st) return { installed: false };
+        return {
+            installed: true,
+            ...st,
+            since_dispatch_ms: st.last_dispatch_at === null ? null : Math.round(performance.now() - st.last_dispatch_at),
+        };
+    }
+
