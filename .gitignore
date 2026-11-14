@@ -67,3 +67,8 @@ research/ai-plan/.*.mjs
 .gitmsg.tmp
 
 .tmpx/
+
+# 桥的 stdout/stderr（运行时被占用，不该提交）
+.bridge.log
+.bridge.err.log
+.tmpbench/
