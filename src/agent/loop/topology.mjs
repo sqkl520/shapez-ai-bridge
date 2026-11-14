@@ -204,7 +204,37 @@ export function tunnelPeer(idx, sender) {
  */
 export function accepts(idx, cell, fromDir) {
     const e = at(idx, cell);
-    if (!e) return { ok: false, kind: "empty", by: null, opaque: false };
+    if (!e) {
+        /* ★ 落点格是**槽位本体格**时，`at()` 找不到它 ★
+         *
+         * `at()` 用 footprint 索引，而「槽位本体格」不总是落在 footprint 内
+         * （painter r=270 的 color 槽 slot=(-9,0)，不在它 (-9,1) 的 footprint 里）。
+         *
+         * 真机实测（2026-11-13，L10）：`painter.color` 的喂料带 B13243 出口格
+         * 正是 (-9,0)，**81 件货堆在那里进不去**，产线零交付。
+         * 而 `accepts([-9,0],"right")` 报 `{ok:false, kind:"empty"}` ——
+         * 因为这一格上没有「实体」，只有「某台机器的槽」。
+         *
+         * 这是同一个 footprint 陷阱的**第三处**（前两处是 `DEAD_END` 与 `upstreamFed`）。
+         * 修法一致：落点格为空时，扫四个邻居机器，看它是不是其中一台的输入槽本体，
+         * 且那台机器接受这个来向。
+         *
+         * ⚠️ 这一处最关键 —— 前两处只影响**诊断**（误报），这一处影响**几何判定本身**。
+         * 它让「货能不能进这台机器」的判断在特定朝向下永远是 false，
+         * 而那时 `connect` / `runEnd` / `flows` 全都跟着判错。 */
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+            const m = at(idx, [cell[0] + dx, cell[1] + dy]);
+            if (!m || isBelt(m) || isTunnel(m)) continue;
+            let ms = null;
+            try { ms = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m)); } catch { ms = null; }
+            if (!ms || !Array.isArray(ms.inputs)) continue;
+            const hit = ms.inputs.some(sl =>
+                Array.isArray(sl.slot) && sl.slot[0] === cell[0] && sl.slot[1] === cell[1]
+                && sl.dir === OPP[fromDir]);
+            if (hit) return { ok: true, kind: m.type, by: m.uid, opaque: false, viaSlotBody: true };
+        }
+        return { ok: false, kind: "empty", by: null, opaque: false };
+    }
     if (isBelt(e)) {
         return { ok: beltEntry(rvOf(e), e.r || 0) === OPP[fromDir], kind: "belt", by: e.uid, opaque: false };
     }
