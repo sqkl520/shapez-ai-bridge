@@ -59,6 +59,7 @@ import { fileURLToPath } from "node:url";
 import { ORDER, OPP, DIRV, beltEntry, beltExit, solveTurn, beltCode, rotateLocal } from "../../ai/belt-rules.mjs";
 import { hubEntriesWorld, templateByBuildingVariant } from "../../ai/op-templates.mjs";
 import { validateConnectArgs, validateMacroResult } from "./contract.mjs";
+import { planTunnelCrossing, tunnelOps, TUNNEL_RANGE } from "./tunnel.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPEC_PATH = path.resolve(HERE, "../../ai/machine-spec.json");
@@ -1376,6 +1377,139 @@ export function connect(a, b, c, d) {
                     ],
                     auto_relaxed: { allow_replace: true, reason: "all-candidates-blocked-by-belts", tried: sum.total, min_replace: sum.minReplace },
                 };
+            }
+        }
+        /* ★ 覆盖也不行 ⇒ 最后一招：从底下穿过去（隧道）★
+         *
+         * 顺序是**覆盖优先、隧道兜底**，不是反过来。理由：
+         *   · `allow_replace` 是既有行为，改它的优先级会让所有历史场景换一种结果，
+         *     而回归测试里 48 条判据全都锁着那些场景。能力增强不该靠改变别人的行为。
+         *   · 覆盖有明确代价（`analyzeReplacedBelts` 算出会切断谁），调用方看得见、能拒绝；
+         *     隧道是"无损"的，所以它适合做**兜底**而不是**首选** ——
+         *     首选无损方案会让"覆盖 1 格"这种本来就对的做法变成永远不触发。
+         *
+         * 实测（L10，2026-11-14）这条兜底正好接住了真实场景：
+         * 绿线要接进混色机 slot 0，青色输出线占着 x=-10 整列。
+         * `allow_replace` 被守卫挡下（「不能覆盖别的机器的喂料格」），
+         * 一对隧道立刻打通 —— 放完 `debug_items` 里第一次出现 cyan，
+         * 产线从 0 恢复到 0.5 件/秒。
+         *
+         * ⚠️ 隧道必须产出**完整路径**（含前后两段带子），不能只报穿越点。
+         * `loop.mjs` 是按 `r.cells` 组 tx 的（见 `planToTxOps`），
+         * 只给两格隧道会让整条连接被**静默丢弃**。
+         * 做法：把要穿越的那几格当成"可通行"重跑一次候选枚举，
+         * 得到一条穿过障碍的完整折线，再把障碍那几格标记成 `tunnel`。 */
+        if (world && opts.tunnels !== false) {
+            const atOf = (x, y) => world.cells.get(key(x, y)) || null;
+            const range = opts.tunnel_range
+                || TUNNEL_RANGE[opts.tunnel_variant || "default"]
+                || TUNNEL_RANGE.default;
+            for (const pf of fromPorts) {
+                const tp = planTunnelCrossing({ from: pf.cell, dir: pf.vel, at: atOf, range });
+                if (!tp.ok) continue;
+
+                /* 障碍那几格临时视为可通行，好让 candidateShapes 生成穿过它们的折线。 */
+                const passable = new Set(tp.skipped.map(c => key(c[0], c[1])));
+                const fitsTunnel = cells => {
+                    if (cells.length > opts.max_cells) return false;
+                    for (const c of cells) {
+                        const rec = world.cells.get(key(c[0], c[1]));
+                        if (!rec) continue;
+                        if (passable.has(key(c[0], c[1]))) continue;      // 这段要靠隧道跨过
+                        if (rec.type !== "belt") return false;             // 机器永不可覆盖
+                        if (!opts.allow_replace) return false;             // 别的带子也不该悄悄踩
+                    }
+                    return true;
+                };
+                for (const pt of usableToPorts) {
+                    const shapes = candidateShapes(pf.cell, pf.vel, pt.cell, pt.vel,
+                        { fits: fitsTunnel, maxTurns: MAX_TURNS });
+                    for (const sh of shapes) {
+                        const chain = poseChain(sh.cells, pf.vel, pt.vel);
+                        if (!chain.ok) continue;
+                        /* 折线必须真的经过那几格障碍，否则这次隧道没被用上 —— 换下一条。 */
+                        const hit = tp.skipped.every(c => sh.cells.some(x => x[0] === c[0] && x[1] === c[1]));
+                        if (!hit) continue;
+                        const ver = verifyChain(chain.cells);
+                        if (!ver.ok) continue;
+
+                        const cellsOut = chain.cells.map(c => {
+                            const isTunnel = passable.has(key(c.x, c.y));
+                            if (!isTunnel) return {
+                                x: c.x, y: c.y, building: "belt",
+                                rotation: c.rotation, rotationVariant: c.rotationVariant, code: c.code,
+                                inDir: c.inDir, outDir: c.outDir, entry: c.entry, exit: c.exit,
+                            };
+                            /* 隧道格：sender / receiver 由它在这一段里的位置决定。 */
+                            const isSender = c.x === tp.sender[0] && c.y === tp.sender[1];
+                            const rv = isSender ? 0 : 1;
+                            return {
+                                x: c.x, y: c.y, building: "underground_belt",
+                                rotation: tp.rotation, rotationVariant: rv,
+                                code: (opts.tunnel_variant === "tier2" ? 24 : 22) + rv,
+                                inDir: c.inDir, outDir: c.outDir, entry: c.entry, exit: c.exit,
+                                tunnel: isSender ? "sender" : "receiver",
+                            };
+                        });
+                        const replacedUids = [];
+                        for (const c of cellsOut) {
+                            if (c.building !== "underground_belt") continue;
+                            const rec = world.cells.get(key(c.x, c.y));
+                            if (rec && rec.type === "belt") replacedUids.push(rec.uid);
+                        }
+                        let consequences = null;
+                        if (replacedUids.length) {
+                            try { consequences = analyzeReplacedBelts(world, replacedUids); } catch { consequences = null; }
+                        }
+                        const out = {
+                            ok: true,
+                            macro: "connect",
+                            via_tunnel: true,
+                            cells_planned: cellsOut.length,
+                            cells_placed: cellsOut.length,
+                            first_mismatch: null,
+                            changed: { added_uids: [], removed_uids: replacedUids.slice().sort((a, b) => a - b) },
+                            warnings: [],
+                            ...(consequences ? { consequences } : {}),
+                            error: null,
+                            dry_run: true,
+                            cells: cellsOut,
+                            pathLen: cellsOut.length,
+                            tunnel: {
+                                sender: tp.sender, receiver: tp.receiver, rotation: tp.rotation,
+                                span: tp.span, skipped: tp.skipped, blocker: tp.blocker,
+                                ops: tunnelOps(tp, opts.tunnel_variant || "default"),
+                            },
+                            choice: {
+                                shape: "tunnel", via: "tunnel-bypass",
+                                split: sh.split, turns: sh.turns,
+                                legs: sh.legs.map(l => ({ dir: l.dir, steps: l.steps })),
+                                fromPort: { role: pf.role, index: pf.index, cell: pf.cell, vel: pf.vel },
+                                toPort: { role: pt.role, index: pt.index, cell: pt.cell, vel: pt.vel },
+                            },
+                            strategy: STRATEGY_DOC,
+                            alternatives: 0,
+                        };
+                        out.warnings.push({
+                            code: "tunnel-crossing",
+                            detail: `地表被 ${tp.blocker.type}(uid=${tp.blocker.uid}) 挡在 `
+                                + `${JSON.stringify(tp.blocker.cell)} —— 用一对隧道从底下穿过去`
+                                + `（sender ${JSON.stringify(tp.sender)} @(${tp.sender}) → `
+                                + `receiver ${JSON.stringify(tp.receiver)}，r=${tp.rotation}，跨度 ${tp.span}）`,
+                            hint: "路径里那几格是 `building:\"underground_belt\"`（rv0=sender / rv1=receiver）。"
+                                + "落盘时必须**先 place 第一个再 place 第二个** —— "
+                                + "游戏的 onEntityManuallyPlaced 只在 receiver 落下时配对，反过来会得到一对没连上的隧道。",
+                        });
+                        if (replacedUids.length) {
+                            out.warnings.push({
+                                code: "replacing-belts",
+                                detail: `隧道会埋掉 ${replacedUids.length} 格既有带子，执行时必须先 delete{uid} 并纳入 tx 回滚`,
+                            });
+                        }
+                        const chk2 = validateMacroResult(out);
+                        if (chk2.ok) return out;
+                    }
+                }
             }
         }
         return failure({

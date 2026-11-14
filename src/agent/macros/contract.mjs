@@ -705,7 +705,8 @@ export function validateConnectArgs(args) {
 
     const opts = args.opts === undefined ? {} : args.opts;
     if (!isObj(opts)) return fail("bad_type", "opts", `${A}.opts 必须是对象`);
-    const allowed = ["rebind", "allow_replace", "auto_relax", "max_cells", "prefer", "dry_run"];
+    const allowed = ["rebind", "allow_replace", "auto_relax", "max_cells", "prefer", "dry_run",
+        "tunnels", "tunnel_variant", "tunnel_range"];
     for (const k of Object.keys(opts)) {
         if (!allowed.includes(k)) return fail("unknown_field", `opts.${k}`, `${A}.opts 不认识 '${k}'`);
     }
@@ -728,6 +729,19 @@ export function validateConnectArgs(args) {
     if (opts.prefer !== undefined && !["shortest", "fewest_turns", "reuse_existing"].includes(opts.prefer)) {
         return fail("bad_type", "opts.prefer",
             `prefer 必须是 shortest | fewest_turns | reuse_existing`, `实得 ${JSON.stringify(opts.prefer)}`);
+    }
+    /* 隧道兜底（`tunnel.mjs`）：覆盖也不行时，从既有带子底下穿过去。
+       `tunnels:false` 是显式关闭 —— 只在调用方明确不希望引入隧道时用。 */
+    if (opts.tunnels !== undefined && typeof opts.tunnels !== "boolean") {
+        return fail("bad_type", "opts.tunnels", "tunnels 必须是布尔");
+    }
+    if (opts.tunnel_variant !== undefined && !["default", "tier2"].includes(opts.tunnel_variant)) {
+        return fail("bad_type", "opts.tunnel_variant",
+            `tunnel_variant 必须是 default | tier2`, `实得 ${JSON.stringify(opts.tunnel_variant)}`);
+    }
+    if (opts.tunnel_range !== undefined && !(isInt(opts.tunnel_range) && opts.tunnel_range >= 2 && opts.tunnel_range <= 9)) {
+        return fail("bad_type", "opts.tunnel_range", "tunnel_range 必须是 2..9 的整数",
+            "config.js:90 的 undergroundBeltMaxTilesByTier 是 [5, 9]；超出这个范围游戏不认。");
     }
 
     /* 同一个端点的同一个端口不能自己连自己 */
