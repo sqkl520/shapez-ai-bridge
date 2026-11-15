@@ -1576,6 +1576,11 @@ class Mod extends shapez.Mod {
             "include_stats",
             "max_resources",
             "layer",
+            /* 矿点扫描半径。旧版写死 64，L12 需要的 white 矿在 239 格外，
+               扫描范围里根本看不见 —— agent 连续四轮报
+               「Cb ore and white paint are not in the scanned area」，
+               在旧产线上反复打补丁。这里放出来让调用方按关卡调整。 */
+            "resource_radius",
         ]);
         for (const k in p) {
             if (!known.has(k)) {

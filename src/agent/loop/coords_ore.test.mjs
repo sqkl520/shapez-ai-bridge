@@ -357,3 +357,48 @@ check("O17 形状矿不受影响：仍锚最近的 cutter/rotater", () => {
         `形状矿必须锚 cutter（实得 ${JSON.stringify(hit.cell)}，离 cutter ${dToCutter} 格）—— `
         + `O15 的收窄只该针对颜料`);
 });
+
+/* ══════════════ O18–O20：复合矿名（2026-11-15，L12）══════════════ */
+
+check("O18 ★ 复合矿里查中间段：Wu 能命中 RuRuWuWu（旧版 startsWith 漏掉）", () => {
+    /* L12 需要的 white 颜料**只存在于复合矿里**，没有纯 white 矿。
+       实测最近的 RuRuWuWu 在距 hub 239 格外。
+       旧判据 `kind.startsWith(prefix)` 对 "RuRuWuWu".startsWith("Wu") 返回 false
+       ⇒ 模型看得见白矿（扫描半径已扩到 256）却永远查不到它，只能报 ORE_NOT_FOUND。 */
+    const obs = {
+        entities: [{ uid: 1, type: "mixer", x: 100, y: 130, r: 0, variant: "default", rotation_variant: 0 }],
+        hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+        resources: [[100, 135, "RuRuWuWu"], [101, 134, "RuRuWuWu"]],
+    };
+    const hit = nearestOreCell(obs, "Wu");
+    assert(hit, "RuRuWuWu 里的 Wu 必须能被查到，否则远处开矿无从谈起");
+    assert(hit.kind === "RuRuWuWu", "\"RuRuWuWu\"");
+});
+
+check("O19 复合矿里查首段仍然工作，且不会误命中不含该段的矿", () => {
+    const obs = {
+        entities: [{ uid: 1, type: "cutter", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0 }],
+        hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+        resources: [
+            [5, 5, "CuRuCuCu"],
+            [6, 6, "RuRuRuRu"],
+            [7, 7, "SuSuSuSu"],
+        ],
+    };
+    const hit = nearestOreCell(obs, "Cu");
+    assert(hit, "CuRuCuCu 含铜，必须查到");
+    assert(hit.kind === "CuRuCuCu", `不许选到不含铜的矿（实得 ${hit.kind}）`);
+});
+
+check("O20 颜料名走整串相等，不被子串误伤", () => {
+    /* `red` / `blue` 这类小写颜料名必须整串相等才算。
+       若改成子串匹配，`red` 会命中任何含 "red" 的串 —— 那是给自己挖坑。 */
+    const obs = {
+        entities: [{ uid: 1, type: "mixer", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0 }],
+        hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+        resources: [[3, 3, "red"], [5, 5, "green"]],
+    };
+    assert(nearestOreCell(obs, "red").kind === "red", '"red" 必须命中 red 矿');
+    assert(nearestOreCell(obs, "green").kind === "green", '"green" 必须命中 green 矿');
+    assert(nearestOreCell(obs, "blue") === null, "地图上没有 blue 就该返回 null，不许瞎凑");
+});

@@ -266,9 +266,24 @@ function checkRefShape(opKey, v, path, add) {
     if (opKey === "$ore") {
         const isShapePrefix = typeof v === "string" && /^[A-Z][a-z]$/.test(v);
         const isPigment = typeof v === "string" && /^[a-z]{3,8}$/.test(v);
-        if (!isShapePrefix && !isPigment) {
+        /* ★ 复合矿名也要收（2026-11-15，L12）★
+         *
+         * 后期关卡的矿大多是**复合矿**：一格上叠着好几种形状或颜料，
+         * 例如 `RuRuWuWu`（含 white）、`CuRuCuCu`、`RuCuCuRu`。
+         * 实测 L12 需要的 white 颜料只存在于复合矿里 —— 纯 white 矿根本不存在。
+         *
+         * 旧判据只认 `Cu` / `red` 这种单色，于是模型看见了矿却**没有合法方式指定**，
+         * 只能报错或者瞎猜。R1 就是这么被 `LLM_COORD` 拦下的：
+         *   「$ore 的值必须是矿种名……实得 "CuRuCuCu"」
+         *
+         * 判据放宽成「游戏矿点表里出现过的键」：形状矿两个大写字母一段（`Cu`/`Ru`），
+         * 可以连写多段（`RuRuWuWu`）；颜料名是小写单词。
+         * 这里只做**格式**校验，真正「地图上有没有」由 `resolveNode` 判 ——
+         * 格式校验不该替地图说话，否则新关卡一出新矿种就得改一次这个正则。 */
+        const isCompositeMine = typeof v === "string" && /^(?:[A-Z][a-z]){2,6}$/.test(v);
+        if (!isShapePrefix && !isPigment && !isCompositeMine) {
             add(path, "REF_SHAPE",
-                `$ore 的值必须是矿种名（形状矿如 "Cu"、颜料如 "red" / "blue"），实得 ${JSON.stringify(v)}`, v);
+                `$ore 的值必须是矿种名（单色如 "Cu"、"red"，复合矿如 "RuRuWuWu"），实得 ${JSON.stringify(v)}`, v);
         }
         return;
     }
@@ -380,10 +395,46 @@ export function argKindOf(macro, path) {
  * @returns {{cell:[number,number], kind:string, count:number, to:number}|null}
  *   没数据 / 没有该矿种 ⇒ null（调用方据此报 ORE_NOT_FOUND，绝不返回假坐标）
  */
+/**
+ * 矿种名与查询前缀是否匹配。
+ *
+ * 矿点表里的 `kind` 是**整格内容**：早期关卡多是纯矿（`CuCuCuCu` / `red`），
+ * 后期关卡出现大量**复合矿**（`RuRuWuWu`、`CuRuCuCu`、`RuCuCuRu` …）——
+ * 一格上叠着好几种形状或颜料。
+ *
+ * 旧判据是 `kind.startsWith(prefix)`，只认「从第一个位置开始」的单色前缀。
+ * 后果：L12 需要的 white 只存在于 `RuRuWuWu` 里，而 `"RuRuWuWu".startsWith("Wu")` 是 false
+ * ⇒ 模型能**看见**白矿（扫描半径已扩到 256），却永远查不到它，
+ * 只能报 `ORE_NOT_FOUND` 或者去别处瞎试。
+ *
+ * 改成「包含」：`"Wu"` 能命中 `RuRuWuWu`，`"Cu"` 能命中 `CuRuCuCu`。
+ * 这在语义上也更对 —— 一格含铜就是能采出铜，不必管铜排在第几段。
+ *
+ * 颜料名（`red` / `blue`）走的是完全匹配，复合矿名（`RuRuWuWu`）走整串相等，
+ * 这两种都不该被子串匹配误伤（`"red"` 不该命中 `"credit"` 之类）。
+ *
+ * @param {string} kind 矿点表里的整串内容
+ * @param {string} prefix 调用方给的 `$ore` 值
+ */
+export function oreKindMatches(kind, prefix) {
+    if (typeof kind !== "string" || typeof prefix !== "string") return false;
+    if (!prefix) return false;
+    /* 整串相等（复合矿名、形状矿名）优先 —— 最精确 */
+    if (kind === prefix) return true;
+    /* 形状矿的两字母段：`Cu` 命中 `CuCuCuCu` / `CuRuCuCu` / `RuCuCuRu` */
+    if (/^[A-Z][a-z]$/.test(prefix)) {
+        for (let i = 0; i + 2 <= kind.length; i += 2) {
+            if (kind.slice(i, i + 2) === prefix) return true;
+        }
+        return false;
+    }
+    /* 颜料名：整串相等才算（上面已判），子串匹配会把 `red` 误伤到别的词 */
+    return false;
+}
+
 export function nearestOreCell(obs, prefix) {
     const list = obs && Array.isArray(obs.resources) ? obs.resources : null;
     if (!list || !list.length) return null;
-
     /* 参照点：所有「吃这种矿的机器」的位置。矿机的合理位置是**靠近它们**。
        ⚠️ 颜料和形状矿的消费者不是同一批 —— 见上方注释，
           错用「任意消费者」会让 `$ore` 和 MIXER_UNFED 指向**两片不同的矿**。
@@ -492,7 +543,7 @@ export function nearestOreCell(obs, prefix) {
         if (!Array.isArray(r) || r.length < 3) continue;
         const [x, y, kind] = r;
         if (!Number.isInteger(x) || !Number.isInteger(y)) continue;
-        if (typeof kind !== "string" || !kind.startsWith(prefix)) continue;
+        if (typeof kind !== "string" || !oreKindMatches(kind, prefix)) continue;
         counts.set(kind, (counts.get(kind) || 0) + 1);
         if (!usable(x, y)) continue;                                         // 这格放不下机器
         const d = distToNearest(x, y);
@@ -505,7 +556,7 @@ export function nearestOreCell(obs, prefix) {
             if (!Array.isArray(r) || r.length < 3) continue;
             const [x, y, kind] = r;
             if (!Number.isInteger(x) || !Number.isInteger(y)) continue;
-            if (typeof kind !== "string" || !kind.startsWith(prefix)) continue;
+            if (typeof kind !== "string" || !oreKindMatches(kind, prefix)) continue;
             const d = distToNearest(x, y);
             if (!best || d < best.d) best = { cell: [x, y], kind, d, occupied: true };
         }
@@ -630,13 +681,15 @@ export function resolveRefs(llmPlan, handles, obs) {
                  * 一段矿的「矩形」会框进大量非矿格（和 `$bbox_of` 的老坑同型）。
                  * 模型要的是「在哪一格放矿机」，一格就够。 */
                 const raw = node.$ore;
-                /* 与 `checkRefShape` 同口径：形状矿两字母前缀 ∪ 颜料名。
-                   见那里对「为什么必须收颜料名」的说明（第 9 关的硬阻断）。 */
+                /* 与 `checkRefShape` 同口径：形状矿两字母前缀 ∪ 颜料名 ∪ 复合矿名。
+                   见那里对「为什么必须收颜料名」和「为什么必须收复合矿名」的说明
+                   （第 9 关的硬阻断 / L12 的 white 只存在于复合矿里）。 */
                 const okShape = typeof raw === "string" && /^[A-Z][a-z]$/.test(raw);
                 const okPigment = typeof raw === "string" && /^[a-z]{3,8}$/.test(raw);
-                if (!okShape && !okPigment) {
+                const okComposite = typeof raw === "string" && /^(?:[A-Z][a-z]){2,6}$/.test(raw);
+                if (!okShape && !okPigment && !okComposite) {
                     add(path, "REF_SHAPE",
-                        `$ore 的值必须是矿种名（形状矿如 "Cu"、颜料如 "red" / "blue"），实得 ${JSON.stringify(raw)}`, raw);
+                        `$ore 的值必须是矿种名（单色如 "Cu"、"red"，复合矿如 "RuRuWuWu"），实得 ${JSON.stringify(raw)}`, raw);
                     return null;
                 }
                 const hit = nearestOreCell(obs, raw);
