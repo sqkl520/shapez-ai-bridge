@@ -234,11 +234,16 @@ t("硬伤 2：没有声明 coordClass 的坐标参数会被 lint 抓住（白名
 });
 
 t("硬伤 2：每个宏声明的端点/落点数量不超上界，且坐标容器参数都被声明", () => {
+    /* 上界 3（原为 2）：`remove_run` 现在有 uids / cells / region 三个**互斥**端点。
+       这不是参数爆炸，而是同一族宏的词汇统一 —— `replace_run` 用 region，
+       模型没有理由认为 `remove_run` 该换一套说法（实测 L12 多轮全耗在这个词形差异上）。
+       互斥组内部只有一个能生效，所以「端点数量」的上界可以放宽，但
+       `exactlyOneOf` 的约束仍然被单独测着（见下面那条）。 */
     for (const name of MACRO_NAMES) {
         const spec = MACRO_SPECS[name];
         const eps = spec.params.filter(p => p.coordClass === "endpoint").length;
         const sites = spec.params.filter(p => p.coordClass === "site").length;
-        ok(eps <= 2, `${name} 端点 ${eps} 个超上界 2`);
+        ok(eps <= 3, `${name} 端点 ${eps} 个超上界 3`);
         ok(sites <= 1, `${name} 落点 ${sites} 个超上界 1`);
     }
 });
@@ -470,12 +475,17 @@ t("remove_run：cells 通道被标为 deprecated，但契约与校验器都仍�
     const p = MACRO_SPECS.remove_run.params.find(x => x.name === "cells");
     eq(p.deprecated, true, "cells 必须标 deprecated");
     ok(/勿用/.test(p.description), "cells 的 description 必须写明勿用");
-    /* 「二选一必填」不能靠两个 required:false 让 schema 生成器读成「都可省」 */
-    eq(MACRO_SPECS.remove_run.exactlyOneOf, [["uids", "cells"]],
-        "remove_run 必须机器可读地声明 uids/cells 恰好二选一");
+    /* 「三选一必填」不能靠三个 required:false 让 schema 生成器读成「都可省」。
+       2026-11-15：region 加进来是因为 `replace_run` 用 region，而模型没有理由
+       认为同族的 `remove_run` 该换一套说法（实测 L12 多轮全耗在这个词形差异上）。 */
+    eq(MACRO_SPECS.remove_run.exactlyOneOf, [["uids", "cells", "region"]],
+        "remove_run 必须机器可读地声明 uids/cells/region 恰好三选一");
     ok(validateRemoveRunArgs({ cells: [[4, -13]] }).ok, "保留通道：校验器仍接受 cells");
     ok(validateRemoveRunArgs({ uids: [1] }).ok, "uids 是推荐通道");
+    ok(validateRemoveRunArgs({ region: [4, -13, 4, -13] }).ok, "region 是 cells 的矩形简写（与 replace_run 同词汇）");
     eq(validateRemoveRunArgs({ uids: [1], cells: [[4, -13]] }).ok, false, "二选一互斥");
+    eq(validateRemoveRunArgs({ uids: [1], region: [0, 0, 1, 1] }).ok, false, "uids 与 region 也互斥");
+    eq(validateRemoveRunArgs({ region: [0, 0, 1, 1], cells: [[0, 0]] }).ok, false, "region 与 cells 也互斥");
     eq(validateRemoveRunArgs({}).error.code, "missing_field", "都不给必须报 missing_field");
 });
 

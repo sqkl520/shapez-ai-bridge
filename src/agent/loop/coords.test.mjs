@@ -677,13 +677,33 @@ eq(argKindOf("replace_run", "args.building"), null, "非坐标参数必须是 nu
    uids / cells / opts.* —— 根本没有 region。旧版只报「不是坐标参数」，
    模型看不出是参数名写错，换着法子重试同一个不存在的参数。 */
 {
+    /* ⚠️ 这条原来的夹具是 `remove_run {region:…}` —— 而 2026-11-15 之后
+       `remove_run` **收** region 了（与 replace_run 保持同一套词汇，
+       见 contract.validateRemoveRunArgs）。所以换一个真的没有该参数的宏。
+
+       `connect` 的参数是 from / to / opts.*，没有 region —— 拿它做夹具。 */
+    const obs = { entities: [{ uid: 1, type: "belt", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0 }], hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 }, resources: [] };
+    const tbl = buildHandles(obs);
+    const plan = { calls: [{ macro: "connect", args: { region: { $path_of: ["B1"] } } }] };
+    const r = resolveRefs(plan, tbl, obs);
+    const hit = (r.violations || []).find(v => v.rule === "UNKNOWN_PARAM");
+    ok(!!hit, "connect 没有 region 参数 ⇒ 必须报 UNKNOWN_PARAM，不是笼统的 REF_SHAPE");
+    ok(!!hit && /from/.test(hit.reason || ""), "错误信息要列出合法参数名", hit && hit.reason);
+}
+
+/* ★ remove_run 现在也收 region —— 与 replace_run 同一套词汇 ★
+ *
+ * 同一族的「整段改造」宏不该用两套参数名。模型在 replace_run 上学会了
+ * region，换到 remove_run 却被拒，而它没有任何理由认为两者不同。
+ * 实测 L12 多轮的最后一步全耗在这个词形差异上。 */
+{
     const obs = { entities: [{ uid: 1, type: "belt", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0 }], hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 }, resources: [] };
     const tbl = buildHandles(obs);
     const plan = { calls: [{ macro: "remove_run", args: { region: { $path_of: ["B1"] } } }] };
     const r = resolveRefs(plan, tbl, obs);
-    const hit = (r.violations || []).find(v => v.rule === "UNKNOWN_PARAM");
-    ok(!!hit, "remove_run 没有 region 参数 ⇒ 必须报 UNKNOWN_PARAM，不是笼统的 REF_SHAPE");
-    ok(!!hit && /uids/.test(hit.reason || ""), "错误信息要列出合法参数名", hit && hit.reason);
+    const bad = (r.violations || []).filter(v => v.rule === "UNKNOWN_PARAM" || v.rule === "REF_SHAPE");
+    ok(bad.length === 0, "remove_run 必须接受 region（与 replace_run 同词汇）", bad.map(v => v.reason).join("; "));
+    ok(r.ok === true, "这条计划应该整体通过", (r.violations || []).map(v => v.rule + ":" + v.reason).join("; "));
 }
 
 

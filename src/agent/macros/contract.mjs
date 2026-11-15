@@ -911,8 +911,44 @@ export function validateInsertMachineArgs(args) {
 export function validateRemoveRunArgs(args) {
     const A = "remove_run";
     if (!isObj(args)) return fail("bad_type", null, `${A} 的入参必须是对象`);
-    const unk = rejectUnknownKeys(args, ["uids", "cells", "opts"], A);
+    /* ★ 也收 `region`（2026-11-15，L12 真机）★
+     *
+     * `replace_run` 的主参数是 `region`（一个 BBox），而 `remove_run` 是
+     * `uids` / `cells`。两者是同一族的「整段改造」宏，参数形状却不同 ——
+     * 模型非常自然地写成 `remove_run {region: $path_of([...])}`，
+     * 然后被拒成 LLM_ARGS。
+     *
+     * 实测：L12 连续多轮的最后一步都撞在这个上，而它每次都在照着
+     * （曾经写错的）诊断提示办事。修提示是第一层，但**让参数名一致**
+     * 才是根治 —— 模型不该因为选了同族的另一个宏就要换一套词汇。
+     *
+     * `region` 语义上等价于 `cells`（矩形选区），这里接受后按 cells 走。
+     * 仍然要求「uids / cells / region 里恰好给一个」，不许混用。 */
+    const unk = rejectUnknownKeys(args, ["uids", "cells", "region", "opts"], A);
     if (unk) return unk;
+
+    const given = ["uids", "cells", "region"].filter(k => args[k] !== undefined);
+    if (given.length !== 1) {
+        return fail(given.length === 0 ? "missing_field" : "bad_type",
+            given.length === 0 ? "uids" : given[1],
+            `${A} 必须在 uids / cells / region 中**恰好给一个**`,
+            "uid 稳定且精确（obs.entities[].uid）；cells / region 会随世界变化而漂移。优先 uid。"
+            + "（region 只是 cells 的矩形简写，与 replace_run 的写法保持一致。）");
+    }
+    if (args.region !== undefined && args.cells === undefined) {
+        /* region → cells：闭区间矩形展开成格集 */
+        const rg = args.region;
+        if (!Array.isArray(rg) || rg.length !== 4 || !rg.every(isInt)) {
+            return fail("bad_type", "region", `${A}.region 必须是 [x0,y0,x1,y1] 四个整数`);
+        }
+        const [x0, y0, x1, y1] = rg;
+        if (x1 < x0 || y1 < y0) {
+            return fail("bad_type", "region", `${A}.region 的 x1/y1 必须不小于 x0/y0`);
+        }
+        const cells = [];
+        for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) cells.push([x, y]);
+        args = { ...args, cells };
+    }
 
     const hasUids = args.uids !== undefined;
     const hasCells = args.cells !== undefined;
@@ -1487,13 +1523,14 @@ export const MACRO_SPECS = Object.freeze({
         name: "remove_run",
         summary: "删掉一段带子（uids 指名的集合）；整段原子删除。",
         params: [
-            { name: "uids", type: "Uid[]", required: false, coordClass: "endpoint", description: "要删的带子 uid（来自 obs）。**这是唯一推荐通道**；与 cells **恰好二选一**（都给 → bad_type，都不给 → missing_field）。" },
+            { name: "uids", type: "Uid[]", required: false, coordClass: "endpoint", description: "要删的带子 uid（来自 obs）。**这是唯一推荐通道**；与 cells / region **恰好三选一**（给多过一个 → bad_type，一个都不给 → missing_field）。" },
             { name: "cells", type: "Cell[]", required: false, coordClass: "endpoint", deprecated: true, description: "**已弃用，勿用**：拿不到 uid 时的历史通道。obs 永远给 uid，这条通道只多一个选错的机会，还把坐标重新放进公开 ABI。保留它是为了不破坏既有调用方；新调用必须用 uids。" },
+            { name: "region", type: "BBox", required: false, coordClass: "endpoint", description: "`cells` 的矩形简写，与 `replace_run` 的写法一致（同一个族里的宏不该用两套词汇）。闭区间 [x0,y0,x1,y1]，内部展开成格集。同样不如 uids 稳定。" },
             { name: "opts.allow_scattered", type: "boolean", required: false, description: "允许删不连通的多段。默认 false（不连通通常是选集错）。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只报告不执行。" },
         ],
-        /** 两个端点参数是**恰好二选一**，不是「都可省」。机器可读，供 A6 的 schema 生成器与契约测试共用。 */
-        exactlyOneOf: [["uids", "cells"]],
+        /** 三个端点参数是**恰好三选一**，不是「都可省」。机器可读，供 A6 的 schema 生成器与契约测试共用。 */
+        exactlyOneOf: [["uids", "cells", "region"]],
         preconditions: [
             "每个 uid（或弃用的 cell）都解析到一个**带子**（belt / underground_belt）。任何一格解析到机器/hub → not_a_run，整单拒绝。",
             "选集在 4-邻接下连通（除非 allow_scattered=true）。",
