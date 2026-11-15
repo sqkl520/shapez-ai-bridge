@@ -3289,8 +3289,13 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
      * 而硬上限是 16000 —— 中间 4500 的差额被后面才拼进去的 S4/S5 吃掉，
      * 于是降级链认为「达标了」，硬上限却仍然超。
      *
-     * 这里补最后一道：仍然超就继续压机器表，直到装下或压到没有为止。 */
-    if (chars > limits.inCharsMax && s3Machines) {
+     * 这里补最后一道：仍然超就继续压机器表，直到装下或压到没有为止。
+     *
+     * ⚠️ 条件里**不能**写 `&& s3Machines`：上面那轮降级链可能已经把机器表
+     * 压成 `null`（整段去掉）了，而这时仍然超 —— 那种情况下这个兜底会被
+     * 整个跳过，于是 `PROMPT_OVER_BUDGET` 照抛（真机 16494 就是这么来的）。
+     * 压成 null 之后没得再压，但至少要**试过**才能确定该抛。 */
+    if (chars > limits.inCharsMax) {
         for (const cap of [6, 3, 0]) {
             const alt = cap === 0 ? null : renderMachines(tbl, diagList, obs, goalShape, { max: cap });
             const u2 = composeWith(alt, s3Belts, s3Capacity || null);
