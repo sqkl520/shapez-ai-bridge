@@ -1046,14 +1046,19 @@ const CODE_RANK = Object.freeze({
     MIXER_UNFED: 2,
     PROCESSOR_REQUIRED: 3,
     SHAPE_UNKNOWN: 4,
-    /* ★ `DEAD_LINES` 排在**最后** ★
+    /* ★ `DEAD_LINES` 的位置取决于**比例**（2026-11-15 夜，L12 真机）★
      *
-     * 它是「地形问题」，不是「配方问题」。世界里有 400 条废线时，
-     * 光靠调 hint 让 connect 绕开是没用的 —— 但也不能让它把
-     * 「mixer 没料」这种直接阻塞挤掉。
+     * 它本来是「地形问题」，排在最后（9）——那个判断在废线占少数时成立：
+     * 先修配方/前提，废线以后再说。
      *
-     * 排在最后 = 只在没有更急的事时提醒；而 `severity: "warn"` 保证它
-     * 不会像 blocker 那样占掉 prompt 的第一位。 */
+     * 但实测 L12：485 条带子里 313 条是死的（**65%**），到 hub 的只有 36%。
+     * 这时它不是「地形问题」，它是**当前所有尝试失败的原因** ——
+     * 每一次 connect 都会撞到那 313 条。而 agent 每轮只清 4 条，
+     * 按那个速度要 78 轮。
+     *
+     * 排序本身不改（`sortByPriority` 用的是这张表），但 severity 在
+     * 发诊断时按 `ratio >= 0.5` 升级成 blocker —— blocker 会排在 warn 之前，
+     * 效果等价而且不需要让这张表知道运行时的比例。 */
     DEAD_LINES: 9,
     /* 孤儿机器和废线是同一类「地形垃圾」，同级。 */
     ORPHAN_MACHINES: 9,
@@ -2768,21 +2773,38 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 }
                 const hot = [...buckets.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 3);
                 const hotHandles = hot.flatMap(([, v]) => v.handles);
+                /* ★ 比例高的时候要升级成 blocker（2026-11-15 夜，L12 真机）★
+                 *
+                 * 原来恒为 `warn`，且优先级排最后（9）。实测 L12：
+                 * 485 条带子里 **313 条是死的（65%）**，到 hub 的只有 36%。
+                 *
+                 * 而 agent 每轮只清理 4 条（死带子 317→313）。按这个速度清 313 条要 78 轮。
+                 * 它不知道问题有多大 —— 一条 warn 排在有 8 个 blocker 的列表末尾，
+                 * 模型读到的是「还有些废线，以后再说」。
+                 *
+                 * 65% 的脚手架不是「以后再说」，它是**当前所有尝试失败的原因**
+                 * （每一次 connect 都会撞到它）。超过一半就该当 blocker 报。 */
+                const heavy = ratio >= 0.5;
                 out.push({
                     code: "DEAD_LINES",
                     layer: "L3",
-                    severity: "warn",
+                    severity: heavy ? "blocker" : "warn",
                     subject: subjectOf(handles, null, "belt"),
                     expected: "every belt on the map feeds something that eventually reaches the hub",
                     observed: `${dead.length} of ${beltsAll.length} belts (${Math.round(ratio * 100)}%) `
                         + `do not reach the hub — leftover scaffolding from earlier attempts, `
-                        + `densest patches: ${hot.map(([k, v]) => `${k} has ${v.n}`).join("; ")}`,
+                        + `densest patches: ${hot.map(([k, v]) => `${k} has ${v.n}`).join("; ")}`
+                        + (heavy
+                            ? `. More than half the map is dead weight — this is why every new `
+                              + `connection runs into something. Clear it FIRST.`
+                            : ""),
                     evidence: {
                         handles: hotHandles,
                         uids: dead.slice(0, 8).map(b => b.uid),
                         dead_count: dead.length,
                         belt_count: beltsAll.length,
                         ratio: Number(ratio.toFixed(2)),
+                        heavy,
                         patches: hot.map(([k, v]) => ({ at: k, belts: v.n, handles: v.handles })),
                     },
                     /* 拆废线的首要修法就是 remove_run；trash_unused 也能顺手清 */
