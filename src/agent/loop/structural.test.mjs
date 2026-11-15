@@ -491,3 +491,54 @@ test("★ structural.mjs 只 import 仓库内的只读模块（不含 node: 内�
         assert.ok(spec.startsWith("./") || spec.startsWith("../"), `只许相对路径：${spec}`);
     }
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 隧道的交接被拒 —— hint 不许教 `replace_run`（2026-11-15 夜，L12 真机）
+ *
+ * 真机现场：`B166` 是隧道发送端 @(85,-18) r=270（向 left），它把货推向
+ * `B164`（隧道接收端），而 `B164` 后面 `B163` 是 r=90（向 right）——
+ * 两者迎头，永远接不上。
+ *
+ * 而 `replace_run` 的契约明确拒绝隧道（`contract.mjs:1158` → `unsupported_building`）。
+ * 但 hint 原来**无条件**教 `replace_run {opts:{facing}}`，于是 agent
+ * 连着 8 轮照做、8 轮被拒，每轮都以为「换个写法也许能成」。
+ * 它没有任何理由知道「这条建议对这个建筑不适用」—— 建议是我们给的。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T-tunnel ★ 送方是隧道时，hint 不许教 replace_run（它一定被拒）", () => {
+    /* 夹具直接用**真机现场的三格几何**（2026-11-15 夜，L12）：
+     *
+     *   14690 隧道发送端 @(85,-18) r=270   ← 货从它出发
+     *   14691 隧道接收端 @(83,-18) r=270   ← 出口 (82,-18)，货向 left 走
+     *   15631 普通带子   @(82,-18) r=90    ← 只接受「向 right 行进」的货
+     *
+     * 两者迎头，这就是那条真实存在、agent 修了 8 轮都没修好的断链。
+     *
+     * 之所以不拿 L4 现改：把一条普通带子改成 `underground_belt` 之后，
+     * 它**不再是 sender**（`tunnelIsSender` 要看配对），handoff 判定直接跳过，
+     * 夹具根本触发不到那条诊断。用真实几何最可靠。 */
+    const TUNNEL_WORLD = {
+        entities: [
+            { uid: 14690, type: "underground_belt", x: 85, y: -18, r: 270, variant: "default", rotation_variant: 0, code: 22, layer: "regular" },
+            { uid: 14691, type: "underground_belt", x: 83, y: -18, r: 270, variant: "default", rotation_variant: 1, code: 23, layer: "regular" },
+            { uid: 15631, type: "belt", x: 82, y: -18, r: 90, variant: "default", rotation_variant: 1, code: 2, layer: "regular" },
+        ],
+        hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 1000, delivered: 0 } },
+    };
+    const ds = structuralDiagnoses(TUNNEL_WORLD, null, "CbCbCbRb:CwCwCwCw", buildHandles(TUNNEL_WORLD, null), {});
+    const rej = byCode(ds, "BELT_HANDOFF_REJECTED")
+        .filter(d => d.evidence && Array.isArray(d.evidence.uids) && d.evidence.uids[0] === 14690);
+    assert.ok(rej.length > 0,
+        `夹具没有触发针对隧道发送端 14690 的 BELT_HANDOFF_REJECTED（实得 ${JSON.stringify(
+            byCode(ds, "BELT_HANDOFF_REJECTED").map(d => d.evidence && d.evidence.uids))}）`);
+    for (const d of rej) {
+        const h = String(d.hint || "");
+        assert.ok(!/replace_run\s*\{/.test(h),
+            `★ 隧道场景下 hint 不许出现 replace_run（它回 unsupported_building）：${h.slice(0, 200)}`);
+        assert.ok(/remove_run/.test(h),
+            `★ 必须指出正确出路是拆掉隧道对：${h.slice(0, 200)}`);
+        assert.ok(d.candidates[0] === "remove_run",
+            `★ 候选表也要换（隧道场景 remove_run 排第一），实得 ${JSON.stringify(d.candidates)}`);
+    }
+});

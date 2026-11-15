@@ -448,7 +448,12 @@ export function structuralDiagnoses(obs, items, goal, handles, opts = {}) {
                 into_type: r.into.type,
                 cells: [r.cell],
             },
-            candidates: ["connect", "replace_run", "trash_unused"],
+            /* 送方是隧道时，候选表也要换 —— `replace_run` 对隧道一定被拒
+               （`contract.mjs` 的 `unsupported_building`），推它等于浪费一轮。
+               `r.kind` 对隧道是 `"tunnel"`（见 rejected.push 那行）。 */
+            candidates: String(r.kind || "").includes("tunnel")
+                ? ["remove_run", "connect", "trash_unused"]
+                : ["connect", "replace_run", "trash_unused"],
             /* ★ 这条码原来**没有 hint** —— 而解法是完全确定的 ★
              *
              * 真机实测（r-20261113200359-7c7e，2026-11-13，level 9）：
@@ -471,10 +476,41 @@ export function structuralDiagnoses(obs, items, goal, handles, opts = {}) {
             hint: (() => {
                 const me = handleOf(handles, r.uid);
                 if (!me) return null;
+                const intoH = handleOf(handles, r.into.uid);
+                /* ★ 送方是隧道 ⇒ `replace_run` 一定被拒，别教它 ★
+                 *
+                 * 2026-11-15 夜，L12 真机：`B166` 是隧道发送端（(85,-18) r=270，
+                 * 向 left），它把货推向 `B164`（隧道接收端），而 `B164` 后面
+                 * `B163` 是 r=90（向 right）—— 两者迎头，永远接不上。
+                 *
+                 * 而 `replace_run` 的契约明确拒绝隧道：
+                 *   `contract.mjs:1158` → `unsupported_building`，
+                 *   「隧道需要 sender/receiver 成对建模，v1 范围外」。
+                 *
+                 * 下面的 hint 原来**无条件**教 `replace_run {opts:{facing}}`。
+                 * 于是 agent 连着 8 轮照做、8 轮被拒（实测 transcript：
+                 * r-20261115212038-389f 的 R2/R4、r-20261115211849-df44 的 R3/R4/R6），
+                 * 每轮都以为「换个写法也许能成」。它没有任何理由知道
+                 * 「这条建议对这个建筑不适用」—— 建议是我们给的。
+                 *
+                 * 隧道的唯一出路是**删掉那一对**（`remove_run` 对隧道有效），
+                 * 用带子重铺。这一点必须说出来，否则它永远修不好。 */
+                /* ⚠️ `r.kind` 对隧道是 `"tunnel"`，不是 `"underground_belt"` ——
+                   它由 `rejected.push({ kind: isTunnel(e) ? "tunnel" : "belt" })` 写死。
+                   第一版判据写成 `.includes("underground")`，匹配不上，修改等于没生效。 */
+                const isTunnel = String(r.kind || "").includes("tunnel");
+                if (isTunnel) {
+                    return `${me} 是**隧道**的发送端（${r.kind}），它把货推向 ${labelOf(handles, r.into)} 时被拒。`
+                        + `⚠️ 隧道**不能就地改朝向** —— \`replace_run\` 对 underground_belt 一律回 `
+                        + `\`unsupported_building\`（隧道必须 sender/receiver 成对建模）。`
+                        + `所以别再写 replace_run 了，它一定会失败。`
+                        + `正确出路：先用 \`remove_run {uids:$uids(["${me}"${intoH ? `,"${intoH}"` : ""}])}\` `
+                        + `把它（和配对的另一端）拆掉，再用普通带子重铺这段。`
+                        + `普通带子改向是自由的，隧道不是 —— 这就是为什么这段一直修不好。`;
+                }
                 /* `acceptDir` 由 `accepts()` 实测得出（四个方向里唯一被接受的那个）。
                  * 拿不到就退化成「两种改法并列」，绝不猜一个方向 —— 猜错比不说更糟：
                  * 模型会照着改、改完还是不行、然后开始怀疑诊断本身。 */
-                const intoH = handleOf(handles, r.into.uid);
                 if (r.acceptDir) {
                     return `${me} 要把货朝 **${r.acceptDir}** 喷，才能进 ${labelOf(handles, r.into)}`
                         + `（它现在朝 ${r.dir}，那个落点不收）。就地改朝向就行，不用坐标：`
