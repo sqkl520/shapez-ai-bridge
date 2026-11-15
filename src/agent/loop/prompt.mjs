@@ -2005,8 +2005,9 @@ function renderDiagnoses(diagnoses) {
         else visible.push(d);
     }
 
-    visible.forEach((d, i) => {
-        const code = (d && d.code) || "UNKNOWN";
+    /* 已渲染过的 hint 原文（用于去重，见下面 `hint:` 那段注释） */
+    const seenHints = new Set();
+    visible.forEach((d, i) => {        const code = (d && d.code) || "UNKNOWN";
         const layer = d && d.layer ? `[${d.layer}${d.severity ? "/" + d.severity : ""}]` : "";
         const subj = d && d.subject
             ? [d.subject.handle, d.subject.type ? `(${d.subject.type})` : ""].filter(Boolean).join(" ")
@@ -2109,7 +2110,24 @@ function renderDiagnoses(diagnoses) {
          * **解法的一部分 > 一点没有**。 */
         if (typeof d.hint === "string" && d.hint.trim()) {
             const h = clip(sanitize(d.hint).text.trim(), 180);
-            if (h) line += `; hint: ${h}`;
+            /* ★ 同一条 hint 只渲染一次（2026-11-15 夜，L12 真机）★
+             *
+             * 实测：8 条诊断里三条 `BELT_HANDOFF_REJECTED` 的 hint 是 226/225/225 字符，
+             * 内容几乎逐字相同（同一个宏的同一套解释）。三条加起来占掉 676 字符 ——
+             * 而 prompt 正是被这个量级的浪费撑到 `PROMPT_OVER_BUDGET` 硬失败的
+             * （16447 > 16000，整个 run `outcome:INTERNAL`）。
+             *
+             * 重复的措辞不带来任何信息：模型读到第二条时已经知道该怎么办了。
+             * 换成一句指回去的短话，比重复三遍有用。
+             *
+             * 只对**完全逐字相同**的 hint 去重 —— 近似重复（比如只有句柄不同）
+             * 不动，因为那种差异本身可能是有信息的。 */
+            if (h && seenHints.has(h)) {
+                line += `; hint: (same as above)`;
+            } else {
+                if (h) seenHints.add(h);
+                if (h) line += `; hint: ${h}`;
+            }
         }
         if (cands.length) line += `; candidates ${cands.join(",")}`;
         /* 超上限被压掉的条数：必须说出来，否则模型以为「诊断就这些」 */
