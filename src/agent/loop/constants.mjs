@@ -535,6 +535,21 @@ export const RETRIEVAL_TABLE = Object.freeze({
      * 权重给最高：改造既有产线是真实存档里最常见的动作，而冷启动第一轮的
      * 目标几乎总是"把某段不通的链改对"。
      */
+    /* ★ 为什么这里**不**推 `build_line` ★
+     *
+     * 第一版加了它（权重 7），理由是「NO_PRODUCTION 说明一条产线都没有，
+     * 该用建线宏」。但 `build_line` 的前置条件是 **site-not-empty**：
+     * 只要世界里有任何非 hub 实体就拒（见 build_line.mjs 文件头）。
+     * L12 的世界有 374 个实体 —— 推它等于推一个必然失败的选项，
+     * 每试一次浪费一轮。
+     *
+     * 它真正合法的用法是「在远处**真正的空地**建线，再接回 hub」，
+     * 而那需要调用方明确给一块空 region。模型现在没有这个信息，
+     * 也不该靠猜。
+     *
+     * 所以后期关卡的「建一整套产线」只能靠增量宏组合：
+     * insert_machine 放机器 + connect 接线 + replace_run 改朝向。
+     * 慢，但每一步都真的能落地。 */
     NO_PRODUCTION: cand([
         ["replace_run", 8],
         ["insert_machine", 5],

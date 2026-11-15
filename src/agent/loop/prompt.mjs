@@ -2828,6 +2828,13 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
             "Each of those is a legitimate round's work. Progress is cumulative: a round that",
             "only lays 40 belts toward a far ore is a GOOD round, not a wasted one.",
             "",
+            "## THERE IS NO \"BUILD THE WHOLE LINE\" MACRO FOR THIS GOAL",
+            "`build_line` refuses multi-layer targets outright (`out-of-scope:multilayer`)",
+            "and refuses any world that already has buildings. Do not look for a shortcut.",
+            "The line gets built one piece at a time: insert_machine to place each machine,",
+            "connect to wire each hop, replace_run to fix a direction. That is the intended",
+            "path, not a workaround — expect it to take many rounds.",
+            "",
             "⇒ Use this to work out which raw ores and which machines the goal needs,",
             "even when the recipe solver could not finish.",
         ].join("\n");
