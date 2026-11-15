@@ -936,18 +936,32 @@ export function validateRemoveRunArgs(args) {
             + "（region 只是 cells 的矩形简写，与 replace_run 的写法保持一致。）");
     }
     if (args.region !== undefined && args.cells === undefined) {
-        /* region → cells：闭区间矩形展开成格集 */
+        /* region → cells。两种形态都收：
+           - `[x0,y0,x1,y1]` 闭区间矩形（与 `replace_run` 同写法）
+           - `[[x,y],…]` 格集（**拐弯的链只能这样表达**）
+           后者是必须的：3 格 L 形带子的外接矩形是 2×2，必有一格空，
+           而 `remove_run` 是按格删的，不需要容器语义。把它也当成矩形，
+           会让「删掉这个拐角」变成一件做不到的事。 */
         const rg = args.region;
-        if (!Array.isArray(rg) || rg.length !== 4 || !rg.every(isInt)) {
-            return fail("bad_type", "region", `${A}.region 必须是 [x0,y0,x1,y1] 四个整数`);
+        if (isBBox(rg)) {
+            const [x0, y0, x1, y1] = rg;
+            const cells = [];
+            for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) cells.push([x, y]);
+            args = { ...args, cells };
+        } else if (Array.isArray(rg) && rg.length > 0 && rg.every(isCell)) {
+            const seen = new Set();
+            for (const c of rg) {
+                const k = `${c[0]},${c[1]}`;
+                if (seen.has(k)) return fail("bad_type", "region", `${A}.region 有重复格 ${k}`);
+                seen.add(k);
+            }
+            args = { ...args, cells: rg.map(c => [c[0], c[1]]) };
+        } else {
+            return fail("bad_type", "region",
+                `${A}.region 必须是 [x0,y0,x1,y1] 矩形，或者 [[x,y],…] 格集`,
+                "拐弯的带子链不是矩形 —— 那种情况直接给格集，别硬凑包围盒。"
+                + "或者干脆用 uids（最稳）。");
         }
-        const [x0, y0, x1, y1] = rg;
-        if (x1 < x0 || y1 < y0) {
-            return fail("bad_type", "region", `${A}.region 的 x1/y1 必须不小于 x0/y0`);
-        }
-        const cells = [];
-        for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) cells.push([x, y]);
-        args = { ...args, cells };
     }
 
     const hasUids = args.uids !== undefined;
@@ -1525,7 +1539,7 @@ export const MACRO_SPECS = Object.freeze({
         params: [
             { name: "uids", type: "Uid[]", required: false, coordClass: "endpoint", description: "要删的带子 uid（来自 obs）。**这是唯一推荐通道**；与 cells / region **恰好三选一**（给多过一个 → bad_type，一个都不给 → missing_field）。" },
             { name: "cells", type: "Cell[]", required: false, coordClass: "endpoint", deprecated: true, description: "**已弃用，勿用**：拿不到 uid 时的历史通道。obs 永远给 uid，这条通道只多一个选错的机会，还把坐标重新放进公开 ABI。保留它是为了不破坏既有调用方；新调用必须用 uids。" },
-            { name: "region", type: "BBox", required: false, coordClass: "endpoint", description: "`cells` 的矩形简写，与 `replace_run` 的写法一致（同一个族里的宏不该用两套词汇）。闭区间 [x0,y0,x1,y1]，内部展开成格集。同样不如 uids 稳定。" },
+            { name: "region", type: "BBox | Cell[]", required: false, coordClass: "endpoint", description: "`cells` 的简写，与 `replace_run` 同一个参数名（同一个族里的宏不该用两套词汇）。矩形 `[x0,y0,x1,y1]`，**或者**一格集 `[[x,y],…]`：拐弯的带子链不是矩形，那种情况请直接给格集，别硬凑成包围盒。同样不如 uids 稳定。" },
             { name: "opts.allow_scattered", type: "boolean", required: false, description: "允许删不连通的多段。默认 false（不连通通常是选集错）。" },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只报告不执行。" },
         ],

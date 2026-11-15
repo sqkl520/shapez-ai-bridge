@@ -707,6 +707,61 @@ eq(argKindOf("replace_run", "args.building"), null, "非坐标参数必须是 nu
 }
 
 
+/* ═══════════ 拐角链的 region（2026-11-15，L12 真机）═══════════ */
+
+/* ★ 拐弯的带子链不是矩形，但它必须能被删 ★
+ *
+ * 一条 3 格的 L 形带子链（B1 在 (0,0)，B2 在 (1,0)，B3 在 (1,1)）外接矩形是
+ * 2×2 的四个格，永远填不满 —— 空洞恒为 [(0,1)]。
+ *
+ * 旧行为：`remove_run.region` 声明成 `BBox`，于是 `$path_of` 走 bbox 投影，
+ * 非连续 ⇒ `PATH_NOT_RECT`，调用整条不进 calls。这意味着**删掉任何拐角
+ * 带子段**在结构上不可能。
+ *
+ * 实测（8 次 run，40 轮）：模型连续三轮把同一段拐角链拆成 4 格 / 1 格 / 3 格
+ * 递上来，每次都被同一个几何事实拒掉，5 轮里 3 轮报废。它做对了每一件事。
+ *
+ * 修法不是放宽 bbox 投影（那会退化成「静默扩大」，是整个算子的反面），
+ * 而是承认 `remove_run.region` 只是 cells 的简写、**不需要容器语义**：
+ * 矩形就投矩形，非矩形就投精确格集。 */
+{
+    const obs = {
+        entities: [
+            { uid: 1, type: "belt", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0 },
+            { uid: 2, type: "belt", x: 1, y: 0, r: 0, variant: "default", rotation_variant: 0 },
+            { uid: 3, type: "belt", x: 1, y: 1, r: 0, variant: "default", rotation_variant: 0 },
+        ],
+        hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 },
+        resources: [],
+    };
+    const tbl = buildHandles(obs);
+    const plan = { calls: [{ macro: "remove_run", args: { region: { $path_of: ["B1", "B2", "B3"] } } }] };
+    const r = resolveRefs(plan, tbl, obs);
+    const notRect = (r.violations || []).filter(v => v.rule === "PATH_NOT_RECT");
+    ok(notRect.length === 0,
+        "★ 拐角链的 region 不许报 PATH_NOT_RECT —— 那些格本来就不是矩形",
+        notRect.map(v => v.reason).join("; "));
+    ok(r.ok === true, "拐角链的 region 计划必须整体通过",
+        (r.violations || []).map(v => v.rule + ":" + v.reason).join("; "));
+    const got = r.ok ? r.calls[0].args.region : null;
+    eq(JSON.stringify(got), JSON.stringify([[0, 0], [1, 0], [1, 1]]),
+        "★ 非矩形 ⇒ 投影成精确格集（不是包围盒，绝不能静默扩大）");
+
+    /* 对照组：`replace_run.region` **仍然**必须是矩形。
+       它要的是容器（在框内挑出待替换的那几条带子），不同于 remove_run 的逐格删除。
+       这个差别是 `argKindOf` 按参数声明走的理由 —— 不是按参数名走。 */
+    const p2 = { calls: [{ macro: "replace_run", args: { region: { $path_of: ["B1", "B2", "B3"] }, building: "belt" } }] };
+    const r2 = resolveRefs(p2, tbl, obs);
+    ok((r2.violations || []).some(v => v.rule === "PATH_NOT_RECT"),
+        "★★ 对照组：replace_run.region 是非矩形时仍必须报 PATH_NOT_RECT（容器语义没被放宽）",
+        (r2.violations || []).map(v => v.rule).join(","));
+    const pv = (r2.violations || []).find(v => v.rule === "PATH_NOT_RECT");
+    ok(pv && pv.value && pv.value.macro === "replace_run",
+        "★ 违规对象要带上宏名 —— 否则 planReject 只能写死候选，把模型引向错误的宏",
+        pv && JSON.stringify(pv.value));
+}
+
+
 /* ═══════════ 汇总 ═══════════ */
 
 console.log(`\ncoords 自测：${pass} 通过 / ${fail} 失败`);

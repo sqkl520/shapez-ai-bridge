@@ -1221,13 +1221,17 @@ function planRejectFromViolations(violations, stage) {
      * 单独成码才能把 hint 写成「拆成更小的连续段」。 */
     if (rules.has("PATH_NOT_RECT")) {
         const v = violations.find(x => x && x.rule === "PATH_NOT_RECT") || {};
+        /* 宏名来自违规对象本身（`coords.mjs` 在 `add(...)` 时带上 `value.macro`）——
+           写死 `replace_run` 会在模型用的是别的宏时把它引到错误方向
+           （2026-11-15，L12：模型用的是 `remove_run`，候选却always 是 `replace_run`）。 */
+        const via = v.value && typeof v.value.macro === "string" ? v.value.macro : null;
         return reject("PATH_NOT_RECT", {
             layer: "plan", stage,
             expected: "交给 region 的 $path_of 格集恰好填满自己的外接矩形（连续选区）",
             observed: v.reason || "选区不连续",
             evidence: { stage, rules: [...rules], path: v.path || null },
             /* 候选是**该宏自身**（与 LLM_ARGS 同口径：给它重试一次的机会） */
-            candidates: ["replace_run"],
+            candidates: via ? [via] : ["replace_run"],
             hint: "把这段链拆成各自连续（不含空洞）的几段，分别调用；或只选真正要改的那几格。"
                 + "不要为了『让它变成矩形』而把没指名的格子加进来。",
         });

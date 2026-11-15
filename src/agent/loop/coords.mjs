@@ -332,15 +332,34 @@ const relPath = p => {
  * 目标参数**声明的**类型 → `"bbox" | "cells" | null`。
  *
  * 唯一真值来源是 `MACRO_SPECS[macro].params[].type`（不在这里抄第二份名单）：
- *   `BBox`   → bbox 投影（只接受恰好填满的格集）
- *   `Cell[]` → 精确格集投影
- *   其它     → null（`$path_of` 用错地方 ⇒ REF_SHAPE）
+ *   `BBox`            → bbox 投影（只接受恰好填满的格集）
+ *   `Cell[]`          → 精确格集投影
+ *   `BBox | Cell[]`   → 两可投影（按格集自身形状决定，见下）
+ *   其它               → null（`$path_of` 用错地方 ⇒ REF_SHAPE）
+ *
+ * ## `BBox | Cell[]` 为什么必须存在
+ *
+ * 它不是「宽松放行」，而是承认**矩形语义与逐格语义确实不同**：
+ *
+ * - `replace_run.region` 要的是容器 —— 它在框内挑出待替换的那几条带子，所以
+ *   选区必须**恰好是**一个矩形，非矩形选区的意图无法表达。
+ * - `remove_run.region` 只是 `cells` 的简写 —— 内部按格逐格删，不需要容器。
+ *   一条**拐弯**的带子链（3 格 L 形）外接矩形是 2×2，永远填不满，
+ *   于是「删掉这个拐角」这件事在 BBox 投影下**结构上不可能**。
+ *
+ * 实测（2026-11-15，L12，8 次 run）：模型连续三轮把同一段拐角链拆成
+ * 4 格 / 1 格 / 3 格递上来，每次都被 `PATH_NOT_RECT` 拒掉，5 轮里 3 轮报废。
+ * 它做对了每一件事 —— 用了算子、选了正确的宏、点名了正确的格 ——
+ * 错的是出题人把「矩形」当成了 `region` 的唯一形态。
+ *
+ * 所以判据按参数走，不按参数名走：同名 `region` 在两个宏里语义不同，
+ * 这个差别必须写进声明里，而不是靠模型自己猜出来。
  *
  * 嵌套参数（`opts.x`）不参与：`$path_of` 只能出现在顶层的坐标参数上。
  *
  * @param {string|null} macro
  * @param {string} path 相对 args 的路径（`region` / `building[0].region` …）
- * @returns {"bbox"|"cells"|null}
+ * @returns {"bbox"|"cells"|"cellset"|null}
  */
 export function argKindOf(macro, path) {
     const rel = relPath(path);
@@ -350,6 +369,8 @@ export function argKindOf(macro, path) {
         if (p) {
             if (p.type === "BBox") return "bbox";
             if (p.type === "Cell[]") return "cells";
+            /* 声明顺序即优先级：含 BBox 又含 Cell[] ⇒ 两可 */
+            if (p.type === "BBox | Cell[]") return "cellset";
         }
     }
     return null;
@@ -753,12 +774,20 @@ export function resolveRefs(llmPlan, handles, obs) {
                             `$path_of 指的 ${p.cells.length} 格没有填满它们的外接矩形 [${p.region}]：`
                             + `空洞 ${JSON.stringify(p.holes)}${p.unique < p.cells.length ? "（且有重复格）" : ""}`
                             + " —— 该参数只接受矩形，非连续选区必须拆成多次调用（或改用 agrees with 目标形状的连续段）",
-                            { cells: p.cells, region: p.region, holes: p.holes });
+                            { cells: p.cells, region: p.region, holes: p.holes, macro: currentMacro });
                         return null;
                     }
                     return { value: p.region, prov: [[path, tag]] };
                 }
                 if (kind === "cells") {
+                    return { value: p.cells.map(c => [c[0], c[1]]), prov: [[path, tag]] };
+                }
+                if (kind === "cellset") {
+                    /* 两可参数（`remove_run.region`）：矩形就用矩形，非矩形就退化成精确格集。
+                       **不报 PATH_NOT_RECT** —— 这个参数本来就不需要容器语义，
+                       拐弯的链删不掉是缺陷，不是模型做错。
+                       矩形优先：它更短，也让 `[x0,y0,x1,y1]` 的老写法继续工作。 */
+                    if (p.contiguous) return { value: p.region, prov: [[path, tag]] };
                     return { value: p.cells.map(c => [c[0], c[1]]), prov: [[path, tag]] };
                 }
                 /* ★ `null` 有两种原因，必须分开报 ★
