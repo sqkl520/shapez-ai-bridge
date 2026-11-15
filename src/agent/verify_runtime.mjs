@@ -1116,16 +1116,57 @@ export async function verifyRuntime(planOrId, opts = {}) {
 
     checks.push(checkLanding(norm, obs));
 
-    // 槽位与连通需要 debug_items；区域覆盖计划的 bbox（外扩 6 格），否则会假红
+    /* 槽位与连通需要 debug_items；区域覆盖**计划的 bbox**（外扩 6 格），否则会假红。
+     *
+     * ★ 没有 placements 时也要读，只是取法不同（2026-11-15，L12 真机）★
+     *
+     * 原来这段是 `if (norm.placements.length) { …读… }` —— 于是**纯删除计划**
+     * （`remove_run` / `remove_machine`，一个 placements 都没有）拿到 `items = null`，
+     * 而 `checkFlow` 的第一句就是「没有 paths ⇒ undecidable」，
+     * `strictVerdict` 随即判红。
+     *
+     * 后果是这一族宏**永远不可能**被判绿：它们只拆不建，删得再干净也没有 placements，
+     * 于是 L3 永远 undecidable，于是 `outcome` 永远不是 success，于是跨 run 记忆里
+     * 攒不出任何一条 `positive` —— 65 次 verify、`goal_delta` 全是 0。
+     *
+     * 删除计划没有自己的 bbox，但**它的效果落在整张图上**（拆掉的那段原本连着什么）。
+     * 这时用 obs 的实体 bbox（+pad）是唯一有意义的取法：它与 verify_runtime 原来的
+     * 「计划 bbox + 6」语义一致（都覆盖「这次改动可能影响的区域」），只是来源从
+     * placements 换成 entities。整图读取**不会**造成假绿：L3 仍然是「沿游戏自己的
+     * paths 走」，只是终于有 paths 可走了。 */
     let items = null;
-    if (norm.placements.length) {
+    {
         const xs = norm.placements.map(p => p.x), ys = norm.placements.map(p => p.y);
         const pad = opts.flowPad === undefined ? 6 : Math.max(6, opts.flowPad);
-        const region = [Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) + pad, Math.max(...ys) + pad].map(Math.round);
-        try {
-            items = await reader.debugItems({ region });
-        } catch (e) {
-            items = { beltError: e.message };
+        let region = null;
+        if (xs.length) {
+            region = [Math.min(...xs) - pad, Math.min(...ys) - pad,
+                      Math.max(...xs) + pad, Math.max(...ys) + pad].map(Math.round);
+        } else {
+            /* 纯删除：退到实体 bbox。与 `loop.mjs#debugItemsRegion` 同一口径
+               （同一个 pad、同样按实体 bbox 外扩），不发明第二套取法。 */
+            const ent = Array.isArray(obs.entities) ? obs.entities : [];
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, n = 0;
+            for (const e of ent) {
+                if (!e || !Number.isFinite(e.x) || !Number.isFinite(e.y)) continue;
+                if (e.x < x0) x0 = e.x;
+                if (e.y < y0) y0 = e.y;
+                if (e.x > x1) x1 = e.x;
+                if (e.y > y1) y1 = e.y;
+                n++;
+            }
+            if (n) {
+                region = [x0 - pad, y0 - pad, x1 + pad, y1 + pad].map(Math.round);
+            } else if (Array.isArray(obs.region) && obs.region.length === 4) {
+                region = obs.region.map(Math.round);
+            }
+        }
+        if (region) {
+            try {
+                items = await reader.debugItems({ region });
+            } catch (e) {
+                items = { beltError: e.message };
+            }
         }
     }
 

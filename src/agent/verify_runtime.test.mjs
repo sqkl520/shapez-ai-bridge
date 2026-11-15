@@ -667,6 +667,45 @@ const clone = o => JSON.parse(JSON.stringify(o));
         const r = await verifyRuntime(PLAN, { reader });
         ok(!r.ok && r.error && r.error.code === "obs_failed", "verify: obs 读失败 → 结构化 error", r.error);
     }
+
+    /* ⑨ ★ 纯删除计划也要读 debug_items（2026-11-15，L12 真机）★
+     *
+     * 原来 `items` 的读取被 `if (norm.placements.length)` 门控 ——
+     * **没有 placements 的计划根本不读 debug_items**，`items` 恒 null，
+     * 而 `checkFlow` 第一句就是「没有 paths ⇒ undecidable」，
+     * `strictVerdict` 随即判红。
+     *
+     * 后果不是「删得不够干净」，是**这一族宏永远不可能被判绿**：
+     * `remove_run` / `remove_machine` 只拆不建，删得再对也没有 placements。
+     * 于是 L3 永远 undecidable → `outcome` 永远不是 success →
+     * 跨 run 记忆里攒不出任何一条 `positive`。实测 65 次 verify、goal_delta 全是 0。
+     *
+     * 这个 bug 单测全绿是因为既有的夹具（`PLAN`）**总有 placements**，
+     * 删掉 placements 的那一支从来没人走过。 */
+    {
+        const DEL_ONLY = {
+            placements: [],
+            removes: [{ uid: 19999, expect: null }],
+            source: "test",
+            flows: null,
+        };
+        let asked = 0;
+        const inner = mkReader(obs, items, {}, {}, { prodCalls: 0, ticks: 0 });
+        const reader = {
+            ...inner,
+            async debugItems(p) {
+                asked++;
+                ok(Array.isArray(p && p.region) && p.region.length === 4,
+                    "★ 纯删除计划也带着合法 region 去读 debug_items", p && p.region);
+                return { ...items, paths: [], pathCount: 0 };
+            },
+        };
+        const r = await verifyRuntime(DEL_ONLY, { reader });
+        ok(asked > 0, "★★ 纯删除计划必须读 debug_items —— 旧版被 placements 门控掉，L3 永远 undecidable", asked);
+        const l3 = r.checks.find(c => c.name === "L3-flow");
+        ok(l3 && l3.undecidable !== true,
+            "★★ 有了 items，L3 就不再是「不可判定」", l3 && (l3.reason || "ok"));
+    }
 }
 
 /* ═════════════════════════ 汇总 ═════════════════════════ */

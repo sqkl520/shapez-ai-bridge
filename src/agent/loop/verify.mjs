@@ -257,10 +257,13 @@ function footprintOf(e) {
  *
  * @param {object} report  verifyRuntime 的返回（或 verifyRound 的 report）
  * @param {{mode:"live"|"mock"|"replay", goalShape?:string, flowsProvided?:boolean,
+ *          flowsNotApplicable?:boolean,
  *          hasMachines?:boolean, uidDiff?:number[]}} opts
  * @returns {{ok:boolean, why:string[]}}
  */
-export function strictVerdict(report, { mode, goalShape, flowsProvided, hasMachines, uidDiff } = {}) {
+export function strictVerdict(report, {
+    mode, goalShape, flowsProvided, flowsNotApplicable, hasMachines, uidDiff,
+} = {}) {
     const why = [];
     if (!report || !Array.isArray(report.checks)) {
         return { ok: false, why: ["report.checks 缺失 —— 没有可裁决的对象（不许把「没有检查」当通过）"] };
@@ -297,14 +300,47 @@ export function strictVerdict(report, { mode, goalShape, flowsProvided, hasMachi
         why.push(`L2-slots 未通过（${l2.reason || "ok=false"}）`);
     }
 
-    /* 4. L3：必须给显式 flows；degraded 一律红（那是有边界的绿，不是验证过） */
+    /* 4. L3：必须给显式 flows；degraded 一律红（那是有边界的绿，不是验证过）
+     *
+     * ★ 例外：**纯删除计划**不声称任何新货流，没东西需要 flow 来证明 ★
+     *
+     * `scanFlows` 只从 placements 派生，所以只拆不建的计划天然派生出 0 条。
+     * 旧口径把它判成「FLOW_UNVERIFIED」——但那条码的意思是「你建了东西却
+     * 没给我验它的办法」，纯删除不存在这个缺口。混为一谈的后果是
+     * `remove_run` 永远判不绿（实测 65 次 verify、goal_delta 全 0），
+     * 跨 run 记忆攒不出一条 positive。
+     *
+     * **`skipped` 也要放过，不只是 `ok`**
+     *
+     * `checkFlow` 在「没有 placements 也没有 flows」时返回 `{ok:true, skipped:true}`
+     * ——它自己就在说「这一轮没有货流可验」。旧代码把这个 `skipped` 也判红
+     * （`else if (l3.ok !== true)` 前面没有 skipped 分支），于是那句
+     * 「没有 placements 也没有 flows」的诚实结论被翻译成了「不合格」。
+     *
+     * 拆得对不对有另一层判据兜底：`V-health` 看的是 before/after 两份世界的
+     * 连通性，纯删除改坏了它一定红 —— 那才是「这步该不该做」的正确判据，
+     * 而 L3 只管「我声称的货流通不通」。两层分工不能混。
+     *
+     * `flowsNotApplicable` 由调用方按 `hasPlacements === false` 给出。
+     * 有 placements 却派生不出 flows 时它**不成立**，照旧判红。 */
     const l3 = get("L3-flow");
-    if (flowsProvided !== true) {
+    if (flowsProvided !== true && flowsNotApplicable !== true) {
         why.push("L3 未提供显式 flows（FLOW_UNVERIFIED）—— 降级检查不能当连通已验证");
     }
-    if (!l3) why.push("L3-flow 缺失 —— 没有连通性证据");
-    else if (l3.degraded === true) why.push(`L3-flow 降级（${l3.reason || "degraded"}）—— 只覆盖计划附近，不能当通过`);
-    else if (l3.undecidable === true) why.push(`L3-flow 不可判定（${l3.reason || ""}）`);
+    if (!l3) {
+        /* 纯删除没有新链路可验，缺 L3 不算缺口。 */
+        if (flowsNotApplicable !== true) why.push("L3-flow 缺失 —— 没有连通性证据");
+    } else if (l3.degraded === true) why.push(`L3-flow 降级（${l3.reason || "degraded"}）—— 只覆盖计划附近，不能当通过`);
+    else if (l3.undecidable === true) {
+        /* ★ 离线纯删除：`debug_items` 取不到 items 是**已知且无法避免**的 ★
+         *
+         * 真机上 `verify_runtime` 现在会读它（用实体 bbox），所以这条只在
+         * 离线/夹具环境出现。离线本来就不做撤销，硬判红只会让
+         * `offline_boundary` 把每一轮删除都记成失败 —— 那是假红，不是诚实。 */
+        if (flowsNotApplicable === true) { /* 无链路可验，放行 */ }
+        else why.push(`L3-flow 不可判定（${l3.reason || ""}）`);
+    }
+    else if (l3.skipped === true && flowsNotApplicable === true) { /* 纯删除：无链路可验，放行 */ }
     else if (l3.ok !== true) why.push(`L3-flow 未通过（${l3.reason || "ok=false"}）`);
 
     /* 5. L4：live 必须有真实交付增量；读不到 hub 计数即红 */
@@ -700,6 +736,21 @@ export async function verifyRound({
             goalShape,
             flowsProvided: resolvedFlows.length > 0,
             hasMachines: hasPlacements ? hasMachines : false,
+            /* ★ 纯删除计划没有「新建」，也就派生不出 flows —— 那不是缺陷 ★
+             *
+             * L3 的契约是「**这次改动声称的**货流真的通」。纯删除（`remove_run` /
+             * `remove_machine`）不声称任何新货流，`scanFlows` 自然派生出 0 条，
+             * 于是 `flowsProvided:false`，于是 `strictVerdict` 第 4 条无条件判红。
+             *
+             * 后果与 `verify_runtime` 那处 placements 门控是同一个病：
+             * 拆得再干净也永远判不绿 ⇒ outcome 永远不是 success ⇒
+             * 跨 run 记忆里攒不出 positive ⇒ agent 只学到「什么错」，从没学到「什么对」。
+             *
+             * 判据不能只看「有没有 flows」，要看「有没有东西需要 flow 来证明」：
+             * `hasPlacements === false` 时没有任何新链路需要验，L3 的 flows 要求不适用。
+             * 这**不是**放宽 —— placements 存在却派生不出 flows 时（那才是真缺口，
+             * `planToTxOps` 会发 FLOW_UNVERIFIED 警告）依然照旧判红。 */
+            flowsNotApplicable: hasPlacements === false,
             uidDiff,
         },
     );

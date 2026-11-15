@@ -111,9 +111,33 @@ test("E2 ★ 检查点存的是 tx **之前**的世界（实体数对得上）",
  * 2. 判定接线
  * ══════════════════════════════════════════════════════════════════════════ */
 
-test("E3 离线：判定写进 transcript，但世界不动（dry）", async () => {
+/* ★ E3 为什么改成这样（2026-11-15）★
+ *
+ * 原夹具是「离线删两条能到 hub 的带子，靠 L3 判红驱动 rollback 判定」。
+ * 那条路能走通，靠的其实是**两个错误相互抵消**：
+ *
+ *   1. `strictVerdict` 把 L3 的 `skipped`（"没有 placements 也没有 flows"，
+ *      本来就是诚实结论）当成红判了；
+ *   2. `classifyChecks` 早就说过 L3 在 mock 下**不可信**，它的红不构成结论。
+ *
+ * 也就是说 E3 一直在用一个离线假红驱动管道 —— 它测的是「管道能连」，但
+ * 连上它的那个信号是假的。修掉 (1) 之后这条路就不存在了，于是问题暴露：
+ *
+ *   **离线结构上无法到达 `rolling_back`。**
+ *
+ * 因为 `decideRollback` 的输入是 `roundNetEffect`
+ * （= `classifyNetEffect(healthBefore, healthAfter)`），而 V-health 在
+ * `OFFLINE_UNVERIFIABLE` 里 —— `FakeGame.apply()` 不做 immutable 回写，
+ * 算出来的可达率变化不可靠。基于不可靠判据撤销世界比不撤销更危险
+ * （`rollback.mjs` 的闸门 0 已经这么写了）。
+ *
+ * 所以离线正确的行为是：**一次都不撤，也不假装判过**。E3 改成钉住这一点，
+ * 同时保留它原本要防的那件事（离线不许真动世界）。真撤销的判定链路由
+ * E4/E5（live）覆盖，那里 V-health 可信。 */
+test("E3 离线：一次都不真撤，世界保留每一步的效果", async () => {
     const g = l4();
     const [[a, b], [c, d]] = liveBeltHandlePairs(g, 2);
+    const n0 = g.obs.entities.length;
     const dir = tmpDir();
     const res = await runLoop({
         reader: g.reader(), game: g,
@@ -126,10 +150,18 @@ test("E3 离线：判定写进 transcript，但世界不动（dry）", async () 
     });
     const rows = readTranscript(res.transcript_path);
     const rb = rows.filter(r => r.kind === "repair_decide" && r.data.phase === "rollback");
-    assert.ok(rb.length > 0, "必须有 rollback 判定行");
-    /* 离线不许真撤 —— 世界必须保留两轮删除的效果 */
     const live = rb.filter(r => r.data.action === "rolled_back");
-    assert.equal(live.length, 0, `离线不该真撤销，实得 ${live.length} 次`);
+    assert.equal(live.length, 0,
+        `离线不许真撤销 —— V-health 在 mock 下不可信，基于它撤世界比不撤更危险；实得 ${live.length} 次`);
+    /* 世界必须保留删除的效果。**不写死「少 4 个」**：第一轮删除在离线是可信的
+       （L1 离线可验、V-health 离线不判结论），这一轮会正常通过 → 目标未达成但
+       本轮无缺陷 → `OFFLINE_ONLY` 收尾，第二轮根本不会跑。
+       断言应该钉住「每一轮真跑了的删除都留下来了」，而不是钉住轮数。 */
+    const applied = rows.filter(r => r.kind === "apply" && r.data && r.data.tx_ok);
+    const removedTotal = applied.reduce((n, r) => n + ((r.data.diff && r.data.diff.removed) || 0), 0);
+    assert.ok(applied.length > 0, "至少有一轮真的落盘了（否则这个测试没测到东西）");
+    assert.equal(g.obs.entities.length, n0 - removedTotal,
+        `离线删除应全部保留（${n0} - ${removedTotal}），实得 ${g.obs.entities.length}`);
 });
 
 test("E4 live：连续破坏 ⇒ 真撤销并写进 rollbacks", async () => {
