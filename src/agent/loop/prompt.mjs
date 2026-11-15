@@ -2712,6 +2712,35 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
      * 实测 L12：200 万状态仍 capped，但形状本身用普通 stacker 分两次叠就能做。
      * 这里把「搜索被截断」和「真的不可解」分开写进正文，让模型的下一步动作不同。 */
     if (recipeUnavailable) {
+        /* 形状编码的解码表 —— 模型自己推配方时的**基础词汇**。
+         *
+         * 形状串每两格一个块：`Cb` = 下层 cyan + 上层 blue。
+         * 大写字母是第二层颜色、小写是第一层（game/colors.js 的 enumColorToShortcode）。
+         *
+         * L12 实测：agent 在 say 里写「Cb ore」，把**颜色组合**当成了矿种名。
+         * 它没有解码表，只能猜 —— 而颜色配方（cyan = blue+green，white = blue+green+red）
+         * 决定了这一关到底需要哪几种颜料矿、要不要 mixer 级联。
+         * 这些是规则不是答案，给出来不会替它做决策，只会让它少猜两轮。 */
+        const colorRules = [
+            "## SHAPE CODE CHEAT SHEET (read the goal shape yourself)",
+            "A shape string is pairs of characters. In each pair the UPPERCASE letter is the",
+            "lower layer color and the lowercase letter is the upper layer color.",
+            "  color codes: r=red g=green b=blue y=yellow p=purple c=cyan w=white",
+            "  a dash (-) = empty.",
+            "So `CbCbCbRb` means: four cells, all with a cyan lower layer, upper layers",
+            "blue/blue/blue/red. A goal with a colon (`A:B`) is TWO stacked layers —",
+            "`A` is the lower shape, `B` is the upper shape; it needs a stacker pass at the end.",
+            "",
+            "Pigment mixing (a mixer takes two pigments and outputs their union):",
+            "  yellow = red+green   purple = red+blue   cyan = blue+green",
+            "  white  = blue+green+red  ⇒ white needs a CASCADE: mix two, then mix the result",
+            "  with the third. One mixer is not enough.",
+            "Painted cells are produced by a painter: it takes a shape and one pigment.",
+            "",
+            "⇒ Use this to work out which raw ores and which machines the goal needs,",
+            "even when the recipe solver could not finish.",
+        ].join("\n");
+
         const why = recipeCapped
             ? [
                 "## RECIPE UNAVAILABLE — search capped, NOT proven impossible",
@@ -2726,10 +2755,14 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
                 recipeHint ? `Suggestion: ${recipeHint}` : null,
                 "⇒ Work it out yourself from the machines in MACHINES, or fall back to whatever",
                 "partial progress the diagnoses point at. Do NOT report the goal as impossible.",
+                "",
+                colorRules,
             ].filter(Boolean).join("\n")
             : [
                 "## RECIPE UNAVAILABLE",
                 `reason: ${recipeUnavailable}`,
+                "",
+                colorRules,
             ].join("\n");
         goalAndRecipe = [s3Goal, why].join("\n\n");
     }
