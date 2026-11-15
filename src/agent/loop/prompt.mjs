@@ -2236,6 +2236,22 @@ function renderLastRound(lastRound) {
                 if (opts.length) {
                     lines.push(`  · ${mac} → ${code}${obsTxt ? `: ${obsTxt}` : ""}`);
                     lines.push(`    ↳ use one of: ${opts.join(" | ")}`);
+                    /* ★ 「用其中**一个**」这句话必须说出来（2026-11-15 夜，L12 真机）★
+                     *
+                     * 上面那行候选清单从 2026-11-12 就在渲染了，但真机实测：
+                     * agent 连着三轮在同一台 mixer 上写 `port:"color"`，每次都被
+                     * `ambiguous_port` 拒掉，每次都能看到候选，**每次都没用**。
+                     *
+                     * 原因不是信息没到，是那行长得像「可选值列表」——
+                     * 模型读成「color 是合法值」而不是「有**两个**都叫 color，
+                     * 你必须用下标指名是哪一个」。缺的是**为什么**，不是**是什么**。
+                     *
+                     * 一行成本，把「歧义」这件事说穿。 */
+                    if (opts.length > 1) {
+                        lines.push(`    ↳ These ${opts.length} ports share the SAME role name — `
+                            + `writing port:"${f.candidates[0].role}" is ambiguous and will be rejected again. `
+                            + `Pass the whole object, e.g. port:${opts[0]}.`);
+                    }
                     continue;
                 }
             }
