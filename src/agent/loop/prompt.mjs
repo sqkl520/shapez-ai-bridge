@@ -427,22 +427,41 @@ function renderParams(spec) {
  * 值不在这里手抄 —— 从 `place.mjs` 的 `SUPPORTED_BUILDINGS` 取，避免第二份真值。
  */
 const LEGAL_VALUES = Object.freeze({
-    insert_machine: () => {
+    insert_machine: (goalShape, optsArg) => {
         try {
+            const opts = optsArg || {};
             const names = Object.keys(SUPPORTED_BUILDINGS);
-            /* ★ `$ore` 必须在这里说，不能只放在 `whenToUse` ★
+            /* `$ore` 的示例矿种**跟着目标走**，不许写死 `Cu`。
              *
-             * 2026-11-12 第 9 关实测：模型想给 mixer 接红颜料，而矿不是实体、
-             * 句柄表里没有它。`$ore` 是**唯一**能给矿机指定矿位的写法，
-             * 但它只写在 `insert_machine.whenToUse[1]` 里 ——
-             * 而 `when:` 行只在预算宽裕时才渲染（见 renderCard 的 useFor）。
+             * 旧版写的是 `形状矿用前缀（"Cu"/"Ru"）` —— 在目标是 Ru 的关卡里，
+             * 模型读到 "Cu" 会以为要去连铜矿。这是**唯一**告诉模型
+             * 「有一个能指名矿格」的地方（见上面那段注释），写错颜色的代价特别高。
              *
-             * `LEGAL_VALUES` 是**无条件**渲染的，所以把它挪到这里。
-             * 实测代价：prompt 里 `$ore` 从「一次都不出现」变成每次都出现，
-             * 而模型 8 轮里一次都没用过它 —— 不是没想到，是根本没看到。 */
+             * ⚠️ 不能从形状串的色号反推形状矿前缀：
+             * 色号 `R` 是 red，而形状矿 `Ru` 是钌 —— 两者只是字母撞上了，
+             * 语义上完全无关。第一版就是这么推出个 `"Re"`（既不是颜色也不是矿种）。
+             *
+             * 所以这里只做一件确定的事：如果调用方给了**实际存在的矿种列表**，
+             * 从中挑一个形状矿当例子。给不出就退回中性写法，不编造。 */
+            let shapeEx = null;
+            let pigEx = null;
+            const kindsList = Array.isArray(opts.oreKinds) ? opts.oreKinds : [];
+            for (const k of kindsList) {
+                const ks = String(k);
+                /* 形状矿：两字母一段的大写开头串，如 `CuCuCuCu` / `RuRuWuWu` */
+                if (!shapeEx && /^(?:[A-Z][a-z])+$/.test(ks)) {
+                    shapeEx = ks.slice(0, 2);
+                }
+                /* 颜料矿：纯小写单词 */
+                if (!pigEx && /^[a-z]{3,8}$/.test(ks)) {
+                    pigEx = ks;
+                }
+            }
+            const shapeHint = shapeEx ? `"${shapeEx}"` : '"<shape ore prefix>"';
+            const pigHint = pigEx ? `"${pigEx}"` : '"red"/"blue"';
             return `machine ∈ {${names.join(" | ")}}   (note the spelling: "rotater", not "rotator")`
-                + `; at 也可写 {"$ore":"<矿种>"} 让宏挑一格矿 —— 形状矿用前缀（"Cu"/"Ru"），`
-                + ` 颜料矿用颜色名（"red"/"blue"）。只是选格，facing 仍要给`;
+                + `; at 也可写 {"$ore":"<矿种>"} 让宏挑一格矿 —— 形状矿用前缀（${shapeHint}），`
+                + ` 颜料矿用颜色名（${pigHint}）。只是选格，facing 仍要给`;
         } catch { return null; }
     },
     replace_run: () => {
@@ -508,7 +527,9 @@ function renderCard(name, opts = {}) {
     /* 合法值提示（防拼错）：见 LEGAL_VALUES 的注释 */
     const lv = LEGAL_VALUES[name];
     if (lv) {
-        const v = lv();
+        /* 把当前目标形状传进去 —— `$ore` 的示例必须用**这个目标真正要的矿**。
+           写死 `"Cu"` 会让模型在目标是 Ru 的关卡里以为要去连铜矿。 */
+        const v = lv(opts.goalShape || null, opts);
         if (v) lines.push(`legal values: ${v}`);
     }
     /* ★ 条件必填的参数：`?` 会骗人 ★
@@ -933,12 +954,30 @@ function renderGoalResource(obs, goalShape, opts = {}) {
      * 用在 MACHINES 段已经吃掉大部分预算的场合（见 renderMachines 的调法）。 */
     const compactForm = opts.compact === true;
 
-    /* 目标颜色 = 形状串里第一个两字母色号（`Cu`/`Ru`/`Rb`…）。
-     * 用「首字母大写 + 小写」这个形状本身，而不是抄一张色表 ——
-     * 色表会随游戏版本变，而形状串的写法是稳定的。 */
-    const m = /^([A-Z][a-z])/.exec(String(goalShape || ""));
-    if (!m) return null;
-    const color = m[1];
+    /* ★ 目标「矿种」怎么取：不要拿形状串的头两个字符当矿名 ★
+     *
+     * 旧写法是 `/^([A-Z][a-z])/.exec(goalShape)` —— 取 `CbCbCbRb:CwCwCwCw` 的 `Cb`
+     * 然后去矿点表里找 `Cb`。但形状串每两格是**颜色对**：
+     * `Cb` = 下层 cyan + 上层 blue，`w` 是 white 色号。
+     * `Cb` 这种两字母块**永远不是矿种名**，矿种名是 `CuCuCuCu` / `red` / `RuRuWuWu`。
+     *
+     * 实测 L12：agent 反复说「Cb ore is NOT in the scanned area」，
+     * 然后去别处瞎试 —— 它被这句**自己推不出来**的提示误导了。
+     *
+     * 现在改成从整个形状串里提取**所有**出现过的颜色字母，
+     * 逐个报告「这种颜色有没有对应的矿」。这才回答它真正要问的问题：
+     * 「做这个形状需要哪些颜料，它们分别在哪」。
+     *
+     * 单个两字母块（`Cu`）的子形状目标仍然走老路 —— 那种情况下 `Cu` 确实既是
+     * 色号也是矿种前缀，两者恰好重合。 */
+    const shapeStr = String(goalShape || "");
+    /* 形状串里出现过的所有字母（大小写都算，`:` 和 `-` 是分隔符） */
+    const letters = new Set();
+    for (const ch of shapeStr) {
+        if (/[a-zA-Z]/.test(ch)) letters.add(ch);
+    }
+    const isPlainTwoLetter = /^([A-Z][a-z])-*-*$/.test(shapeStr) || /^([A-Z][a-z])$/.test(shapeStr);
+    const color = isPlainTwoLetter ? /^([A-Z][a-z])/.exec(shapeStr)[1] : null;
 
     /* 按矿种聚合（resources 是 [x,y,kind] 三元组） */
     const byKind = new Map();
@@ -959,40 +998,73 @@ function renderGoalResource(obs, goalShape, opts = {}) {
         byKind.set(kind, e);
     }
 
-    /* 目标矿：`Cu` → kind 形如 `CuCuCuCu` */
-    const targetKinds = [...byKind.keys()].filter(k => String(k).startsWith(color));
-    const present = [...byKind.keys()];
-
-    if (targetKinds.length) {
-        /* ⚠️ **不渲染坐标**：prompt 有一条硬契约「坐标 0 命中」
-         *    （`prompt.test.mjs` 的「同一份渲染里坐标正则 0 命中」）。
-         *    第一版写了 `(nearest 20,5; bbox …)`，直接把那条测试打红。
-         *    模型本来也不许用坐标下指令（只能用句柄），给了坐标只会诱发幻觉。
-         *    给「有没有 / 多少格 / 远近档位」就够它判断该不该往那个方向找。
-         *
-         * 紧凑模式只给最主要的那个矿种（格数最多的），丢掉远近档位。
-         * 用在 MACHINES 段已经吃掉大部分预算的场合 —— 那里「有铜」这个事实
-         * 本身就是关键，具体几格、多远是次要的。 */
-        if (compactForm) {
-            const top = targetKinds
-                .map(k => [k, byKind.get(k)])
-                .sort((a, b) => b[1].count - a[1].count)[0];
-            return `⇒ target ore ${color} IS on the map: ${top[0]}×${top[1].count}`;
+    /* ★ 每种需要的颜色，各自报告「矿在不在」★
+     *
+     * 旧版只查一个 `color`，而且是 startsWith。两个问题：
+     *   · startsWith 找不到复合矿的中间段（`Wu` 在 `RuRuWuWu` 里，但不在开头）
+     *   · 目标形状有多种颜色时（L12 要 cyan+blue+white），只报一种等于没说
+     *
+     * 现在按形状串里出现过的**每个颜色字母**分别查。
+     * 颜色字母 → 矿种名：大写字母对应形状矿的两字母前缀（`C`→`Cu`/`Cb`…），
+     * 小写字母对应颜料名（`w`→`white`、`b`→`blue`）。
+     * 这里不硬编色表，直接拿字母去两个方向都试一遍，命中哪个算哪个。 */
+    const COLOR_LETTER_TO_NAME = {
+        r: "red", g: "green", b: "blue", y: "yellow", p: "purple", c: "cyan", w: "white",
+    };
+    /** 某种颜色的矿在不在 —— 返回 {color, kinds[], ok} */
+    const probeColor = (letter) => {
+        const lower = letter.toLowerCase();
+        const word = COLOR_LETTER_TO_NAME[lower] || null;
+        const kinds = [];
+        for (const [k, e] of byKind) {
+            const ks = String(k);
+            /* 颜料矿：纯小写单词（red / blue / white …） */
+            if (word && ks === word) { kinds.push([ks, e]); continue; }
+            /* 形状矿：两字母段里含这个色号（大小写都要对）
+               `Cu` 的 `u` 是色号，`RuRuWuWu` 里的 `Wu` 也是。
+               这里只按「该字母出现在某个两字母段的对应位置」判，
+               不做全串子串匹配 —— `red` 里的 `r` 不该算作 red 形状矿。 */
+            for (let i = 0; i + 2 <= ks.length; i += 2) {
+                const pair = ks.slice(i, i + 2);
+                if (!/^[A-Z][a-z]$/.test(pair)) continue;
+                const pairLower = pair[1];
+                if (pairLower === lower) { kinds.push([ks, e]); break; }
+                const pairUpper = pair[0].toLowerCase();
+                if (pairUpper === lower) { kinds.push([ks, e]); break; }
+            }
         }
-        const parts = targetKinds.map(k => {
-            const e = byKind.get(k);
-            return `${k}×${e.count} (${withinBand(e.nearestD)})`;
+        return { color: letter, kinds, ok: kinds.length > 0 };
+    };
+
+    const wanted = [...letters].map(probeColor);
+    if (wanted.length) {
+        /* 每种颜色一行：有就说有几格、在哪一档；没有就明说「没有」。
+         *
+         * 同色多种矿时**全部列出**（`CuCuCuCu` 和 `CuCu----` 都含铜）——
+         * 只报最大的那种会让模型以为「只有这一种矿可采」，
+         * 而两种矿的远近和产量可能差很多，选哪个是它的决定。 */
+        const lines = wanted.map(w => {
+            if (!w.ok) {
+                return `⇒ ${w.color}: NO ore produces this color in the scanned area`;
+            }
+            const sorted = w.kinds.slice().sort((a, b) => b[1].count - a[1].count);
+            const best = sorted[0];
+            const total = w.kinds.reduce((a, [, e]) => a + e.count, 0);
+            if (compactForm) return `⇒ ${w.color}: ${best[0]}×${best[1].count}`;
+            const each = sorted
+                .map(([k, e]) => `${k}×${e.count} (${withinBand(e.nearestD)})`)
+                .join(", ");
+            return `⇒ ${w.color}: ${each}`;
         });
-        return `⇒ target ore ${color} IS on the map: ${parts.join("; ")}`;
+        const missing = wanted.filter(w => !w.ok);
+        const head = missing.length
+            ? `⇒ goal needs colors [${[...letters].join("")}]; ${missing.length} of them have NO ore here`
+            : `⇒ goal needs colors [${[...letters].join("")}]; all of them exist as ore`;
+        return [head, ...lines].join("\n");
     }
 
-    /* 没有目标矿：把地图上实际有的列出来 —— 这就是「为什么你在造别的东西」的答案 */
-    const have = present.slice(0, 4).join(", ");
-    if (compactForm) {
-        return `⇒ target ore ${color} is NOT in the scanned area (found: ${have || "none"})`;
-    }
-    return `⇒ target ore ${color} is NOT in the scanned area (resources found: ${have || "none"})`
-        + ` — no miner can ever produce ${color} here; check for a ${color} patch or a different route`;
+    /* 形状串里没有字母（`----` 这种）：没什么可查 */
+    return null;
 }
 
 /**
@@ -2629,7 +2701,10 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     const whenLinesOn = limits.includeWhen === null
         ? (limits.tokensMax >= 5000)
         : limits.includeWhen;
-    const s2 = renderCards(candidates, { includeWhen: whenLinesOn });
+    const oreKinds = Array.isArray(obs && obs.resources)
+        ? [...new Set((obs.resources || []).map(r => (Array.isArray(r) && r.length >= 3) ? r[2] : null).filter(k => typeof k === "string"))]
+        : [];
+    const s2 = renderCards(candidates, { includeWhen: whenLinesOn, goalShape, oreKinds });
     const s3Goal = renderGoal(goalShape, goal, obs);
     /* ★ 配方（S3 的一部分）：告诉模型这个形状该怎么造 ★
      *

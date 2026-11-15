@@ -50,20 +50,24 @@ const patch = (kind, n, ox = 0, oy = 0) =>
     Array.from({ length: n }, (_, i) => [ox + (i % 4), oy + Math.floor(i / 4), kind]);
 
 /* ── R1：★ 核心 ★ 目标矿在地图上 ⇒ 明说"有" ── */
-check("R1 目标 Cu 有矿 ⇒ 说 IS on the map", () => {
+check("R1 目标 Cu 有矿 ⇒ 说它存在并给出格数", () => {
     const r = promptOf("Cu----Cu", patch("CuCuCuCu", 8, 20, 5));
     const s = r.blocks.s3_machines;
-    assert(/target ore Cu IS on the map/.test(s), `应说目标矿存在，实际：\n${s.slice(-300)}`);
+    /* 格式在 2026-11-15 改成「按颜色逐个报告」：
+       旧版 `⇒ target ore Cu IS on the map: ...`，新版 `⇒ goal needs colors [...]`
+       + 每种颜色一行。这里断言的是**契约**（说得清有没有、给出格数），不是旧措辞。 */
+    assert(/goal needs colors/.test(s), `应有一行汇总说清目标需要哪些颜色，实际：\n${s.slice(-300)}`);
+    assert(/all of them exist as ore/.test(s), `Cu 在地图上就该说「都存在」，实际：\n${s.slice(-300)}`);
     assert(/CuCuCuCu×8/.test(s), "应给出矿种与格数");
 });
 
-/* ── R2：★ 核心 ★ 目标矿不存在 ⇒ 明说"没有"，并列出实际有什么 ── */
-check("R2 目标 Cu 没矿、只有 Ru ⇒ 说 NOT in the scanned area", () => {
+/* ── R2：★ 核心 ★ 目标矿不存在 ⇒ 明说"没有"，并点明后果 ── */
+check("R2 目标 Cu 没矿、只有 Ru ⇒ 明说这种颜色没有矿", () => {
     const r = promptOf("Cu----Cu", patch("RuRuRuRu", 12));
     const s = r.blocks.s3_machines;
-    assert(/target ore Cu is NOT in the scanned area/.test(s), `应说目标矿不在，实际：\n${s.slice(-300)}`);
+    assert(/NO ore produces this color/.test(s), `应明说这种颜色没有矿，实际：\n${s.slice(-300)}`);
     assert(/RuRuRuRu/.test(s), "应列出实际有什么矿");
-    assert(/no miner can ever produce Cu/.test(s), "应点明后果");
+    assert(/have NO ore here/.test(s), "汇总行应点明有几种颜色缺矿");
 });
 
 /* ── R3：无 resources 数据 ⇒ 整段消失（不猜） ── */
@@ -247,9 +251,16 @@ check("R8 ★ $ore 示例的颜色跟着目标走，不许写死 Cu", () => {
         recipe: { ok: true, steps: [], machines: [] },
         budget: { in_chars_max: 16000, prompt_tokens_max: 4600 },
     });
-    if (/\$ore/.test(b.user)) {
-        assert(/\{"\$ore":"Ru"\}/.test(b.user), "示例必须是 Ru（目标矿），不是 Cu");
-        assert(!/\{"\$ore":"Cu"\}/.test(b.user), "不许出现写死的 Cu");
+    /* 契约：**如果**渲染了 `$ore`，示例里的矿种必须跟目标一致，不许写死 Cu。
+       2026-11-15：这段的渲染条件变过（资源段重写成「按颜色逐个报告」），
+       当前预算下可能整段不出现 —— 那不违反契约，只是没触发。
+       所以这里断言的是「出现了就必须对」，而不是「必须出现」。 */
+    const oreMentions = b.user.match(/\$ore[^\n]*/g) || [];
+    for (const line of oreMentions) {
+        assert(!/"Cu"/.test(line), `$ore 示例不许写死 Cu（目标矿是 Ru）：${line.slice(0, 160)}`);
+    }
+    if (oreMentions.length) {
+        assert(/"Ru"/.test(b.user), `既然渲染了 $ore 示例，就该用目标矿 Ru：${oreMentions[0].slice(0, 160)}`);
     }
 });
 
