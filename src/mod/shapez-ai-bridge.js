@@ -1513,8 +1513,21 @@ class Mod extends shapez.Mod {
              * 半径 64 的依据：`map.getChunk()` 按 chunk(16) 对齐，±64 = 4×4 个 chunk，
              * 覆盖到实测铜矿 bbox 的两端（x -40..23, y -40..10）还留有余量；
              * 再大只是白扫（`maxResources` 上限本来就会截断）。
-             */
-            const R = 64;
+             *
+             * ★ 2026-11-15：64 对后期关卡太小了 ★
+             *
+             * L12 目标 `CbCbCbRb:CwCwCwCw` 需要 **white** 颜料，
+             * 而最近的 white 矿（`RuRuWuWu`）在**距离 hub 239 格**外（实测）。
+             * 半径 64 的扫描里根本看不见它 —— agent 连续四轮都报
+             * 「Cb ore and white paint are not in the scanned area」，
+             * 于是它只能在旧产线上打补丁，而真正该做的是「去远处开矿」。
+             *
+             * 「看不见目标矿」和「目标矿不存在」是两回事，模型分不出来就会一直试错。
+             * 现在放大到 256，并允许调用方用 `resource_radius` 覆盖。
+             * 代价只有扫描时间：`max_resources` 本来就会截断结果。 */
+            const R = Number.isInteger(req.resource_radius) && req.resource_radius > 0
+                ? Math.min(req.resource_radius, 512)
+                : 256;
             const base = Array.isArray(effectiveRegion) ? effectiveRegion : [-R, -R, R, R];
             const resRegion = [
                 Math.min(base[0], -R), Math.min(base[1], -R),

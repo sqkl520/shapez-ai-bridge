@@ -4662,7 +4662,17 @@ export function makeBridgeReader(baseUrl) {
         return body.result;
     };
     return {
-        async obs(p) { return call("obs", { max_entities: 50000, layer: "all", include_stats: true, include_resources: true, max_resources: 20000, ...p }); },
+        /* `resource_radius`：矿点扫描半徑。
+         *
+         * mod 那边默认 256 —— 旧值 64 是 L5 时代定的，只够覆盖脚边的铜矿。
+         * L12 需要 white 颜料，最近的 `RuRuWuWu` 在距 hub 239 格外，
+         * 半径 64 完全看不见，agent 于是连续四轮报
+         * 「Cb ore and white paint are not in the scanned area」，
+         * 在旧产线上反复打补丁，却不知道真正该做的是去远处开矿。
+         *
+         * 「看不见目标矿」和「目标矿不存在」是两回事 —— 不告诉模型这个区别，
+         * 它就只能靠猜。这里显式给足，让远处有什么矿是**可见**的事实。 */
+        async obs(p) { return call("obs", { max_entities: 50000, layer: "all", include_stats: true, include_resources: true, max_resources: 20000, resource_radius: 256, ...p }); },
         async debugItems(p) { return call("debug_items", p || {}); },
         async production(p) { return call("production", p || { slices: 6 }); },
         async step(ticks) { return call("act", { op: "step", ticks }); },
