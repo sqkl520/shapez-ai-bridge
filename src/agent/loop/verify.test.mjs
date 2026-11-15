@@ -441,9 +441,21 @@ const LIVE = { mode: "live", goalShape: "RuRu----", flowsProvided: true, hasMach
     const after = JSON.parse(JSON.stringify(before));
     const { indexOf, flowReachable } = await import("./topology.mjs");
     const reach = flowReachable(before, indexOf(before));
-    const liveBelt = before.entities.find(e => e.type === "belt" && reach.has(e.uid));
-    ok(!!liveBelt, "夹具里有一条能到 hub 的带子（构造前提）");
-    after.entities = after.entities.filter(e => e.uid !== liveBelt.uid);
+    const liveBelts = before.entities.filter(e => e.type === "belt" && reach.has(e.uid));
+    ok(liveBelts.length >= 6, "夹具里有足够多能到 hub 的带子（构造前提）", liveBelts.length);
+    /* ★ 拆「主干」而不是「末端一条」（2026-11-15 夜改）★
+     *
+     * 原来这里删 1 条，断言 V-health 判红。但那条只是末端的 1 条：
+     * reach 从 140→139 只有 0.7%，`belts_dead` 一点没变。
+     *
+     * 新语义给 reach 加了 2% 容差（`health.mjs` 的 `REACH_TOLERANCE`）——
+     * 因为真机实测 `remove_run` 被记成 regressive **57 次**，
+     * 理由全是「154→153」这种误伤一条。把误伤判成「改坏了」等于
+     * 告诉 agent 永远别删东西，而它必须删（世界被自己的旧线塞满了）。
+     *
+     * 所以这条测试改成拆 6 条（140 里 6 条 ≈ 4.3%），那才是真的主干。 */
+    const kill = new Set(liveBelts.slice(0, 6).map(e => e.uid));
+    after.entities = after.entities.filter(e => !kill.has(e.uid));
 
     /* reader 的 obs() 直接返回 after —— verifyRound 内部只用它做 after 快照。 */
     const fakeReader = {
@@ -454,7 +466,10 @@ const LIVE = { mode: "live", goalShape: "RuRu----", flowsProvided: true, hasMach
     };
     const round = await verifyRound({
         reader: fakeReader,
-        txPlan: { placements: [], removes: [{ uid: liveBelt.uid }], destroys: [liveBelt.uid], ops: [], flows: [] },
+        txPlan: {
+            placements: [], destroys: [...kill], ops: [], flows: [],
+            removes: [...kill].map(uid => ({ uid })),
+        },
         beforeObs: before,
         mode: "mock",
         goalShape: "RuRu----",

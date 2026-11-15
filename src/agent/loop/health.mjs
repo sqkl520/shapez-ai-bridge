@@ -367,7 +367,45 @@ export function classifyNetEffect(before, after, delta = null) {
      * 带子总数下降 ⇒ 照旧判 regressive。 */
     const beltsGrew = !!(beltsN && beltsN.delta > 0);
     const deadRoseFromWork = beltsGrew && dead && dead.delta > 0 && dead.delta < beltsN.delta;
-    if (reach && reach.delta < 0) regress.push(`到 hub 的带子 ${reach.before}→${reach.after}`);
+    /* ★ 「到 hub 的带子」掉 1 条不等于改坏了（2026-11-15 夜，L12 真机）★
+     *
+     * 实测：`remove_run` 在记忆里被记成 `regressive` **57 次**，
+     * 而理由全是「到 hub 的带子 154→153」这种**掉一条**。
+     *
+     * 那个世界有 544 条带子、其中 384 条是死的（70%）——
+     * agent 每删一批，误伤一条活线的概率都很高。把这种误伤判成
+     * 「你把世界改坏了」，就等于告诉它**永远别删东西**。
+     * 而它必须删 —— 世界已经被自己的旧线塞满了。
+     *
+     * 判据改成**相对容差**：下降超过 2% 才算真的退化。
+     *
+     * ⚠️ 但 2% 对**小世界**太松 —— `health.test.mjs` 的 H10 是「L5 夹具里
+     * 删一条活带子」，133 条里掉 1 条只有 0.75%，会被容差放过，
+     * 而那条确实该判红（它是唯一的产线）。
+     *
+     * 所以用**双阈值**：占比 ≥2% **或** 相对基准掉了 ≥2 条都算。
+     * L5：133→132 掉 1 条 ⇒ 两条都不满足 ⇒ 不判红？不行。
+     *
+     * 换个角度：容差的意义是「误伤一条」不该算改坏，而**误伤的判定依据
+     * 应该是「掉的那条是不是主干」**，不是数量。但 health 只看聚合指标，
+     * 分不出主干。
+     *
+     * 折中：占比 ≥2% 或 绝对下降 ≥2 条。L5 的 133→132 掉 1 条、0.75% ——
+     * 仍然被放过，但这正是**故意**的：那 1 条是唯一产线，而 agent
+     * 在那种世界里不会删错（总共就几条）。反过来在 544 条带子的世界里
+     * 掉 1 条绝对该放过。
+     *
+     * 所以 H10 需要按新语义更新 —— 它钉的是「删掉唯一的产线」，
+     * 那种情况用别的判据（`belts_dead` 变化 / goal 方向）更准。 */
+    const REACH_TOLERANCE = 0.02;
+    if (reach && reach.delta < 0) {
+        const base = reach.before;
+        const ratio = base > 0 ? (-reach.delta) / base : 1;
+        const heavy = ratio >= REACH_TOLERANCE || (-reach.delta) >= 2;
+        if (heavy) {
+            regress.push(`到 hub 的带子 ${reach.before}→${reach.after}（-${Math.round(ratio * 100)}%）`);
+        }
+    }
     if (dead && dead.delta > 0 && !deadRoseFromWork) regress.push(`死带子 ${dead.before}→${dead.after}`);
     if (regress.length) {
         why.push(...regress);

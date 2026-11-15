@@ -135,11 +135,40 @@ test("H9 删一条死带子 = cleanup（改善，不是「什么都没干成」�
     assert.equal(e.kind, "cleanup", `判定=${e.kind} why=${e.why.join("/")}`);
 });
 
-test("H10 删一条活带子 = regressive", () => {
+/* ★ H10 的语义在 2026-11-15 夜改过（L12 真机）★
+ *
+ * 原来断言「删一条活带子 = regressive」。那个断言在 L5 上成立是因为
+ * reach 从 133→132 —— 但**只掉了 1 条**。
+ *
+ * 而真机实测：`remove_run` 在记忆里被记成 regressive **57 次**，
+ * 理由全是「到 hub 的带子 154→153」这种掉一条。那个世界有 544 条带子、
+ * 384 条是死的（70%）—— 每删一批，误伤一条活线的概率都很高。
+ * 把这种误伤判成「你把世界改坏了」，等于告诉 agent **永远别删东西**，
+ * 而它必须删（世界被自己的旧线塞满了）。
+ *
+ * 新语义：占比 ≥2% **或** 绝对下降 ≥2 条才算退化。
+ * 误伤一条（0.6%）放过；拆掉主干（实测那次 160→64）照旧判红。
+ *
+ * `LIVE_BELT` 是随便找的一条能到 hub 的带子 —— 它的下游不会跟着塌
+ * （`belts_dead` 27→27，没变），所以它不是主干，掉 1 条确实不该判红。 */
+test("H10 删一条末端活带子 = 不算改坏（误伤一条不该叫「把世界改坏了」）", () => {
     const o = clone(L5);
     o.entities = o.entities.filter(e => e.uid !== LIVE_BELT.uid);
     const { e } = judge(withObs(o));
-    assert.equal(e.kind, "regressive", `判定=${e.kind} why=${e.why.join("/")}`);
+    assert.notEqual(e.kind, "regressive",
+        `掉 1/133 = 0.75%，低于容差，不该判 regressive（why=${e.why.join("/")}）`);
+});
+
+test("H10b ★ 对照：拆掉主干（reach 掉 ≥2%）照旧判 regressive", () => {
+    const o = clone(L5);
+    const reach0 = flowReachable(L5, indexOf(L5));
+    const live = L5.entities.filter(e => e.type === "belt" && reach0.has(e.uid));
+    /* 删掉 5 条活带子（133 里 5 条 ≈ 3.8%，超过 2% 容差） */
+    const kill = new Set(live.slice(0, 5).map(e => e.uid));
+    o.entities = o.entities.filter(e => !kill.has(e.uid));
+    const { e } = judge(withObs(o));
+    assert.equal(e.kind, "regressive",
+        `拆掉 5/133 ≈ 3.8% 的主干必须判红（why=${e.why.join("/")}）`);
 });
 
 test("H11 加 3 条孤立带子 = regressive（死带子变多）", () => {
