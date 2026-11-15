@@ -568,3 +568,78 @@ test("H11b ★ 全部新带子都孤立（死带子增量 === 带子增量）⇒
     assert.equal(e.kind, "regressive", `全孤立的新带子不该被当成施工中（why=${e.why.join("/")}）`);
     assert.ok(e.why.some(w => /死带子/.test(w)), "必须说清是死带子变多");
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 铺了一条死线：总货量微涨，但带货路径数没涨（2026-11-15 夜，L12 真机）
+ *
+ * `items_on_belts` 是个粗指标 —— 铺新线时那几格上会带几个存货，总货量
+ * 于是微涨，`stalled_growth` 判不出来。但路径数从 35 涨到 37、
+ * 带货的还是那 13 条，这就是**又铺了一条死的**。
+ *
+ * 实测 L12：545 条带子 / 37 条路径，只有 13 条带货运货（35%）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("H30 ★ 总货量微涨但带货路径数没涨 ⇒ 仍是 stalled_growth", () => {
+    const snap = (o) => ({
+        belts: 100, machines: 10, entities: 120,
+        belts_reaching_hub: 80, belts_dead: 20,
+        items_on_belts: 50, reach_pct: 0.8,
+        paths_with_items: 13, paths_total: 35,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        upgrade_levels: { belt: 0 },
+        shape: "a",
+        ...o,
+    });
+    const before = snap({});
+    /* 带子 +3、货 +2（新线上有几个存货），但带货路径数没变（还是 13 条） */
+    const after = snap({
+        belts: 103, entities: 123, items_on_belts: 52,
+        paths_with_items: 13, paths_total: 37, shape: "b",
+    });
+    const d = healthDelta(before, after);
+    const e = classifyNetEffect(before, after, d);
+    assert.equal(e.kind, "stalled_growth",
+        `总货量涨了 2 但带货路径数没涨 ⇒ 又是条死线（why=${e.why.join("/")}）`);
+});
+
+test("H30b ★ 对照：带货路径数涨了 ⇒ 是 constructive（新线真的接了货）", () => {
+    const snap = (o) => ({
+        belts: 100, machines: 10, entities: 120,
+        belts_reaching_hub: 80, belts_dead: 20,
+        items_on_belts: 50, reach_pct: 0.8,
+        paths_with_items: 13, paths_total: 35,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        upgrade_levels: { belt: 0 },
+        shape: "a",
+        ...o,
+    });
+    const before = snap({});
+    /* 带货路径 13 → 15：新线真的接进了活货流 */
+    const after = snap({
+        belts: 103, entities: 123, items_on_belts: 61,
+        paths_with_items: 15, paths_total: 37, shape: "b",
+    });
+    const d = healthDelta(before, after);
+    const e = classifyNetEffect(before, after, d);
+    assert.equal(e.kind, "constructive",
+        `带货路径数涨了 ⇒ 新线接了货，不该判 stalled_growth（why=${e.why.join("/")}）`);
+});
+
+test("H30c ★ 拿不到 paths 指标时退回只看货量（不能因缺字段就判停滞）", () => {
+    const snap = (o) => ({
+        belts: 100, machines: 10, entities: 120,
+        belts_reaching_hub: 80, belts_dead: 20,
+        items_on_belts: 50, reach_pct: 0.8,
+        paths_with_items: null, paths_total: null,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        upgrade_levels: { belt: 0 },
+        shape: "a",
+        ...o,
+    });
+    const before = snap({});
+    const after = snap({ belts: 103, entities: 123, items_on_belts: 61, shape: "b" });
+    const d = healthDelta(before, after);
+    const e = classifyNetEffect(before, after, d);
+    assert.notEqual(e.kind, "stalled_growth",
+        `货量涨了、paths 字段缺席 ⇒ 不该判停滞（why=${e.why.join("/")}）`);
+});

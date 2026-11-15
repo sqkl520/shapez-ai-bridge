@@ -439,8 +439,41 @@ export function classifyNetEffect(before, after, delta = null) {
          * 这不是把 constructive 判成 regressive：它没弄坏什么，所以不进
          * 「该撤销」那一档。它只是**不该算作进展**，得让模型看到
          * 「你加的东西没有让世界动起来」这句话。 */
+        /* ★ 「加了东西但世界没动」的判据要两条，缺一条会漏 ★
+         *
+         * 判据 A（原版）：`items_on_belts` 没涨。
+         * 判据 B（2026-11-15 夜补）：**带货路径数**没涨。
+         *
+         * 为什么光有 A 不够：铺一条新线时，那几格上会带几个存货，总货量
+         * 于是微涨 —— A 判不出来。但路径数从 35 涨到 37、带货的还是那 13 条，
+         * 这就是**又铺了一条死的**。
+         *
+         * 实测 L12：545 条带子 / 37 条路径，只有 13 条带货运货（35%）。
+         * agent 每轮铺新线，总货量小幅波动骗过了 A，而产出始终 0。
+         *
+         * ⚠️ 这里的「有没有改善」**不能**用 `better` —— 它把
+         * `items.delta > 0`（货量微涨）算作改善，而货量微涨恰恰是
+         * 「铺了新线带几个存货」的典型症状。真正的改善只有
+         * 「到 hub 的带子变多」或「死带子变少」。 */
         const itemsMoved = !!(items && items.delta > 0);
-        if (!itemsMoved && !better.length) {
+        /* ★ 不能从 `delta` 里找 `paths_with_items` ★
+         *
+         * `healthDelta` 只报**变了的**项。而「带货路径数没变」恰恰是
+         * 要判的那种情况 —— 它不在 delta 里，`get()` 返回 null。
+         *
+         * 第一版就是这么写的：`const pw = get("paths_with_items")` ⇒ null ⇒
+         * 退回只看货量 ⇒ 铺新线带来的 2 件存货骗过判据 ⇒ 判 constructive。
+         * 所以直接从**前后两份快照**取。 */
+        const pwBefore = before && Number.isFinite(before.paths_with_items) ? before.paths_with_items : null;
+        const pwAfter = after && Number.isFinite(after.paths_with_items) ? after.paths_with_items : null;
+        const havePw = pwBefore !== null && pwAfter !== null;
+        const pathsMoved = havePw ? (pwAfter > pwBefore) : false;
+        /* 语义是「**没有任何一条路径开始带货**」—— 那是「世界有没有真的动起来」
+           最直接的证据。总货量涨几件完全可能是新线上的存货，不代表货在流。
+           拿得到路径数就以它为准；拿不到才退回只看货量。 */
+        const noFlowProgress = havePw ? !pathsMoved : !itemsMoved;
+        const realGain = !!((reach && reach.delta > 0) || (dead && dead.delta < 0));
+        if (noFlowProgress && !realGain) {
             why.push(`结构变了（${bits.join(" ") || `实体 ${entities ? entities.delta : "?"}`}），`
                 + `但**世界完全没动**：带上的货没有增加，也没有任何产出。`
                 + `新加的东西没有接进任何活着的货流里。`);
