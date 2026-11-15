@@ -2989,6 +2989,49 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         user = compose(s3Belts, null);
     }
 
+    /* ★ 仍然超预算 ⇒ 逐档压缩机器表（2026-11-15 夜，L12 真机）★
+     *
+     * 原来只在 `shown === 0`（带子被砍光）时才压缩机器表。那段逻辑的教训
+     * 是对的（「带子是唯一能就地改造的东西，机器表只是上下文」），
+     * 但触发条件太窄：
+     *
+     * 实测 L12：世界膨胀到 559 实体 / 55 台机器 / 499 条带子，带子列表
+     * 还有 16 格可显示，可总量仍然 17919 > 16000 —— 于是
+     * `PROMPT_OVER_BUDGET` 直接抛，整个 run 硬失败（`outcome:INTERNAL`），
+     * 而这一轮开头的清理动作是有效的（死带子 312→309）。
+     *
+     * 也就是说：**世界一膨胀，agent 就彻底停摆**。这比「少显示几台机器」糟得多。
+     *
+     * 所以改成：只要超预算就依次压缩机器表（12 → 6 → 整段去掉），
+     * 每档都重跑截断循环保住带子。带子优先的结构不变 ——
+     * 只有在「压缩机器表能换来更多带子」时才值得降，所以仍以 `sh >= shown` 为准。
+     *
+     * 注意 `shown > 0` 也允许进这一档：真正决定要不要降的是「压了机器表之后
+     * 还能不能装下」，由下面的循环自己判断。 */
+    if (s1.length + user.length > targetChars) {
+        const MACHINE_STEPS = [12, 6, 0];
+        for (const cap of MACHINE_STEPS) {
+            const alt = cap === 0 ? null : renderMachines(tbl, diagList, obs, goalShape, { max: cap });
+            let sh = selection.ordered.length;
+            let bl = renderBelts(tbl, selection, sh, false);
+            let u = composeWith(alt, bl, null);
+            let tr = 0;
+            while (s1.length + u.length > targetChars && sh > 0) {
+                sh -= 1; tr += 1;
+                bl = renderBelts(tbl, selection, sh, true);
+                u = composeWith(alt, bl, null);
+            }
+            if (s1.length + u.length <= targetChars) {
+                shown = sh; trimmed = tr; s3Belts = bl; s3Machines = alt; user = u;
+                break;                                   // 装下了就停
+            }
+            /* 装不下也记下这一档：至少让机器表小一点，比硬抛错强 */
+            if (!alt || alt.length < (s3Machines ? s3Machines.length : Infinity)) {
+                shown = sh; trimmed = tr; s3Belts = bl; s3Machines = alt; user = u;
+            }
+        }
+    }
+
     /* ★ 带子被砍到 0 ⇒ 先砍**机器表**，再重试 ★
      *
      * 2026-11-10 第 9 关实测：536 条带子、8 条诊断、37 台机器时，
@@ -3198,7 +3241,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
             {
                 chars, limit: limits.inCharsMax,
                 sections: { s1: s1.length, s2: s2.length, s3_goal: s3Goal.length, s3_hub: s3Hub.length,
-                    s3_machines: s3Machines.length, s3_belts: s3Belts.length, s3_production: s3Production.length,
+                    s3_machines: (s3Machines || "").length, s3_belts: s3Belts.length, s3_production: s3Production.length,
                     s3_recipe: (s3Recipe || "").length, s3_capacity: (s3Capacity || "").length,
                     s3_budget: s3Budget.length, s4: s4.length, s5: s5.length, s6: s6.length },
                 diagnoses: diagList.length,
