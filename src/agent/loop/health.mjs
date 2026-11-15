@@ -376,40 +376,25 @@ export function classifyNetEffect(before, after, delta = null) {
 
     const grewN = (entities && entities.delta > 0) || (beltsN && beltsN.delta > 0) || (machines && machines.delta > 0);
 
-    const better = [];
-    if (reach && reach.delta > 0) better.push(`到 hub 的带子 ${reach.before}→${reach.after}`);
-    if (dead && dead.delta < 0) better.push(`死带子 ${dead.before}→${dead.after}`);
-    if (items && items.delta > 0) better.push(`带上的货 ${items.before}→${items.after}`);
-    if (better.length && !grewN) {
-        why.push(...better);
-        return { kind: "cleanup", why, delta: d };
-    }
-
-    if (grewN) {
-        const bits = [];
-        if (machines && machines.delta) bits.push(`机器 ${machines.delta > 0 ? "+" : ""}${machines.delta}`);
-        if (beltsN && beltsN.delta) bits.push(`带子 ${beltsN.delta > 0 ? "+" : ""}${beltsN.delta}`);
-        why.push(`结构变了（${bits.join(" ") || `实体 ${entities ? entities.delta : "?"}`}），但目标没动`
-            + (better.length ? `；顺带改善：${better.join("、")}` : ""));
-        return { kind: "constructive", why, delta: d };
-    }
-    if (better.length) {
-        why.push(...better);
-        return { kind: "cleanup", why, delta: d };
-    }
-
     /* ── 升级：一种**不体现在拓扑上**的正向变化 ──
      *
-     * 升级不增删实体（它改全局倍率、扣 hub 库存），所以上面所有指标一个都不会动。
+     * 升级不增删实体（它改全局倍率、扣 hub 库存），所以拓扑指标一个都不会动。
      * 不加这一条，一次真实的升级会被判成 `inert`（「世界没有任何变化」）——
      * 实测就是这么发生的（r-20261113180132-31ba：买了 painting T1，
      * `classifyNetEffect` 说 inert，而 hub 里实实在在少了 600 个形状）。
      *
      * 为什么是 `positive` 而不是新加一种 kind：
      *   · 已有的 `positive` 语义就是「这一轮让局面变好了」，升级正是；
-     *   · 加第六种 kind 会让所有 `switch` 的老调用方（timeline / 汇总 / 测试）
-     *     都要改，而它们没理由关心「好」是来自交付还是来自升级。
-     * 但 `why` 里必须说清是升级 —— 否则读日志的人会以为目标交付涨了。 */
+     *     下游所有拿 `kind === "positive"` 判「这步有价值」的地方都不用改。
+     * 但 `why` 里必须说清是升级 —— 否则读日志的人会以为目标交付涨了。
+     *
+     * ★ 位置必须在这里（`grewN` 分支**之前**）★
+     *
+     * 原来它在最后，于是「同一轮既买升级又加机器」会被结构性变化盖掉，
+     * 升级的功劳消失（`health.test.mjs` 的 H17g 一直钉着这个已知缺口）。
+     * 加了 `stalled_growth` 之后这个位置问题变得更严重 —— 那种情况下
+     * 模型会看到「你加了东西但世界没动」，而它其实买了一次升级（真实的进展）。
+     * 判「好」的判据必须比判「没进展」的判据先跑。 */
     const upBefore = (before && before.upgrade_levels) || null;
     const upAfter = (after && after.upgrade_levels) || null;
     if (upBefore && upAfter) {
@@ -423,6 +408,54 @@ export function classifyNetEffect(before, after, delta = null) {
             return { kind: "positive", why, delta: d };
         }
     }
+
+    const better = [];
+    if (reach && reach.delta > 0) better.push(`到 hub 的带子 ${reach.before}→${reach.after}`);
+    if (dead && dead.delta < 0) better.push(`死带子 ${dead.before}→${dead.after}`);
+    if (items && items.delta > 0) better.push(`带上的货 ${items.before}→${items.after}`);
+    if (better.length && !grewN) {
+        why.push(...better);
+        return { kind: "cleanup", why, delta: d };
+    }
+
+    if (grewN) {
+        const bits = [];
+        if (machines && machines.delta) bits.push(`机器 ${machines.delta > 0 ? "+" : ""}${machines.delta}`);
+        if (beltsN && beltsN.delta) bits.push(`带子 ${beltsN.delta > 0 ? "+" : ""}${beltsN.delta}`);
+        /* ★ 「加了东西，但世界一点都没动」必须与 constructive 分开 ★
+         *
+         * 2026-11-15 夜，L12 真机实测：`production()` 的 `produced_total` 恒为空
+         * （拉长窗口、加切片、甚至重启游戏重载存档之后仍然空），而 agent 连续
+         * 七八轮都在加带子/加机器，每轮都被判成 `constructive`（「结构变了，
+         * 但目标没动」）—— 那不是中性，那是在**给一个完全没运转的世界加分**。
+         *
+         * 后果很具体：世界从 435 涨到 467 实体、带子 382→411，产出始终 0。
+         * 它在往一个死掉的世界里堆东西，而判据一路给绿灯。
+         *
+         * 判据：规模涨了，但**带上的货没有增加**，且没有任何目标产出。
+         * 「带上的货」是货流是否真的在动的直接证据 —— 新铺的线如果接对了，
+         * 货会开始流（items_on_belts 涨）；接错了就一动不动。
+         *
+         * 这不是把 constructive 判成 regressive：它没弄坏什么，所以不进
+         * 「该撤销」那一档。它只是**不该算作进展**，得让模型看到
+         * 「你加的东西没有让世界动起来」这句话。 */
+        const itemsMoved = !!(items && items.delta > 0);
+        if (!itemsMoved && !better.length) {
+            why.push(`结构变了（${bits.join(" ") || `实体 ${entities ? entities.delta : "?"}`}），`
+                + `但**世界完全没动**：带上的货没有增加，也没有任何产出。`
+                + `新加的东西没有接进任何活着的货流里。`);
+            return { kind: "stalled_growth", why, delta: d };
+        }
+        why.push(`结构变了（${bits.join(" ") || `实体 ${entities ? entities.delta : "?"}`}），但目标没动`
+            + (better.length ? `；顺带改善：${better.join("、")}` : ""));
+        return { kind: "constructive", why, delta: d };
+    }
+    if (better.length) {
+        why.push(...better);
+        return { kind: "cleanup", why, delta: d };
+    }
+
+    /* 升级判定已经提到 `grewN` 之前（见上面那段注释：判「好」的必须先跑）。 */
 
     /* 尺寸与连通性都没动 ⇒ 看形态指纹。变了就是「原地打转」（拆了重建一个等价的、
        把死带子挪个位置、改了一条带子的朝向……），没变才是真的什么都没做。
@@ -518,6 +551,9 @@ export const NET_EFFECT_LABEL = Object.freeze({
     regressive: "改坏了",
     cleanup: "清理（改善但不是交货）",
     constructive: "只加东西没交货",
+    /* 「加了东西，但世界完全没动」—— 与 constructive 的区别见 classifyNetEffect 里那段注释。
+       constructive 至少「顺带改善」了点东西；这一档什么改善都没有，纯粹是往死世界里堆料。 */
+    stalled_growth: "加了东西但世界没动",
     churn: "原地打转",
     inert: "完全没变",
 });

@@ -324,11 +324,18 @@ test("H17g 升级与拓扑**同时**发生时，判定是什么（红队实测�
     const a = worldHealth({ obs: after, items: L5_ITEMS });
     const e = classifyNetEffect(b, a, healthDelta(b, a));
 
-    /* 已知缺口：结构变了就把升级的功劳盖掉。钉住它，防止「以为改了其实是抖动」。 */
-    assert.ok(["constructive", "regressive"].includes(e.kind),
-        `同轮结构性变化会盖过升级 —— 当前实现应当落在 constructive/regressive，实得 ${e.kind}`);
-    assert.ok(!e.why.some(w => /升级/.test(w)),
-        `★ 已知缺口：升级的贡献在这条路径上不会被说出来。实得：${e.why.join("/")}`);
+    /* ★ 这条测试原本钉的是一个**已知缺口**：「结构变了就把升级的功劳盖掉」★
+     *
+     * 2026-11-15 夜补上了。加 `stalled_growth` 档位时，这个缺口从「不好看」
+     * 变成了「会主动误导」：那种情况下模型会看到「你加了东西但世界没动」，
+     * 而它其实买了一次升级（真实的进展，只是不体现在拓扑上）。
+     *
+     * 判「好」的判据必须比判「没进展」的判据先跑。所以升级判定提到了 `grewN` 之前。
+     * 现在同轮「买升级 + 加机器」判 `positive`，且 `why` 里会说清是升级。 */
+    assert.equal(e.kind, "positive",
+        `同轮买升级 + 加机器 ⇒ 判 positive（升级是真实进展），实得 ${e.kind}`);
+    assert.ok(e.why.some(w => /升级/.test(w)),
+        `★ why 必须说清功劳来自升级，不能让人以为目标交付涨了。实得：${e.why.join("/")}`);
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -479,6 +486,73 @@ test("H28b ★ 对照组：带子没涨、死带子涨 ⇒ 仍是 regressive（�
     assert.equal(e.kind, "regressive",
         `带子总数没变而死带子涨 ⇒ 是既有线被拆坏（why=${e.why.join("/")}）`);
     assert.ok(e.why.some(w => /死带子/.test(w)), "必须说清是死带子变多");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 「加了东西但世界没动」必须是独立一档（2026-11-15 夜，L12 真机）
+ *
+ * `production()` 的 `produced_total` 恒为空（拉长窗口、加切片、重启游戏重载
+ * 存档之后仍然空），而 agent 连续七八轮都在加带子/加机器，每轮判 constructive。
+ * 世界从 435 涨到 467 实体、带子 382→411，产出始终 0 ——
+ * 它在往一个死掉的世界里堆料，而判据一路给绿灯。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("H29 ★ 加了东西但带上的货没增加 ⇒ stalled_growth（不是 constructive）", () => {
+    const snap = (o) => ({
+        belts: 100, machines: 10, entities: 120,
+        belts_reaching_hub: 80, belts_dead: 20,
+        items_on_belts: 50, reach_pct: 0.8,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        upgrade_levels: { belt: 0 },
+        shape: "a",
+        ...o,
+    });
+    /* 加了 3 条带子，但货量一点没动、连通性也没改善 —— 新带子是死的 */
+    const before = snap({});
+    const after = snap({ belts: 103, entities: 123, shape: "b" });
+    const d = healthDelta(before, after);
+    const e = classifyNetEffect(before, after, d);
+    assert.equal(e.kind, "stalled_growth",
+        `加了东西但世界没动 ⇒ 不能算进展（why=${e.why.join("/")}）`);
+    assert.ok(e.why.some(w => /完全没动|没有增加/.test(w)),
+        `理由必须说清「世界没动」，不能只说「结构变了」。实得：${e.why.join("/")}`);
+});
+
+test("H29b ★ 对照：加了东西且货量涨了 ⇒ 仍是 constructive（不是 stalled_growth）", () => {
+    const snap = (o) => ({
+        belts: 100, machines: 10, entities: 120,
+        belts_reaching_hub: 80, belts_dead: 20,
+        items_on_belts: 50, reach_pct: 0.8,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        upgrade_levels: { belt: 0 },
+        shape: "a",
+        ...o,
+    });
+    const before = snap({});
+    const after = snap({ belts: 103, entities: 123, items_on_belts: 61, shape: "b" });
+    const d = healthDelta(before, after);
+    const e = classifyNetEffect(before, after, d);
+    assert.equal(e.kind, "constructive",
+        `货量涨了说明新线接进了活货流 ⇒ 是施工中，不该判 stalled_growth（why=${e.why.join("/")}）`);
+});
+
+test("H29c ★ 对照：加了东西且死带子减少 ⇒ 不算 stalled_growth（有改善）", () => {
+    const snap = (o) => ({
+        belts: 100, machines: 10, entities: 120,
+        belts_reaching_hub: 80, belts_dead: 20,
+        items_on_belts: 50, reach_pct: 0.8,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        upgrade_levels: { belt: 0 },
+        shape: "a",
+        ...o,
+    });
+    const before = snap({});
+    /* 带子涨、死带子降 —— 新线有一部分接上了，还顺手清了旧的 */
+    const after = snap({ belts: 103, entities: 123, belts_dead: 17, shape: "b" });
+    const d = healthDelta(before, after);
+    const e = classifyNetEffect(before, after, d);
+    assert.notEqual(e.kind, "stalled_growth",
+        `死带子减少是真改善，不能判 stalled_growth（why=${e.why.join("/")}）`);
 });
 
 test("H11b ★ 全部新带子都孤立（死带子增量 === 带子增量）⇒ 仍是 regressive", () => {

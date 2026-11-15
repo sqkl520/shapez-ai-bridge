@@ -251,7 +251,16 @@ export function extractAttempts({ goalShape, world = "unknown", netEffects, roun
         /* 撤销的记号来自 `rollbacks`（权威），不靠 netEffects 的 kind 猜 ——
            因为 `reverted` 在 netEffects 里可能被「下一轮的 inert」覆盖过。 */
         const effective = revertedRounds.has(e.round) ? "reverted" : kind;
-        if (!["reverted", "regressive", "inert", "positive", "cleanup"].includes(effective)) continue;
+        /* ★ `stalled_growth` 要记（2026-11-15 夜，L12 真机）★
+         *
+         * 它与 `constructive` 看起来都是「加了东西」，但信息量完全不同：
+         * constructive 至少顺带改善了什么；stalled_growth 是**加了东西世界一点没动**
+         * ——「这个动作在这个世界上是无效的」，这正是记忆该记住的东西。
+         *
+         * 实测背景：`production()` 恒为空，agent 连续七八轮加带子，每轮判 constructive
+         * （被当噪音丢掉），于是它永远学不到「你加的这些线是死的」。
+         * 记下来之后，下一轮的 `PRIOR ATTEMPTS` 就会说这句话。 */
+        if (!["reverted", "regressive", "inert", "positive", "cleanup", "stalled_growth"].includes(effective)) continue;
 
         /* ★ 收尾观测（`final:true`）的同 action_set 合并规则 ★
          *
@@ -321,7 +330,11 @@ export function entryKey(e) {
 }
 
 /** 结论的「硬度」：数值越小越该被保留（负例优先）。 */
-const HARDNESS = Object.freeze({ reverted: 0, regressive: 1, positive: 2, cleanup: 3, inert: 4 });
+/* `stalled_growth` 排在 `inert` 之前（数值 4，inert 退到 5）：
+   它比 inert 有信息量 —— inert 是「什么都没发生」（可能是外部原因），
+   stalled_growth 是「我做了事，但做的东西是死的」（这个动作本身无效）。
+   记忆该优先保留后者那种结论。 */
+const HARDNESS = Object.freeze({ reverted: 0, regressive: 1, positive: 2, cleanup: 3, stalled_growth: 4, inert: 5 });
 const hardness = k => (HARDNESS[str(k)] === undefined ? 9 : HARDNESS[str(k)]);
 
 /**

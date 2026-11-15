@@ -2305,6 +2305,19 @@ function renderLastStep(e) {
         positive: "GOOD — the goal advanced",
         cleanup: "GOOD — the world got cleaner (but nothing delivered yet)",
         constructive: "NEUTRAL — you added things, the goal did not move",
+        /* ★ 与 `constructive` 的区别（2026-11-15 夜，L12 真机）★
+         *
+         * `constructive` 至少「顺带改善」了点东西（死带子少了 / 到 hub 的多了）。
+         * 这一档什么改善都没有：规模涨了，但**带上的货一件没多** ——
+         * 新加的东西没有接进任何活着的货流里，世界根本没动。
+         *
+         * 实测：`production()` 恒为空，而 agent 连续七八轮加带子/加机器，
+         * 每轮判 constructive。世界 435→467 实体、带子 382→411，产出始终 0。
+         * 判据一路给绿灯，它就一直在往死掉的世界里堆料。
+         *
+         * 所以这一档必须说清「你加的东西是死的」，而不只是「目标没动」。 */
+        stalled_growth: "WASTE — you added things, but the world did not move at all "
+            + "(no goods started flowing, nothing produced). What you added is not connected to any live flow",
         regressive: "BAD — this made the world WORSE",
         churn: "WASTE — the world changed but nothing measurable improved",
         inert: "WASTE — the world did not change at all",
@@ -2329,6 +2342,13 @@ function renderLastStep(e) {
     if (e.kind === "regressive") {
         lines.push("⇒ Repeating a change of this kind will keep making it worse. "
             + "Pick a different target or a different macro — the diagnosis below is not the whole story.");
+    } else if (e.kind === "stalled_growth") {
+        /* 与 churn/inert 分开：那两档是「没做什么」，这一档是「做了，但做的东西是死的」。
+           指令完全不同 —— 它不需要「换个动作」，它需要「先让已有的东西通起来」。 */
+        lines.push("⇒ You DID add things, but the world state did not move: goods did not start flowing, "
+            + "nothing was produced. That means what you added is not connected to a live flow. "
+            + "Before adding anything else, find a path that already carries goods and extend/repair THAT — "
+            + "or fix the one belt that breaks the handoff. Adding more disconnected belts will keep scoring zero.");
     } else if (e.kind === "churn" || e.kind === "inert") {
         lines.push("⇒ Nothing improved last round. Repeating the same shape of action will waste another round.");
     } else if (e.kind === "reverted") {
@@ -2457,6 +2477,9 @@ function renderRunLog(log) {
         positive: "delivered",
         cleanup: "cleaned up",
         constructive: "added stuff, no delivery",
+        /* 与 `constructive` 的区别：那是「加了东西没交货」，这是「加了东西世界根本没动」——
+           后者是更强的否定（这条线压根没接进任何活货流）。 */
+        stalled_growth: "added dead belts — nothing started flowing",
         reactive: "made it worse",
         regressive: "made it worse",
         inert: "changed nothing",
