@@ -1,1 +1,4 @@
 supervisor 启动（Ctrl-C 退出）。日志：.bridge-restarts.log
+      0 [main] sh (163368) child_copy: cygheap read copy failed, 0x0..0x800011120, done 0, windows pid 163368, Win32 error 299
+      0 [main] sh 2171868 dofork: child -1 - forked process 163368 died unexpectedly, retry 0, exit code 0xC0000142, errno 11
+tools/bridge-supervisor.sh: fork: retry: Resource temporarily unavailable
