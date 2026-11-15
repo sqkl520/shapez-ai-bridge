@@ -32,6 +32,7 @@ import {
     MACRO_SPECS, MACRO_NAMES, MACRO_VALIDATORS, WARNING_CODES, WARNING_SEVERITIES, ERROR_CODES,
     validateMacroResult, validateReplaceRunArgs, validateInsertMachineArgs, validateConnectArgs,
     validateRemoveRunArgs, validateExtendLineArgs, validateTrashUnusedArgs,
+    validateRemoveMachineArgs,
     lintNoBareCoords, worstSeverity, warningVerdict, isCanonicalWarningCode,
 } from "./contract.mjs";
 import {
@@ -702,6 +703,39 @@ t("信封：计划态下 added_uids 恒空（uid 由 tx 分配），契约已写
     ok(/全部通过|passed/.test(r.stdout || ""),
         `selftest 的输出应当自报通过，实得：${(r.stdout || "").slice(-300)}`);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * `opts.*` 被写成顶层参数时，错误要说出正确写法
+ * （2026-11-15 夜，L12 真机）
+ *
+ * 模型写 `remove_machine {uids:[...], allow_unwired:true}`，
+ * 而合法形态是 `opts.allow_unwired`。旧错误是
+ * 「remove_machine 不认识参数 'allow_unwired'；允许的参数：uids, opts」——
+ * 两句话都没提到「它其实是存在的，只是在 opts 下面」。
+ *
+ * 这类错误很常见：prompt 的 params 行把 `uids:Uid[]` 和
+ * `opts.allow_unwired:boolean?` 并排显示，模型当成同一层是自然的。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+t("opts.* 写成顶层 ⇒ 错误必须指出它在 opts 下面", () => {
+    const r = validateRemoveMachineArgs({ uids: [10209], allow_unwired: true });
+    ok(!r.ok && r.error.code === "unknown_field", "被拒且码是 unknown_field");
+    ok(/在 opts 下面/.test(r.error.message || ""), "理由要说清「在 opts 下面」：" + r.error.message);
+    ok(/opts:\{allow_unwired/.test(r.error.hint || ""), "hint 要给正确形态：" + r.error.hint);
+    ok(/uids, opts/.test(r.error.hint || ""), "同时列出顶层合法参数：" + r.error.hint);
+});
+
+t("对照：真的不存在的参数不许瞎猜成 opts.*", () => {
+    const r = validateRemoveMachineArgs({ uids: [10209], nonsense_xyz: true });
+    ok(!r.ok, "被拒");
+    ok(!/在 opts 下面/.test(r.error.message || ""),
+        "不许说它在 opts 下面：" + r.error.message);
+});
+
+t("对照：正确写成 opts.allow_unwired ⇒ 通过", () => {
+    const r = validateRemoveMachineArgs({ uids: [10209], opts: { allow_unwired: true } });
+    ok(r.ok, "校验通过：" + (r.ok ? "" : JSON.stringify(r.error)));
+});
 
 /* ══════════════════════════════════════════════════════════════════════════
  * 汇总

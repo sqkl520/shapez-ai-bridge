@@ -520,6 +520,25 @@ function rejectUnknownKeys(args, allowed, macro) {
                     `坐标必须由宏内部计算。端点请用 uid（来自 obs.entities[].uid）；`
                     + `点位的选择只能通过端点/落点参数表达。见 CONTRACT-MACROS.md §2`);
             }
+            /* ★ 名字对但层级不对 —— 直接说出正确写法（2026-11-15 夜，L12 真机）★
+             *
+             * 模型写 `remove_machine {uids:[...], allow_unwired:true}`，
+             * 而合法形态是 `opts.allow_unwired`。它收到的错误是
+             * 「remove_machine 不认识参数 'allow_unwired'；允许的参数：uids, opts」——
+             * 两句话都没有提到「allow_unwired 其实是存在的，只是在 opts 下面」。
+             *
+             * 这类错误很常见：`opts.*` 与顶层参数在 prompt 的 params 行里并排显示
+             * （`params: uids:Uid[], opts.allow_unwired:boolean?`），模型把它们
+             * 当成同一层是自然的。所以要么让它一眼看出层级，要么直接给正确写法。 */
+            const spec = MACRO_SPECS[macro];
+            const nested = spec && Array.isArray(spec.params)
+                ? spec.params.find(x => typeof x.name === "string" && x.name === `opts.${k}`)
+                : null;
+            if (nested) {
+                return fail("unknown_field", k,
+                    `${macro} 的参数 '${k}' 在 opts 下面，不是顶层 —— 正确写法是 opts:{${k}: ...}`,
+                    `改成 \`{... , opts:{${k}: <值>}}\`。顶层只认：${allowed.join(", ")}。`);
+            }
             return fail("unknown_field", k,
                 `${macro} 不认识参数 '${k}'`,
                 `允许的参数：${allowed.join(", ")}`);
