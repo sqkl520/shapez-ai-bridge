@@ -3279,6 +3279,25 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         user = compose(s3Belts, s3Capacity || null);
         chars = s1.length + user.length;
     }
+    /* ★ 带子砍光了还超 ⇒ 再压机器表（2026-11-15 夜，L12 真机）★
+     *
+     * 真机实测：世界膨胀到 524 实体 / 59 台机器 / 485 条带子时，
+     * 即使带子列表砍到 0，总量仍然 16128 > 16000 —— 因为**机器表**本身
+     * 就占了 2000+ 字符（55 台机器逐行渲染）。
+     *
+     * 上面那轮「压缩机器表」的降级链用的是 `targetChars`(11500) 作判据，
+     * 而硬上限是 16000 —— 中间 4500 的差额被后面才拼进去的 S4/S5 吃掉，
+     * 于是降级链认为「达标了」，硬上限却仍然超。
+     *
+     * 这里补最后一道：仍然超就继续压机器表，直到装下或压到没有为止。 */
+    if (chars > limits.inCharsMax && s3Machines) {
+        for (const cap of [6, 3, 0]) {
+            const alt = cap === 0 ? null : renderMachines(tbl, diagList, obs, goalShape, { max: cap });
+            const u2 = composeWith(alt, s3Belts, s3Capacity || null);
+            s3Machines = alt; user = u2; chars = s1.length + u2.length;
+            if (chars <= limits.inCharsMax) break;
+        }
+    }
     if (chars > limits.inCharsMax) {
         throw new PromptOverBudget(
             `prompt is ${chars} chars > LLM_IN_CHARS_MAX ${limits.inCharsMax}; `
