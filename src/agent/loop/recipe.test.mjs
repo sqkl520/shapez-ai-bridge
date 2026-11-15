@@ -413,6 +413,45 @@ test("solved:true 却非零退出 ⇒ ok:false（solver 自相矛盾不许静默
     assert.match(r.reason, /self-contradictory/);
 });
 
+/* ── ★ `solved:false` 的两种原因必须分开报（2026-11-15，L12 真机）★ ──
+ *
+ * L12 目标 `CbCbCbRb:CwCwCwCw` 在默认预算下 4.5 秒就 `capped`，
+ * `--max-states 2000000` 跑到 33 秒**仍然** capped（208 万个 stack 组合）。
+ * 而那个形状用普通 stacker 分两次叠就能做出来 —— 求解器只是穷举不动。
+ *
+ * 旧版一律报 "solver says the shape is unreachable"，等于告诉 agent「这关做不出来」。
+ * 模型读到那句会放弃，或者去解锁无关的机器 —— 两种处置都是南辕北辙。 */
+const CAPPED_PLAN = JSON.stringify({
+    target: "CbCbCbRb:CwCwCwCw",
+    solved: false,
+    plan: null,
+    stats: { expanded: 3300, generated: 52800, stackPairs: 2088644, capped: true },
+    known: 2000001,
+});
+
+test("solved:false + capped:true ⇒ 明确说「搜索截断」而不是「不可解」", () => {
+    const r = recipeFor("CbCbCbRb:CwCwCwCw", { spawn: makeSpawn(CAPPED_PLAN, { status: 2 }) });
+    assert.equal(r.ok, false);
+    assert.equal(r.capped, true, "必须把 capped 带出来，否则调用方无从区分");
+    assert.match(r.reason, /capped/);
+    assert.match(r.reason, /not proven unreachable/);
+    assert.doesNotMatch(r.reason, /^solver says the shape is unreachable$/);
+    assert.equal(r.stats.stackPairs, 2088644, "solver 的统计要原样透传，便于判断是不是该加预算");
+    assert.ok(typeof r.hint === "string" && r.hint.length > 0, "要给可执行的下一步，不能只说「不可解」");
+});
+
+test("solved:false 但没 capped ⇒ 仍然报真不可解", () => {
+    const exhausted = JSON.stringify({
+        target: "XxXx", solved: false, plan: null,
+        stats: { expanded: 289, generated: 4624, stackPairs: 0, capped: false },
+        known: 289,
+    });
+    const r = recipeFor("XxXx", { spawn: makeSpawn(exhausted, { status: 2 }) });
+    assert.equal(r.ok, false);
+    assert.equal(r.capped, false, "没有 capped 就是真的搜完了，不许冒充截断");
+    assert.equal(r.reason, "solver says the shape is unreachable");
+});
+
 /* ═══════════════ 6. 既有接口行为不许变（冻结面） ═══════════════ */
 
 test("solveRecipe 行为不变：不带门控、status!==0 先判退出码", () => {

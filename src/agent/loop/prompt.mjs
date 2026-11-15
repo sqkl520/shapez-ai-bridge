@@ -2659,9 +2659,21 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         }
     }
     const s3Recipe = renderRecipe(r, { maxSteps: 8 });
+    /* ★ 配方拿不到时，把「为什么」原样带出去 ★
+     *
+     * 旧版这里只写 `unavailable`，模型看不出是「真的做不出」还是「求解器算不动」。
+     * 这两种情况的处置完全相反：
+     *   · 真不可解   → 换目标 / 检查是不是漏了解锁的机器
+     *   · 搜索被截断 → 形状可能仍然可做，自己推或者加预算重跑
+     * 实测 L12 `CbCbCbRb:CwCwCwCw`：求解器 200 万状态仍 capped，
+     * 但那个形状用普通 stacker 分两次叠就能出来。
+     * 把「穷举不动」说成「不可解」会直接误导 agent 放弃。 */
     const recipeUnavailable = s3Recipe === null
         ? (r && typeof r.reason === "string" && r.reason ? r.reason : (r && r.ok === true ? "empty recipe" : "unavailable"))
         : null;
+    const recipeCapped = !!(r && r.capped === true);
+    const recipeHint = (r && r.capped === true && typeof r.hint === "string") ? r.hint : null;
+    const recipeStats = (r && r.capped === true && r.stats) ? r.stats : null;
     const s3Hub = renderHub(tbl);
     let s3Machines = renderMachines(tbl, diagList, obs, goalShape);
     const s3Production = renderProduction(production, goalShape);
@@ -2691,7 +2703,36 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
 
     const selection = pickBelts(tbl, diagList, goalShape, obs);
     /* 配方紧跟在 GOAL 之后：它是「这个目标怎么造」的一部分，不是独立信息 */
-    const goalAndRecipe = s3Recipe ? [s3Goal, s3Recipe].join("\n\n") : s3Goal;
+    let goalAndRecipe = s3Recipe ? [s3Goal, s3Recipe].join("\n\n") : s3Goal;
+
+    /* ★ 配方拿不到时必须在正文里说清楚「为什么」★
+     *
+     * 只在 blocks 里留一个 `recipe_unavailable` 字段等于没告诉模型 —— 那是给测试看的。
+     * 模型看不到配方会默认「这关做不出来」，而实际往往是求解器穷举不动。
+     * 实测 L12：200 万状态仍 capped，但形状本身用普通 stacker 分两次叠就能做。
+     * 这里把「搜索被截断」和「真的不可解」分开写进正文，让模型的下一步动作不同。 */
+    if (recipeUnavailable) {
+        const why = recipeCapped
+            ? [
+                "## RECIPE UNAVAILABLE — search capped, NOT proven impossible",
+                `the shape solver hit its state limit${recipeStats
+                    ? ` (expanded ${recipeStats.expanded}, generated ${recipeStats.generated}, `
+                      + `stack pairs ${recipeStats.stackPairs})`
+                    : ""} before finding a plan.`,
+                "This does NOT mean the shape cannot be built — it means the exhaustive search",
+                "ran out of budget. Many shapes that defeat the solver are trivial for a human",
+                "layout: e.g. a 4-wide target is often two ordinary stacker passes, each combining",
+                "two 2-wide halves you can cut and paint with the machines you already have.",
+                recipeHint ? `Suggestion: ${recipeHint}` : null,
+                "⇒ Work it out yourself from the machines in MACHINES, or fall back to whatever",
+                "partial progress the diagnoses point at. Do NOT report the goal as impossible.",
+            ].filter(Boolean).join("\n")
+            : [
+                "## RECIPE UNAVAILABLE",
+                `reason: ${recipeUnavailable}`,
+            ].join("\n");
+        goalAndRecipe = [s3Goal, why].join("\n\n");
+    }
 
     /* ★ CAPACITY（产能瓶颈）★
      *
@@ -3005,6 +3046,10 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         /* 配方段（可能为 null —— solver 不可用）。单独暴露，便于测试与排查 */
         s3_recipe: s3Recipe,
         recipe_unavailable: recipeUnavailable,
+        /* 求解器是「搜索被截断」还是「真的不可解」—— 两者对模型的意义完全不同，
+           混成一个字段会让事后排查（和测试）分不清「这关做不出来」与「求解器算不动」。 */
+        recipe_capped: recipeCapped,
+        recipe_stats: recipeStats,
         /* CAPACITY：`null` 表示「这段没出现」。**为什么没出现**记在 `capacity_unavailable` ——
          * 「数据不可信」/「没什么可说」/「预算不够被丢掉」是三种完全不同的情况，
          * 混成一个 null 会让事后排查（和测试）分不清「功能没触发」和「功能坏了」。 */

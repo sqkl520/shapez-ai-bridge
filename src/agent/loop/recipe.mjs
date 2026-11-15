@@ -173,9 +173,33 @@ function runSolver(goalShape, opts = {}) {
     catch { return { ok: false, reason: "solver output is not JSON", raw: text.slice(0, 400) }; }
 
     if (!data || data.solved !== true || !data.plan || !Array.isArray(data.plan.steps)) {
+        /* ★ `solved:false` 有两种完全不同的原因，不许合并成一句话 ★
+         *
+         * `capped:true` = 搜索**被状态上限截断**，不代表形状做不出来。
+         * 实测（L12 `CbCbCbRb:CwCwCwCw`）：默认预算下 4.5 秒就 capped，
+         * `--max-states 2000000` 跑到 33 秒仍然 capped（208 万个 stack 组合）。
+         * 而这种形状其实**用普通 stacker 叠两次就能做**，压根不需要 quad cutter ——
+         * 求解器只是穷举不动。
+         *
+         * 把「穷举不动」说成「不可解」会把 agent 引向放弃，
+         * 或者引向「去解锁新机器」这种南辕北辙的处置。
+         * 所以这里分开报，并带上 solver 自己的统计，让调用方自己判断。 */
+        const capped = !!(data && data.stats && data.stats.capped);
+        if (data && data.solved === false && capped) {
+            return {
+                ok: false,
+                reason: "solver search capped before finding a plan (not proven unreachable)",
+                capped: true,
+                stats: data.stats || null,
+                hint: "形状可能仍可解，只是组合爆炸。可以考虑：换个思路手工推（比如同样的形状用 stacker 分两次叠），"
+                    + "或用 --max-states / --depth 提高预算重跑。",
+                raw: text.slice(0, 400),
+            };
+        }
         return {
             ok: false,
             reason: data && data.solved === false ? "solver says the shape is unreachable" : "unexpected solver payload",
+            capped: false,
             raw: text.slice(0, 400),
         };
     }
@@ -228,7 +252,20 @@ export function recipeFor(goalShape, opts = {}) {
 
     /* 注意 `tolerateUnsolvable`：solver 不可解时 exit(2) 但仍吐合法 JSON，必须先解析。 */
     const r = runSolver(goalShape, { ...opts, extraArgs: gated, tolerateUnsolvable: true });
-    if (!r.ok) return { ok: false, reason: r.reason || "unknown", level, gated };
+    /* ★ 失败原因必须逐字带出去，不许在这里收窄成 `{ok:false, reason}` ★
+     *
+     * `capped` / `stats` / `hint` 是「搜索被截断」与「真不可解」的唯一区分依据。
+     * 旧版这行只透传 reason，于是上层拿到的永远是同一句话，
+     * prompt 也就没法告诉模型「这个形状可能仍然可做」。 */
+    if (!r.ok) {
+        return {
+            ok: false,
+            reason: r.reason || "unknown",
+            level,
+            gated,
+            ...(r.capped === true ? { capped: true, stats: r.stats || null, hint: r.hint || null } : { capped: false }),
+        };
+    }
 
     const steps = r.steps;
 
