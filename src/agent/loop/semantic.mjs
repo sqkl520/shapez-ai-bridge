@@ -1076,15 +1076,43 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
     void items;
     const o = unwrapObs(obs);
     const recipe = opts.recipe;
-    if (!recipe || recipe.ok !== true || !Array.isArray(recipe.steps) || !recipe.steps.length) return [];
+    /* ★ 配方不可用**不等于**什么都别说了（2026-11-15 夜，L12 真机）★
+     *
+     * 原来这里是 `if (!recipe || recipe.ok !== true || ...) return [];` ——
+     * 配方解不出来就整个语义层关掉。
+     *
+     * 而 L12 的求解器**搜索超限**（`recipe.ok=false`，报了「not proven unreachable」），
+     * 于是从第一轮起这个函数一条诊断都不产。实测代价：
+     *
+     *   · `ORPHAN_MACHINES` 报过「23 of 59 machines have NOTHING connected
+     *     (miner×15, stacker×1, rotater×1, trash×6)」—— 一直能算，从来没送出去；
+     *   · `HUB_INLET_THIN` 报过「3 格上放了带子但方向不对，9 个入口空着」——
+     *     这正是 L12 卡死的直接原因；
+     *   · `DEAD_LINES`、`UPGRADE_AVAILABLE` 同理。
+     *
+     * agent 只看得到 `NO_PRODUCTION` 一个干诊断（「没有产线在造目标」），
+     * 于是它只能在黑暗里加带子 —— 而世界真正的问题是「入口接错了方向」
+     * 和「23 台机器一根线都没接」。
+     *
+     * 这些诊断**不依赖配方**：谁没接线、谁的入口指错了、哪条线到不了 hub ——
+     * 全是纯拓扑/几何。只有「该用 cutter 还是 rotater」才需要配方。
+     *
+     * 所以改成：配方缺席时用**空的** model（`usable` 为空 ⇒ 依赖配方的分支
+     * 自然一条都不产），但纯拓扑的那几条照常跑。
+     *
+     * 前提不变：`truncated` 时仍然整体返回空（世界不完整时任何结论都不可信）。 */
+    const recipeUsable = !!(recipe && recipe.ok === true
+        && Array.isArray(recipe.steps) && recipe.steps.length);
     if (o.truncated === true) return [];            // 契约 §4：世界不完整 ⇒ 语义层整体返回空
     const goalShape = typeof goal === "string" ? goal : (goal && (goal.shape || goal.goal)) || null;
     if (typeof goalShape !== "string" || !goalShape) return [];
 
     const idx = indexOf(o);
     const reach = hubReachable(o, idx);
-    const model = recipeModel(recipe, opts.level);
-    if (!model.usable.length) return [];
+    /* `recipeModel` 对空 steps 返回 `{usable:[], …}` —— 正是我们要的。
+       末尾两个 web 依赖 `model.usable.length` 的判断会因此跳过，
+       但它们各自前面有 `!model.usable.length` 的早退，行为不变。 */
+    const model = recipeModel(recipeUsable ? recipe : { steps: [] }, opts.level);
 
     const engine = makeShapeEngine(o, idx);
     const hull = orbitOf(goalShape);

@@ -266,15 +266,51 @@ test("T5 对照：修好前后的差异**只在**「cutter 在不在那条流上
  * 6. 负例：recipe 缺失 ⇒ []，且不抛
  * ══════════════════════════════════════════════════════════════════════════ */
 
-test("T6 ★ 负例：opts.recipe 缺失 / null / ok:false / steps 为空 ⇒ 返回 []，不抛，不 spawn", () => {
+/* ★ 这条契约在 2026-11-15 夜被推翻了（L12 真机）★
+ *
+ * 原来断言「配方缺失 ⇒ 语义层整体降级为空」。那个契约的代价在 L12 上暴露得很彻底：
+ * 求解器搜索超限（`recipe.ok=false`）⇒ 整个语义层从第一轮起一条诊断都不产
+ * ⇒ agent 只看得到 `NO_PRODUCTION` 一个干诊断，在黑暗里加带子。
+ *
+ * 而当时算得出来却送不出去的，恰恰是最要命的两条：
+ *   · `ORPHAN_MACHINES`：23/59 台机器一根线都没接
+ *   · `HUB_INLET_THIN`：3 格带子摆在入口上却指错方向，9 个入口空着
+ *
+ * 这两条**不依赖配方** —— 纯拓扑/几何。只有「该用 cutter 还是 rotater」才需要配方。
+ *
+ * 新契约：配方缺席时用空 model（依赖配方的分支自然不产），纯拓扑的照常跑。
+ * 但**不抛、不 spawn** 这两条必须保留 —— 它们是安全性质，与产出什么无关。 */
+test("T6 ★ 负例：opts.recipe 缺失 / null / ok:false / steps 为空 ⇒ 不抛、不 spawn（但纯拓扑诊断照常跑）", () => {
     const cases = [undefined, null, {}, { ok: false, reason: "solver timed out" }, { ok: true, steps: [] }];
     for (const recipe of cases) {
         let ds;
         assert.doesNotThrow(() => {
             ds = semanticDiagnoses(L4, null, goalOf(L4), handlesOf(L4), recipe === undefined ? {} : { recipe });
         }, `recipe=${JSON.stringify(recipe)} 不许抛`);
-        assert.deepEqual(ds, [], `recipe=${JSON.stringify(recipe)} ⇒ 语义层整体降级为空`);
+        assert.ok(Array.isArray(ds), `recipe=${JSON.stringify(recipe)} ⇒ 必须是数组`);
+        /* 依赖配方的码一条都不许出现：没有配方就不知道需要哪些机器/工序。
+           ⚠️ `SHAPE_UNKNOWN` **不在此列** —— 它只是说「这个形状算不出来」
+           （隧道跨界 / 模板缺失 / 没有矿图），与配方无关，配方缺席时照样该报。 */
+        const recipeBound = new Set([
+            "PROCESSOR_REQUIRED", "MIXER_UNFED", "DISCARDED_INTERMEDIATE",
+            "WRONG_SHAPE_AT_HUB",
+        ]);
+        const leaked = ds.filter(d => recipeBound.has(d.code)).map(d => d.code);
+        assert.deepEqual(leaked, [],
+            `recipe=${JSON.stringify(recipe)} ⇒ 不许产出依赖配方的码（实得 ${leaked.join(",")}）`);
     }
+});
+
+test("T6b ★ 配方不可用时，纯拓扑诊断仍然要产出（这就是推翻旧契约的理由）", () => {
+    /* 用一个「入口明显没接好」的世界，验证不靠配方也能看出问题。 */
+    const o = clone(L4);
+    const ds = semanticDiagnoses(o, null, goalOf(o), handlesOf(o), { recipe: { ok: false } });
+    const codes = ds.map(d => d.code);
+    /* 至少要有 ORPHAN / HUB_INLET / DEAD_LINES 其中之一能算出来 ——
+       它们是纯拓扑的，配方缺席不构成理由。 */
+    const topo = ["ORPHAN_MACHINES", "HUB_INLET_THIN", "DEAD_LINES", "UPGRADE_AVAILABLE"];
+    assert.ok(codes.some(c => topo.includes(c)),
+        `配方缺席时纯拓扑诊断必须照常产出（实得 ${codes.join(",") || "空"}）`);
 });
 
 test("T6 负例：obs.truncated ⇒ 返回 []（世界不完整时语义结论不可信）", () => {
