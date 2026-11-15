@@ -672,3 +672,70 @@ test("H30c ★ 拿不到 paths 指标时退回只看货量（不能因缺字段�
     assert.notEqual(e.kind, "stalled_growth",
         `货量涨了、paths 字段缺席 ⇒ 不该判停滞（why=${e.why.join("/")}）`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 死带子涨几条不该判 regressive（2026-11-15 夜，L12 真机）
+ *
+ * 实测：一次 `connect` 铺了 39 条带子，死带子从 211 涨到 215 —— 只涨 4 条
+ * （39 条里 35 条已经接上了）。可判据据此给出 regressive，跨 run 记忆
+ * 于是把 `connect` 记成「judged harmful」×22，agent 最后在 prompt 里
+ * 写下「Abandoning connect/replace_run (both regressed)」——
+ * **主动放弃了唯一能建线的两个宏**。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("H31 ★ 死带子涨 4/211（1.9%）不算改坏 —— 那是长线施工的正常中间态", () => {
+    const snap = (o) => ({
+        belts: 400, machines: 10, entities: 420,
+        belts_reaching_hub: 206, belts_dead: 211,
+        items_on_belts: 50, reach_pct: 0.8,
+        paths_with_items: 10, paths_total: 20,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        upgrade_levels: { belt: 0 }, shape: "a",
+        ...o,
+    });
+    const before = snap({});
+    /* 铺 39 条新线，35 条已接上、4 条还死着 */
+    const after = snap({ belts: 439, entities: 459, belts_dead: 215, shape: "b" });
+    const d = healthDelta(before, after);
+    const e = classifyNetEffect(before, after, d);
+    assert.notEqual(e.kind, "regressive",
+        `涨 4/211 = 1.9%，低于 5% 容差，不该判 regressive（why=${e.why.join("/")}）`);
+});
+
+test("H31b ★ 对照：死带子涨 59/133（44%）照旧判 regressive", () => {
+    const snap = (o) => ({
+        belts: 200, machines: 10, entities: 220,
+        belts_reaching_hub: 133, belts_dead: 133,
+        items_on_belts: 50, reach_pct: 0.8,
+        paths_with_items: 10, paths_total: 20,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        upgrade_levels: { belt: 0 }, shape: "a",
+        ...o,
+      });
+    const before = snap({});
+    const after = snap({ belts: 260, entities: 280, belts_dead: 192, shape: "b" });
+    const d = healthDelta(before, after);
+    const e = classifyNetEffect(before, after, d);
+    assert.equal(e.kind, "regressive",
+        `涨 59/133 = 44%，必须判红（why=${e.why.join("/")}）`);
+    assert.ok(e.why.some(w => /死带子/.test(w)), "理由必须说清是死带子变多");
+});
+
+test("H31c ★ 对照：绝对涨 10 条即使占比低也判红", () => {
+    const snap = (o) => ({
+        belts: 900, machines: 10, entities: 920,
+        belts_reaching_hub: 500, belts_dead: 400,
+        items_on_belts: 50, reach_pct: 0.55,
+        paths_with_items: 10, paths_total: 20,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        upgrade_levels: { belt: 0 }, shape: "a",
+        ...o,
+    });
+    const before = snap({});
+    /* 涨 10/400 = 2.5%（低于 5%），但绝对涨 10 条 —— 绝对阈值兜底 */
+    const after = snap({ belts: 910, entities: 930, belts_dead: 410, shape: "b" });
+    const d = healthDelta(before, after);
+    const e = classifyNetEffect(before, after, d);
+    assert.equal(e.kind, "regressive",
+        `占比只有 2.5% 但绝对涨 10 条，双阈值里绝对那条该兜住（why=${e.why.join("/")}）`);
+});

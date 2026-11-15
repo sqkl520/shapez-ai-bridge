@@ -366,7 +366,13 @@ export function classifyNetEffect(before, after, delta = null) {
      * 这不放宽「真拆坏了」的判定：把 N 条活带子拆掉同时铺 M<N 条新带子，
      * 带子总数下降 ⇒ 照旧判 regressive。 */
     const beltsGrew = !!(beltsN && beltsN.delta > 0);
-    const deadRoseFromWork = beltsGrew && dead && dead.delta > 0 && dead.delta < beltsN.delta;
+    /* ⚠️ 豁免只在**死带子涨得不多**时才成立。
+     *
+     * 原来的条件 `dead.delta < beltsN.delta` 太宽：涨 59 条死带子、
+     * 铺 60 条带子，照样被豁免成「施工中」—— 而 59 条死带子是真退化。
+     * 加一条上限：死带子绝对涨幅 <10 条才谈得上「中间态」。 */
+    const deadRoseFromWork = beltsGrew && dead && dead.delta > 0
+        && dead.delta < beltsN.delta && dead.delta < 10;
     /* ★ 「到 hub 的带子」掉 1 条不等于改坏了（2026-11-15 夜，L12 真机）★
      *
      * 实测：`remove_run` 在记忆里被记成 `regressive` **57 次**，
@@ -406,7 +412,29 @@ export function classifyNetEffect(before, after, delta = null) {
             regress.push(`到 hub 的带子 ${reach.before}→${reach.after}（-${Math.round(ratio * 100)}%）`);
         }
     }
-    if (dead && dead.delta > 0 && !deadRoseFromWork) regress.push(`死带子 ${dead.before}→${dead.after}`);
+    /* ★ 死带子也要容差：铺一条长线时中间态涨几条是正常的 ★
+     *
+     * 实测（2026-11-15 夜，L12）：一次 `connect` 铺了 39 条带子，
+     * 死带子从 211 涨到 215 —— **只涨了 4 条**（39 条里 35 条已经接上了），
+     * 可判据据此给出 `regressive`，跨 run 记忆于是把 `connect` 记成
+     * 「judged harmful」×22，agent 最后在 prompt 里写下
+     * 「Abandoning connect/replace_run (both regressed)」——
+     * **主动放弃了唯一能建线的两个宏**。
+     *
+     * 一条 39 格的新线在接完之前，按定义就有几格是死的。用「涨 0 条」
+     * 当及格线等于禁止任何长线施工。
+     *
+     * 判据：涨幅 ≥5% **或** 绝对涨 ≥10 条才算退化。
+     * 211 → 215 涨 4 条（1.9%）⇒ 放过；
+     * 320 → 323 涨 3 条（0.9%）⇒ 放过（那次也是被误判的）；
+     * 133 → 192 涨 59 条（44%）⇒ 照旧判红。 */
+    if (dead && dead.delta > 0 && !deadRoseFromWork) {
+        const base = dead.before;
+        const ratio = base > 0 ? dead.delta / base : 1;
+        if (ratio >= 0.05 || dead.delta >= 10) {
+            regress.push(`死带子 ${dead.before}→${dead.after}（+${Math.round(ratio * 100)}%）`);
+        }
+    }
     if (regress.length) {
         why.push(...regress);
         return { kind: "regressive", why, delta: d };
