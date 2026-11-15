@@ -420,3 +420,77 @@ test("H27 格式是稳定的：同一份快照两次格式化逐字节相同（t
     assert.equal(formatHealth(base()), formatHealth(base()));
     assert.equal(shapeHash(L5), shapeHash(L5));
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 施工中间态 vs 真破坏（2026-11-15，L12 真机）
+ *
+ * `connect` 的特征是**带子 +N、死带子 +N**：新铺的每一格在源头和下游都接上
+ * 之前，按定义就是死带子。旧口径只看 `dead.delta > 0` 就判 regressive，于是
+ * 一次正确的 connect 被记成「改坏了」，跨 run 记忆里 `connect` 被标成
+ * 「rolled back, judged harmful」（n=7），模型读成「别用 connect」——
+ * 而它是**唯一**能往 mixer 喂料的宏（实测 R3 就靠它推进）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("H28 ★ 新铺的线有一部分已接上（死带子增量 < 带子增量）⇒ 不是 regressive", () => {
+    /* ★ 为什么不拿真实世界造这个夹具 ★
+     *
+     * 试过：在 L5 里找一格能接上活线的位置。**找不到** —— L5 的 25 条死带子
+     * 全都接不上（那正是「死」的意思），而既有活线周围没有可延伸的空格。
+     * 硬凑出来的场景一律是 `dead.delta === belts.delta`（全孤立），
+     * 那样 `if` 分支根本进不去，测试会**空转通过** —— 假绿比不写更糟。
+     *
+     * 所以这里直接造两份**最小快照**：它们只含 `classifyNetEffect` 需要的
+     * 那几个指标字段。这不是绕过测试，是把被测函数的契约写清楚 ——
+     * `classifyNetEffect(before, after, delta)` 只吃快照，不读世界。 */
+    const snap = (o) => ({
+        belts: 100, machines: 10, entities: 120,
+        belts_reaching_hub: 80, belts_dead: 20,
+        items_on_belts: 50, reach_pct: 0.8,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        ...o,
+    });
+    const before = snap({});
+    /* 带子 100→104（+4），死带子 20→22（+2）：
+       新增 4 条里有 2 条已接上、2 条还在等下游 —— 施工中间态。
+       到 hub 的带子没减少（80→80），所以没有任何「原有的线被拆坏」的证据。 */
+    const after = snap({ belts: 104, entities: 124, belts_dead: 22, belts_reaching_hub: 80 });
+    const d = healthDelta(before, after);
+    const deadD = (d.find(x => x.metric === "belts_dead") || {}).delta;
+    const beltsD = (d.find(x => x.metric === "belts") || {}).delta;
+    assert.equal(beltsD, 4, "前置：带子 +4");
+    assert.equal(deadD, 2, "前置：死带子 +2（严格小于带子增量）");
+    const e = classifyNetEffect(before, after, d);
+    assert.notEqual(e.kind, "regressive",
+        `部分新带子已接上 ⇒ 施工中间态（why=${e.why.join("/")}）`);
+});
+
+test("H28b ★ 对照组：带子没涨、死带子涨 ⇒ 仍是 regressive（原有的线被拆坏了）", () => {
+    const snap = (o) => ({
+        belts: 100, machines: 10, entities: 120,
+        belts_reaching_hub: 80, belts_dead: 20,
+        items_on_belts: 50, reach_pct: 0.8,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        ...o,
+    });
+    const before = snap({});
+    const after = snap({ belts_dead: 23 });
+    const d = healthDelta(before, after);
+    const e = classifyNetEffect(before, after, d);
+    assert.equal(e.kind, "regressive",
+        `带子总数没变而死带子涨 ⇒ 是既有线被拆坏（why=${e.why.join("/")}）`);
+    assert.ok(e.why.some(w => /死带子/.test(w)), "必须说清是死带子变多");
+});
+
+test("H11b ★ 全部新带子都孤立（死带子增量 === 带子增量）⇒ 仍是 regressive", () => {
+    /* 这条与 H11 同向，但把边界条件写成显式断言：
+       判据是 dead.delta < belts.delta（**严格小于**），不是 <=。
+       全孤立时必须照旧判红 —— 那是「铺了一堆没人要的带子」，不是施工中。 */
+    const o = clone(L5);
+    let uid = 920001;
+    for (let i = 0; i < 3; i++) {
+        o.entities.push({ uid: uid++, type: "belt", x: 60 + i, y: 60, r: 0, rotation_variant: 0, code: 1 });
+    }
+    const { e } = judge(withObs(o));
+    assert.equal(e.kind, "regressive", `全孤立的新带子不该被当成施工中（why=${e.why.join("/")}）`);
+    assert.ok(e.why.some(w => /死带子/.test(w)), "必须说清是死带子变多");
+});

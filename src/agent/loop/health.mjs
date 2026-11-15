@@ -341,17 +341,39 @@ export function classifyNetEffect(before, after, delta = null) {
     const reach = get("belts_reaching_hub");
     const dead = get("belts_dead");
     const items = get("items_on_belts");
+    const entities = get("entities");
+    const beltsN = get("belts");
+    const machines = get("machines");
     const regress = [];
+    /* ★ 「新铺的带子还没接完」不是破坏（2026-11-15，L12 真机）★
+     *
+     * `connect` 的特征是**带子 +N、死带子 +N**：新铺的每一格在源头和下游
+     * 都接上之前，按定义就是死带子。这不是把世界改坏了，是施工做到一半。
+     *
+     * 旧口径只看 `dead.delta > 0` 就判 `regressive`，于是：
+     *   · 一次正确的 `connect` 被判成「改坏了」；
+     *   · 跨 run 记忆记住 `connect → rolled back, judged harmful`（n=7）；
+     *   · 模型读到「别用 connect」—— 而它是**唯一**能往 mixer 喂料的宏。
+     *     实测 R3 就是靠 connect 推进的，R2/R5 却被记忆劝退。
+     *
+     * 判据：带子总数增加了，**且新增的死带子少于新增的带子** —— 说明这批新带子里
+     * 有一部分已经接上了，剩下的还在等下游。那正是施工中间态。
+     *
+     * 为什么是**严格小于**而不是 `<=`：全部新带子都孤立（`dead.delta === belts.delta`）
+     * 时没有任何一格接上，那不是「施工中」，是「铺了一堆没人要的带子」——
+     * 照旧判 regressive（`health.test.mjs` 的 H11 钉住这一条）。
+     *
+     * 这不放宽「真拆坏了」的判定：把 N 条活带子拆掉同时铺 M<N 条新带子，
+     * 带子总数下降 ⇒ 照旧判 regressive。 */
+    const beltsGrew = !!(beltsN && beltsN.delta > 0);
+    const deadRoseFromWork = beltsGrew && dead && dead.delta > 0 && dead.delta < beltsN.delta;
     if (reach && reach.delta < 0) regress.push(`到 hub 的带子 ${reach.before}→${reach.after}`);
-    if (dead && dead.delta > 0) regress.push(`死带子 ${dead.before}→${dead.after}`);
+    if (dead && dead.delta > 0 && !deadRoseFromWork) regress.push(`死带子 ${dead.before}→${dead.after}`);
     if (regress.length) {
         why.push(...regress);
         return { kind: "regressive", why, delta: d };
     }
 
-    const entities = get("entities");
-    const beltsN = get("belts");
-    const machines = get("machines");
     const grewN = (entities && entities.delta > 0) || (beltsN && beltsN.delta > 0) || (machines && machines.delta > 0);
 
     const better = [];
