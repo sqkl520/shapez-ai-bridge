@@ -2917,6 +2917,52 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                     + `**留最近的矿机和已经半接通的机器**（输入接了但输出没接的 mixer 是半成品，别删）。`,
             });
         }
+
+        /* ★ ③c-bis TRASH_OVERGROWN —— 垃圾桶太多（2026-11-15 夜，L12 真机）★
+         *
+         * 实测：最近 5 次 run 的 59 个调用里 `trash_unused` 占 **12 个（20%）**，
+         * 世界里的垃圾桶从 25 涨到 34，而产出始终 0。
+         *
+         * 为什么 agent 爱用它：它是少数**几乎总是成功**的宏
+         * （不像 `connect` 会撞 `occupied`、`insert_machine` 会 `blocked_by_machine`）。
+         * 于是它变成了「有事没事找个垃圾倒」—— 每次都能拿到 `cleanup` 的评分，
+         * 而世界离目标一步没近。
+         *
+         * 判据：垃圾桶数量 > 8 **且**超过机器的 20%。
+         * 这个阈值的依据：L12 需要的完整产线里，废料口只有 cutter 的右半
+         * 和 painter 的多余色，正常不会超过 5-6 个。
+         * 8 是「再宽也就这样了」的上限。 */
+        {
+            const trashes = idx.ent.filter(e => e.type === "trash");
+            const machineTotal = machines.length;
+            const tooMany = trashes.length > 8
+                && (machineTotal === 0 || trashes.length / machineTotal >= 0.2);
+            if (tooMany) {
+                const hs = trashes.map(t => handleOf(handles, t.uid)).filter(Boolean);
+                out.push({
+                    code: "TRASH_OVERGROWN",
+                    layer: "L2",
+                    severity: "warn",
+                    subject: subjectOf(handles, trashes[0].uid, "trash"),
+                    expected: "垃圾桶只用来消化真正的废料（cutter 的边角、painter 的多余色）",
+                    observed: `${trashes.length} 个垃圾桶 / ${machineTotal} 台机器 —— `
+                        + `它们吞掉的货本来可以进目标产线`,
+                    evidence: {
+                        handles: hs,
+                        uids: trashes.map(t => t.uid),
+                        trash_count: trashes.length,
+                        machine_count: machineTotal,
+                    },
+                    candidates: ["remove_machine", "remove_run"],
+                    hint: `${trashes.length} 个垃圾桶太多了。它们是「止损」不是「产出」—— `
+                        + `倒掉货能让 DEAD_END 从诊断里消失，但对造出目标形状零贡献。`
+                        + `**别再用 trash_unused 图省事了**：它几乎总是成功，所以很容易变成惯性，`
+                        + `而每一轮用它都离目标更远。`
+                        + `清掉多余的：\`remove_machine {uids:$uids([${hs.slice(0, 4).join(",")}])}\`。`
+                        + `判断标准：这条废料流**本来就不该存在**（源头是接错的线）⇒ 拆线，不是加垃圾桶。`,
+                });
+            }
+        }
     }
 
     /* ────────────────────────────────────────────────────────────────────

@@ -132,6 +132,10 @@ export const DIAG_CODES = Object.freeze({
        截图上是一排垃圾桶和孤立的 cutter/rotater，一根带子都没接。
        `DEAD_LINES` 只数带子，**完全没看机器**：57 台机器里 45 台是孤儿。 */
     ORPHAN_MACHINES: "L2: machines sit on the map with nothing connected to them (both their inputs and outputs are empty); they are leftover attempts that will never run and only get in the way of pathing",
+    /* 2026-11-15 夜，L12 真机：最近 5 次 run 的 59 个调用里 `trash_unused` 占 12 个（20%），
+       垃圾桶从 25 涨到 34，产出始终 0。垃圾桶是「止损」不是「产出」——
+       它能让 DEAD_END 消失，但对「造出目标形状」零贡献。 */
+    TRASH_OVERGROWN: "L2: the map is carrying far more trash buildings than any waste stream needs; each one swallows goods that could have been part of the goal chain, and they are cheap to place so they accumulate",
     /* 2026-11-13：用户说「AI 不会用更高级的方法提高效率」。
        实测 level 9 那一刻 `miner` 与 `painting` 两档升级**当场就买得起**
        （hub 里存着 RuRuRuRu×15583、RbRb----×7219），白送的 ×1.5 采矿速率
@@ -508,6 +512,21 @@ export const RETRIEVAL_TABLE = Object.freeze({
     ORPHAN_MACHINES: cand([
         ["remove_machine", 8],
         ["remove_run", 3],
+    ]),
+    /* ★ 垃圾桶太多（2026-11-15 夜，L12 真机）★
+     *
+     * 实测：最近 5 次 run 的 59 个调用里 `trash_unused` 占 12 个（20%），
+     * 世界里的垃圾桶从 25 涨到 34，而产出始终 0。
+     *
+     * 垃圾桶是「止损」不是「产出」：把货倒掉能让诊断上的 DEAD_END 消失，
+     * 但对「造出目标形状」零贡献。agent 之所以爱用它，是因为它是
+     * 少数**几乎总是成功**的宏（不像 connect 会撞 occupied）——
+     * 于是它变成了「有事没事找个垃圾倒」。
+     *
+     * 世界里垃圾桶够用时，这条诊断唯一的候选就是拆掉多余的那些。 */
+    TRASH_OVERGROWN: cand([
+        ["remove_machine", 8],
+        ["remove_run", 4],
     ]),
     /* 买得起升级 ⇒ 唯一的候选就是 `upgrade`。
        **权重给满**（10）不是因为它最急，而是因为它是**唯一**能处理这条诊断的宏：
