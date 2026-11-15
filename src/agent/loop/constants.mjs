@@ -114,6 +114,14 @@ export const DIAG_CODES = Object.freeze({
     PROCESSOR_REQUIRED: "L4: the recipe needs a process step (cut/rotate/stack/paint) that is either absent from the factory (scope:factory, blocker) or present but not on the stream that carries its input shape (scope:stream, warn)",
     MIXER_UNFED: "L4: a mixer exists but its two color slots do not receive two *different* pigments (the recipe's mix step needs e.g. blue+red); counting mixers is not enough — the machine is there and still can never run",
     WRONG_SHAPE_AT_HUB: "L4: a stream reaching the hub carries a shape that is one rotation away from the goal (in orbit(goal) but not goal); the fix is upstream, not at the inlet",
+    /* 2026-11-15 夜，L12 真机：世界 484 条带子、373 个物品在流动、`production()` 恒空、
+       交付恒 0。查下来 hub 的 16 个 feed cell 只有 7 个放了带子，而西侧那 4 个全是
+       `r=180`（货沿 hub 外侧纵向穿过，不是流进 hub）—— 真正能收货的只有 3 个。
+
+       这条信号系统一直在算（`accepts(exitDirOf(e))`），但只在 `wrong.size` 非空时才用；
+       而 hub 一件货都没收到时 `inlet`/`wrong` 都是空的，于是什么都不报。
+       agent 于是看到「没有产线」而去加更多带子，那些带子同样接不上。 */
+    HUB_INLET_THIN: "L3: too few of the hub's 16 inlet cells can actually deliver (a belt sitting there with the wrong direction does not count); with nothing delivered this is the first thing to fix",
     DISCARDED_INTERMEDIATE: "L4: a multi-output machine sends a useful half (in orbit(goal) or the recipe closure) into trash/nowhere while the other half is delivered and is not the goal",
     SHAPE_UNKNOWN: "L4: shape propagation stopped (no-resources/tunnel/unknown-op/unverified-rotation/cycle/unknown-color); info only, never a blocker and never fed to the LLM as an action",
     /* 2026-11-13：用户直接指着屏幕说「这么多废弃的路线都没有拆」。
@@ -512,6 +520,13 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["replace_run", 8],
         ["insert_machine", 4],
         ["connect", 1],
+    ]),
+    /* 入口太薄：**直接补入口**是首选（connect 到 feed cell），
+       方向反了的用 replace_run 就地改向。这条与 WRONG_SHAPE_AT_HUB 正好相反 ——
+       那条病在上游所以 connect 权重 1，这条病就在入口所以 connect 最高。 */
+    HUB_INLET_THIN: cand([
+        ["connect", 9],
+        ["replace_run", 5],
     ]),
     DISCARDED_INTERMEDIATE: cand([
         ["replace_run", 7],

@@ -494,7 +494,7 @@ test("P-a 只产出已登记的码（越界即红：别顺手加了没登记的�
      *                          两档当场买得起，而 prompt 一个字都没提。 */
     const OWNED = new Set([
         "PROCESSOR_REQUIRED", "WRONG_SHAPE_AT_HUB", "DISCARDED_INTERMEDIATE",
-        "SHAPE_UNKNOWN", "MIXER_UNFED",
+        "SHAPE_UNKNOWN", "MIXER_UNFED", "HUB_INLET_THIN",
         "DEAD_LINES", "ORPHAN_MACHINES", "UPGRADE_AVAILABLE",
     ]);
     for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {

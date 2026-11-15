@@ -2468,6 +2468,94 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 candidates: ["replace_run", "connect"],
             });
         }
+
+        /* ────────────────────────────────────────────────────────────────
+         * ③b HUB_INLET_THIN —— hub 的 16 个入口里，真正能把货送进来的太少
+         *
+         * 2026-11-15 夜，L12 真机：世界有 484 条带子、373 个物品在流动、
+         * `production()` 恒为空、交付恒为 0。查下来 hub 的 16 个 feed cell
+         * 只有 **7 个**上放了带子，而这 7 个里西侧那 4 个全是 `r=180`
+         * （货向 bottom 流，**沿着 hub 外侧纵向穿过**，不是向 right 流进 hub）。
+         * 真正能收货的只有 3 个。
+         *
+         * 这条信号系统**一直在算**（上面那个循环里就有 `accepts(exitDirOf(e))` 判据），
+         * 但它只在 `wrong.size` 非空时才被用 —— 而这个世界 hub 一件货都没收到，
+         * `inlet` 是空的，于是 `wrong` 也是空的，什么都不会报。
+         *
+         * 结果是：agent 看到的是「NO_PRODUCTION，没有产线」，而真相是
+         * **收货口本身就不够用**。它于是去加更多带子，而那些带子同样接不上。
+         *
+         * 判据故意保守：只在「入口少**且**目标没有任何交付」时报。
+         * 交付已经通了的时候入口少不是问题（一条线够用）。 */
+        {
+            const allInlets = (hs && Array.isArray(hs.inputs)) ? hs.inputs : [];
+            const live = [];
+            const misaimed = [];
+            for (const sl of allInlets) {
+                const e = at(idx, sl.cell);
+                if (!e) continue;
+                if (isBelt(e)) {
+                    /* 真正能收货 ⇔ 带子的出口正好指向 hub 本体格，且 hub 收这个来向 */
+                    const okDelivery = sameCell(exitCellOf(e), sl.slot) && accepts(idx, sl.slot, exitDirOf(e)).ok;
+                    if (okDelivery) live.push({ cell: sl.cell, handle: handleOf(handles, e.uid) });
+                    else misaimed.push({ cell: sl.cell, handle: handleOf(handles, e.uid) });
+                } else if (isTunnel(e)) {
+                    /* 隧道跨界，方向不可判定 ⇒ 不计入 live，也不计入 misaimed */
+                } else {
+                    const s2 = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e));
+                    const o = s2 && s2.outputs.find(x => sameCell(x.cell, sl.slot) && x.dir === OPP[sl.dir]);
+                    if (o) live.push({ cell: sl.cell, handle: handleOf(handles, e.uid) });
+                }
+            }
+            /* 交付数：goal 可能是形状串，也可能是 {shape, required, delivered, progress}。
+               自己取数，不依赖别的模块的 `num()` —— 这里只需要「是不是 0」。 */
+            const deliveredNow = (goal && typeof goal === "object"
+                && typeof goal.delivered === "number" && Number.isFinite(goal.delivered))
+                ? goal.delivered
+                : 0;
+            /* 触发条件：
+             *
+             *   · `inlet.length === 0` —— hub 一个**能收到货**的入口都没有
+             *     （`inlet` 是上面那个循环填的：只有带子的出口真的指向 hub 本体、
+             *      且 hub 接受那个来向时才 push）。用这一条而不是 `delivered === 0`：
+             *      后者在测试夹具里恒为 0，会把「已经修好」的世界也判进来
+             *      （`semantic.test.mjs` 的 T5 就是这么红的）。
+             *   · `misaimed.length > 0` —— 且确实有带子**摆在入口格上却指错了方向**。
+             *
+             * 为什么不加「live 太少」这种阈值：试过 `live < 4`，真机世界恰好
+             * live=4（`[-2,-3]`、`[-2,2]`、`[-3,1]`、`[2,1]` 四个碰巧对上），
+             * 于是判据不触发 —— 而 `[-3,-2]`/`[-3,-1]`/`[-3,0]` 三条明明指错了，
+             * 货沿着 hub 外侧纵向穿过。**「有带子放错」本身就是明确的错误**，
+             * 不需要再拿总数去凑阈值。 */
+            const nothingArrives = inlet.length === 0;
+            if (nothingArrives && misaimed.length > 0) {
+                const subj = subjectOf(handles, hub.uid, "hub");
+                const mk = x => `${JSON.stringify(x.cell)}${x.handle ? `(${x.handle})` : ""}`;
+                out.push({
+                    code: "HUB_INLET_THIN",
+                    layer: "L3",
+                    severity: "blocker",
+                    subject: subj,
+                    expected: `hub 的 16 个入口里至少 4 个能真正收货`,
+                    observed: `只有 ${live.length} 个入口能收货`
+                        + (misaimed.length
+                            ? `；另有 ${misaimed.length} 格上放了带子但**方向不对**（货沿着 hub 外侧流过，送不进去）：`
+                              + misaimed.slice(0, 4).map(mk).join(" ")
+                            : "")
+                        + `。空着的入口：${allInlets.length - live.length - misaimed.length} 个。`,
+                    evidence: {
+                        handles: [subj.handle].filter(Boolean),
+                        uids: [hub.uid],
+                        tier: tierOf(hub.uid),
+                        live_inlets: live.length,
+                        misaimed_inlets: misaimed.slice(0, 6),
+                        live_list: live.slice(0, 6),
+                        total_inlets: allInlets.length,
+                    },
+                    candidates: ["connect", "replace_run"],
+                });
+            }
+        }
     }
 
     /* ────────────────────────────────────────────────────────────────────
