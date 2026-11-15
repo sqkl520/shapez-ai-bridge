@@ -1190,6 +1190,29 @@ function planRejectFromViolations(violations, stage) {
             evidence: { stage, rules: [...rules] },
         });
     }
+    /* ★ `UNKNOWN_PARAM` 也要单独成码 ★
+     *
+     * `argKindOf` 返回 null 既可能是「参数存在但不是坐标类型」，
+     * 也可能是「这个宏根本没这个参数」。
+     *
+     * 实测（2026-11-15，L12）：agent 对 `remove_run` 写了 `{region:$path_of(...)}`，
+     * 而 `remove_run` 的参数是 `uids` / `cells` / `opts.*` —— 根本没有 region。
+     * 旧版只报「不是坐标参数」，模型看不出是**参数名写错**，
+     * 换着法子重试同一个不存在的参数，三轮全耗在这上面。
+     *
+     * 单独成码才能把 hint 写成「换参数名，合法的有这些」。 */
+    if (rules.has("UNKNOWN_PARAM")) {
+        const v = violations.find(x => x && x.rule === "UNKNOWN_PARAM") || {};
+        const avail = (v.value && Array.isArray(v.value.available)) ? v.value.available : [];
+        return reject("LLM_ARGS", {
+            layer: "plan", stage,
+            expected: "用的参数名在该宏的声明里存在",
+            observed: v.reason || "参数名不存在",
+            evidence: { stage, rules: [...rules], path: v.path || null, available: avail },
+            hint: `换参数名。这个宏接受：${avail.join(" / ")}。`
+                + `坐标算子（$ref / $uids / $bbox_of / $path_of）要放在真正的坐标参数上。`,
+        });
+    }
     /* ★ `PATH_NOT_RECT` 必须单独成码（第三轮实验的直接产物）★
      * 它既不是「LLM 夹带坐标」（那是模型做错事），也不是「宏拒绝」（宏根本没跑到）——
      * 是**出题人给的算子表达不了它的合法意图**：`$path_of` 指的格集拐弯了，region 无法表达。

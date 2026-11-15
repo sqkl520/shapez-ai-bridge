@@ -671,6 +671,22 @@ eq(argKindOf("replace_run", "calls[0].args.region"), "bbox", "argKindOf 认完�
 eq(argKindOf("replace_run", "args.region"), "bbox", "argKindOf 也认相对路径形态（旧版这里返回 null）");
 eq(argKindOf("replace_run", "args.building"), null, "非坐标参数必须是 null");
 
+/* ★ 参数名写错 vs 参数类型不对，必须分开报（2026-11-15，L12 真机）★
+
+   agent 对 remove_run 写了 {region:$path_of(...)}，而 remove_run 的参数是
+   uids / cells / opts.* —— 根本没有 region。旧版只报「不是坐标参数」，
+   模型看不出是参数名写错，换着法子重试同一个不存在的参数。 */
+{
+    const obs = { entities: [{ uid: 1, type: "belt", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0 }], hub: { uid: 10000, x: 0, y: 0, w: 4, h: 4 }, resources: [] };
+    const tbl = buildHandles(obs);
+    const plan = { calls: [{ macro: "remove_run", args: { region: { $path_of: ["B1"] } } }] };
+    const r = resolveRefs(plan, tbl, obs);
+    const hit = (r.violations || []).find(v => v.rule === "UNKNOWN_PARAM");
+    ok(!!hit, "remove_run 没有 region 参数 ⇒ 必须报 UNKNOWN_PARAM，不是笼统的 REF_SHAPE");
+    ok(!!hit && /uids/.test(hit.reason || ""), "错误信息要列出合法参数名", hit && hit.reason);
+}
+
+
 /* ═══════════ 汇总 ═══════════ */
 
 console.log(`\ncoords 自测：${pass} 通过 / ${fail} 失败`);

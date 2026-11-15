@@ -761,6 +761,33 @@ export function resolveRefs(llmPlan, handles, obs) {
                 if (kind === "cells") {
                     return { value: p.cells.map(c => [c[0], c[1]]), prov: [[path, tag]] };
                 }
+                /* ★ `null` 有两种原因，必须分开报 ★
+                 *
+                 * `argKindOf` 返回 null 既可能是「参数存在但不是坐标类型」
+                 * （如 `replace_run.building`），也可能是「这个宏压根没有这个参数」。
+                 *
+                 * 实测（2026-11-15，L12）：agent 对 `remove_run` 写了
+                 * `{region:{$path_of:[…]}}`，而 `remove_run` 的参数是
+                 * `uids` / `cells` / `opts.*` —— **根本没有 region**。
+                 * 旧版只报「不是坐标参数」，模型看不出是参数名写错了，
+                 * 于是换着法子重试同一个不存在的参数。
+                 *
+                 * 是「参数名写错」就该直接把合法参数名列出来。 */
+                const spec = MACRO_SPECS[currentMacro];
+                const declared = spec && Array.isArray(spec.params)
+                    ? spec.params.map(x => x.name)
+                    : null;
+                const rel = String(path).includes("args.")
+                    ? String(path).slice(String(path).indexOf("args.") + 5)
+                    : String(path);
+                const topName = rel.split(".")[0];
+                const exists = declared ? declared.includes(topName) : true;
+                if (!exists) {
+                    add(path, "UNKNOWN_PARAM",
+                        `${currentMacro} 没有参数 "${topName}" —— 它只接受 ${declared.join(" / ")}`,
+                        { param: topName, available: declared });
+                    return null;
+                }
                 add(path, "REF_SHAPE",
                     `${path} 不是坐标参数（type=${JSON.stringify(kind)}），$path_of 只能给 region / cells`,
                     { param: relPath(path), kind });
