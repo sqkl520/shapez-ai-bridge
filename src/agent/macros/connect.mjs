@@ -382,7 +382,23 @@ function selectPort(list, sel, kindWord, field) {
         const hit = list.filter(p => p.role === sel);
         if (hit.length === 1) return { ok: true, port: hit[0] };
         if (hit.length > 1) return { ok: false, code: "ambiguous_port", message: `${field}.port="${sel}" 命中 ${hit.length} 个，需 {role,index}`, candidates: hit.map(p => ({ role: p.role, index: p.index, cell: p.cell })) };
-        return { ok: false, code: "bad_type", message: `${field}.port="${sel}" 不是合法角色`, candidates: list.map(p => ({ role: p.role, index: p.index })) };
+        /* ★ `bad_type` 也要带 hint —— 光有 candidates 送不到模型眼前 ★
+         *
+         * 2026-11-15 夜，L12 真机：模型写 `port:"right"` / `port:"left"`，
+         * 而那一端的合法角色是 `primary` / `color` / `shape`。宏把候选算出来了
+         * （`candidates:[{role:"color",index:0},…]`），但 `hint` 是 null，
+         * 而 prompt 的候选渲染**只对 `ambiguous_port` 生效** ——
+         * 于是模型看到的是光秃秃一行「connect → bad_type」，什么都不知道。
+         *
+         * 它下一轮用同样的写法再试，因为没有任何信息告诉它「right 不是角色名」。 */
+        return {
+            ok: false, code: "bad_type",
+            message: `${field}.port="${sel}" 不是合法角色`,
+            hint: `这个端点接受的角色只有 ${[...new Set(list.map(p => p.role))].join(" / ")} —— `
+                + `"${sel}" 不是其中之一。写成 \`port:{role:"<角色>", index:<第几个>}\`，`
+                + `或直接把整个 \`{role,index}\` 对象传进来。`,
+            candidates: list.map(p => ({ role: p.role, index: p.index })),
+        };
     }
     if (sel && typeof sel === "object" && isInt(sel.entry)) {
         const p = list.find(q => q.index === sel.entry);

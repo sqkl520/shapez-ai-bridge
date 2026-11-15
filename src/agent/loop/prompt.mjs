@@ -2253,7 +2253,20 @@ function renderLastRound(lastRound) {
              *
              * 只对 `ambiguous_port` 渲染：其它错误的 candidates 往往是
              * 「可以连的端口表」这种长列表，预算撑不住，而且不是必需的答案。 */
-            if (code === "ambiguous_port" && Array.isArray(f.candidates) && f.candidates.length) {
+            /* ★ 候选清单不只对 `ambiguous_port` 有意义（2026-11-15 夜，L12 真机）★
+             *
+             * 原来只有 `code === "ambiguous_port"` 才渲染 `↳ use one of:`。
+             * 而 `bad_type`（角色名写错，如把 `primary` 写成 `right`）**也带 candidates**
+             * —— 宏把可选角色算出来了，只是没进 prompt。
+             *
+             * 实测：模型连着 4 轮写 `port:"right"` / `port:"left"`，每次撞 `bad_type`，
+             * 每次的 candidates 里都明明白白列着 `primary` / `color` / `shape`，
+             * 而它一次都没看到 —— 因为渲染条件是写死的 `ambiguous_port`。
+             *
+             * 现在 `bad_type` 也走这条路径。其它错误码的 candidates 往往是
+             * 「能连的端口表」这种长列表，预算撑不住，仍然不渲染。 */
+            const candCode = code === "ambiguous_port" || code === "bad_type";
+            if (candCode && Array.isArray(f.candidates) && f.candidates.length) {
                 const opts = f.candidates
                     .filter(c => c && typeof c.role === "string" && Number.isInteger(c.index))
                     .slice(0, 4)
@@ -2272,11 +2285,18 @@ function renderLastRound(lastRound) {
                      * 你必须用下标指名是哪一个」。缺的是**为什么**，不是**是什么**。
                      *
                      * 一行成本，把「歧义」这件事说穿。 */
-                    if (opts.length > 1) {
+                    /* 这句只对 `ambiguous_port` 成立 —— `bad_type` 的情况是
+                       「角色名根本不存在」，不是「两个同名」。 */
+                    if (code === "ambiguous_port" && opts.length > 1) {
                         lines.push(`    ↳ These ${opts.length} ports share the SAME role name — `
                             + `writing port:"${f.candidates[0].role}" is ambiguous and will be rejected again. `
                             + `Pass the whole object, e.g. port:${opts[0]}.`);
                     }
+                    /* ⚠️ 走这条路径时也要把 hint 放出来 ——
+                       `continue` 会跳过下面那行 hint 渲染，于是
+                       `bad_type` 的「角色只有 primary / color / shape」这句
+                       就又丢了。candidates 解决「有哪些」，hint 解决「为什么」。 */
+                    if (hint) lines.push(`    ↳ ${hint}`);
                     continue;
                 }
             }
