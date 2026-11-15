@@ -2671,9 +2671,19 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                     },
                     /* 拆废线的首要修法就是 remove_run；trash_unused 也能顺手清 */
                     candidates: ["remove_run", "trash_unused"],
+                    /* ★ 提示里的宏调用必须与宏的真实签名一致 ★
+                     *
+                     * 这里原来写的是 `remove_run {region:$path_of([...])}` ——
+                     * 而 `remove_run` 的参数是 `uids` / `cells` / `opts.*`，**没有 region**。
+                     *
+                     * 后果：模型照着提示写，被拒成 LLM_ARGS，然后它不会怀疑提示有错，
+                     * 只会换个写法重试 —— 实测 L12 连续几轮的最后一步全耗在这上面。
+                     * 诊断教一个名字、宏卡片教另一个名字，模型只能二选一猜。
+                     *
+                     * 现在按真实签名写。`$uids` 直接收句柄数组，正合适。 */
                     hint: `${dead.length} 条带子到不了 hub（占全部 ${Math.round(ratio * 100)}%）—— `
                         + `这是早年反复试错留下的脚手架，不拆它会让后来每一次 connect 都撞到它。`
-                        + `用 \`remove_run {region:$path_of([${hotHandles.slice(0, 4).join(",")}])}\` `
+                        + `用 \`remove_run {uids:$uids([${hotHandles.slice(0, 4).join(",")}])}\` `
                         + `一片一片拆（最密的三片：${hot.map(([k, v]) => `${k} 有 ${v.n} 条`).join("，")}）。`
                         + `**拆之前先别铺新线** —— 空间腾出来之后，正解往往只要几格。`,
                 });
