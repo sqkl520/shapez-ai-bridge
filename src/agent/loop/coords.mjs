@@ -306,7 +306,27 @@ function checkRefShape(opKey, v, path, add) {
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /** `calls[0].args.region` → `region`（provenance 的路径口径，与 calls 里一致）。 */
-const relPath = p => String(p).split(".").slice(2).join(".");
+/**
+ * 从 provenance 路径里取出「参数相对路径」（`region` / `building[0].port` 这种）。
+ *
+ * ⚠️ 路径有两种形态，必须都吃下：
+ *   · 完整形态 `calls[0].args.region` —— resolveNode 内部逐层拼出来的
+ *   · 相对形态 `args.region`       —— 部分调用点直接传这个
+ *
+ * 旧实现是 `split(".").slice(2).join(".")`。它对完整形态正确（去掉 `calls[0]` 和 `args`），
+ * 但对相对形态**整串都被切掉**，返回空字符串 ——
+ * 于是 `argKindOf` 查不到参数声明，返回 null，
+ * `$path_of` 走到最后那个兜底分支报「不是坐标参数」。
+ *
+ * 实测后果（2026-11-15，L12）：agent 连续三轮用
+ * `replace_run {region:{$path_of:[…]}}`，全部被拒成 `REF_SHAPE`，
+ * 而它用的算子、宏、参数都是对的 —— 纯粹是路径解析把自己绊倒了。
+ */
+const relPath = p => {
+    const s = String(p);
+    const i = s.indexOf("args.");
+    return i >= 0 ? s.slice(i + 5) : s;
+};
 
 /**
  * 目标参数**声明的**类型 → `"bbox" | "cells" | null`。

@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import {
     COORD_SOURCES, PROVENANCE_RE, COORD_TEXT_RE, COORD_KEYS,
-    assertNoHumanCoords, resolveRefs, assertProvenance, getPath,
+    assertNoHumanCoords, resolveRefs, assertProvenance, getPath, argKindOf,
 } from "./coords.mjs";
 import { buildHandles, bboxOf } from "./handles.mjs";
 
@@ -656,6 +656,20 @@ console.log("\n── 9. 变异：连续性检查恒真 → 必须被抓 ──"
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 }
+
+
+/* ═══════════ argKindOf 的路径解析（2026-11-15，L12 真机）═══════════ */
+
+/* 旧实现是 split(".").slice(2).join(".") —— 对完整形态正确，
+   对相对形态整串被切光返回空字符串，于是查不到参数声明、返回 null，
+   $path_of 走到兜底分支报「不是坐标参数」。
+
+   实测后果：agent 连续三轮用 replace_run{region:{$path_of:[…]}}，
+   全部被拒成 REF_SHAPE，而它用的算子、宏、参数都是对的 ——
+   纯粹是路径解析把自己绊倒了，而错误信息把它引向了错误的方向。 */
+eq(argKindOf("replace_run", "calls[0].args.region"), "bbox", "argKindOf 认完整路径形态");
+eq(argKindOf("replace_run", "args.region"), "bbox", "argKindOf 也认相对路径形态（旧版这里返回 null）");
+eq(argKindOf("replace_run", "args.building"), null, "非坐标参数必须是 null");
 
 /* ═══════════ 汇总 ═══════════ */
 
