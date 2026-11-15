@@ -3251,7 +3251,27 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     }
 
     /* ── 硬上限：不静默截断任何东西，直接抛 ── */
-    const chars = s1.length + user.length;
+    let chars = s1.length + user.length;
+    /* ★ 最后一道保险：只超一点点时，把带子列表再压几条（2026-11-15 夜，L12 真机）★
+     *
+     * 降级链的目标是 `targetChars`（默认 11500 = tokensMax×2.5），
+     * 而硬上限是 `inCharsMax`（16000）。中间 4500 字符的差额本来是留给
+     * S4/S5 这些后面才拼进去的段的 —— 世界一膨胀，那点差额被吃光，
+     * 于是降级链「达标」了、硬上限却仍然超。
+     *
+     * 实测：16114 vs 16000，差 **114 字符**。为一个零头让整个 run
+     * `outcome:INTERNAL`（这一轮开头的清理是有效的：死带子 322→316），
+     * 代价明显不成比例。
+     *
+     * 所以：超硬上限时继续砍带子（带子优先原则不变 —— 它本来就是
+     * 唯一可截断的东西），砍到 0 还不够才抛。 */
+    while (chars > limits.inCharsMax && shown > 0) {
+        shown -= 1;
+        trimmed += 1;
+        s3Belts = renderBelts(tbl, selection, shown, true);
+        user = compose(s3Belts, s3Capacity || null);
+        chars = s1.length + user.length;
+    }
     if (chars > limits.inCharsMax) {
         throw new PromptOverBudget(
             `prompt is ${chars} chars > LLM_IN_CHARS_MAX ${limits.inCharsMax}; `
