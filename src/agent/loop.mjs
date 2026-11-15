@@ -1015,16 +1015,36 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
         if (goalShape && goalUnmet && madeGoal <= 0) {
             const hub = idx.ent.find(e => e.type === "hub");
             const subject = subjectOf(tbl, hub && hub.uid, "hub");
+            /* ★ 世界已经腐化时，hint 要先说「清理」（2026-11-15 夜，L12 真机）★
+             *
+             * 实测：577 条带子、49 台机器、28 个垃圾桶，产出恒 0。
+             * agent 连着 4/6 轮全撞 `connect:occupied` —— 世界被自己的旧线塞满了。
+             * 而它每轮按 hint 换端口、换目标，下一轮又撞，世界只会更挤。
+             *
+             * 「没有产线在造目标」这句话在干净的世界里指向「去建一条」，
+             * 在腐化的世界里指向「先清出空间」。同一个诊断，两种完全不同的下一步。
+             * 判据用带子数：L12 需要的完整产线大约 60-100 条带子，
+             * 577 条意味着绝大部分是废线。 */
+            const beltCount = idx.ent.filter(e => e.belt || e.type === "belt" || e.type === "underground_belt").length;
+            const trashCount = idx.ent.filter(e => e.type === "trash").length;
+            const rotten = beltCount >= 300;
             out.push(mkDiag("NO_PRODUCTION", {
                 layer: "L4",
                 subject,
                 expected: `有产线在造 ${goalShape}`,
                 observed: p ? `窗口内 ${goalShape} 产出 0（delivered ${delivered === null ? "?" : delivered}/${required === null ? "?" : required}）`
+                    + (rotten ? `；世界已有 ${beltCount} 条带子 / ${trashCount} 个垃圾桶，产出仍然是 0` : "")
                     : "production 不可用，无法确认任何产线在造目标形状",
                 handles: [subject.handle], uids: hub ? [hub.uid] : [],
-                evidence: { stage: "initial", goal: goalShape },
-                candidates: ["connect", "insert_machine", "trash_unused"],
-                hint: "首轮没有 report：这是「目标形状没有产线在造」的初始诊断，不是对某条 check 的复述。",
+                evidence: { stage: "initial", goal: goalShape, ...(rotten ? { belts: beltCount, trash: trashCount, rotten: true } : {}) },
+                candidates: rotten
+                    ? ["remove_run", "connect", "insert_machine", "trash_unused"]
+                    : ["connect", "insert_machine", "trash_unused"],
+                hint: rotten
+                    ? `这个世界已经堆了 ${beltCount} 条带子却一件都产不出来 —— 说明绝大部分是接不上的旧线。`
+                        + `**先清理，别再往上加**：用 \`remove_run\` 把到不了 hub 的旧线成片拆掉，`
+                        + `腾出空间之后，正解往往只要几十格。继续铺新线只会撞上自己。`
+                    : "首轮没有 report：这是「目标形状没有产线在造」的初始诊断，不是对某条 check 的复述。",
             }));
         }
     }
