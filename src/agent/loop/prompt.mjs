@@ -2113,19 +2113,26 @@ function renderDiagnoses(diagnoses) {
             /* ★ 同一条 hint 只渲染一次（2026-11-15 夜，L12 真机）★
              *
              * 实测：8 条诊断里三条 `BELT_HANDOFF_REJECTED` 的 hint 是 226/225/225 字符，
-             * 内容几乎逐字相同（同一个宏的同一套解释）。三条加起来占掉 676 字符 ——
-             * 而 prompt 正是被这个量级的浪费撑到 `PROMPT_OVER_BUDGET` 硬失败的
-             * （16447 > 16000，整个 run `outcome:INTERNAL`）。
+             * 内容几乎相同（同一个宏的同一套解释，只在句柄或格数上差一两个字符）。
+             * 三条加起来占掉 676 字符 —— 而 prompt 正是被这个量级的浪费撑到
+             * `PROMPT_OVER_BUDGET` 硬失败的（16372 > 16000，整个 run outcome:INTERNAL）。
              *
-             * 重复的措辞不带来任何信息：模型读到第二条时已经知道该怎么办了。
-             * 换成一句指回去的短话，比重复三遍有用。
+             * 重复的措辞不带来信息：模型读到第二条时已经知道该怎么办了。
              *
-             * 只对**完全逐字相同**的 hint 去重 —— 近似重复（比如只有句柄不同）
-             * 不动，因为那种差异本身可能是有信息的。 */
-            if (h && seenHints.has(h)) {
+             * ## 为什么用**前缀指纹**而不是全等比较
+             *
+             * 第一版写成 `seenHints.has(h)`（全等），实测**一条都没去掉** ——
+             * 那三条 hint 是 226/225/225，差一两个字符，全等比较必然失手。
+             *
+             * 改成取前 60 字符作指纹：同一段解释的开头必然相同，而
+             * 真正不同的 hint（`ambiguous_port` 的「use one of」、
+             * `port_already_bound` 的「传 opts.rebind」）开头就分道扬镳了。
+             * 60 这个长度是「够长到不误判、够短到能抓住句柄差异」的折中。 */
+            const fp = h ? h.slice(0, 60) : "";
+            if (h && seenHints.has(fp)) {
                 line += `; hint: (same as above)`;
             } else {
-                if (h) seenHints.add(h);
+                if (h) seenHints.add(fp);
                 if (h) line += `; hint: ${h}`;
             }
         }
