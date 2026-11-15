@@ -552,6 +552,24 @@ export const RETRIEVAL_TABLE = Object.freeze({
      * 慢，但每一步都真的能落地。 */
     NO_PRODUCTION: cand([
         ["replace_run", 8],
+        /* ★ `remove_machine` —— 拆掉堵路的废弃机器（2026-11-15，L12 真机）★
+         *
+         * 这一族里原来只有「放东西」和「改朝向」，没有「拆机器」。于是当世界的问题
+         * 是**机器本身**时，模型没有任何牌可打。
+         *
+         * 实测 L12（r-20261115154848-7b88）：18 台矿机里 8 台挤在 (33..39, -7..-12)，
+         * 正好堵死 mixer@34,-13 的通路。`production()` 显示 `produced_total: {}`
+         * —— **一件都没产出**，18 台机器全是废物。
+         *
+         * 模型看出来了（「wiring a free miner's output into that free color slot」），
+         * 但它只能选 connect 或 insert_machine，两者都要绕这堵墙 —— 于是连续两轮
+         * 提出 96 条 / 57 条 op 的绕行方案，每次都被预演闸门拦下（到 hub 的带子 -20/-28）。
+         * 正确的动作是先把挡路的矿机拆掉，而那张牌不在候选里。
+         *
+         * 权重 6：排在 replace_run(8) 之后 —— 大多数 `NO_PRODUCTION` 确实是「缺链路」，
+         * 拆机器只在「机器本身是障碍」时才对。但必须**在候选里**，
+         * 否则模型连想到它的机会都没有。 */
+        ["remove_machine", 6],
         ["insert_machine", 5],
         ["connect", 4],
         ["remove_run", 3],
