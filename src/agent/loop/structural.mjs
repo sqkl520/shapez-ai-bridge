@@ -57,7 +57,7 @@
  */
 import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
 import { slotsOf, beltRvOf } from "../verify_runtime.mjs";
-import { OPP, beltEntry } from "../../ai/belt-rules.mjs";
+import { OPP, beltEntry, beltExit } from "../../ai/belt-rules.mjs";
 import {
     K, indexOf, at, isBelt, isTunnel, tunnelIsSender, tunnelPeer,
     dirOfRotation, exitDirOf, exitCellOf, entryCellOf,
@@ -356,16 +356,56 @@ function collectTopologyFacts(idx) {
              * 货进得来、且继续沿 `d` 的方向流走，下游不破。
              *
              * 也就是说：**把 hit 摆成一条朝 `d` 喷的直带**。这是最小改动。 */
+            /* ★ 只有「改完不破坏下游」时才建议改接收方（2026-11-16）★
+             *
+             * 上一版直接找出「能让这个来向进来的朝向」，就当成建议。
+             * 但真机上 B485 @ (81,-1) 是一条**纵向主干**的一环：
+             *   (81,-2) r=180 在上、B485 r=180、 (81,0) r=180 在下 —— 全部向下流。
+             * 而 B486 从右边 (82,-1) 送进来，这条纵向通道**根本不接受侧向流入**。
+             *
+             * 把 B485 转成朝 left 确实能收下 B486 —— 但它就接不到下面的 (81,0) 了。
+             * 预演闸门如实报出代价：死带子 227→287（+60）、到 hub 的带子 396→336。
+             * agent 照着我的建议改，连着 5 轮全被 `PLAN_REJECTED` 拦下。
+             *
+             * 所以：改接收方之前，先确认它**原本的下游还能接上**。
+             * 接不上就说明这条线不该在这里汇入 —— 该改的是发送方的目标，
+             * 不是接收方的朝向。那种情况下 `intoFix` 留 null，
+             * hint 走「两种改法并列」那条更保守的路。
+             *
+             * ⚠️ 「下游」要用**当前朝向**算，不是用建议朝向算。
+             * 第一版拿 `d` 算下游格 —— 那是「改完之后货去哪」，
+             * 而 (80,-1) 恰好是空地，检查就放行了。
+             * 真正会断的是它**现在**的下游 (81,0)：B485 现在朝 bottom，
+             * 那条纵向主干靠它接着往下走。改成 left 之后整条链断 60 格。 */
             let intoFix = null;
             try {
                 const hb = idx.byUid.get(hit.uid) || hit;
                 if (isBelt(hb) && d) {
-                    /* 找 rot 使 beltExit(0, rot) === d（直带，入口自然正对 OPP[d]） */
                     const ROT_OF_EXIT = { top: 0, right: 90, bottom: 180, left: 270 };
+                    const DIRV = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
                     const rot = ROT_OF_EXIT[d];
-                    if (rot !== undefined) {
-                        /* 复核：这个朝向的入口确实等于 OPP[d] */
-                        if (beltEntry(0, rot) === OPP[d]) intoFix = d;
+                    /* 它现在朝哪、下游是谁 */
+                    const curExit = beltExit(hb.rotation_variant || 0, hb.r || 0);
+                    const curDv = DIRV[curExit] || null;
+                    const curDown = curDv ? at(idx, [hb.x + curDv[0], hb.y + curDv[1]]) : null;
+                    const hasDownstream = !!curDown;
+                    /* 只有当它**本来就是末端**（当前出口是空地）时，
+                       改朝向才不会破坏任何东西。 */
+                    const isTail = !hasDownstream;
+                    /* 或者：改完之后它的下游仍然能接住 —— 那种情况也允许 */
+                    let keepsDownstream = false;
+                    if (hasDownstream && rot !== undefined && beltEntry(0, rot) === OPP[d]) {
+                        const ndv = DIRV[d];
+                        const nd = at(idx, [hb.x + ndv[0], hb.y + ndv[1]]);
+                        if (nd && (isBelt(nd) || isTunnel(nd))) {
+                            const a2 = accepts(idx, [hb.x + ndv[0], hb.y + ndv[1]], d);
+                            keepsDownstream = !!(a2 && a2.ok === true && !a2.opaque);
+                        } else if (!nd) {
+                            keepsDownstream = false;   // 改完变末端 ⇒ 会断下游
+                        }
+                    }
+                    if (rot !== undefined && beltEntry(0, rot) === OPP[d] && (isTail || keepsDownstream)) {
+                        intoFix = d;
                     }
                 }
             } catch { intoFix = null; }
