@@ -113,6 +113,18 @@ export const DIAG_CODES = Object.freeze({
      *    只看 code 分不出严重性，必须看 `evidence.scope` —— 这是本闭集里唯一一个有这种二义性的码。 */
     PROCESSOR_REQUIRED: "L4: the recipe needs a process step (cut/rotate/stack/paint) that is either absent from the factory (scope:factory, blocker) or present but not on the stream that carries its input shape (scope:stream, warn)",
     MIXER_UNFED: "L4: a mixer exists but its two color slots do not receive two *different* pigments (the recipe's mix step needs e.g. blue+red); counting mixers is not enough — the machine is there and still can never run",
+    /* ★ 「一台 mixer 都没有」（2026-11-16）★
+     *
+     * L12 的目标 `CbCbCbRb:CwCwCwCw` 需要 **white**（上层 4 个象限全是圆形+white），
+     * 而 white 只能由 mixer 合成（blue+green+red）—— 地图上没有 white 矿。
+     *
+     * 真机实测：世界跑到 600 实体、11 台矿机（4 台挖 blue）、575 条带子，
+     * **mixer 是 0 台**。而诊断只报 `HUB_INLET_THIN` / `ORPHAN_MACHINES`，
+     * 一个字都没提「你缺一台 mixer」。
+     *
+     * agent 于是把全部预算花在修带子和清垃圾桶上，而 L12 缺的是**那台机器**。
+     * 这与 `PROCESSOR_REQUIRED{scope:"factory"}` 是同一类：工厂缺工序机器。 */
+    MIXER_MISSING: "L4: the recipe needs a mix step (e.g. white = blue+green+red) but the world has ZERO mixers; no amount of belt work can produce the pigment without one",
     WRONG_SHAPE_AT_HUB: "L4: a stream reaching the hub carries a shape that is one rotation away from the goal (in orbit(goal) but not goal); the fix is upstream, not at the inlet",
     /* 2026-11-15 夜，L12 真机：世界 484 条带子、373 个物品在流动、`production()` 恒空、
        交付恒 0。查下来 hub 的 16 个 feed cell 只有 7 个放了带子，而西侧那 4 个全是
@@ -501,6 +513,12 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["connect", 8],
         ["replace_run", 5],
         ["insert_machine", 4],
+    ]),
+    /* 一台 mixer 都没有 ⇒ 唯一的解就是 `insert_machine` 放一台。
+       权重给满（10）因为它**不可替代** —— 没有 mixer 就永远合不出白颜料，
+       而白颜料是 L12 上层 4 个象限全部要求的东西。 */
+    MIXER_MISSING: cand([
+        ["insert_machine", 10],
     ]),
     /* 废线堆成山时，**先拆再铺** —— 不拆的话下一次 connect 还是撞在它们身上。
        `trash_unused` 作为次要选项：它能顺手把没有下游的碎片收掉。 */

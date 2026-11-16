@@ -1589,3 +1589,66 @@ test("M24 ★ BELT_HANDOFF_REJECTED 的 facing 必须能真的接上（不能比
             `★ 拿不到唯一方向时必须给两条路，不许瞎猜。实得：${d.hint}`);
     }
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MIXER_MISSING —— 一台 mixer 都没有（2026-11-16，L12 真机）
+ *
+ * 真机实测：世界 600 实体、11 台矿机（4 台挖 blue）、575 条带子，
+ * **mixer 是 0 台**。而 L12 上层 4 个象限全要 white，
+ * white 只能由 mixer 合成（blue+green+red），地图上没有 white 矿。
+ *
+ * 旧检测在 `if (model.needs.has("mixer"))` 里面，而 L12 的求解器搜索超限
+ * （`recipe.ok=false`）⇒ `model.needs` 是空的 ⇒ 那段一次都不执行。
+ * agent 于是把全部预算花在修带子和清垃圾桶上，而它缺的是那台机器本身。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("M25 ★ 目标要 white（无矿）+ 世界 0 台 mixer ⇒ MIXER_MISSING（配方不可用也要报）", () => {
+    /* 造一个：有 blue/green/red 三种颜料矿，没有 white 矿，一台 mixer 都没有。 */
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 1000, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", layer: "regular" },
+        ],
+        resources: [
+            [5, 5, "blue"], [6, 5, "green"], [7, 5, "red"],
+        ],
+    };
+    const ds = semanticDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null),
+        { recipe: { ok: false, reason: "solver search capped" }, level: 12 });
+    const d = byCode(ds, "MIXER_MISSING")[0];
+    assert.ok(d, `★ 配方不可用时也必须报 MIXER_MISSING（实得 ${JSON.stringify(ds.map(x => x.code))}）`);
+    assert.equal(d.severity, "blocker", "必须是 blocker（不可绕过）");
+    assert.ok(/white/.test(d.observed), `必须说清缺的是 white：${d.observed}`);
+    assert.deepEqual(d.candidates, ["insert_machine"],
+        `★ 唯一出路是 insert_machine，实得 ${JSON.stringify(d.candidates)}`);
+});
+
+test("M25b ★ 对照：世界已有 mixer ⇒ 不许报 MIXER_MISSING", () => {
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 1000, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", layer: "regular" },
+            { uid: 2, type: "mixer", x: 5, y: 5, r: 0, variant: "default", layer: "regular" },
+        ],
+        resources: [[5, 8, "blue"], [6, 8, "green"], [7, 8, "red"]],
+    };
+    const ds = semanticDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null),
+        { recipe: { ok: false }, level: 12 });
+    assert.ok(!ds.some(d => d.code === "MIXER_MISSING"),
+        "★ 已经有 mixer 时不许报「一台都没有」");
+});
+
+test("M25c ★ 对照：目标颜色都有矿（不需要合成）⇒ 不许报 MIXER_MISSING", () => {
+    /* `CrCrCrCr` 只需要 red。地图上有 red 矿 ⇒ 不需要 mixer。 */
+    const w = {
+        goal: { level: 3, requirement: { shape: "CrCrCrCr", required: 60, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", layer: "regular" },
+        ],
+        resources: [[5, 5, "red"]],
+    };
+    const ds = semanticDiagnoses(w, null, "CrCrCrCr", buildHandles(w, null),
+        { recipe: { ok: false }, level: 3 });
+    assert.ok(!ds.some(d => d.code === "MIXER_MISSING"),
+        `★ 目标色有矿就不需要 mixer（实得 ${JSON.stringify(ds.map(x => x.code))}）`);
+});

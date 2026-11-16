@@ -1496,6 +1496,60 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
      * 解不出时**不猜**是哪种颜色 —— 只说「这一槽没有已知来料」，
      * 并把该槽的喂料格与缺口原因一起给出。
      * ──────────────────────────────────────────────────────────────────── */
+    /* ★ 「一台 mixer 都没有」——**不依赖配方**，从目标形状就能判（2026-11-16）★
+     *
+     * 真机实测：世界 600 实体、11 台矿机（4 台挖 blue）、575 条带子，
+     * **mixer 是 0 台**。而 L12 上层 4 个象限全要 white，
+     * white 只能由 mixer 合成（blue+green+red），地图上没有 white 矿。
+     *
+     * 旧的检测在 `if (model.needs.has("mixer"))` 里面 —— 而 L12 的求解器
+     * 搜索超限（`recipe.ok=false`），`model.needs` 是**空的**，
+     * 那段一次都不执行。于是 agent 把全部预算花在修带子和清垃圾桶上，
+     * 而它缺的是那台机器本身。
+     *
+     * 这条判断不需要配方：目标形状的色码里有 `w`，而矿表里没有 white 矿
+     * ⇒ 白颜料一定得混出来 ⇒ 必须有 mixer。纯数据可推。 */
+    {
+        const mixersNow = idx.ent.filter(e => e.type === "mixer");
+        /* 目标的色码集合（按 pair 的第二位取，见 prompt.mjs 的同款说明） */
+        const goalColorCodes = new Set();
+        for (const layer of String(goalShape || "").split(":")) {
+            for (let q = 0; q + 1 < layer.length; q += 2) {
+                const cc = layer[q + 1];
+                if (/[a-z]/.test(cc) && cc !== "u") goalColorCodes.add(cc);
+            }
+        }
+        /* 有几种目标的色码**在地图上没有颜料矿** ⇒ 只能混出来 */
+        const COLOR_NAMES = { r: "red", g: "green", b: "blue", y: "yellow", p: "purple", c: "cyan", w: "white" };
+        const oreKinds = engine && engine.ore ? new Set([...engine.ore.values()].filter(v => /^[a-z]+$/.test(String(v)))) : null;
+        const mustMix = [...goalColorCodes]
+            .map(c => COLOR_NAMES[c])
+            .filter(name => !!name && oreKinds && oreKinds.size > 0 && !oreKinds.has(name));
+        if (mixersNow.length === 0 && mustMix.length > 0) {
+            const subj = subjectOf(handles, null, "mixer");
+            out.push({
+                code: "MIXER_MISSING",
+                layer: "L4",
+                severity: "blocker",
+                subject: subj,
+                expected: `世界上至少有一台 mixer，能合成 ${mustMix.join("+")}`,
+                observed: `地图上有 0 台 mixer，而目标需要 ${mustMix.join("/")} —— `
+                    + `这种颜料没有矿，只能靠 mixer 合成。再多的带子工作都产不出它。`,
+                evidence: {
+                    handles: [subj.handle].filter(Boolean),
+                    uids: [],
+                    wanted_colors: mustMix,
+                    mixer_count: 0,
+                },
+                candidates: ["insert_machine"],
+                hint: `**先造一台 mixer**，这是唯一的出路：`
+                    + `\`insert_machine {at:{$ref:"<一条空带子>", asCell:true}, machine:"mixer", facing:"<方向>"}\`。`
+                    + `放好之后，它的两个 color 槽分别接两种颜料，输出再往 hub 方向接。`
+                    + `**在这之前修带子都是白费** —— 没有 mixer，${mustMix.join("/")} 永远不存在。`,
+            });
+        }
+    }
+
     if (model.needs.has("mixer")) {
         const mixStep = model.usable.find(s => s.op === "mix");
         const wantColors = (mixStep && Array.isArray(mixStep.inputs) ? mixStep.inputs : [])
@@ -1503,6 +1557,47 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
         const mixers = idx.ent.filter(e => e.type === "mixer");
         /* 只有**真的**需要两种不同颜色时才查（单输入配方不该被这条打扰） */
         const needDistinct = new Set(wantColors).size >= 2 || wantColors.length >= 2;
+
+        /* ★ 一台 mixer 都没有 ⇒ 这是**不可绕过的**阻塞（2026-11-16，L12 真机）★
+         *
+         * 真机实测：世界 600 实体、11 台矿机（4 台挖 blue）、575 条带子，
+         * **mixer 是 0 台**。而 L12 的上层 4 个象限全要 white，
+         * white 只能由 mixer 合成（blue+green+red），地图上没有 white 矿。
+         *
+         * 旧的诊断只在 `for (const m of mixers)` 里逐台检查 ——
+         * 0 台时这个循环一次都不跑，于是**一句提示都没有**。
+         * agent 于是把全部预算花在修带子和清垃圾桶上，
+         * 而它缺的是那台机器本身。
+         *
+         * 这与 `PROCESSOR_REQUIRED{scope:"factory"}` 同类：工厂缺工序机器。
+         * 区别是这条比它更硬 —— 没有 mixer，白颜料永远不存在，
+         * 再多的带子工作都是零。 */
+        if (mixers.length === 0 && (needDistinct || wantColors.length > 0)) {
+            const subj = subjectOf(handles, null, "mixer");
+            /* 从配方里读出要混哪几种颜料，说给模型听 */
+            const wanted = wantColors.map(c => String(c).replace(/^color:/, ""));
+            out.push({
+                code: "MIXER_MISSING",
+                layer: "L4",
+                severity: "blocker",
+                subject: subj,
+                expected: `世界上至少有一台 mixer，能合成 ${wanted.join("+") || "目标所需的白颜料"}`,
+                observed: `地图上有 0 台 mixer，而目标需要 ${wanted.join("+") || "混合颜料"} —— `
+                    + `这种颜料没有矿，只能靠 mixer 合成。再多的带子工作都产不出它。`,
+                evidence: {
+                    handles: [subj.handle].filter(Boolean),
+                    uids: [],
+                    wanted_colors: wanted,
+                    mixer_count: 0,
+                },
+                candidates: ["insert_machine"],
+                hint: `**先造一台 mixer**，这是唯一的出路：`
+                    + `\`insert_machine {at:{ref:"<一条空带子>"}, asCell:true, machine:"mixer", facing:"<方向>"}\`。`
+                    + `放好之后，它的两个 color 槽分别接 ${wanted.slice(0, 2).join(" 和 ") || "两种颜料"}，`
+                    + `输出再往 hub 方向接。**在这之前修带子都是白费** —— `
+                    + `没有 mixer，那几种颜料混不到一起。`,
+            });
+        }
 
         for (const m of mixers) {
             const tpl = templateByBuildingVariant(m.type, variantOf(m));
