@@ -54,9 +54,9 @@ import { spawnSync } from "node:child_process";
 export const MAP_CHUNK_SIZE = 16;              // 上游 core/config.js:72 mapChunkSize
 
 /* ───────────────────────── 结构化错误（本地版） ─────────────────────────
- * reason 取值刻意复用 plan §2.5 的枚举字符串，但**不 import** P1 的 errors.mjs：
- * P1 仍在写，本包测试要自包含。
- * TODO(P1 落地后)：换成 errors.mjs 的 ContractViolation / makeFailure（字段名已对齐 path/rule/got/reason）。 */
+ * reason 取值与 `src/ai/compiler/errors.mjs` 的枚举一致，但这里**不 import** 它：
+ * 本包的测试要自包含，不应因为 compiler 的改动而连带失败。
+ * 字段形状已对齐（path / rule / got / reason），需要时可直接互换。 */
 export class WorldError extends Error {
     constructor(pathKey, rule, got, reason = "no-resource-in-range") {
         super(`世界查询失败 ${pathKey}: 期望 ${rule}，实得 ${safe(got)}`);

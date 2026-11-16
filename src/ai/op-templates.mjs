@@ -55,8 +55,9 @@ import { rotateLocal, beltCode, ORDER, OPP, DIRV, norm360, angleToDir, EXIT_LOCA
 export { rotateLocal, beltCode, ORDER, OPP, DIRV, norm360, angleToDir };
 
 /* ───────────────────────────── 结构化错误（本地版） ─────────────────────────────
- * TODO(P1 落地后)：换成 `src/ai/compiler/errors.mjs` 的 ContractViolation / makeFailure，
- * 保持 {path, rule, got, reason} 字段名不变即可（本包测试要求自包含，故现在自带一份）。 */
+ * 这一份是自包含的：本包的测试不应该依赖 `src/ai/compiler/` 才能跑。
+ * 字段形状与 `src/ai/compiler/errors.mjs` 的 ContractViolation 一致
+ * （{path, rule, got, reason}），需要时可以直接互换。 */
 export class SpecError extends Error {
     /** @param {string} path 字段/参数路径 @param {string} rule 违反的规则 @param {unknown} got 实得值 */
     constructor(pathKey, rule, got, reason = "validate:V8-scope") {
@@ -1113,8 +1114,8 @@ export function bottleneckOf(ops) {
 }
 
 /* ================================ 自测（node src/ai/op-templates.mjs --test） ================================
- * TODO(P1)：P1 的 errors.mjs/ContractViolation 落地后，这些断言可换成 assert*()；
- * 现在刻意**不 import types.mjs**（P1 仍在写），断言一律用普通对象比较，保持本包自包含。 */
+ * 断言刻意用普通对象比较、不 import `types.mjs` —— 本包的测试保持自包含，
+ * 不因为下游模块改动而连带失败。 */
 
 function runTests() {
     let failed = 0;
