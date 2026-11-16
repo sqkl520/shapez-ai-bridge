@@ -1037,8 +1037,7 @@ function renderGoalResource(obs, goalShape, opts = {}) {
     };
 
     const wanted = [...letters].map(probeColor);
-    if (wanted.length) {
-        /* 每种颜色一行：有就说有几格、在哪一档；没有就明说「没有」。
+    if (wanted.length) {        /* 每种颜色一行：有就说有几格、在哪一档；没有就明说「没有」。
          *
          * 同色多种矿时**全部列出**（`CuCuCuCu` 和 `CuCu----` 都含铜）——
          * 只报最大的那种会让模型以为「只有这一种矿可采」，
@@ -1060,7 +1059,91 @@ function renderGoalResource(obs, goalShape, opts = {}) {
         const head = missing.length
             ? `⇒ goal needs colors [${[...letters].join("")}]; ${missing.length} of them have NO ore here`
             : `⇒ goal needs colors [${[...letters].join("")}]; all of them exist as ore`;
-        return [head, ...lines].join("\n");
+
+        /* ★ 当前矿机在挖什么 —— 与「需要什么」对比（2026-11-15 夜，L12 真机）★
+         *
+         * 实测：世界有 6 台矿机，全部在挖 red / green；而 `CbCbCbRb:CwCwCwCw`
+         * 需要 cyan 和 white，两者都要 blue。**一台挖 blue 的都没有。**
+         *
+         * 而 prompt 只说了「goal needs colors [CbRw]; all of them exist as ore
+         * ⇒ b: blue×1794」—— 它知道需要 blue，也知道有 1794 格 blue，
+         * 但**不知道自己的矿机只挖 red/green**。
+         *
+         * 于是它一直在修带子、接 mixer、清垃圾桶，而缺的那一种颜料
+         * 从来没人去挖。这不是它笨：那三个事实分布在 prompt 的不同段里，
+         * 从来没有人把它们**并列**说出来（这是本项目最高频的缺陷形态
+         * —— 「算出来了但没送到决策者眼前」，只是这次是「送到了但没并排」）。
+         *
+         * 只报**需要的颜色**里哪些没人挖，不罗列全部矿机 —— 预算和噪音。 */
+        const digState = (() => {
+            const ents = Array.isArray(obs && obs.entities) ? obs.entities : [];
+            const miners = ents.filter(e => e && e.type === "miner");
+            if (!miners.length) return null;
+            /* 矿机脚下是什么矿种 */
+            const dugKinds = new Map();       // kind → 台数
+            for (const m of miners) {
+                const k = byKind.get ? null : null;
+                const key = `${m.x},${m.y}`;
+                let hit = null;
+                for (const r of list) {
+                    if (Array.isArray(r) && r[0] === m.x && r[1] === m.y) { hit = r[2]; break; }
+                }
+                if (hit) dugKinds.set(hit, (dugKinds.get(hit) || 0) + 1);
+            }
+            if (!dugKinds.size) return null;
+            /* 需要的颜色里，哪些没有任何一台矿机在挖 */
+            const notDug = [];
+            for (const w of wanted) {
+                if (!w.ok) continue;          // 地图上就没有这种矿，不怪矿机
+                const lower = w.color.toLowerCase();
+                const word = COLOR_LETTER_TO_NAME[lower] || null;
+                const dug = [...dugKinds.keys()].some(k => {
+                    const ks = String(k);
+                    if (word && ks === word) return true;
+                    for (let i = 0; i + 2 <= ks.length; i += 2) {
+                        const pair = ks.slice(i, i + 2);
+                        if (!/^[A-Z][a-z]$/.test(pair)) continue;
+                        if (pair[1] === lower || pair[0].toLowerCase() === lower) return true;
+                    }
+                    return false;
+                });
+                if (!dug) notDug.push(w.color);
+            }
+            return { miners: miners.length, dugKinds, notDug };
+        })();
+        /* ★ 只对**有矿可挖**的颜色给 `$ore` 建议 ★
+         *
+         * 第一版直接拿 `notDug[0]` 举例，而 L12 的 `notDug` 是 `[C,b,w]` ——
+         * `C` 是 cyan，`w` 是 white，**这两种颜色地图上根本没有矿**（要 mixer 合成）。
+         * 于是提示写成 `$ore:"cyan"`，把模型指向一个不存在的矿种。
+         *
+         * ⚠️ 第二版仍然错：`probeColor` 对 `C`/`R`/`w` 都返回 `ok:true`，
+         * 因为它们作为**形状矿里的一段**出现了（`RuRuRuCu` 含 `C`，`RuRuWuWu` 含 `w`）。
+         * 但形状矿挖出来的是**形状**，不是**颜料** —— 把 `Cu` 混进 mixer 的
+         * color 槽什么也混不出来。
+         *
+         * 所以这里必须区分：`$ore` 能指的「颜料矿」只有**纯小写单词**那几种
+         * （`red` / `blue` / `green` / `yellow` / `purple` / `cyan` / `white`）。
+         * 形状矿的 `$ore` 值是 `CuCuCuCu` 那种，挖出来是形状 —— 那是另一条产线的事。 */
+        const PIGMENT_NAMES = new Set(Object.values(COLOR_LETTER_TO_NAME));
+        const diggable = digState
+            ? digState.notDug.filter(c => {
+                const word = COLOR_LETTER_TO_NAME[c.toLowerCase()] || null;
+                return !!word && byKind.has(word);
+            })
+            : [];
+        const digLine = digState && digState.notDug.length
+            ? `⇒ ⚠️ NO miner is digging ${digState.notDug.join("/")} — `
+                + `you have ${digState.miners} miner(s) on `
+                + `${[...digState.dugKinds].map(([k, n]) => `${k}×${n}`).join(", ")}. `
+                + `Every color above is needed; the ones nobody digs can never appear.`
+                + (diggable.length
+                    ? ` Put a miner on the missing PIGMENT with `
+                        + `\`insert_machine {at:{"$ore":"${COLOR_LETTER_TO_NAME[diggable[0].toLowerCase()]}"}, machine:"miner", facing:<dir>}\`.`
+                    : ` (The missing ones have no **pigment** ore on this map — they must be mixed, not mined.)`)
+            : null;
+
+        return [head, ...lines, digLine].filter(Boolean).join("\n");
     }
 
     /* 形状串里没有字母（`----` 这种）：没什么可查 */
