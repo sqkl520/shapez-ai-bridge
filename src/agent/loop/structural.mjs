@@ -57,7 +57,7 @@
  */
 import { templateByBuildingVariant } from "../../ai/op-templates.mjs";
 import { slotsOf, beltRvOf } from "../verify_runtime.mjs";
-import { OPP } from "../../ai/belt-rules.mjs";
+import { OPP, beltEntry } from "../../ai/belt-rules.mjs";
 import {
     K, indexOf, at, isBelt, isTunnel, tunnelIsSender, tunnelPeer,
     dirOfRotation, exitDirOf, exitCellOf, entryCellOf,
@@ -330,12 +330,42 @@ function collectTopologyFacts(idx) {
              * 算一下：要让 `hit` 收下从 `e0` 来的货，`hit` 必须朝哪个方向喷？
              * 就是「从 hit 指向 e0」的反方向 —— 即 `hit` 的出口正对着 e0 来的方向。
              * 用 `accepts` 复核四个方向里哪个真的能收。 */
+            /* ★ 「改接收方」要算的是**这个特定来向**，不是「随便哪个能收的方向」★
+             *
+             * 2026-11-16 第一版算错了：遍历四个方向找第一个 `accepts().ok` 的，
+             * 结果对 (8,6) 那格给出 `bottom` —— 那是「改成朝 bottom 后接受
+             * 从 top 来的货」，而实际的货是从 **right** 来的。
+             *
+             * 后果是完美的死循环：agent 连着 12 轮照 hint 改同一格，
+             * 每次 `replace_run` 都报 `added:1, removed:1`（看起来成功了），
+             * 下一轮诊断原封不动再报一遍。
+             *
+             * ## 正确的算法
+             *
+             * 货沿 `d`（发送方的出口方向 = 货的行进方向）到达 hit。
+             * `accepts()` 的判据是 `beltEntry(rv, rot) === OPP[d]`
+             * —— 即「这条带子的入口面」要正对 `OPP[d]`（货来自的那一面）。
+             *
+             * 所以要让 hit 接受这个来向，需要挑一个 `rv`，使
+             *   `beltEntry(rv, rot_new) === OPP[d]`
+             * 而 `rot_new` 还要保持它**原有的出流方向**（别把下游弄断）。
+             *
+             * 从 `belt-rules` 的表看：`rv=0` 是直带（entry 与 exit 相反），
+             * 且 `beltEntry(0, rot) = OPP[beltExit(0, rot)]`。
+             * 所以直带只要 `rot` 使得 `beltExit(0, rot) === d` 即可 ——
+             * 货进得来、且继续沿 `d` 的方向流走，下游不破。
+             *
+             * 也就是说：**把 hit 摆成一条朝 `d` 喷的直带**。这是最小改动。 */
             let intoFix = null;
             try {
                 const hb = idx.byUid.get(hit.uid) || hit;
-                if (isBelt(hb)) {
-                    for (const dd of ["top", "right", "bottom", "left"]) {
-                        if (accepts(idx, [hb.x, hb.y], dd).ok) { intoFix = dd; break; }
+                if (isBelt(hb) && d) {
+                    /* 找 rot 使 beltExit(0, rot) === d（直带，入口自然正对 OPP[d]） */
+                    const ROT_OF_EXIT = { top: 0, right: 90, bottom: 180, left: 270 };
+                    const rot = ROT_OF_EXIT[d];
+                    if (rot !== undefined) {
+                        /* 复核：这个朝向的入口确实等于 OPP[d] */
+                        if (beltEntry(0, rot) === OPP[d]) intoFix = d;
                     }
                 }
             } catch { intoFix = null; }

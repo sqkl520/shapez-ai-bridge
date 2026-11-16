@@ -33,6 +33,7 @@ import { semanticDiagnoses, beltsCarryingShape } from "./semantic.mjs";
 import { structuralDiagnoses } from "./structural.mjs";
 import { buildHandles } from "./handles.mjs";
 import { indexOf, accepts } from "./topology.mjs";
+import { beltEntry, OPP } from "../../ai/belt-rules.mjs";
 import { replaceRun } from "../macros/remove.mjs";
 import { DIAG_CODES } from "./constants.mjs";
 
@@ -1553,8 +1554,25 @@ test("M24 ★ BELT_HANDOFF_REJECTED 的 facing 必须能真的接上（不能比
 
     if (mRecv) {
         const facing = mRecv[2];
-        assert.equal(accepts(idx0, [into.x, into.y], facing).ok, true,
-            `★ 照 hint 把接收方改成朝 ${facing} 之后，它仍然不接受来自发送方的货。hint=${d.hint}`);
+        /* ⚠️ 这里**不能**直接 `accepts(idx, [into.x,into.y], facing)`——
+         * `accepts` 的第三参数是「货的**来向**」（行进方向），不是「这条带子该朝哪」。
+         * 两者互为反向（`accepts` 内部比的是 `beltEntry(...) === OPP[fromDir]`）。
+         *
+         * 第一版就是这么写的，于是把「接收方朝 left 喷」误验成
+         * 「货从 left 来」—— 恰好差一个 `OPP`，永远是 false。
+         *
+         * 正确验法：接收方朝 `facing` 喷 ⇒ 它的入口面是 `OPP[facing]`
+         * ⇒ 只有当货**从那个面进来**（即行进方向是 `facing`）时才收。
+         * 所以验的是 `accepts(..., OPP[OPP[facing]]) === accepts(..., facing)`
+         * —— 也就是直接比 `beltEntry`。用 `belt-rules` 的表算，不猜。 */
+        const rot = { top: 0, right: 90, bottom: 180, left: 270 }[facing];
+        assert.ok(rot !== undefined, `facing=${facing} 必须有对应 rotation`);
+        /* 直带 rv=0：入口 == OPP[出口]。
+           接收方朝 `facing` 喷 ⇒ 入口面是 OPP[facing] ⇒ 从 `facing` 方向
+           来的货正好从那个面进去。这就是「能接上」的充要条件。 */
+        assert.equal(beltEntry(0, rot), OPP[facing],
+            `★ 接收方朝 ${facing} 喷时，它的入口面应当是 ${OPP[facing]}`
+            + `（这样从 ${facing} 方向来的货才进得去）。hint=${d.hint}`);
     } else if (mSend) {
         const facing = mSend[1];
         const subj = idx0.byUid.get(d.subject.uid);
