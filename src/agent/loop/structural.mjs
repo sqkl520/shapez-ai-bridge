@@ -630,6 +630,48 @@ export function structuralDiagnoses(obs, items, goal, handles, opts = {}) {
                  *
                  * `r.intoFix` 是 `accepts()` 从四个方向里实测出的、接收方
                  * **真的能收**的那个朝向 —— 不是猜的。 */
+                /* ★ 十字路口：改朝向无解，必须用隧道（2026-11-16，L12 真机）★
+                 *
+                 * 真机现场：`B38` @ (36,-40) 位于一个十字路口 ——
+                 *   横向 y=-40 一整排 r=270（向左流）
+                 *   纵向 x=36 一整列 r=180（向下流）
+                 * 两股流都要经过 B38，而**一个格子只能有一个方向**。
+                 *
+                 * 于是诊断在两种说法之间来回打脸：
+                 *   改 B38 → bottom ⇒ 下一轮说它该改回 left
+                 *   改回 left      ⇒ 下一轮又说该改 bottom
+                 * agent 在 bottom 和 left 之间来回摆了 **12 轮**
+                 * （transcript 实证：r-20261116150724-482e 的 R1-R6、
+                 *   r-20261116150617-9e33 的 R1-R6，每轮 `added:1,removed:1`
+                 *   看起来都成功，下一轮诊断原封不动）。
+                 *
+                 * 这不是它能修的：要解这个结，必须让其中一条流**从地下穿过去**。
+                 * 系统里有 `underground_belt`（`tunnel.mjs` 就是为这个写的），
+                 * 而 hint 从来没提过它。 */
+                const isCrossroads = (() => {
+                    try {
+                        const hb2 = idx.byUid.get(r.into.uid) || r.into;
+                        if (!isBelt(hb2)) return false;
+                        const horiz = [at(idx, [hb2.x - 1, hb2.y]), at(idx, [hb2.x + 1, hb2.y])]
+                            .filter(x => x && (isBelt(x) || isTunnel(x))).length;
+                        const vert = [at(idx, [hb2.x, hb2.y - 1]), at(idx, [hb2.x, hb2.y + 1])]
+                            .filter(x => x && (isBelt(x) || isTunnel(x))).length;
+                        return horiz >= 1 && vert >= 1;
+                    } catch { return false; }
+                })();
+                if (isCrossroads && intoH) {
+                    const meH = me;
+                    return `${meH} 推向 ${labelOf(handles, r.into)} 被拒 —— 但**这不是朝向问题**：`
+                        + `${intoH} 在一处**十字路口**上（横向和纵向都有带子经过），`
+                        + `而一个格子只能有一个方向，所以它必然拒收其中一股。\n`
+                        + `**改朝向修不好它** —— 你会改完发现下一轮还是同一个错（只是方向反过来）。\n`
+                        + `唯一的出路是让其中一条流**从地下穿过去**。` +
+                        `好消息：\`connect\` **本来就会自己挖隧道**（\`opts.tunnels\` 默认就是开的），`
+                        + `所以直接用它重接这条流，让宏去绕：\n`
+                        + `  \`connect {from:{ref:"${meH}"}, to:{ref:"${intoH}"}, opts:{rebind:true, tunnels:true}}\`\n`
+                        + `它会在路被挡住时自动放一对 underground_belt 从地下穿过交叉点。\n`
+                        + `**别再试 replace_run 了** —— 这个位置在拓扑上就是接不了两股流的。`;
+                }
                 if (r.intoFix && intoH) {
                     /* ⚠️ 措辞刻意与「改发送方」不同形。
                      *
