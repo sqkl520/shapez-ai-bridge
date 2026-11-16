@@ -93,3 +93,7 @@ out.html
 
 # 编译夹具的输出区（每次跑都重新生成，交接件不是源文件）
 research/ai-plan/harness/out/
+
+# 真机实验的原始世界快照（含真实存档数据、单文件近 600KB）
+# 复现应当重跑实验装置，而不是提交测量数据。
+research/ai-player/facts/live/

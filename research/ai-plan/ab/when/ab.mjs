@@ -112,12 +112,17 @@ console.log(`  差 = ${ARMS.ON.system.length + ARMS.ON.user.length - ARMS.OFF.sy
 /* ⚠️ 密钥**绝不硬编码**：本仓是公开的。从环境变量取，缺了就明确报错停。
    用 `AB_BASE_URL` / `AB_MODEL` 可以指向任何兼容 Anthropic Messages 协议的端点。 */
 const API = {
-    baseUrl: process.env.AB_BASE_URL || "https://api.example.test",
+    baseUrl: process.env.AB_BASE_URL || "",
     model: process.env.AB_MODEL || "virtual/opus",
     key: process.env.ANTHROPIC_API_KEY || "",
     maxTokens: 64000,
     timeoutMs: 600000,
 };
+if (!API.baseUrl) {
+    console.error("✗ 缺少 AB_BASE_URL 环境变量 —— 不设默认端点，避免把密钥发到意料之外的主机。");
+    console.error("  用法：ANTHROPIC_API_KEY=sk-... AB_BASE_URL=https://api.anthropic.com node research/ai-plan/ab/when/ab.mjs [N] [CONC]");
+    process.exit(2);
+}
 if (!API.key) {
     console.error("✗ 缺少 ANTHROPIC_API_KEY 环境变量 —— 本装置不内置密钥（公开仓库）。");
     console.error("  用法：ANTHROPIC_API_KEY=sk-... node research/ai-plan/ab/when/ab.mjs [N] [CONC]");
