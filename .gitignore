@@ -90,3 +90,6 @@ research/ai-plan/tmp/
 # 一次性页面快照（写作时误存的 HTML）
 bing.html
 out.html
+
+# 编译夹具的输出区（每次跑都重新生成，交接件不是源文件）
+research/ai-plan/harness/out/
