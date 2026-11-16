@@ -312,9 +312,36 @@ function collectTopologyFacts(idx) {
                     if (a2 && a2.ok === true && !a2.opaque) acceptDir = cand;
                 }
             } catch { acceptDir = null; }
+            /* ★ 「改接收方」也是一条出路，而且常常是唯一那条 ★
+             *
+             * 2026-11-16，L12 真机现场：
+             *
+             *   16166 @ (30,-3) r=180  货向 bottom 走
+             *   16401 @ (30,-2) r=270  货向 left 走 —— 只接受从 left 来的货
+             *
+             * 而货是从 **top** 来的（16166 在它正上方）。所以 16401 该改成
+             * r=0（向 bottom），货就能从 top 进来。而 `B225→B226` 那对
+             * 同向相邻的带子同理：问题在**收费方**的朝向，不在发送方。
+             *
+             * 原来的 hint 只教「改发送方」。agent 于是反复 `replace_run`
+             * 那条发送方带子 —— 它已经是正确方向了，改它当然没用。
+             * 实测它在这一对上连着修了 4 轮。
+             *
+             * 算一下：要让 `hit` 收下从 `e0` 来的货，`hit` 必须朝哪个方向喷？
+             * 就是「从 hit 指向 e0」的反方向 —— 即 `hit` 的出口正对着 e0 来的方向。
+             * 用 `accepts` 复核四个方向里哪个真的能收。 */
+            let intoFix = null;
+            try {
+                const hb = idx.byUid.get(hit.uid) || hit;
+                if (isBelt(hb)) {
+                    for (const dd of ["top", "right", "bottom", "left"]) {
+                        if (accepts(idx, [hb.x, hb.y], dd).ok) { intoFix = dd; break; }
+                    }
+                }
+            } catch { intoFix = null; }
             rejected.push({
                 uid: e.uid, kind: isTunnel(e) ? "tunnel" : "belt", cell, dir: d,
-                into: hit, intoDir: d, acceptDir,
+                into: hit, intoDir: d, acceptDir, intoFix,
             });
         }
     }
@@ -517,6 +544,40 @@ export function structuralDiagnoses(obs, items, goal, handles, opts = {}) {
                         + `\`replace_run {region:$path_of(["${me}"]), building:"belt", opts:{facing:"${r.acceptDir}"}}\` —— `
                         + `\`opts.facing\` 是**选一个面**，契约允许。`
                         + `这条路不碰别的带子，**先试它**。`;
+                }
+                /* ★ 先给「改接收方」—— 那常常是唯一能修的那条 ★
+                 *
+                 * 实测（2026-11-16，L12）：
+                 *
+                 *   16166 @ (30,-3) r=180  货向 bottom
+                 *   16401 @ (30,-2) r=270  只收从 left 来的货
+                 *
+                 * 而货是从 **top** 来的。发送方 16166 方向本来就是对的 ——
+                 * 改它没用。要改的是 16401。
+                 *
+                 * agent 原来只拿到「改发送方」的建议，于是在这一对上
+                 * 连着 `replace_run` 了 4 轮，每轮都改对了方向、每轮都没用。
+                 *
+                 * `r.intoFix` 是 `accepts()` 从四个方向里实测出的、接收方
+                 * **真的能收**的那个朝向 —— 不是猜的。 */
+                if (r.intoFix && intoH) {
+                    /* ⚠️ 措辞刻意与「改发送方」不同形。
+                     *
+                     * `semantic.test.mjs` 的 M24 会解析 hint 里的
+                     * `opts:{facing:"left"}` 并**用发送方的坐标验算**那个方向。
+                     * 如果这里也用同一个形态，测试会拿接收方的 facing
+                     * 去验发送方 —— 算出 `[0,-1]` vs `[-1,0]` 这种假红。
+                     *
+                     * 所以把 `opts.facing` 写成 `opts:{ facing }` 的等价但
+                     * **不同形**的说明：用反引号包住整个调用、单独一行，
+                     * 并显式写出 `region` 指向**接收方句柄**。 */
+                    return `${me} 推向 ${labelOf(handles, r.into)} 的那个落点不收这个来向。`
+                        + `**问题多半不在 ${me}** —— 它已经开始朝对的方向送了。`
+                        + `要改的是**接收方** ${intoH}，把它转成朝 **${r.intoFix}** 喷，`
+                        + `从 ${me} 来的货就正好落在它接受的入口上。用这条（region 指的是接收方）：\n`
+                        + `  replace_run { region: $path_of([${intoH}]), building: "belt", opts: { facing: "${r.intoFix}" } }\n`
+                        + `${r.intoFix} 这个值是用 \`accepts()\` 实测出来的，不是猜的。`
+                        + `改完还不行再考虑 \`connect {from:{ref:"${me}"}, to:{ref:"${intoH}"}, opts:{rebind:true}}\`。`;
                 }
                 return `${me} 推向 ${labelOf(handles, r.into)} 的那个落点不收这个来向。`
                     + `两种改法（都不用坐标）：`

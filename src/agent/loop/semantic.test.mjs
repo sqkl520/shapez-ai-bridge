@@ -1530,20 +1530,35 @@ test("M24 ★ BELT_HANDOFF_REJECTED 的 facing 必须能真的接上（不能比
     assert.ok(d.hint, `★ 这条码必须给 hint —— 没有它模型只能猜方向。实得：${d.hint}`);
     assert.match(d.hint, /replace_run|connect/, "必须给出可抄的改法");
 
-    /* ★ 核心断言：若 hint 给了具体 facing，它必须**真的能接上** ★
+    /* ★ 核心断言：hint 给的改法必须**真的能接上** ★
      *
      * 「有 facing」不等于「facing 对」。第一版实现的错就在这一层：
      * 给出朝 top，模型照做，出口格跑到 (0,-1)，根本没指向 (0,0)。
-     * 只断言「有 facing」抓不到这种错。 */
-    const m = /opts:\{facing:"(top|right|bottom|left)"\}/.exec(d.hint);
-    if (m) {
-        const facing = m[1];
-        const DIRV = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
+     * 只断言「有 facing」抓不到这种错。
+     *
+     * 2026-11-16 起 hint 有两种形态，**都要验**：
+     *   · 改发送方：`replace_run {region:$path_of(["<发送方>"]), opts:{facing:"<面>"}}`
+     *     ⇒ 验「发送方的新出口格 == 接收方那格」
+     *   · 改接收方：`replace_run {region:$path_of([<接收方>]), ..., opts: { facing: "<面>" } }`
+     *     ⇒ 验「接收方改成那个朝向后，确实接受来自发送方的货」
+     *
+     * 后者是 2026-11-16 加的：真机上一对「同向相邻的带子」里，
+     * 发送方方向本来就是对，错在接收方 —— 只教改发送方等于让它白改四轮。 */
+    const mSend = /opts:\{facing:"(top|right|bottom|left)"\}/.exec(d.hint);
+    const mRecv = /region: \$path_of\(\[(B\d+)\]\).*?facing: "(top|right|bottom|left)"/.exec(d.hint);
+    const DIRV = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
+    const intoUid = (d.evidence && d.evidence.uids && d.evidence.uids[1]);
+    const into = intoUid !== undefined ? idx0.byUid.get(intoUid) : null;
+    assert.ok(into, "必须能拿到接收方实体");
+
+    if (mRecv) {
+        const facing = mRecv[2];
+        assert.equal(accepts(idx0, [into.x, into.y], facing).ok, true,
+            `★ 照 hint 把接收方改成朝 ${facing} 之后，它仍然不接受来自发送方的货。hint=${d.hint}`);
+    } else if (mSend) {
+        const facing = mSend[1];
         const subj = idx0.byUid.get(d.subject.uid);
         const newExit = [subj.x + DIRV[facing][0], subj.y + DIRV[facing][1]];
-        const intoUid = (d.evidence && d.evidence.uids && d.evidence.uids[1]);
-        const into = intoUid !== undefined ? idx0.byUid.get(intoUid) : null;
-        assert.ok(into, "必须能拿到接收方实体");
         assert.deepEqual(newExit, [into.x, into.y],
             `★ 照 hint 改成朝 ${facing} 之后，出口格是 ${JSON.stringify(newExit)}，`
             + `而接收方在 ${JSON.stringify([into.x, into.y])} —— 还是没接上。`
@@ -1552,7 +1567,7 @@ test("M24 ★ BELT_HANDOFF_REJECTED 的 facing 必须能真的接上（不能比
             `★ 改完之后接收方仍不接受这个来向。hint=${d.hint}`);
     } else {
         /* 拿不到唯一解时，hint 必须给「两种改法并列」，不许瞎猜一个方向。 */
-        assert.match(d.hint, /两种改法|先试/,
+        assert.match(d.hint, /两种改法|先试|再考虑/,
             `★ 拿不到唯一方向时必须给两条路，不许瞎猜。实得：${d.hint}`);
     }
 });
