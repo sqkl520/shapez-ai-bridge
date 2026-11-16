@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose a capability, starting from the problem it solves
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A good feature request starts from a problem, not from a proposed button.
+        The fields below are ordered that way on purpose.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What can you not do today
+      description: |
+        Describe the situation you are in and what blocks you. Concrete beats
+        general: "I cannot tell from the run output whether a line is broken or
+        merely idle" is better than "diagnostics could be improved".
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How you work around it now
+      description: If there is a way to get by, what is it? A workaround tells us how much the gap actually costs.
+    validations:
+      required: false
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: Optional. If you have a specific shape in mind, describe it — but the problem above is the important part.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which part would this touch
+      multiple: true
+      options:
+        - The mod (in-game)
+        - The bridge
+        - The MCP server
+        - The agent / planning loop
+        - The GUI
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches, and why you think they are worse or better.
+    validations:
+      required: false

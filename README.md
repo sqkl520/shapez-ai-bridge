@@ -33,6 +33,8 @@ install, configuration, bridge start and verification — with live logs and
 explicit fixes when something is missing. No configuration file is ever edited
 by hand.
 
+![Setup wizard, first screen](docs/gui/01-first-run.png)
+
 ```bash
 node gui/server.mjs          # or double-click gui/start.cmd on Windows
 ```

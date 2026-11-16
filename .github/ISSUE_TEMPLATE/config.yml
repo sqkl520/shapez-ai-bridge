@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/sqkl520/shapez-ai-bridge/security/advisories/new
+    about: Report security problems privately, not as a public issue.
+  - name: Question or setup help
+    url: https://github.com/sqkl520/shapez-ai-bridge/blob/main/README.md#troubleshooting
+    about: Check the troubleshooting section first — it covers the common setup failures.
