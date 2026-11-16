@@ -2882,8 +2882,35 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
              *
              * 「有输入没输出」= 半成品，留着；「有输出没输入」= 等料，也留着
              * （矿机正是这一类，它输出接着带子就说明有人在用它）。
-             * 只有两端全空，才是永远不会运转的废件。 */
-            if (inFed === 0 && outFed === 0) orphans.push(m);
+             * 只有两端全空，才是永远不会运转的废件。
+             *
+             * ★ 站在矿上的矿机**永远不算孤儿**（2026-11-16 凌晨，L12 真机）★
+             *
+             * 实测：agent 刚按「没人挖 blue」的提示放了 4 台蓝矿机，
+             * 下一轮 `ORPHAN_MACHINES` 把它们判成孤儿，它照着建议
+             * `remove_machine {uids:$uids([M2,M8,M4,M3,M7,M6])}` 一次删了 6 台 ——
+             * **包括刚放上去挖 blue 的那些**。矿机从 12 台回到 6 台，blue 从 4 台回到 1 台。
+             *
+             * 这不是 agent 乱来：它照的是诊断的建议。而「刚放的矿机」必然两端全空
+             * —— 那正是 `insert_machine` 之后、`connect` 之前的状态。
+             * 「先放矿机、下一轮才接线」是这套系统唯一可行的施工顺序，
+             * 判据却把中间态判成废件。删掉它等于禁止这种施工法。
+             *
+             * 判据：矿机脚下有矿 ⇒ 它有产出能力，迟早要接 —— 留着。 */
+            const isMiner = m.type === "miner";
+            let onOre = false;
+            if (isMiner) {
+                /* `engine` 是本函数开头就建好的形状引擎，`engine.ore` 是
+                   `${x},${y}` → 矿种 的 Map（1134 行已经在用同一个）。
+                   不用 `idx.__ore` —— 那是 `structural.mjs` 自己挂的，
+                   在这个函数里**从来不存在**（实测 `idx.__ore instanceof Map === false`）。 */
+                const ore = engine && engine.ore instanceof Map ? engine.ore : null;
+                if (ore) onOre = ore.has(`${m.x},${m.y}`);
+                /* 没有矿图时**保守算它在矿上** —— 宁可漏报孤儿，
+                   也不能因为读不到矿图就把所有矿机删光。 */
+                else onOre = true;
+            }
+            if (inFed === 0 && outFed === 0 && !onOre) orphans.push(m);
         }
         /* 少于 6 台不报：零星几台可能是刚放的、还没接 */
         if (orphans.length >= 6) {
