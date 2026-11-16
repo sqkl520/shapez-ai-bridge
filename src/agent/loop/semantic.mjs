@@ -1550,6 +1550,90 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
         }
     }
 
+    /* ★ 「mixer 有，但它的 color 槽没接到两种**不同**颜料」—— 也要能独立判（2026-11-16）★
+     *
+     * 与 `MIXER_MISSING` 是同一个病：这一段原来整块在
+     * `if (model.needs.has("mixer"))` 里，而 L12 的 `recipe.ok=false`
+     * 让 `model.needs` 空前置条件永不成立 ⇒ 整段不执行。
+     *
+     * 真机实测：agent 刚建好一台 mixer @ (-4,1)，三个槽都接了带子，
+     * 但两个 color 输入的带子是 `r=180`（向下流）—— 货根本不进 mixer。
+     * 而诊断一条都没报，agent 完全不知道那里有问题。
+     *
+     * 这条判据不需要配方：**看 mixer 的两个 color 喂料格上，货是往哪个方向走的**。
+     * 走的方向不对 ⇒ 报。这个纯几何可判。 */
+    {
+        const mixersHere = idx.ent.filter(e => e.type === "mixer");
+        for (const m of mixersHere) {
+            let sl = null;
+            try { sl = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m)); } catch { sl = null; }
+            if (!sl) continue;
+            const colorIns = (sl.inputs || []).filter(x => x.role === "color");
+            if (colorIns.length < 2) continue;
+            /* 逐个 color 槽：喂料格上那条带子的**出口**是不是指向 mixer 本体。
+               同时算出**正确朝向** —— 每个槽的方向都不一样，笼统说「朝 left」
+               对第二个槽就是错的（真机实测：(-3,1) 要 left、(-3,0) 要 bottom）。 */
+            const bad = [];
+            for (const x of colorIns) {
+                const e = at(idx, x.cell);
+                if (!e) { bad.push({ cell: x.cell, why: "空格", handle: null, fix: null }); continue; }
+                if (!isBelt(e)) continue;                 // 机对机直贴，另算
+                const exCell = exitCellOf(e);
+                const exDir = exitDirOf(e);
+                const pointsAtMixer = Array.isArray(exCell)
+                    && exCell[0] === x.slot[0] && exCell[1] === x.slot[1];
+                const acceptsIt = accepts(idx, x.slot, exDir);
+                if (!pointsAtMixer || !(acceptsIt && acceptsIt.ok)) {
+                    /* 正确朝向 = 从这条带子指向 mixer 槽位本体格的方向 */
+                    const ddx = x.slot[0] - e.x, ddy = x.slot[1] - e.y;
+                    const fix = ddy < 0 ? "top" : ddy > 0 ? "bottom" : ddx > 0 ? "right" : ddx < 0 ? "left" : null;
+                    bad.push({
+                        cell: x.cell,
+                        why: `带子朝 ${exDir} 喷，出口在 ${JSON.stringify(exCell)}，没落在 mixer 的槽上`,
+                        handle: handleOf(handles, e.uid),
+                        fix,
+                    });
+                }
+            }
+            if (bad.length) {
+                const subj = subjectOf(handles, m.uid, "mixer");
+                const mh = handleOf(handles, m.uid);
+                out.push({
+                    /* ⚠️ 用**独立**的码，不是 `MIXER_UNFED`。
+                       `MIXER_UNFED` 有一条既有的、很具体的语义：「两个 color 槽要**分开**接，
+                       只接一个的话路径会穿过另一个槽的喂料格把它覆盖成死线」
+                       —— 那条警告有真机依据（r-20261112202028-8e5a 两个槽一起废掉），
+                       不能被这条更基础的「方向不对」挤掉（`semantic.test.mjs:1269` 钉着它）。 */
+                    code: "MIXER_COLOR_AIMED",
+                    layer: "L4",
+                    severity: "blocker",
+                    subject: subj,
+                    expected: `${mh || "这台 mixer"} 的两个 color 槽各有一条**朝它喷**的带子`,
+                    observed: `${bad.length}/${colorIns.length} 个 color 槽没接到货：`
+                        + bad.map(b => `${JSON.stringify(b.cell)}（${b.why}${b.handle ? ` ${b.handle}` : ""}）`).join("；"),
+                    evidence: {
+                        handles: [subj.handle, ...bad.map(b => b.handle)].filter(Boolean),
+                        uids: [m.uid],
+                        bad_slots: bad,
+                    },
+                    candidates: ["replace_run", "connect"],
+                    hint: `${mh || "这台 mixer"} 的 color 槽接的是**方向不对**的带子 —— `
+                        + `货沿着它们流走了，根本不进 mixer。`
+                        + bad.filter(b => b.handle && b.fix).map(b =>
+                            `把 ${b.handle} 转成朝 **${b.fix}** 喷：`
+                            + `\`replace_run {region:$path_of(["${b.handle}"]), building:"belt", opts:{facing:"${b.fix}"}}\``).join("；")
+                        + `。`
+                        /* 「每个槽方向不一样」这句只有**真的不一样**时才说 ——
+                           两条都是 left 的时候说这句会让人以为还有别的方向。 */
+                        + (new Set(bad.filter(b => b.fix).map(b => b.fix)).size > 1
+                            ? `**每个槽的方向不一样，逐条按上面给的来**。`
+                            : ``)
+                        + `这条不修，白颜料永远合不出来。`,
+                });
+            }
+        }
+    }
+
     if (model.needs.has("mixer")) {
         const mixStep = model.usable.find(s => s.op === "mix");
         const wantColors = (mixStep && Array.isArray(mixStep.inputs) ? mixStep.inputs : [])
