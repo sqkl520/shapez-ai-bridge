@@ -2,7 +2,7 @@
 
 > 本文件是 Mod / 桥接 / MCP / Agent / 测试 五个组件的**共同接口契约**。
 > 任何不一致以本文件为准；改协议 = 改本文件 + 升 `protocol` 号 + 三处同步。
-> 证据来源见 `PHASE0-RECON.md`；所有游戏侧 API 引用均出自 `recon/bundle.pretty.js`（美化版 1.5.6）。
+> 证据来源见 [`PHASE0-RECON.md`](../PHASE0-RECON.md)；本文件引用的游戏侧能力都建立在游戏官方的 mod API 之上。
 
 ## 0. 架构一图
 
@@ -182,10 +182,10 @@ SZBP1.<LZString-URI-safe 压缩体>
 - `code` = 游戏内部建筑码（`getCodeFromBuildingData` 产物，含 variant/rotationVariant 信息）【观测】。
   粘贴时经 `getBuildingDataFromCode(code)` 反查，**code 表只在同一游戏版本内保证有效 → `gv` 不匹配报 `2006`**。
 - `dx,dy` = 相对锚点；`rot` = 0/90/180/270。
-- **`o[i]` = 该格的真实 `originalRotation`**（游戏按它做邻居重算，`systems/belt.js:160`）。缺省/`null` → 回落到 `rot`（= v1 行为）。
+- **`o[i]` = 该格的真实 `originalRotation`**（游戏按它做邻居重算）。缺省/`null` → 回落到 `rot`（= v1 行为）。
   **为什么用平行数组而不是 stride=5**：改 stride 时若忘升版本号，`n % 4 == 0` 的蓝图会被旧解码器**静默**读成错位实体（实测 n=4/8/12/16 中招）并照样盖进世界；平行数组则让旧解码器原样可读（多出的键被忽略），且长度不符能显式报 `2001`。代价：容量 +12~27%（实测 2000 格 3899→4950 字符）。
   **为什么需要它**：`originalRotation` 不可从 `(rotation, rv)` 反推（同一对值命中 `belt.js` 不同分支时 orig 不同）。缺 `o` 时，「导出→贴到别处」或「贴完在拐角旁补一格」都会让拐角**翻向**（实机取证：`research/ai-plan/live/results/orig-flip.json`，9 格矩阵 3 翻 6 不翻，翻的全是 PULL 扰动）。
-- 粘贴 = 对每个实体 `logic.tryPlaceBuilding({building, origin, rotation, originalRotation, rotationVariant, variant})`，包在 `performBulkOperation` + **`performImmutableOperation`** 双层里（后者屏蔽 `systems/belt.js:63` 的邻居重算，否则蓝图里的 rv 会被改写）。
+- 粘贴 = 对每个实体 `logic.tryPlaceBuilding({building, origin, rotation, originalRotation, rotationVariant, variant})`，包在 `performBulkOperation` + **`performImmutableOperation`** 双层里（后者屏蔽邻居重算，否则蓝图里的 rv 会被改写）。
 - 扣费（`charge:"auto"` 且 `!gameMode.getHasFreeCopyPaste()`）：`cost = findNiceIntegerValue(4 * n^1.1)`【观测】，从 `getBlueprintShapeKey()` 扣；不足 → `2002`。`paste_blueprint` 支持 `dry_run:true` 预检（见 §5）。
 - 压缩算法：**LZString URI-safe 变体**（`compressToEncodedURIComponent` 等价），与游戏存档所用完全一致——npm `lz-string` 实测可解游戏自身产物。实现走 `src/shared/lz-string.cjs`（桥接/测试）与 mod 内嵌副本（mod 必须单文件）。
 - 文本仅含 `[A-Za-z0-9+\-$.]` 与 `SZBP1.` 前缀，可安全放进 JSON/剪贴板/对话。
@@ -280,5 +280,5 @@ MCP 错误：把 §7 错误码原样塞进 `isError:true` 的 content 文本（`
 
 | 游戏版本 | mod 版本 | protocol | 状态 |
 |---|---|---|---|
-| 1.5.6 (ee2279d5) | 0.1.x | 1 | ✅ 本仓库开发基线 |
+| 1.5.6 | 0.1.x | 1 | ✅ 本仓库开发基线 |
 | 其他 | 任意 | 任意 | ❌ 硬失败（1002） |

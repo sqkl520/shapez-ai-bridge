@@ -1,6 +1,6 @@
 # 实机验证报告 — shapez.io AI 接口（1.5.6）
 
-> 环境：Windows 10 / Steam 版 shapez.io 1.5.6（ee2279d5）/ Node v24.14
+> 环境：Windows 10 / Steam 版 shapez.io 1.5.6/ Node v24.14
 > 方法：mod 安装到 `%APPDATA%\shapez.io\mods`，通过**正式桥接**（`src/bridge/bridge.mjs`）
 > 驱动真实游戏做端到端验证。**所有结果均为真机实测。**
 > 日期：2026-10-20

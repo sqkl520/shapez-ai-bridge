@@ -152,7 +152,7 @@ Generated from `compat.json`:
 
 | Game version | Mod version | Protocol | Status |
 |---|---|---|---|
-| 1.5.6 (Steam build `ee2279d5`, Electron 16.2.8) | 0.1.x | 1 | Supported — development baseline |
+| 1.5.6 (Steam) | 0.1.x | 1 | Supported — development baseline |
 | any other | any | any | **Hard fail** (error `1002`) — no downgrade, no override |
 
 The mod declares `minimumGameVersion: 1.5.6`, and the bridge re-checks the game version reported at handshake against this table; on mismatch nothing is routed.
@@ -163,10 +163,10 @@ Delete `shapez-ai-bridge.js` from the mods folder (that single file is the entir
 
 ## Known limitations
 
-An honest list, taken from the phase-0 recon ([`PHASE0-RECON.md`](PHASE0-RECON.md)):
+An honest list. See [`PHASE0-RECON.md`](PHASE0-RECON.md) for why each of these follows from how the game works:
 
-- **Steam achievements are disabled while ANY mod is installed.** The game only enables its Steam layer when zero mods are loaded (`if (mods.length === 0) steam.listen()`). This is official shapez.io behavior, not a bug of this project.
-- **The game clears localStorage on every launch** (`clearCache()` + `clearStorageData()` in the main process), so the mod has no cross-session local storage. Anything persistent must go through mod settings files or the savegame.
+- **Steam achievements are disabled while ANY mod is installed.** The game only enables its Steam layer when zero mods are loaded. This is official shapez.io behavior, not a bug of this project.
+- **The game clears its session storage on every launch**, so the mod has no cross-session local storage. Anything persistent must go through mod settings files or the savegame.
 - **shapez.io 1.5.6 has no native blueprint string format.** This project defines its own `SZBP1.*` format (built on the game's own LZ-string compression), so blueprints are only exchangeable between the same game version — the embedded `gv` field is checked on paste, and a mismatch fails with error `2006`.
 - **Pasting a blueprint charges "blueprint shape" material** (in regular mode, `CbCbCbRb:CwCwCwCw`) per the game's own cost formula. Use `charge:false` to paste for free.
 - **`step` / `await` fast-forward runs synchronously on the render thread** — large tick counts briefly freeze the screen. A single step is capped at 20,000 ticks.
@@ -242,7 +242,7 @@ Directory layout:
 | `docs/PROTOCOL.md` | The frozen protocol contract — the single source of truth |
 | `compat.json` | Machine-readable compatibility matrix |
 | `test/` | Layer selftests (mod RPC in a Node sandbox, lz-string interop, blueprint round-trips) |
-| `recon/` | Phase-0 reverse-engineering artifacts (local research only, excluded from distribution) |
+| `recon/` | Local analysis artifacts from the research phase (excluded from distribution; game code inside is © tobspr Games) |
 
 Running the layers and their selftests:
 

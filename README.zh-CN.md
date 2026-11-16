@@ -112,7 +112,7 @@ node scripts/smoke_test.mjs
 
 | 游戏版本 | mod 版本 | protocol | 状态 |
 |---|---|---|---|
-| 1.5.6（Steam 构建 `ee2279d5`，Electron 16.2.8） | 0.1.x | 1 | ✅ 支持 — 开发基线 |
+| 1.5.6（Steam 版） | 0.1.x | 1 | ✅ 支持 — 开发基线 |
 | 其他任何版本 | 任意 | 任意 | ❌ **硬失败**（错误码 `1002`）— 禁止降级、无覆盖开关 |
 
 mod 声明了 `minimumGameVersion: 1.5.6`，桥接还会在握手时用游戏上报的版本比对这张表；不匹配则什么都不转发。
@@ -123,10 +123,10 @@ mod 声明了 `minimumGameVersion: 1.5.6`，桥接还会在握手时用游戏上
 
 ## 已知限制
 
-诚实清单，取材自阶段 0 侦察报告（[`PHASE0-RECON.md`](PHASE0-RECON.md)）：
+诚实清单。每一条为什么成立，见 [`PHASE0-RECON.md`](PHASE0-RECON.md)：
 
-- **安装任何 mod 都会禁用 Steam 成就。** 游戏只在零 mod 时才启用 Steam 层（`if (mods.length === 0) steam.listen()`）。这是 shapez.io 的官方行为，不是本项目的 bug。
-- **游戏每次启动都会清空 localStorage**（主进程 `clearCache()` + `clearStorageData()`），因此 mod 没有任何跨会话本地存储。需要持久化的数据只能走 mod 设置文件或存档。
+- **安装任何 mod 都会禁用 Steam 成就。** 游戏只在零 mod 时才启用 Steam 层。这是 shapez.io 的官方行为，不是本项目的 bug。
+- **游戏每次启动都会清空会话存储**，因此 mod 没有任何跨会话本地存储。需要持久化的数据只能走 mod 设置文件或存档。
 - **shapez.io 1.5.6 没有原生蓝图字符串格式。** 本项目自定义了 `SZBP1.*` 格式（基于游戏自身的 LZ-string 压缩），因此蓝图只能在同版本之间交换——字符串内嵌 `gv`（产出时的游戏版本）字段，粘贴时不匹配会报 `2006`。
 - **粘贴蓝图按游戏规则扣"蓝图形状"材料**（regular 模式下为 `CbCbCbRb:CwCwCwCw`）。用 `charge:false` 可免费粘贴。
 - **`step` / `await` 快进在渲染线程上同步执行**——大 tick 数会短暂冻结画面。单次 step 上限 20,000 ticks。
@@ -199,7 +199,7 @@ mod 声明了 `minimumGameVersion: 1.5.6`，桥接还会在握手时用游戏上
 | `docs/PROTOCOL.md` | 冻结的协议契约——唯一权威 |
 | `compat.json` | 机器可读的兼容矩阵 |
 | `test/` | 分层自测（Node 沙箱里的 mod RPC、lz-string 互通、蓝图往返） |
-| `recon/` | 阶段 0 逆向产物（仅本地研究用，不随分发） |
+| `recon/` | 研究阶段的本地分析产物（不随分发；其中游戏代码版权归 tobspr Games） |
 
 运行各层与其自测：
 

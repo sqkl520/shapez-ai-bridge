@@ -6,7 +6,7 @@
 
 ## 这是什么
 
-shapez.io（Steam，1.5.6 @ ee2279d5）的 AI 可操作接口工具链，三层：
+shapez.io（Steam 版 1.5.6）的 AI 可操作接口工具链，三层：
 
 ```
 游戏内 Mod（单文件 .js，官方 mod API）      ← 把游戏世界变成可读写的 JSON 接口
@@ -33,7 +33,7 @@ MCP server + 参考 Agent                     ← 任意 AI/脚本的接入点
 ### D1：桥接拓扑 —— 外部宿主起服务端，Mod 当 WebSocket 客户端
 
 **约束（实测）**：渲染进程 `nodeIntegration:false` + `contextIsolation:true` + `sandbox:true`
-（index-main.js:69-77），Mod **没有 Node 权限**，`require("http")` 不可能。但渲染进程是完整
+，Mod **没有 Node 权限**，`require("http")` 不可能。但渲染进程是完整
 Chromium、无 CSP，**原生 WebSocket 恒可用**。
 
 - 没有它会怎样：只能在 Mod 里起服务器 → 需要 Node 权限 → 不可能，或必须做浏览器
@@ -126,6 +126,5 @@ node test/mod_selftest.mjs && node test/mod_rpc_selftest.mjs && node test/bluepr
   && node test/lzstring_interop.mjs && node src/bridge/selftest.mjs && node src/mcp/selftest.mjs
 ```
 
-工具清单：`npx @electron/asar`（解包，仅侦察）、`node`（全部运行时）、
-`js-beautify`（美化 bundle，仅侦察）。侦察全部产物在 `recon/`（gitignore 排除，
-版权归 tobspr Games，仅本地研究）。
+工具清单：`node`（全部运行时）。研究阶段在本地使用过的分析产物集中放在
+`recon/`（由 `.gitignore` 排除，版权归 tobspr Games，不随本项目分发）。
