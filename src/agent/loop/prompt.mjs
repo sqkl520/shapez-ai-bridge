@@ -715,7 +715,93 @@ function renderGoal(goalShape, goal, obs) {
     if (delivered !== null) bits.push(`delivered ${delivered}`);
     if (progress !== null && delivered === null) bits.push(`progress ${progress}`);
     if (bits.length) lines.push(bits.join(" | "));
+    /* ★ 「没人挖的颜料」提到 GOAL 段（2026-11-16 凌晨，L12 真机）★
+     *
+     * 那行 `⚠️ NO miner is digging blue` 原来是 `## MACHINES` 段的**最后一行**，
+     * 实测 prompt 16071 字符里它排在第 2530 字符之后、又藏在一长串机器清单末尾 ——
+     * 模型连着 4 次 run 一次都没提过它，全在修带子和清垃圾桶。
+     *
+     * 这不是「信息没送到」（它在 prompt 里），是**位置太靠后**。
+     * 而它是这一关唯一真正的阻塞：`CbCbCbRb:CwCwCwCw` 需要 cyan 和 white，
+     * 两者都要 blue，而 6 台矿机全在挖 red/green。
+     *
+     * 提到 `## GOAL` 下面紧跟目标条数 —— 模型读目标时一定会读到它。
+     * 只放一行、只说缺的那几种，不重复资源清单（那段还在 MACHINES 里）。 */
+    const gapLine = renderMinerColorGap(obs, goalShape);
+    if (gapLine) lines.push(gapLine);
     return lines.join("\n");
+}
+
+/**
+ * 「目标需要的颜色里，哪些没有任何一台矿机在挖」—— 一行短句。
+ *
+ * 与 `renderGoalResource` 的分工：那个回答「地图上有没有这种矿」，
+ * 这个回答「**我的矿机有没有在挖它**」。两个问题不同，答案也可以不同：
+ * L12 的 blue 有 1794 格，而 6 台矿机一台都没挖 —— 只看前者会以为「有矿就行」。
+ *
+ * 只对**颜料矿**（纯小写单词）给 `$ore` 建议：形状矿挖出来是形状，
+ * 不是颜料，混进 mixer 的 color 槽什么也混不出来。
+ *
+ * @returns {string|null} 不缺时返回 null（不占预算）
+ */
+function renderMinerColorGap(obs, goalShape) {
+    const list = obs && Array.isArray(obs.resources) ? obs.resources : null;
+    const ents = obs && Array.isArray(obs.entities) ? obs.entities : null;
+    if (!list || !list.length || !ents) return null;
+    const ents_miners = ents.filter(e => e && e.type === "miner");
+    if (!ents_miners.length) return null;
+
+    const COLOR_LETTER_TO_NAME = {
+        r: "red", g: "green", b: "blue", y: "yellow", p: "purple", c: "cyan", w: "white",
+    };
+    /* ★ 只有**小写**字母是颜色（2026-11-16 凌晨）★
+     *
+     * 形状串的约定：大写 = 下层、小写 = 上层，而**颜色**用色号字母表示。
+     * 但 `RuRu----` 里的 `R`/`u` 是**形状矿** `Ru` 的两个字母，不是颜色。
+     *
+     * 第一版把 `R` 映射成 `red`，于是 L4（目标 `RuRu----`）报出
+     * 「NEEDS red but no miner is digging it」—— 而 L4 要的是 **Ru 形状**，
+     * 不是红色颜料。8 台矿机里 3 台正好在挖 `RuRuRuRu`，完全够用。
+     *
+     * 所以只取小写字母：`CbCbCbRb:CwCwCwCw` 里真正的小写颜色字母是
+     * `b`（blue）和 `w`（white）—— 那正是 mixer 要混的颜料。
+     * 大写字母代表的形状矿由 `renderGoalResource` 那段负责，这里不重复。 */
+    const letters = new Set();
+    for (const ch of String(goalShape || "")) if (/[a-z]/.test(ch)) letters.add(ch);
+    if (!letters.size) return null;
+
+    /* 地图上有哪些**颜料**矿 */
+    const pigmentOres = new Set();
+    for (const r of list) {
+        if (!Array.isArray(r) || r.length < 3) continue;
+        const k = String(r[2]);
+        if (/^[a-z]+$/.test(k)) pigmentOres.add(k);
+    }
+    /* 矿机在挖哪些颜料 */
+    const oreAt = new Map();
+    for (const r of list) if (Array.isArray(r) && r.length >= 3) oreAt.set(`${r[0]},${r[1]}`, String(r[2]));
+    const dug = new Map();
+    for (const m of ents_miners) {
+        const k = oreAt.get(`${m.x},${m.y}`);
+        if (k) dug.set(k, (dug.get(k) || 0) + 1);
+    }
+    if (!dug.size) return null;
+
+    /* 需要的颜料里，哪些地图上有、但没人挖 */
+    const missing = [];
+    for (const L of letters) {
+        const word = COLOR_LETTER_TO_NAME[L.toLowerCase()];
+        if (!word || !pigmentOres.has(word)) continue;       // 地图上没有这种颜料矿
+        if (dug.has(word)) continue;                          // 已经有人在挖
+        missing.push(word);
+    }
+    if (!missing.length) return null;
+
+    const dugText = [...dug].map(([k, n]) => `${k}×${n}`).join(", ") || "(none)";
+    return `⇒ ⚠️ NEEDS ${missing.join("/")} but no miner is digging it `
+        + `(you have ${ents_miners.length} miner(s) on ${dugText}). `
+        + `Fix this FIRST: \`insert_machine {at:{"$ore":"${missing[0]}"}, machine:"miner", facing:<dir>}\`. `
+        + `Everything else is downstream of this.`;
 }
 
 /**
