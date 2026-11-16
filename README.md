@@ -146,6 +146,8 @@ The end-to-end live run (compile → `dry_run` → paste → per-cell diff → h
 
 See [`research/ai-plan/BATCH.md`](research/ai-plan/BATCH.md) for the build ledger and [`research/ai-player/SYNTHESIS.md`](research/ai-player/SYNTHESIS.md) for the research behind it.
 
+`research/` holds the working notes from building this — measurement scripts, live-run transcripts, design arguments, and the records of what was tried and rejected. It is **not** user documentation and is not needed to use the tool; it is kept public because the claims in this README should be checkable rather than taken on trust.
+
 ## Compatibility
 
 Generated from `compat.json`:
