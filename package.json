@@ -1,16 +1,48 @@
 {
   "name": "shapez-ai-bridge",
   "version": "0.1.0",
-  "description": "AI-operable interface for shapez.io — mod + bridge + MCP",
+  "description": "Drive shapez.io from code: an official single-file mod, a zero-dependency local bridge, and an MCP server",
   "type": "module",
   "license": "MIT",
+  "keywords": [
+    "shapez",
+    "shapez.io",
+    "game-mod",
+    "mcp",
+    "model-context-protocol",
+    "llm",
+    "ai-agent",
+    "automation"
+  ],
+  "homepage": "https://github.com/sqkl520/shapez-ai-bridge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sqkl520/shapez-ai-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sqkl520/shapez-ai-bridge/issues"
+  },
+  "files": [
+    "src/mod/",
+    "src/bridge/",
+    "src/mcp/",
+    "src/ai/",
+    "install.sh",
+    "install.ps1",
+    "bridge.config.example.json",
+    "mcp-config.example.json",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
   "scripts": {
     "bridge": "node src/bridge/bridge.mjs",
     "mcp": "node src/mcp/server.mjs",
     "agent": "node src/agent/play.mjs",
     "smoke": "node scripts/smoke_test.mjs",
     "selftest:bridge": "node src/bridge/selftest.mjs",
-    "selftest:mcp": "node src/mcp/selftest.mjs"
+    "selftest:mcp": "node src/mcp/selftest.mjs",
+    "test": "node --test src/agent/"
   },
   "engines": {
     "node": ">=20"
