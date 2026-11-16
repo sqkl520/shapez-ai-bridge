@@ -181,6 +181,8 @@ mod 声明了 `minimumGameVersion: 1.5.6`，桥接还会在握手时用游戏上
 - 本项目代码为 **MIT** 许可——见 [`LICENSE`](LICENSE)。
 - vendored [lz-string](https://github.com/pieroxy/lz-string) 1.4.5（`src/shared/lz-string.cjs`）：© 2013 Pieroxy，**MIT / WTFPL** 双许可——见 [`src/shared/lz-string.LICENSE.txt`](src/shared/lz-string.LICENSE.txt)。它负责压缩蓝图，并与游戏自身的存档压缩算法一致。
 - 本仓库**不含任何 shapez.io 游戏代码**。全部集成走游戏官方 mod API（单文件 mod 的 `METADATA`/`Mod`、`ModInterface`、`window.shapez` 模块导出）。shapez.io 版权 © [tobspr Games](https://shapez.io)。
+- 这是**非官方的社区项目**，与 tobspr Games 无隶属、背书或支持关系。本项目的问题请不要向他们反馈。
+- 加载 mod 会把存档标记为已修改：**被 mod 触碰过的存档会禁用 Steam 成就与 shapez.io DLC**。这是游戏自身的行为，本项目既没有添加也无法绕过。在意这两项的请用单独存档。
 
 ## 开发
 

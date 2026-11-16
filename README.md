@@ -224,6 +224,8 @@ Replace the path with the absolute path of your checkout. **Windows path writing
 - This project's code is **MIT** — see [`LICENSE`](LICENSE).
 - Vendored [lz-string](https://github.com/pieroxy/lz-string) 1.4.5 (`src/shared/lz-string.cjs`): © 2013 Pieroxy, dual-licensed **MIT / WTFPL** — see [`src/shared/lz-string.LICENSE.txt`](src/shared/lz-string.LICENSE.txt). It compresses blueprints and mirrors the game's own savegame compression.
 - This repository contains **no shapez.io game code**. All integration goes through the game's official mod API (single-file mods with `METADATA`/`Mod`, `ModInterface`, the `window.shapez` module exports). shapez.io is © [tobspr Games](https://shapez.io).
+- This is an **unofficial, community project**. It is not affiliated with, endorsed by, or supported by tobspr Games. Please do not report problems with this mod to them.
+- Loading a mod marks the savegame as modified: **Steam achievements and the shapez.io DLC are disabled for saves the mod has touched**. That is the game's own behaviour, not something this project adds or can work around. Use a separate save if you care about either.
 
 ## Development
 
