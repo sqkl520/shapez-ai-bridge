@@ -677,8 +677,46 @@ export function structuralDiagnoses(obs, items, goal, handles, opts = {}) {
         seenHeads.add(u.uid);
         const subj = subjectOf(handles, u.uid, "belt");
         const up = at(idx, entryCellOf(u.head));
+        /* ★ 链头附近有没有「差一点就能接上」的机器输出口（2026-11-16）★
+         *
+         * 真机现场：链头 B570 @ (-2,12) 需要从 (-2,13) 进料，而
+         * painter#13552 @ (-4,14) 的输出口在 (-5,16) —— 两者相距 3 格、方向也不同。
+         *
+         * 模型每轮只有 6 次 LLM 调用，而这条链的上游断点在 143 格之外。
+         * 让它自己从 600 个实体里找出「附近哪台机器的输出可以接过来」是不现实的。
+         * 而这个信息**纯几何可算**：扫链头周围 3 格，看有没有机器的输出口指向附近。
+         *
+         * 只报**最近的 3 台**，并且只在这些机器**本来就有输出口**时报
+         * （孤儿机器另有 `ORPHAN_MACHINES` 管）。 */
+        let nearbySource = null;
+        try {
+            const en = entryCellOf(u.head);
+            if (en) {
+                let best = null;
+                for (let dy = -3; dy <= 3; dy++) {
+                    for (let dx = -3; dx <= 3; dx++) {
+                        if (!dx && !dy) continue;
+                        const c = [en[0] + dx, en[1] + dy];
+                        const e = at(idx, c);
+                        if (!e || isBelt(e) || isTunnel(e) || e.type === "hub" || e.type === "trash") continue;
+                        let sl = null;
+                        try { sl = slotsOf(e.type, e.variant, e.x, e.y, e.r || 0, beltRvOf(e)); } catch { sl = null; }
+                        const outs = (sl && Array.isArray(sl.outputs)) ? sl.outputs : [];
+                        if (!outs.length) continue;
+                        const h = handleOf(handles, e.uid);
+                        if (!h) continue;
+                        const d = Math.abs(dx) + Math.abs(dy);
+                        if (!best || d < best.dist) best = { handle: h, type: e.type, cell: c, dist: d };
+                    }
+                }
+                nearbySource = best;
+            }
+        } catch { nearbySource = null; }
         const observed = u.source === "none"
             ? "入口那一格上没有实体（这条流没有源头）"
+                + (nearbySource
+                    ? `；但 ${nearbySource.dist} 格外的 ${nearbySource.handle}(${nearbySource.type}) 有输出口，接过来这条链就活了`
+                    : "")
             : `入口接的是 ${labelOf(handles, up)}，但它不往这里吐货`
                 + (u.source === "trash" || u.source === "hub" ? `（${u.source} 没有输出）` : "");
         out.push({
@@ -693,8 +731,15 @@ export function structuralDiagnoses(obs, items, goal, handles, opts = {}) {
                 uids: [u.uid],
                 tier: tierOf(u.uid, [u.head.x, u.head.y]),
                 source: u.source,
+                ...(nearbySource ? { nearby_source: nearbySource } : {}),
             },
             candidates: ["connect", "insert_machine", "extend_line"],
+            hint: nearbySource
+                ? `${subj.handle || "这条链"} 没有源头，但 **${nearbySource.handle}（${nearbySource.type}）就在 ${nearbySource.dist} 格外**，`
+                    + `它有输出口。把这台机器的输出接到 ${subj.handle || "链头"} 的入口：`
+                    + `\`connect {from:{ref:"${nearbySource.handle}"}, to:{ref:"${subj.handle || "?"}"}}\`。`
+                    + `这比在 100 多格之外找源头现实得多 —— 只差几格转接。`
+                : null,
         });
     }
     for (const g of barrenGroups.values()) {

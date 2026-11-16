@@ -542,3 +542,57 @@ test("T-tunnel ★ 送方是隧道时，hint 不许教 replace_run（它一定�
             `★ 候选表也要换（隧道场景 remove_run 排第一），实得 ${JSON.stringify(d.candidates)}`);
     }
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 链头附近有机器输出口 ⇒ hint 要说出来（2026-11-16）
+ *
+ * 真机现场：链头 B570 @ (-2,12) 需要从 (-2,13) 进料，而 painter @ (-4,14)
+ * 的输出口在 (-5,16) —— 相距 3 格。模型每轮只有 6 次 LLM 调用，
+ * 而这条链的上游断点在 143 格之外；让它自己在 600 个实体里找
+ * 「附近哪台机器能接过来」是不现实的。
+ *
+ * 这个信息纯几何可算，而且比「去 100 多格外找源头」现实得多。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("T-unfed-nearby ★ 链头 3 格内有机器 ⇒ hint 点名它", () => {
+    /* 造一个：一条无源头的带子，旁边放一台有输出口的机器。 */
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 1000, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", layer: "regular" },
+            /* 链头：@ (10,10)，入口在 (10,11)，那里是空的 */
+            { uid: 2, type: "belt", x: 10, y: 10, r: 0, rotation_variant: 0, code: 1, variant: "default", layer: "regular" },
+            /* 附近 2 格处放一台 cutter（有输出口） */
+            { uid: 3, type: "cutter", x: 10, y: 13, r: 0, rotation_variant: 0, code: 9, variant: "default", layer: "regular" },
+        ],
+        resources: [],
+    };
+    const ds = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    const unfed = byCode(ds, "CHAIN_UNFED").filter(d => d.evidence && d.evidence.uids && d.evidence.uids[0] === 2);
+    assert.ok(unfed.length > 0,
+        `夹具必须产出针对链头 uid=2 的 CHAIN_UNFED（实得 ${JSON.stringify(
+            byCode(ds, "CHAIN_UNFED").map(d => d.evidence && d.evidence.uids))}）`);
+    const d = unfed[0];
+    assert.ok(d.evidence.nearby_source,
+        `★ 附近有机器输出口时必须记进 evidence.nearby_source（实得 ${JSON.stringify(d.evidence)}）`);
+    assert.ok(/cutter|《|连接/.test(String(d.hint || "")) || /2/.test(String(d.hint || "")),
+        `★ hint 必须点名那台机器和距离：${d.hint}`);
+});
+
+test("T-unfed-nearby2 ★ 对照：链头附近没有机器 ⇒ 不许编一个出来", () => {
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 1000, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", layer: "regular" },
+            { uid: 2, type: "belt", x: 10, y: 10, r: 0, rotation_variant: 0, code: 1, variant: "default", layer: "regular" },
+        ],
+        resources: [],
+    };
+    const ds = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    const unfed = byCode(ds, "CHAIN_UNFED").filter(d => d.evidence && d.evidence.uids && d.evidence.uids[0] === 2);
+    assert.ok(unfed.length > 0, "夹具必须产出 CHAIN_UNFED");
+    assert.ok(!unfed[0].evidence.nearby_source,
+        `★ 附近没有机器时不许凭空造一个 nearby_source（实得 ${JSON.stringify(unfed[0].evidence.nearby_source)}）`);
+    assert.ok(!/格外/.test(String(unfed[0].hint || "")),
+        `★ 没有 nearby source 时 hint 不许提「N 格外」：${unfed[0].hint}`);
+});
