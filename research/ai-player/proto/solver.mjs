@@ -181,6 +181,9 @@ class Solver {
     solve(target) {
         const targetHash = so.hash(target);
         const colors = [...this.pigmentColors];
+        /* 目标的层数 —— 配对池用它来砍「比目标还厚」的多层中间态。
+           没有它就只能收 `nLayers <= 4` 的全部组合，而那正是搜索爆炸的来源。 */
+        const targetLayers = (target && Array.isArray(target.layers)) ? target.layers.length : 1;
 
         let frontier = this.seed();
         if (this.known.has(targetHash)) return this.buildPlan(targetHash);
@@ -207,8 +210,33 @@ class Solver {
             //    (b) 多层堆叠：上下层象限可以重叠 → 直接叠成**新的一层**（≤4 层）
             if (this.ops.stack) {
                 // 配对池有界（实测教训：全量 O(n²) 会爆炸；真实配方的输入都是浅形状）
+                //
+                // ★ 池子必须同时收「单层」和「多层」（2026-11-16）★
+                //
+                // 原来写的是 `quadsOf(e.shape) && e.depth <= 3` —— 而 `quadsOf`
+                // 对多层形状**返回 null**（它只处理 `layers.length === 1`）。
+                //
+                // 于是多层形状永远进不了池子，而下面分支 (b)「多层堆叠」
+                // 需要 `totalLayers >= 2` —— 它要至少一个多层输入才可能成立。
+                // 结果 (b) **几乎永远不触发**：池里全是单层，1+1=2 层确实能叠出
+                // 第一层多层……但那次叠出来的多层形状下一轮又被排除出池，
+                // 于是 3 层、4 层永远造不出来。
+                //
+                // 实测代价：`CbCbCbRb:CwCwCwCw`（2 层，每层都是混合形状）
+                // 跑到 50 万状态、9 秒仍然 `capped: true` —— 它在单层互补配对上
+                // 无限展开，而真正需要的那条（叠出 2 层）根本没在搜索范围里。
+                //
+                // 修法：单层和多层都收，但**都要深度有界**。
+                // 多层只收 `depth <= 2`（比单层更严）—— 它们的配对组合更贵。 */
                 const pool = [...this.known.entries()]
-                    .filter(([, e]) => quadsOf(e.shape) && e.depth <= 3);
+                    .filter(([, e]) => {
+                        const single = !!quadsOf(e.shape);
+                        if (single) return e.depth <= 3;
+                        /* 多层：只有当它能成为目标的前缀时才有意义 ——
+                           即层数不超过目标的层数。这砍掉了绝大多数无用组合。 */
+                        const nLayers = e.shape && e.shape.layers ? e.shape.layers.length : 0;
+                        return nLayers >= 2 && nLayers <= targetLayers && e.depth <= 2;
+                    });
                 for (let i = 0; i < pool.length; i++) {
                     const [ha, ea] = pool[i];
                     const qa = quadsOf(ea.shape);
@@ -218,7 +246,8 @@ class Solver {
                         const qb = quadsOf(eb.shape);
 
                         // (a) 互补合并（象限不重叠 → 单层）
-                        if (disjoint(qa, qb)) {
+                        //     只有两个都是**单层**时才可能。
+                        if (qa && qb && disjoint(qa, qb)) {
                             this.stats.stackPairs++;
                             let s;
                             try { s = so.stack(eb.shape, ea.shape); } catch { continue; }

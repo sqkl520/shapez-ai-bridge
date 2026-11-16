@@ -763,11 +763,30 @@ function renderMinerColorGap(obs, goalShape) {
      * 「NEEDS red but no miner is digging it」—— 而 L4 要的是 **Ru 形状**，
      * 不是红色颜料。8 台矿机里 3 台正好在挖 `RuRuRuRu`，完全够用。
      *
-     * 所以只取小写字母：`CbCbCbRb:CwCwCwCw` 里真正的小写颜色字母是
-     * `b`（blue）和 `w`（white）—— 那正是 mixer 要混的颜料。
-     * 大写字母代表的形状矿由 `renderGoalResource` 那段负责，这里不重复。 */
+     * ## 正确的解析：形状串的**每一对**是 (形状码, 色码)
+     *
+     * `shape-ops.mjs:27-46` 的 `parse()` 写得很清楚：
+     *
+     *   · 每层 8 字符 = 4 个象限 × (形状码 + 色码)
+     *   · 形状码 `R`=rect / `C`=circle / `S`=star / `W`=windmill（**大写**）
+     *   · 色码   `r`=red / `g`=green / `b`=blue / `y`=yellow /
+     *            `p`=purple / `c`=cyan / `w`=white / `u`=uncolored（**小写**）
+     *   · `:` 分隔的是**层**（下 → 上）
+     *
+     * 所以 `CbCbCbRb:CwCwCwCw` 是：下层 3 个「圆形+blue」+ 1 个「矩形+blue」，
+     * 上层 4 个「圆形+white」。**需要的颜料只有 blue 和 white** ——
+     * 既不需要 cyan，也不需要 red。
+     *
+     * 之前的「只取小写字母」恰好蒙对了这一次（色码全在偶数位），
+     * 但那不是因为它算对了，是因为运气。按对解析才是对的语义：
+     * 万一哪天目标是 `RbCbCbCb` 这种以形状码结尾的，逐字符判断就会跑偏。 */
     const letters = new Set();
-    for (const ch of String(goalShape || "")) if (/[a-z]/.test(ch)) letters.add(ch);
+    for (const layer of String(goalShape || "").split(":")) {
+        for (let q = 0; q + 1 < layer.length; q += 2) {
+            const colorCode = layer[q + 1];
+            if (/[a-z]/.test(colorCode) && colorCode !== "u") letters.add(colorCode);
+        }
+    }
     if (!letters.size) return null;
 
     /* 地图上有哪些**颜料**矿 */
@@ -1057,10 +1076,47 @@ function renderGoalResource(obs, goalShape, opts = {}) {
      * 单个两字母块（`Cu`）的子形状目标仍然走老路 —— 那种情况下 `Cu` 确实既是
      * 色号也是矿种前缀，两者恰好重合。 */
     const shapeStr = String(goalShape || "");
-    /* 形状串里出现过的所有字母（大小写都算，`:` 和 `-` 是分隔符） */
+    /* ★ 形状码与色码必须分开取（2026-11-16）★
+     *
+     * 每层 8 字符 = 4 象限 × (形状码 + 色码)：
+     *   形状码 `R`/`C`/`S`/`W`（大写），色码 `r`/`g`/`b`/…/`w`（小写）。
+     *
+     * 旧版把**所有**字母都收进 `letters`，于是 `CbCbCbRb:CwCwCwCw` 里的
+     * `C`（circle，形状码）被当成了一种「颜色」，`probeColor('C')` 再去矿表里
+     * 找到 `RuRuRuCu` 这类**形状矿**并报 `ok:true` —— 可那跟「有没有颜料」无关。
+     *
+     * 这正是我给 `$ore` 建议时输出 `"$ore":"cyan"` 的根源：
+     * cyan 在 `COLOR_LETTER_TO_NAME['c']` 里，而 `C` 被当成了 `c`。
+     * 地图上根本没有 cyan 矿（它是 blue+green 合成的）。
+     *
+     * 现在分两组：
+     *   · `letters`     —— **色码**，也就是「需要哪些颜料」。只取 pair 的第二位。
+     *   · `shapeCodes`  —— **形状码**，也就意味着「需要哪些形状矿」。
+     * 两者用途不同，混在一起报会误导。 */
     const letters = new Set();
-    for (const ch of shapeStr) {
-        if (/[a-zA-Z]/.test(ch)) letters.add(ch);
+    const shapeCodes = new Set();
+    /* ★ 判据：**有冒号**才是标准的「每格 形状码+色码」格式 ★
+     *
+     * `CbCbCbRb:CwCwCwCw` —— 冒号分隔下层/上层，每层 8 字符 = 4 象限 × 2。
+     * `Cu----Cu` / `RuRu----` / `Cu` —— 旧式记法，整串就是矿种/形状名。
+     *
+     * 试过用「长度是否 8」判，不行：`RuRu----` 也是 8 字符、`CbCbCbRb` 也匹配
+     * `([RCSW][a-z]){4}`，两种格式在这些特征上**完全重合**。冒号才是唯一可靠的区分。 */
+    const layersRaw = shapeStr.split(":");
+    const isPairFormat = layersRaw.length >= 2
+        && layersRaw.every(l => l.length === 8);
+    if (isPairFormat) {
+        for (const layer of layersRaw) {
+            for (let q = 0; q + 1 < layer.length; q += 2) {
+                const sc = layer[q], cc = layer[q + 1];
+                if (/[A-Z]/.test(sc)) shapeCodes.add(sc);
+                if (/[a-z]/.test(cc) && cc !== "u") letters.add(cc);
+            }
+        }
+    }
+    /* 旧式记法：所有字母都收 —— `Cu` 那种形态下形状码与矿种前缀恰好重合。 */
+    if (!isPairFormat) {
+        for (const ch of shapeStr) if (/[a-zA-Z]/.test(ch)) letters.add(ch);
     }
     const isPlainTwoLetter = /^([A-Z][a-z])-*-*$/.test(shapeStr) || /^([A-Z][a-z])$/.test(shapeStr);
     const color = isPlainTwoLetter ? /^([A-Z][a-z])/.exec(shapeStr)[1] : null;
