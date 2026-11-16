@@ -171,7 +171,7 @@ utilization = processCapacity / supply
 ## 复现
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 # 攻击 B（我实测的那个）
 node -e "
 import('./src/agent/assess.mjs').then(async m=>{

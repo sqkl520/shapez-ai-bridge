@@ -342,7 +342,7 @@ arg 拼错怎么办、宏间同轮依赖排序），契约就可以开工。**
 ## 复现命令汇总
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 node .tmpverify/rt-l4-probe.mjs        # L4 上 replace_run 一次全绿（5 op）
 node .tmpverify/rt-phase2-66.mjs       # 真实 L5 上 connect 23 种组合成功 / 10 条直达 hub（推翻 F7）
 node .tmpverify/rt-phase2-46.mjs       # connect(allow_replace) 不报 destroys → R6 会误拒

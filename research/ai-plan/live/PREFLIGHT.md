@@ -237,8 +237,8 @@ try {
 
 ```bash
 # 6c. 独立复核（不依赖 guard 自己的记录，直接看磁盘）
-sha256sum "C:/Users/Administrator/AppData/Roaming/shapez.io/saves/savegame-<usersave>.bin"
-stat "C:/Users/Administrator/AppData/Roaming/shapez.io/saves/savegame-<usersave>.bin"
+sha256sum "<shapez-saves-dir>/saves/savegame-<usersave>.bin"
+stat "<shapez-saves-dir>/saves/savegame-<usersave>.bin"
 ```
 
 **基线（原文，`.tmpverify/live/user-save-baseline.json`）**

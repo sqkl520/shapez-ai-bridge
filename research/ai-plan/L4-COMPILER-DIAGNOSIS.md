@@ -541,7 +541,7 @@ h[1]===goal? true
 ## 附：本文所有实验的复现命令
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 
 # 0) 取存档快照（只读）
 curl -s -X POST http://127.0.0.1:7777/rpc -H "Content-Type: application/json" \

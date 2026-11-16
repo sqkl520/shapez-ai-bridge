@@ -191,7 +191,7 @@ Steam 权威日志：
 - `.tmpverify/screen5.png`（21:09:58）是一张**纯桌面壁纸** —— 21:09:58 时游戏窗口根本不在屏上；
 - 21:10–21:22 期间 `.tmpverify/` 下持续出现不是我写的脚本（`rt-b2-exec.mjs`、`exp-plan/sim-b2.mjs`、
   `rt-gaming.mjs`、`rt-ideal.mjs`），全部是**离线**跑 `capacity-scenario.json` 的；
-- `node scripts/watch.mjs`（PID 30840，20:55 启动）不属于本仓库，属于 `D:/Projects/Overwatch/`。
+- `node scripts/watch.mjs`（PID 30840，20:55 启动）不属于本仓库，属于 `<another-checkout>/`。
 
 好消息：这些离线脚本没有碰世界（guard.log 零写入可证）。坏消息：**「独占」的前提是假的**，
 而 `screen5.png` 直接推翻了派工描述里「游戏已启动、正在载入」这一条。

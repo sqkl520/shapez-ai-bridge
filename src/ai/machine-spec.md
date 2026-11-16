@@ -2,7 +2,7 @@
 
 > 交付物 2/2（机器可读版：`src/ai/machine-spec.json`）。布局编译器（P1–P8）的静态数据底座。
 > 纯离线规格检索：权威源码 `recon/upstream-full/src/js/game/`（commit `ee2279d`，精确对应 1.5.6）。
-> 本文所有路径相对于仓库根 `D:/Projects/rea/Project work/shapez`。
+> 本文所有路径相对于仓库根 `<repo>`。
 > **本次派发（第 2 次）已完成**：59 码全量机械对拍 + 8 个指定变体逐字段全核 + `notes`/`rateMeta` 全部引用行号复核。发现并修正 3 处错误（见 §4）。
 
 ---

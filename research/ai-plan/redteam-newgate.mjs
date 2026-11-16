@@ -17,7 +17,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const ROOT = path.resolve("D:/Projects/rea/Project work/shapez");
+const ROOT = path.resolve("<repo>");
 const G = await import(pathToFileURL(path.join(ROOT, "src/agent/gates.mjs")).href);
 const B = await import(pathToFileURL(path.join(ROOT, "src/ai/belt-rules.mjs")).href);
 const { DIRV, OPP, beltEntry, beltExit } = B;

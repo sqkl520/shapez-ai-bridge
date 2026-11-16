@@ -55,7 +55,7 @@
 
 ### 证据
 
-- **本仓库实验（【实测】）**：临时脚本 `validate-channel-routing.mjs`（因纪律"只写交付文件"，已移出仓库，在 `C:/Users/Administrator/AppData/Local/Temp/`）+ 穷举版 `brute.mjs`。
+- **本仓库实验（【实测】）**：临时脚本 `validate-channel-routing.mjs`（因纪律"只写交付文件"，已移出仓库，在 `<tmp-dir>/`）+ 穷举版 `brute.mjs`。
   - 输出：`NO vertical constraints: left-edge==optimal 160, left-edge>optimal 0`；`WITH vertical constraints: left-edge==optimal 400, >optimal 0`；穷举 `instances: 27405  left-edge suboptimal: 0`。
   - 单调（保序）排列 `hasVConMonotone([0,1,2,3],[0,1,2,3]) = false`，交换首尾 `= true` → **证实"层内保持父子同序 ⇒ 无 vertical constraint ⇒ 无交叉"**，这是 DESIGN 阶段 A 第 4 步可行性的形式依据。
   - **可复现**：`node <脚本>`，无依赖、无随机外部输入（seed 固定 12345/999）。
@@ -582,4 +582,4 @@ export function routeChannel(ch, occ, { straightCost = 1, turnCost = 2, cap = 40
 | `xaviershay/factorio-layout-designer` / `w-flo/Foreman` | 【文档】README + 目录列表（Foreman **未读源码**） | §4 |
 | 本仓库一手 | `src/ai/belt-rules.mjs`(全文)、`recon/upstream-full/src/js/game/components/belt.js`(:6,64-71,103-119)、`research/ai-player/plan-compiler.md`(:80-135,230-292)、`designs/layout-compiler-DESIGN.md`(阶段 A/B 全文)、`facts/ecosystem.md`、`review/ADVERSARIAL-REVIEW.md:221-223` | §0 §4 §5 §6 |
 | arXiv API（`https://export.arxiv.org/api/query`，http 被拦、https 通） | 【实测】`id_list=2005.03192,2404.05472,2310.01505` 取回摘要（标题/摘要实读：`2005.03192` = Factorio 机制 PSPACE-完全、`2404.05472` = splitter 网络稳态 + 均衡 Ω(n log n) 下界、`2310.01505` = Factorio 蓝图 CP 自动设计）；`all:"crossing minimization"` 命中 **2412.06361**；`all:"left-edge algorithm"` / `all:"Hybrid A*"` / `all:"switchbox routing"` = **0 命中（负面结果，已如实记录）** | §1 §7 |
-| 计算实验（本会话） | 临时脚本 `validate-channel-routing.mjs` + `brute.mjs`（**在 `C:/Users/Administrator/AppData/Local/Temp/`，未写入仓库**）：left-edge vs 暴力色数，穷举 27405 例 + 随机 400 例 | §1 §8 |
+| 计算实验（本会话） | 临时脚本 `validate-channel-routing.mjs` + `brute.mjs`（**在 `<tmp-dir>/`，未写入仓库**）：left-edge vs 暴力色数，穷举 27405 例 + 随机 400 例 | §1 §8 |

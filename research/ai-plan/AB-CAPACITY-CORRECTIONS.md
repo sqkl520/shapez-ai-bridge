@@ -168,7 +168,7 @@ delivered_per_sec: {"RuRu----": 0.5}                     ← 60/60 = 1.0，不�
 ## 复现
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 node -e "
 const r=require('./.tmpverify/ab-capacity/results-v2.json');
 const ids=new Set(r.map(x=>x.arm+'#'+x.rep));

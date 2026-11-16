@@ -119,7 +119,7 @@ export class AnthropicClient extends LLMClient {
      * @param {object} [o]
      * @param {string} [o.apiKey]  缺省读 `ANTHROPIC_API_KEY`；**缺失即构造期抛错**
      * @param {string} [o.baseUrl] 兼容 Anthropic Messages 协议的**代理/网关**地址
-     *        （例如 `https://api.example.test`）。**缺省为 null = 走官方地址**。
+     *        （例如自建网关或兼容代理的地址）。**缺省为 null = 走官方地址**。
      *        注意：**不**自动读 `ANTHROPIC_BASE_URL` —— 那个变量在本机被 Claude Code
      *        自己占用（指向 IDE 的本地网关），跟着它走会让本项目的 CLI 打到错误的地方。
      *        要用代理必须显式传 `--base-url` 或 `{baseUrl}`。

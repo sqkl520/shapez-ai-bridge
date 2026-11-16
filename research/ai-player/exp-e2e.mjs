@@ -147,7 +147,7 @@ async function main() {
   log("\n[2] 离线读 map.seed ...");
   const sv = await rpc("save_now", {});
   const saveFile = path.join(process.env.APPDATA, "shapez.io", "saves", `savegame-${sv.internal_id}.bin`);
-  const { decodeSave } = require("D:/Projects/rea/Project work/shapez/recon/decode_full.cjs");
+  const { decodeSave } = require("<repo>/recon/decode_full.cjs");
   const seed = decodeSave(saveFile).obj.dump.map.seed;
   log(`  seed = ${seed}`);
 

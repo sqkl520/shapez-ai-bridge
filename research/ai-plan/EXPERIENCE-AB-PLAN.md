@@ -866,7 +866,7 @@ S2 就测不出"过敏"，只能测出"会不会读英文"。
 ## 8. 复现脚本（本设计期间用来核实前提的，可直接跑）
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 
 node .tmpverify/exp-plan/headroom.mjs        # §0.3 预算余量（547 → 6747，对照臂逐字节不变）
 node .tmpverify/exp-plan/final-pipeline.mjs  # §0.1 文本 70% vs 世界 8.7%（主判据的依据）

@@ -134,7 +134,7 @@ Steam 的权威日志（`D:/Steam/logs/console_log.txt`）：
 但 `screen.png` 证明**桌面上还有另一个 agent 会话在活动**，而 `screen5.png` 证明 **21:09:58 时游戏窗口根本不在屏幕上**——
 与派工描述的「游戏已启动、正在载入」直接矛盾。
 
-`scripts/watch.mjs`（PID 30840，20:55 启动）也不是本仓库的 —— 它属于 `D:/Projects/Overwatch/`。
+`scripts/watch.mjs`（PID 30840，20:55 启动）也不是本仓库的 —— 它属于 `<another-checkout>/`。
 
 **没有任何一方写过世界**：`.tmpverify/live/guard.log` 在我整个会话期间**零新增条目**
 （最后一条是 `2026-11-01T12:18:03Z`，即本地 20:18，早于我）。

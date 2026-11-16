@@ -259,7 +259,7 @@ options.addMachines = {
 ## 附：核验命令
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 node -e "import('./src/agent/rules.mjs').then(m=>{
   console.log(JSON.stringify({RATES:m.RATES, MULT:m.UPGRADE_MULTIPLIERS, LINE:m.MACHINE_UPGRADE_LINE, LAYOUT:m.LAYOUT_RULES}, null, 1));
 })"

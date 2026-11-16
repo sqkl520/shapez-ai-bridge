@@ -77,7 +77,7 @@ hub entry 8 在 `(0,-3)`。
 复现命令：
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 node --input-type=module -e "
 import { connect } from './src/agent/macros/connect.mjs';
 import fs from 'node:fs';

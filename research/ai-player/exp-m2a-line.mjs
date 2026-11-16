@@ -30,7 +30,7 @@ async function rpc(m, a = {}) {
 }
 const log = (...a) => console.log(...a);
 const decodeSaveOf = saved => {
-  const { decodeSave } = require("D:/Projects/rea/Project work/shapez/recon/decode_full.cjs");
+  const { decodeSave } = require("<repo>/recon/decode_full.cjs");
   return decodeSave(path.join(process.env.APPDATA, "shapez.io", "saves", `savegame-${saved.internal_id}.bin`));
 };
 

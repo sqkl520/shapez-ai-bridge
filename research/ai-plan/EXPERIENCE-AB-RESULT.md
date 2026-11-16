@@ -220,7 +220,7 @@ prompt 里 `desc` 的写法（`top:secondary`）和 `port` 参数要求（`secon
 ## 复现
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 
 # 重跑实验（断点续跑，已有的不会重复）
 node .tmpverify/ab-correction/runner.mjs 15 .tmpverify/ab-correction/results.json 3

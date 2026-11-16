@@ -83,7 +83,7 @@
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 | B/B1 | **PASS** | EnvReport 26 项全部与真实机器一致 | 样例: node=v26.12.1 game=D:\Steam\steamapps\common\shapez.io mod.match=true port.busy=false |
 
@@ -99,7 +99,7 @@
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 | B/B1 | **PASS** | EnvReport 26 项全部与真实机器一致 | 样例: node=v26.12.1 game=D:\Steam\steamapps\common\shapez.io mod.match=true port.busy=false |
 | B/B2 | **PASS** | 安装 exit_code=0, 文件与仓库 sha256 一致 | resp={"ok":true,"exit_code":0,"target":"C:\\Users\\Administrator\\AppData\\Roaming\\shapez.io\\mods\\shapez-ai-bridge.js","sha256":"eb0fb09708fa1c7d6116de7ad9ade3a495e859d09a99ce92c6bd297b538880e5","backup":null,"lines_n":27} sha_match=true shaBefore=eb0fb09708f… |
@@ -121,7 +121,7 @@
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 | B/B1 | **PASS** | EnvReport 26 项全部与真实机器一致 | 样例: node=v26.12.1 game=D:\Steam\steamapps\common\shapez.io mod.match=true port.busy=false |
 | B/B2 | **PASS** | 安装 exit_code=0, 文件与仓库 sha256 一致 | resp={"ok":true,"exit_code":0,"target":"C:\\Users\\Administrator\\AppData\\Roaming\\shapez.io\\mods\\shapez-ai-bridge.js","sha256":"eb0fb09708fa1c7d6116de7ad9ade3a495e859d09a99ce92c6bd297b538880e5","backup":null,"lines_n":27} sha_match=true shaBefore=eb0fb09708f… |
@@ -145,7 +145,7 @@
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 | B/B1 | **PASS** | EnvReport 26 项全部与真实机器一致 | 样例: node=v26.12.1 game=D:\Steam\steamapps\common\shapez.io mod.match=true port.busy=false |
 | B/B2 | **PASS** | 安装 exit_code=0, 文件与仓库 sha256 一致 | resp={"ok":true,"exit_code":0,"target":"C:\\Users\\Administrator\\AppData\\Roaming\\shapez.io\\mods\\shapez-ai-bridge.js","sha256":"eb0fb09708fa1c7d6116de7ad9ade3a495e859d09a99ce92c6bd297b538880e5","backup":null,"lines_n":27} sha_match=true shaBefore=eb0fb09708f… |
@@ -172,7 +172,7 @@
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 | B/B1 | **PASS** | EnvReport 26 项全部与真实机器一致 | 样例: node=v26.12.1 game=D:\Steam\steamapps\common\shapez.io mod.match=true port.busy=false |
 | B/B2 | **PASS** | 安装 exit_code=0, 文件与仓库 sha256 一致 | resp={"ok":true,"exit_code":0,"target":"C:\\Users\\Administrator\\AppData\\Roaming\\shapez.io\\mods\\shapez-ai-bridge.js","sha256":"eb0fb09708fa1c7d6116de7ad9ade3a495e859d09a99ce92c6bd297b538880e5","backup":null,"lines_n":27} sha_match=true shaBefore=eb0fb09708f… |
@@ -205,7 +205,7 @@
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 | B/B1 | **PASS** | EnvReport 26 项全部与真实机器一致 | 样例: node=v26.12.1 game=D:\Steam\steamapps\common\shapez.io mod.match=true port.busy=false |
 | B/B2 | **PASS** | 安装 exit_code=0, 文件与仓库 sha256 一致 | resp={"ok":true,"exit_code":0,"target":"C:\\Users\\Administrator\\AppData\\Roaming\\shapez.io\\mods\\shapez-ai-bridge.js","sha256":"eb0fb09708fa1c7d6116de7ad9ade3a495e859d09a99ce92c6bd297b538880e5","backup":null,"lines_n":27} sha_match=true shaBefore=eb0fb09708f… |
@@ -244,7 +244,7 @@
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 | B/B1 | **PASS** | EnvReport 26 项全部与真实机器一致 | 样例: node=v26.12.1 game=D:\Steam\steamapps\common\shapez.io mod.match=true port.busy=false |
 | B/B2 | **PASS** | 安装 exit_code=0, 文件与仓库 sha256 一致 | resp={"ok":true,"exit_code":0,"target":"C:\\Users\\Administrator\\AppData\\Roaming\\shapez.io\\mods\\shapez-ai-bridge.js","sha256":"eb0fb09708fa1c7d6116de7ad9ade3a495e859d09a99ce92c6bd297b538880e5","backup":null,"lines_n":27} sha_match=true shaBefore=eb0fb09708f… |
@@ -290,7 +290,7 @@
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 | B/B1 | **PASS** | EnvReport 26 项全部与真实机器一致 | 样例: node=v26.12.1 game=D:\Steam\steamapps\common\shapez.io mod.match=true port.busy=false |
 | B/B2 | **PASS** | 安装 exit_code=0, 文件与仓库 sha256 一致 | resp={"ok":true,"exit_code":0,"target":"C:\\Users\\Administrator\\AppData\\Roaming\\shapez.io\\mods\\shapez-ai-bridge.js","sha256":"eb0fb09708fa1c7d6116de7ad9ade3a495e859d09a99ce92c6bd297b538880e5","backup":null,"lines_n":27} sha_match=true shaBefore=eb0fb09708f… |
@@ -602,7 +602,7 @@ red_team 的 .bak-* 安全测试会在显式 `clean_backups:true` 用例前先�
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 
 计数: PASS=6 FAIL=0 BLOCKED=0
@@ -619,7 +619,7 @@ red_team 的 .bak-* 安全测试会在显式 `clean_backups:true` 用例前先�
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 | B/B1 | **PASS** | EnvReport 26 项全部与真实机器一致 | 样例: node=v26.12.1 game=D:\Steam\steamapps\common\shapez.io mod.match=true port.busy=false |
 | B/B2 | **PASS** | 安装 exit_code=0, 文件与仓库 sha256 一致 | resp={"ok":true,"exit_code":0,"target":"C:\\Users\\Administrator\\AppData\\Roaming\\shapez.io\\mods\\shapez-ai-bridge.js","sha256":"eb0fb09708fa1c7d6116de7ad9ade3a495e859d09a99ce92c6bd297b538880e5","backup":null,"lines_n":27} sha_match=true shaBefore=eb0fb09708f… |
@@ -688,7 +688,7 @@ red_team 的 .bak-* 安全测试会在显式 `clean_backups:true` 用例前先�
 | S/token | **PASS** | GET / 含 <meta name=gui-token> | token len=32 |
 | S/healthz | **PASS** | GET /api/healthz 免 token（错误 token 也 200） | status=200 body={"ok":true,"gui_version":"0.1.0","uptime_s":0,"port":7801} |
 | S/api_version | **PASS** | GET /api/version: mod=0.1.0 protocol=1 compat=["1.5.6"] node=20/v26.12.1 | {"gui":"0.1.0","repo":"D:\\Projects\\rea\\Project work\\shapez","mod":"0.1.0","protocol":1,"compat_games":["1.5.6"],"node":{"min":20,"cur":"v26.12.1"}} |
-| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["D:/Projects/rea/Project work/shapez/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
+| S/api_mcp_config | **PASS** | GET /api/mcp-config: command=node args=["<repo>/src/mcp/server.mjs"] | claude_cfg_path=%APPDATA%\AppData\Roaming\Claude\claude_desktop_config.json |
 | S/error_envelope | **PASS** | 404 错误统一体字段齐全（code/message/message_en/hint/detail/log_ref） | status=404 body={"error":{"code":"NOT_FOUND","message":"未知 API","message_en":"unknown api","hint":null,"detail":null,"log_ref":null}} |
 | B/B1 | **PASS** | EnvReport 26 项全部与真实机器一致 | 样例: node=v26.12.1 game=D:\Steam\steamapps\common\shapez.io mod.match=true port.busy=false |
 | B/B2 | **PASS** | 安装 exit_code=0, 文件与仓库 sha256 一致 | resp={"ok":true,"exit_code":0,"target":"C:\\Users\\Administrator\\AppData\\Roaming\\shapez.io\\mods\\shapez-ai-bridge.js","sha256":"eb0fb09708fa1c7d6116de7ad9ade3a495e859d09a99ce92c6bd297b538880e5","backup":null,"lines_n":27} sha_match=true shaBefore=eb0fb09708f… |

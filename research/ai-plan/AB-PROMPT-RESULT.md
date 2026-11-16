@@ -136,7 +136,7 @@ n=10~20 的置信区间很宽（A 的 95% CI 是 60–98%），
 ## 复现
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 node .tmpverify/ab-prompt/stats.mjs          # 统计（含 Fisher 自检）
 # 原始数据
 ls .tmpverify/ab-prompt/results-*.json
@@ -277,7 +277,7 @@ rate RuRu----: 0.5          ← 上面说 0，这里说 0.5
 ## 复现
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 # 原始数据
 ls .tmpverify/ab-capacity/results.json      # 82 条（夹具坏的那批）
 ls .tmpverify/ab-capacity/results-v2.json   # 51 条（修正后）

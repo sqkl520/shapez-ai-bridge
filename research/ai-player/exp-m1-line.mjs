@@ -88,7 +88,7 @@ async function main() {
   log("\n快进 2000 tick ...");
   await rpc("act", { op: "step", ticks: 2000 });
   const saved = await rpc("save_now", {});
-  const { decodeSave } = require("D:/Projects/rea/Project work/shapez/recon/decode_full.cjs");
+  const { decodeSave } = require("<repo>/recon/decode_full.cjs");
   const { obj } = decodeSave(path.join(process.env.APPDATA, "shapez.io", "saves", `savegame-${saved.internal_id}.bin`));
   const pos = new Map();
   for (const e of (obj.dump.entities || [])) { const s = e.components?.StaticMapEntity; if (s && typeof e.uid === "number") pos.set(e.uid, { x: s.origin.x, y: s.origin.y }); }

@@ -204,7 +204,7 @@ B2 独立样本 23 条
 ## 9. 复现
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 node .tmpverify/ab-correction/replay-b2.mjs
 ```
 

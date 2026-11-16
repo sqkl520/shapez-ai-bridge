@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-const ROOT = path.resolve("D:/Projects/rea/Project work/shapez");
+const ROOT = path.resolve("<repo>");
 const DIR = path.join(ROOT, "research/ai-plan/.redteam");
 fs.mkdirSync(DIR, { recursive: true });
 

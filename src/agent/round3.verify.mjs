@@ -1,5 +1,5 @@
 // 第三轮验收：自己跑一遍全部要点
-import * as G from "file:///D:/Projects/rea/Project%20work/shapez/src/agent/gates.mjs";
+import * as G from "./gates.mjs";
 async function rpc(method, params) {
   const res = await fetch('http://127.0.0.1:7777/rpc', {
     method: 'POST', headers: { 'content-type': 'application/json' },

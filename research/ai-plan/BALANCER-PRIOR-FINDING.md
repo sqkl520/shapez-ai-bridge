@@ -139,7 +139,7 @@ A2 臂里 15/26 次的动作是「给 balancer 的 secondary 输出接垃圾桶�
 ## 复现
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 node -e "
 const r=require('./.tmpverify/ab-capacity/results-v2.json');
 const rows=r.filter(x=>(x.thinking||'').length>100);

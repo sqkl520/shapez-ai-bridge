@@ -355,7 +355,7 @@ const atStart = rf 的某个端口 cell === blockedBy 的格；
 ## 附：复现方式
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 node .tmpverify/connocc/extract.mjs      # 抽出 15 条 occupied（含完整 args）
 node .tmpverify/connocc/classify2.mjs    # 逐端口对判定 A/D/B/C
 node .tmpverify/connocc/workarounds.mjs  # 每个失败调用换 opts/port 后能否通

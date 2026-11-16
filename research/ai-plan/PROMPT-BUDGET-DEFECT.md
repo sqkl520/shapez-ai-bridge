@@ -169,7 +169,7 @@ targetChars = max(9800, 估算的必需字符数)
 ## 复现
 
 ```bash
-cd "D:/Projects/rea/Project work/shapez"
+cd "<repo>"
 node -e "
 import('./src/agent/loop/prompt.mjs').then(async prompt=>{
   const fs=await import('node:fs');
