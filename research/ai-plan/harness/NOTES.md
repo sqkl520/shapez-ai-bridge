@@ -105,7 +105,7 @@ place({steps, site:{x:0,y:0}, hub:{x:-4,y:-4}, world:hubWorldState([-4,-4],null)
 - painter 模板是 **2 个输入槽**（`shape←left`、`color←top`，GEOMETRY 表1:19）；表3 规则 6：「颜料是**独立物流**：
   painter 的 color 从 top 进 → 必须为颜料留垂直通道」；M2a 实机已证两条物流都到位才上色。
 - 契约里**没有颜料通道的位置**：`channels[].payload` 必须是 shapez shortKey（types.mjs:597），而游戏里颜料是
-  `ColorItem` 不是 `ShapeItem`（`recon/upstream-full/src/js/game/items/color_item.js:28` `getItemType()="color"`）。
+  `ColorItem` 不是 `ShapeItem`（游戏源码 color_item.js `getItemType()="color"`）。
   实测：`"--------"`（空形状）是 `parse∘hash` 的**唯一**不动点；`"-r-r-r-r"` 这类「有色空位」被 hash 归一回
   `"--------"` ⇒ S1 立刻报 `expectedHash="-r-r-r-r" actualHash="--------"`。也就是说**同一张图里画不出两个不同颜料的来源**。
 

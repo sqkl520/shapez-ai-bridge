@@ -134,7 +134,7 @@ L4 实测：`0.5 / 1.8 = 27.8%`。
 - 2 个 acceptor 槽：`(0,0)` 从底、`(1,0)` 从底
 - 2 个 ejector 槽：`(0,0)` 朝上、`(1,0)` 朝上
 
-出处：`recon/upstream-full/src/js/game/buildings/balancer.js:179-200`
+出处：游戏源码 balancer.js
 
  ejected 时**不轮转**，而是：
 
@@ -177,7 +177,7 @@ secondary 接垃圾桶（14/26 次），它以为那是「分流」,实际是「
 ### 8.1 hub 占地 4×4
 
 ```js
-// recon/upstream-full/src/js/game/buildings/hub.js:23-25
+// 游戏源码 hub.js
 getDimensions() {
     return new Vector(4, 4);
 }
@@ -190,11 +190,11 @@ getDimensions() {
 ### 8.2 隧道是 1×1，**不占中间格**
 
 ```js
-// recon/upstream-full/src/js/game/buildings/underground_belt.js:38
+// 游戏源码 underground_belt.js
 export class MetaUndergroundBeltBuilding extends MetaBuilding { ... }
 // 没有覆写 getDimensions ⇒ 用基类默认值
 
-// recon/upstream-full/src/js/game/meta_building.js:49-51
+// 游戏源码 meta_building.js
 getDimensions(variant = defaultBuildingVariant) {
     return new Vector(1, 1);
 }

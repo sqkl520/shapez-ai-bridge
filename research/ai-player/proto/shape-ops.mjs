@@ -1,7 +1,7 @@
 /**
  * shape-ops.mjs — shapez 1.5.6 形状运算的离线复刻（主 Agent 亲自核证版）。
  *
- * 每一行都对照 recon/upstream-full/src/js/game/shape_definition.js 的实现：
+ * 每一行都对照 游戏源码 shape_definition.js 的实现：
  *   getHash()                 :266   —— 形状字符串编码
  *   fromShortKey()            :139   —— 字符串解析
  *   cloneFilteredByQuadrants():471   —— 切割的底层

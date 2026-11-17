@@ -6,7 +6,7 @@
  * 算法来源（**复刻**，不是 import）：
  *   research/ai-player/exp-e2e.mjs:32-89      ← 本文件的直接搬运源（同一算法的已验证内联版）
  *   research/ai-player/proto/gen-resources.mjs:17-210（对照逐行；CLI 输出是本文件的对拍基准）
- *   上游对照：recon/upstream-full/src/js/game/map_chunk.js（generateLowerLayer/generatePatches）、
+ *   上游对照：游戏源码 map_chunk.js（generateLowerLayer/generatePatches）、
  *             core/rng.js（ALEA）、core/config.js:72（mapChunkSize = 16）
  *   实机凭据：facts/offline-map-reproduction.md（seed 43391 → 3002/3002 逐格一致）
  *

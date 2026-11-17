@@ -1,7 +1,7 @@
 # 带子拓扑的三条实机规则（源码 + 实测双向确认）
 
 日期：2026-10-27
-来源：`recon/upstream-full/src/js/game/` 源码 + 本机实机探测
+来源：游戏源码 源码 + 本机实机探测
 
 这三条解释了为什么"看起来该通的线不通"，也是 `gates.mjs` 的 G7/G8 能成立的前提。
 
@@ -9,7 +9,7 @@
 
 ## 规则 1：带子只接收与它行进方向相同的货，**没有侧向输入**
 
-`recon/upstream-full/src/js/game/belt_path.js:246`：
+游戏源码 belt_path.js：
 
 ```js
 const beltAcceptingDirection = targetStaticComp.localDirectionToWorld(enumDirection.top);
@@ -29,7 +29,7 @@ if (ejectSlotWsDirection === beltAcceptingDirection) {
 
 ## 规则 2：拐角的形状由**邻居当时是否在场**决定，放置后不会自动重算
 
-`recon/upstream-full/src/js/game/buildings/belt.js:160-250`
+游戏源码 belt.js
 `computeOptimalDirectionAndRotationVariantAtTile`：
 
 - 它调 `root.logic.getEjectorsAndAcceptorsAtTile(tile)` 查邻居

@@ -56,7 +56,7 @@ params: { id?: string, dry_run?: boolean }
 ```
 
 `id` ∈ `Object.keys(root.gameMode.getUpgrades())` = `belt` / `miner` / `processors` / `painting`
-（`recon/upstream-full/src/js/game/modes/regular.js:108/138/175/205`）。
+（游戏源码 regular.js/138/175/205`）。
 
 **它确实做了「买得起吗」判断**（`:1079-1088`）：
 
@@ -70,7 +70,7 @@ params: { id?: string, dry_run?: boolean }
 ```
 
 `can_buy` 来自游戏自己的 `hubGoals.canUnlockUpgrade(id)`（`:1064`），
-后者会逐条比对 `storedShapes` 与 `tierData.required`（`recon/upstream-full/src/js/game/hub_goals.js:289-310`）。
+后者会逐条比对 `storedShapes` 与 `tierData.required`（游戏源码 hub_goals.js）。
 所以**不是**「无条件尝试然后失败」——它在动世界之前就拒绝了。
 
 **返回值**（`:1096-1104`）：

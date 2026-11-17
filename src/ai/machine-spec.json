@@ -2,8 +2,8 @@
   "version": "1.5.6",
   "game_commit": "ee2279d",
   "generatedFrom": {
-    "authoritative": "recon/upstream-full/src/js/game/buildings/*.js + meta_building_registry.js + components/* + systems/*",
-    "crossCheck": "recon/bundle.pretty.js（逐 internalId 比对，59 码全部吻合）"
+    "authoritative": "游戏源码的 buildings/*.js + meta_building_registry.js + components/* + systems/*",
+    "crossCheck": "与游戏实现逐 internalId 比对，59 码全部吻合）"
   },
   "buildings": {
     "miner": {

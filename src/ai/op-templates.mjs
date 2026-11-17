@@ -6,7 +6,7 @@
  *   research/ai-player/facts/GEOMETRY-TABLE.md 表1（槽位）、表2（速率）
  *   research/ai-player/facts/building-codes-live.json（实机提取：60 条记录 → **15 个去重 code**
  *     覆盖 14 个 building|variant 组合（belt 的 4 条都是 rv=0→code 1）；全部 rv=0）
- *   上游源码复核：recon/upstream-full/src/js/game/buildings/{cutter,painter,stacker,mixer,rotater,miner,trash}.js
+ *   上游源码复核：游戏源码的 {cutter,painter,stacker,mixer,rotater,miner,trash}.js
  * 方向真值 = src/ai/belt-rules.mjs 的 rotateLocal（**唯一方向函数，禁止二次实现**）。
  *
  * 三条硬断言（红队 + 审查结论，落到代码与测试）：
@@ -100,7 +100,7 @@ export const UNLOCK_LEVEL_FALLBACK = Object.freeze({
 /**
  * 隧道（underground_belt T1）**实际可用**的关卡 —— 编译器侧所有隧道门控的唯一真值。
  *
- * 依据（`recon/upstream-full/`，三处互证）：
+ * 依据（游戏源码，三处互证）：
  *   1. `buildings/underground_belt.js:178-180` `getIsUnlocked()` = `isRewardUnlocked(reward_tunnel)`
  *   2. `modes/levels.js` **三套**关卡表（WEB_DEMO :56 / STEAM_DEMO :130 / STANDALONE :201）
  *      的第 **5** 项都是 `shape:"Cu----Cu"` → `reward_tunnel` —— 三套在**这一项上完全一致**。

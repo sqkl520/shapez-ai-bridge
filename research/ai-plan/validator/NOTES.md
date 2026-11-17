@@ -7,7 +7,7 @@
 
 | 文件 | 行数 | 内容 |
 |---|---|---|
-| `src/ai/compiler/belt-sim.mjs` | ~520 | 独立实现 `computeBelt`（对照 `recon/upstream-full/src/js/game/buildings/belt.js:159-247`）+ 槽位法邻居模型（对照 `logic.js:391-470`）+ `topologyScore`（双实现拍腿）+ 存档回放 |
+| `src/ai/compiler/belt-sim.mjs` | ~520 | 独立实现 `computeBelt`（对照 游戏源码 belt.js）+ 槽位法邻居模型（对照 `logic.js:391-470`）+ `topologyScore`（双实现拍腿）+ 存档回放 |
 | `src/ai/compiler/validate.mjs` | ~1450 | V1-V10 + S1 十一判据、归因机制、`auditReport`、CLI（三种输入） |
 | `research/ai-plan/validator/mutation-cases.mjs` | ~240 | 19 条注入（7 陷阱 + 8 清单 + 4 补充） |
 | `research/ai-plan/validator/test.mjs` | ~590 | L0：A 判据自测 / B 变异矩阵 / C 双实现对拍 / D golden / E lint / F 自洽 / G CLI / H 三态归属 / I 回归锁 / J P5⇄P1/P8 交接 / K hub 锚点 |

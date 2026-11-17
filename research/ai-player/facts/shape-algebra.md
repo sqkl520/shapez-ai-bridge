@@ -1,11 +1,11 @@
 # 形状代数（主 Agent 亲自核证，v1）
 
-> 本文件的每一条都由主 Agent 在 `recon/upstream-full/`（精确 1.5.6 @ ee2279d）里读过源码确认。
+> 本文件的每一条都由主 Agent 在 游戏源码（精确 1.5.6 @ ee2279d）里读过源码确认。
 > 证据等级：【观测】= 源码实读；【实测】= 本地脚本跑出来的数据。
 
 ## 1. 形状的字符串编码（short key）【观测】
 
-来源：`recon/upstream-full/src/js/game/shape_definition.js:139` `ShapeDefinition.fromShortKey(key)`
+来源：游戏源码 shape_definition.js `ShapeDefinition.fromShortKey(key)`
 
 **格式**：`<8字符>` 或 `<8字符>:<8字符>`（多层，`:` 分隔；`layers` 从**下到上**）
 

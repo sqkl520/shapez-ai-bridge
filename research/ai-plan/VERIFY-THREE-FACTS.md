@@ -1,7 +1,7 @@
 # 三条关键事实的独立复核
 
 > 2026-11-02。复核者只读源码与原始数据，不引用任何既有结论。
-> 最高权威：`recon/upstream-full/`（shapez.io 1.5.6，commit `ee2279d5`）。
+> 最高权威：游戏源码（shapez.io 1.5.6）。
 
 | 事实 | 结论 | 一句话 |
 |---|---|---|
@@ -208,7 +208,7 @@ carry-over 与 ×2.5 都正确实现。**commit `bb6939d` 的修复是对的。*
 
 | 常量 | 源码位置 | 值 | 仓库 |
 |---|---|---|---|
-| `fixedImprovements` | `recon/upstream-full/src/js/game/modes/regular.js:80` | `[0.5, 0.5, 1, 1, 2, 1, 1]` | `rules.mjs:243` 一致 ✓ |
+| `fixedImprovements` | 游戏源码 regular.js | `[0.5, 0.5, 1, 1, 2, 1, 1]` | `rules.mjs:243` 一致 ✓ |
 | `tierGrowth` | `regular.js:66` | `2.5` | `rules.mjs:244` 一致 ✓ |
 | `beltSpeedItemsPerSecond` | `src/js/core/config.js:81` | `2` | `rules.mjs:28` 一致 ✓ |
 | `buildingSpeeds.cutter` | `config.js:102` | `1/4` | `rules.mjs:245` 一致 ✓ |
@@ -381,7 +381,7 @@ get difficultyMultiplicator() {
 
 ### 1. footprint 2×1
 
-`recon/upstream-full/src/js/game/buildings/cutter.js:37-40`
+游戏源码 cutter.js
 `getDimensions(variant)` → `defaultBuildingVariant` 返回 `new Vector(2, 1)` ✓
 （quad 变体是 `Vector(4, 1)`，`cutter.js:42`）
 
@@ -604,7 +604,7 @@ capacityOf({entities:[..., {type:'painterQuad',...}], ...}) ⇒ TypeError
 
 `capacityOf` 的 `PROCESSORS` 列表（`assess.mjs:214`）**包含 `"painterQuad"`**。
 触发条件：桥把一台 painter 的 quad 变体报成 `type: "painterQuad"`。
-从 `recon/upstream-full/src/js/game/buildings/painter.js:22` 看，
+从 游戏源码 painter.js 看，
 `MetaPainterBuilding` 的 `getId()` 是 `"painter"`（变体走 `variant` 字段），
 所以桥大概率报 `type:"painter"` —— **当前不会触发**。
 但 `MACHINE_UPGRADE_LINE`（`rules.mjs:84`）里登记了 `painterQuad: "painting"`，

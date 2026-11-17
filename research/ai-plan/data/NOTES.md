@@ -41,7 +41,7 @@ plan §2.2:238 说「非 belt 建筑的 rv 位在实机码里怎么编码，**�
 - code 由 `building_codes.js:41-56 registerBuildingVariant(code, meta, variant, rotationVariant = 0)`
   经 `meta_building_registry.js:42-53` 用每个 meta 建筑的 `getAllVariantCombinations()` 注册；
   查表 key = `metaBuildingId/variant/rotationVariant`（`building_codes.js:87-99`）。
-- `grep -rn "rotationVariant:" recon/upstream-full/src/js/game/buildings/` →
+- `grep -rn "rotationVariant:" 游戏源码 →
   **只有 `belt.js`（rv 0/1/2 → internalId 1/2/3）、`underground_belt.js`（0/1）、`wire.js`（0/1/2/3）
   注册了 rv≠0 的组合**。
   miner/cutter/rotater/stacker/mixer/painter/trash/hub 的组合里**根本不出现 `rotationVariant` 字段**

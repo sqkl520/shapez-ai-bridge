@@ -1,7 +1,7 @@
 # 02 — 如何把 AI / 程序接到 shapez 上：现有方案调研
 
 > **调研日期**：2026-10-25
-> **调研方式**：本地源码逐行核对（`recon/upstream-full/`，即 shapez.io 1.5.6 = `version` 文件内容）+ GitHub REST/Code Search API（`gh api` / `gh search`）+ WebSearch。
+> **调研方式**：本地源码逐行核对（游戏源码，即 shapez.io 1.5.6 = `version` 文件内容）+ GitHub REST/Code Search API（`gh api` / `gh search`）+ WebSearch。
 > **说明**：本机 `WebFetch` 对 `github.com` / `arxiv.org` / `wiki.factorio.com` 被安全策略拦截，所有仓库内容均通过 `gh api repos/.../contents/...` 直接取原文；arXiv 摘要通过 `export.arxiv.org/api/query` 取原始 Atom XML。WebSearch 的 shapez 专项查询命中率很低（多次返回空），因此 shapez 生态的结论主要来自 GitHub API，而非搜索引擎。
 > **证据分级**：`[有源码可查]` = 我读到了实现代码；`[文档说明]` = 官方 README / 仓库 README / arXiv 摘要原文；`[仅博客/口述]` = 二手转述，未验证。
 
@@ -277,7 +277,7 @@ JSON = { v:1|2, gv:"1.5.6", w:[minx,miny],
 
 | 名称 | 用途 | 语言 | ★ | 最后 push | 活跃 | 我们能不能用 |
 |---|---|---|---|---|---|---|
-| `tobspr-games/shapez.io` | 官方源码（GPL-3.0） | JS | 6999 | 2026-09-07 | 低频（已转 CE/2 代） | **是**，就是我们的 `recon/upstream-full` |
+| `tobspr-games/shapez.io` | 官方源码（GPL-3.0） | JS | 6999 | 2026-09-07 | 低频（已转 CE/2 代） | **是**，就是我们的 游戏源码 |
 | `tobspr-games/shapez-community-edition` | 社区续作，TS 化 + 新 modloader（`mod.json` + `.asar`） | JS/TS | 206 | 2026-10-16 | 活跃 | **参考**：它的 `mod_metadata.ts`（zod schema）是"如果 1.5.6 有 mod.json 会长什么样"的答案；`electron/src/mods/{loader,locator,metadata}.ts` 是完整实现 |
 | `tobspr-games/shapez.io-viewer` | 任意形状 → 预览图 | JS | 24 | 2023-03 | 停更 | 形状渲染可抄（我们目前不做形状可视化） |
 | `entibo/shapezio-mods` | mod 集合（含 Compact Machines）+ 构建脚手架 | TS | 6 | 2026-10-01 | 低频 | `src/compact/mod.json` 是**构建期**清单范例 |
@@ -632,7 +632,7 @@ src/autoLayout/
 
 ## 8. 参考来源
 
-### 8.1 本地源码（`recon/upstream-full/`，shapez.io 1.5.6）
+### 8.1 本地源码（游戏源码，shapez.io 1.5.6）
 
 | 文件 | 用来证明 |
 |---|---|

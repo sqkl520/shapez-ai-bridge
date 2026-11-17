@@ -177,7 +177,7 @@
 
 ### 4.4 隧道（underground belt）在这里的位置
 
-游戏里隧道 `undergroundBeltMaxTilesByTier: [5, 9]`（`recon/upstream-full/src/js/core/config.js:90`），即**最多跨 5 格**（我们的 `TUNNEL_MAX_SPAN = 4` 是保守的）。这等价于 VLSI 里的 **via / 换层**：它**不创造容量，只允许两股流在垂直方向分离**。
+游戏里隧道 `undergroundBeltMaxTilesByTier: [5, 9]`（游戏源码 config.js），即**最多跨 5 格**（我们的 `TUNNEL_MAX_SPAN = 4` 是保守的）。这等价于 VLSI 里的 **via / 换层**：它**不创造容量，只允许两股流在垂直方向分离**。
 
 **重要推论**：隧道能解决的是"**两条带子必须交叉**"，不能解决"**行数不够**"。`CpCpCpCp --tunnels` 的实测结果是 bbox 168×19 且仍然 `crossing-needs-tunnel`——正是这个原因。所以在实现顺序上，**隧道必须排在行分配之后**（先有足够行，再谈交叉），而不是用来兜底形状问题。
 
@@ -226,7 +226,7 @@
 
 ### 5.4 结论：我们的"配对式二叉树"是对的
 
-**前提核实（【本项目】）**：`MINERS_PER_LINE = 4`（`place.mjs:643`），矿机速率 `beltSpeedItemsPerSecond / 5 = 2/5 = 0.4 items/s`（`recon/upstream-full/src/js/core/config.js:151`）——**所有矿机等速**。所以当前场景是等权，配对式已是最优（上表 K=4/8/… 的"配对式"列就是最优值）。`Hu–Tucker` 现在**用不上**，它是给将来"混矿种 / 混 tier / 矿机速率不均"准备的。
+**前提核实（【本项目】）**：`MINERS_PER_LINE = 4`（`place.mjs:643`），矿机速率 `beltSpeedItemsPerSecond / 5 = 2/5 = 0.4 items/s`（游戏源码 config.js）——**所有矿机等速**。所以当前场景是等权，配对式已是最优（上表 K=4/8/… 的"配对式"列就是最优值）。`Hu–Tucker` 现在**用不上**，它是给将来"混矿种 / 混 tier / 矿机速率不均"准备的。
 
 真正值得做的只有一件事：**每级 balancer 占的行数**（`8fc9f9d` 之前 `ROW_H`、之后 2 行；理论上 1 行/级就够了，因为它的输入口和输出口逐格对齐）。这属于 §3 的 `rowPitch` 表，不属于树形选择。
 

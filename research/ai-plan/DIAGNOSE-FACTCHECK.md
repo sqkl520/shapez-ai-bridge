@@ -174,7 +174,7 @@ diagnose 若据此产出「这个形状造不出来」会是**假论断** ——
 - `obs.resources` 是**矿格 → 矿种**的三元组 `[x, y, kind]`（`shapez-ai-bridge.js:1497-1525`），
   能回答「这台矿机脚底下是什么矿」，但**不能**回答「这台 cutter 在切什么」。
 - `production` 是 **`Map<shapeShortKey, count>`**（`shapez-ai-bridge.js:605-655`；游戏侧 `history[produced][shapeHash]`，
-  见 `recon/bundle.js` `_onItemProduced`）—— **按形状统计，不按链**，无法归因到某条带子。
+  见游戏实现的 `_onItemProduced`）—— **按形状统计，不按链**，无法归因到某条带子。
 
 **对 diagnose 语义化设计的影响**：`obs` 能给出「哪台机器在哪、朝向如何」，但**给不出「这台机器在处理什么形状」**。
 所以「这条链是不是本来就该经过 cutter」不能用 obs 判 —— 必须靠「链的几何终点是不是 cutter」这种**结构**判据，
@@ -193,7 +193,7 @@ diagnose 若据此产出「这个形状造不出来」会是**假论断** ——
       && p.boundAcceptor.entity.components.StaticMapEntity
       ? [ ...origin.x, ...origin.y ] : "yes") : null,
   ```
-- **但 `p.boundAcceptor` 是游戏里的一个函数**：`recon/bundle.js:403263`
+- **但 `p.boundAcceptor` 是游戏里的一个函数**：游戏实现里的一处
   `this.boundAcceptor = this.computeAcceptingEntityAndSlot().acceptor`，
   而 `_computeAcceptingEntityAndSlot` 返回 `{entity, acceptor: function}`（`bundle.js:403880-403900`）。
   **函数对象上没有 `.entity` 属性** ⇒ 三目恒走 `"yes"` 分支。

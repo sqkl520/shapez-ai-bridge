@@ -14,13 +14,13 @@
 
 - `WebSearch` 工具对 shapez 的专项查询**大面积返回空结果**（约 20 次查询里只有 3 次有内容），不能作为主证据。
 - `WebFetch` 对 `github.com` / `reddit.com` / `fandom.com` / `shapez.io` 均被安全策略拦截；`shapez.fandom.com`、`shapez.miraheze.org` 从本机直连被 Cloudflare 挡（403 / 超时）。**官方 wiki 本次没有抓到**。
-- 实际可用的通道是：**本机游戏 `app.asar` 解包出的 `bundle.js`（= 1.5.6 发布版源码）**、**GitHub REST API 读取 `tobspr-games/shapez.io` 的 `config.js` / `regular.js` / `hub_goals.js` / `base-en.yaml`**、**Steam 社区指南页面的直连抓取（curl）**、**Steam Store API**。
+- 实际可用的通道是：**游戏 1.5.6 发布版源码**、**GitHub REST API 读取 `tobspr-games/shapez.io` 的 `config.js` / `regular.js` / `hub_goals.js` / `base-en.yaml`**、**Steam 社区指南页面的直连抓取（curl）**、**Steam Store API**。
 
 证据等级：
 
 | 标记 | 含义 |
 |---|---|
-| `[官方源码]` | 我直接读到了 1.5.6 运行代码（`bundle.js`）或仓库源文件中的实现/常量，冲突时以此为准 |
+| `[官方源码]` | 我直接读到了 1.5.6 运行代码或仓库源文件中的实现/常量，冲突时以此为准 |
 | `[官方文案]` | 游戏内 tip / 翻译文件 / 商店页原文 |
 | `[社区教程]` | Steam 指南作者的系统性总结，多人复现，但未逐条对源码 |
 | `[玩家经验，未验证]` | 单人做法、评论区说法，或我未能复核的推断 |
@@ -615,7 +615,7 @@ assert measuredDelivered / B >= 0.8           # R8（实测 ≥ 80%）
 
 | 内容 | 来源 |
 |---|---|
-| 全局速率常量（带 2/s、矿 0.4/s、间距 0.63、建筑速度表） | `https://github.com/tobspr-games/shapez.io/blob/master/src/js/core/config.js`（本次经 GitHub Contents API 取原文；本机 `app.asar/bundle.js` 同值） |
+| 全局速率常量（带 2/s、矿 0.4/s、间距 0.63、建筑速度表） | `https://github.com/tobspr-games/shapez.io/blob/master/src/js/core/config.js`（本次经 GitHub Contents API 取原文；游戏发布版源码同值） |
 | 升级线定义、`tierGrowth=2.5`、`fixedImprovements`、`excludePrevious` | `https://github.com/tobspr-games/shapez.io/blob/master/src/js/game/modes/regular.js` |
 | 升级倍率累加、hub 送货、关卡进度、`tryUnlockUpgrade` 扣库存 | `https://github.com/tobspr-games/shapez.io/blob/master/src/js/game/hub_goals.js` |
 | 26 关关卡表、奖励、`throughputOnly` | 同上仓库 `src/js/game/modes/levels.js`（`generateLevelsForVariant`） |

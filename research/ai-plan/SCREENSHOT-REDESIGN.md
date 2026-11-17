@@ -9,7 +9,7 @@
 
 ### 1. HUD 和世界画在同一张 canvas 上
 
-`recon/upstream-full/src/js/game/core.js:490`：
+游戏源码 core.js：
 
 ```js
 root.hud.draw(params);   // ← 世界内容画完之后，最后一步

@@ -1,7 +1,7 @@
 # 人类策略与机制文档 —— shapez.io 的「人类怎么玩」与社区机制知识
 
 > 调研日期：2026-10-23　作者：人类策略调研 agent
-> **证据纪律**：【观测】= 本机 `recon/upstream-full/` 源码（1.5.6 @ `ee2279d`，git log 已核）；
+> **证据纪律**：【观测】= 本机 游戏源码 源码（1.5.6 @ `ee2279d`，git log 已核）；
 > 【社区】= GitHub 上可核实的社区产物（仓库/issue/blog，附 URL）；
 > 【推断】= 有依据的推测，非实测。
 > ⚠️ 网络受限：fandom / reddit / steamcommunity 全部不可达（curl 返回 000，非 404）。
@@ -387,7 +387,7 @@ has_balancer = balancer | (merger and splitter)
 
 ## Sources
 
-**本机源码（精确 1.5.6 @ `ee2279d`，`recon/upstream-full/`）**
+**本机源码（精确 1.5.6 @ `ee2279d`，游戏源码）**
 - `src/js/game/modes/levels.js`（STANDALONE_LEVELS:164-364；自由模式 needs）
 - `src/js/game/modes/regular.js`（generateUpgrades:75-295）
 - `src/js/game/hub_goals.js`（自由模式图形生成:370-479；速度:487-575）

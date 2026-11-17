@@ -2,9 +2,9 @@
  * gen-resources.mjs — 离线复现 shapez 1.5.6 的资源图（由 map.seed 确定性生成）。
  *
  * 算法来源（逐行对照）：
- *   recon/upstream-full/src/js/game/map_chunk.js   (generateLowerLayer / generatePatches / internalGenerate*)
- *   recon/upstream-full/src/js/core/rng.js         (ALEA)
- *   recon/upstream-full/src/js/core/config.js:72   (mapChunkSize = 16)
+ *   游戏源码 map_chunk.js   (generateLowerLayer / generatePatches / internalGenerate*)
+ *   游戏源码 rng.js         (ALEA)
+ *   游戏源码 config.js   (mapChunkSize = 16)
  *
  * 用法：
  *   node research/ai-player/proto/gen-resources.mjs <seed> [x0 y0 x1 y1]
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const MAP_CHUNK_SIZE = 16;
 
-// ───────────────────────── ALEA RNG（对照 recon/upstream-full/src/js/core/rng.js） ─────────────────────────
+// ───────────────────────── ALEA RNG（对照 游戏源码 rng.js） ─────────────────────────
 
 function Mash() {
     let n = 0xefc8249d;

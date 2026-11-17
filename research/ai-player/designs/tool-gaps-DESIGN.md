@@ -5,7 +5,7 @@
 > 使其能被一个工程师直接开始实现。
 >
 > 行号基准（撰写时）：`src/mod/shapez-ai-bridge.js`（工作树版，含未提交的 dry_run 改动）、
-> `src/bridge/bridge.mjs`、`src/mcp/server.mjs`、`docs/PROTOCOL.md`、上游源码 `recon/upstream-full/`。
+> `src/bridge/bridge.mjs`、`src/mcp/server.mjs`、`docs/PROTOCOL.md`、上游源码 游戏源码。
 > 上游引用格式：`文件:行号`（1.5.6 @ ee2279d）。
 
 ---

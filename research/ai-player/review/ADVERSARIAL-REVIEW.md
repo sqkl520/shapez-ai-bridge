@@ -1,7 +1,7 @@
 # 对抗性审查：「AI 玩 shapez」方案（SYNTHESIS 及其证据链）
 
 > 审查对象：`research/ai-player/SYNTHESIS.md` + `facts/*` + `designs/*` + `proto/*`。
-> 方法：全部关键断言回到 `recon/upstream-full/`（1.5.6 @ ee2279d）源码逐行核对；
+> 方法：全部关键断言回到 游戏源码（1.5.6 @ ee2279d）源码逐行核对；
 > 所有"实测 PASS"逐一对拍 `facts/live/*.result.json` 原始数据；竞品 `Songxwn/shapez-auto`
 > 与公开求解器 `TomasSirgedas/Shapez-solver` 已克隆通读。
 > 立场：挑毛病。扎实的部分只给一句话确认。

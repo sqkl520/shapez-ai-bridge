@@ -129,7 +129,7 @@ y=-3 横排本身是**对的**（10 条 `r=270 code=1`，entry=right / exit=left
 
 上游源码逐行核对：
 
-- `recon/upstream-full/src/js/game/buildings/cutter.js:116-121`
+- 游戏源码 cutter.js
   ```js
   entity.components.ItemEjector.setSlots([
       { pos: new Vector(0, 0), direction: enumDirection.top },

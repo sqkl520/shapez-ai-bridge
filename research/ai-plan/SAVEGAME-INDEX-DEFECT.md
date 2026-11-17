@@ -56,14 +56,14 @@ mod 的 loadSave()  （shapez-ai-bridge.js:4859）
 ```
 
 ```js
-// recon/upstream-full/src/js/savegame/savegame_manager.js:75-77
+// 游戏源码 savegame_manager.js
 getSavegamesMetaData() {
     return this.currentData.savegames;
 }
 ```
 
 ```js
-// recon/upstream-full/src/js/savegame/savegame_manager.js:226-235
+// 游戏源码 savegame_manager.js
 initialize() {
     // First read, then directly write to ensure we have the latest data
     return this.readAsync().then(() => {
@@ -136,7 +136,7 @@ static serializeObject(obj) {
 ### 方案 C：`new_game` 绕过索引（**能进世界，但救不回目标存档**）
 
 ```js
-// recon/upstream-full/src/js/savegame/savegame_manager.js:141-160
+// 游戏源码 savegame_manager.js
 createNewSavegame() {
     const id = this.generateInternalId();
     const metaData = { lastUpdate: Date.now(), version: …, internalId: id };

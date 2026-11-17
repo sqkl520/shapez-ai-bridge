@@ -33,7 +33,7 @@ import {
 
 export const ROUTE_SCHEMA_VERSION = 1;
 
-/** 弯带有效长度（`recon/upstream-full/src/js/game/components/belt.js:6` curvedBeltLength）。
+/** 弯带有效长度（游戏源码 belt.js curvedBeltLength）。
  *  ⚠️ 它是**弧长**（rv0=1.0 格，rv1/rv2=0.78 格）—— 不是容量折扣（prior-art §7）。 */
 export const CURVED_BELT_LENGTH = 0.78;
 export const STRAIGHT_BELT_LENGTH = 1.0;

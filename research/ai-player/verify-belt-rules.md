@@ -23,9 +23,9 @@ rv0/1/2 的**局部**入口边与出口边，从三处相互独立的上游源�
 
 | 依据 | 文件:行号 | 内容 | 与 belt-rules 是否一致 |
 |---|---|---|---|
-| 出口局部表 | `recon/upstream-full/src/js/game/buildings/belt.js:12` | `arrayBeltVariantToRotation = [top, left, right]` | ✅ `EXIT_LOCAL={0:top,1:left,2:right}` 逐字相同 |
+| 出口局部表 | 游戏源码 belt.js | `arrayBeltVariantToRotation = [top, left, right]` | ✅ `EXIT_LOCAL={0:top,1:left,2:right}` 逐字相同 |
 | 出口赋值时机 | `belt.js:148`（`updateVariants`） | `entity.components.Belt.direction = arrayBeltVariantToRotation[rotationVariant]` | ✅ rv→Belt.direction 就是这个数组 |
-| 入口局部恒 bottom | `recon/upstream-full/src/js/game/components/belt.js:9-12` | `FAKE_BELT_ACCEPTOR_SLOT = { pos:(0,0), direction: bottom }` | ✅ `beltEntry` 一律旋转局部 `bottom` |
+| 入口局部恒 bottom | 游戏源码 belt.js | `FAKE_BELT_ACCEPTOR_SLOT = { pos:(0,0), direction: bottom }` | ✅ `beltEntry` 一律旋转局部 `bottom` |
 | 出口=direction | `components/belt.js:14-36` | `FAKE_BELT_EJECTOR_SLOT_BY_DIRECTION[direction].direction = direction` | ✅ `Belt.direction`（即 EXIT_LOCAL[rv]）就是出口 |
 | **物理走货轨迹** | `components/belt.js:101-122`（`transformBeltToLocalSpace`） | top：`y=0.5-progress`（从下往上走，入口 0.5 处=下、出口=上）；right：`(0.5→? , 0.5→-0.5)`；left：`(-0.5→? ,0.5→-0.5)` | ✅ **铁证**：三种 direction 的 item 都**从局部 bottom 端进入、从 EXIT_LOCAL 端离开** |
 | code=1+rv | `belt.js:25-43`（`getAllVariantCombinations`） | internalId 1/2/3 ↔ rotationVariant 0/1/2 | ✅ `beltCode = 1 + rv` |

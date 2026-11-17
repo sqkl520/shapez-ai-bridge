@@ -2,7 +2,7 @@
 
 > 立场：编译器"开始写之前"，逐条攻击它**赖以成立**的假设，找出"源码看着稳、实机会翻车"的地方。
 > 只产出分析与判据，不写实现。
-> 行号基准：上游 `recon/upstream-full/src/js/`（shapez 1.5.6 @ ee2279d）+ 工作树 `src/mod/shapez-ai-bridge.js`。
+> 行号基准：上游 游戏源码（shapez 1.5.6 @ ee2279d）+ 工作树 `src/mod/shapez-ai-bridge.js`。
 > 每条标注：**【源码确证】**（读了上游/工作树代码）／**【推断】**（从代码逻辑推，未跑）／**【待实机】**（只能上机定论）。
 > 承接 `review/ADVERSARIAL-REVIEW.md` 的 F1/F2，本文不重复其已列结论，只做增量核证与排序。
 

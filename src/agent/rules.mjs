@@ -164,7 +164,7 @@ export const UPGRADE_MULTIPLIERS = Object.freeze([1, 1.5, 2, 3, 4, 6, 7, 8]);
  * 「佃有 RuRu---- 600 但一个 Su 都没有」的 processors T2 判成 **affordable**。
  * 这个 bug 会直接让本包的 CAPACITY 段建议一条买不起的升级。
  *
- * 数值由 `recon/upstream-full` 的源码**逐档复刻**验证过（含 `findNiceIntegerValue`
+ * 数值由游戏源码**逐档复刻**验证过（含 `findNiceIntegerValue`
  * 的 round-to-nice：>100 取 20 的倍数、>1000 取 100 的倍数、>5000 取 1000 的倍数……）。
  *
  * ⚠️ 只登记到 T3。T4/T5 是 `SrSrSrSr:CyCyCyCy` 这一档起步的长尾，

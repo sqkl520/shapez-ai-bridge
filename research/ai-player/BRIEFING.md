@@ -18,8 +18,8 @@
 
 ### 2.1 游戏与工具链
 
-- 游戏：shapez.io **1.5.6**（Steam），构建 `ee2279d5`，Electron 16.2.8。【观测】
-- 官方源码仓库（GPL-3.0，tobspr/shapez.io）——**本机已有部分提取**在 `recon/upstream/`
+- 游戏：shapez.io **1.5.6**（Steam）。【观测】
+- 官方源码仓库（GPL-3.0，tobspr/shapez.io）——**本机已有部分提取**在 游戏源码
   （files: `src_js_game_game_logic.js`、`src_js_game_buildings_belt.js`、`src_js_game_buildings_hub.js`、
   `src_js_game_components_item_acceptor.js`、`src_js_game_components_item_processor.js`、
   `src_js_game_systems_item_processor.js`、`src_js_game_building_codes.js`、`src_js_mods_*`、
@@ -27,7 +27,7 @@
   **更全的 1.5.6 游戏实现（本地反编译副本）**——这是最权威的本地源头，
   任何游戏内部行为（形状运算、建筑槽位、belt 路由、目标生成、tick 机制）都能在里面查到。
   ⚠️ `recon/` 是本地研究产物，**不得随分发**（.gitignore 已排除）。
-- 官方 mod 文档与示例：仓库 README 指向 shapez.io/modding + `recon/upstream/mod_examples_*.js`。
+- 官方 mod 文档与示例：仓库 README 指向 shapez.io/modding + 游戏源码。
 - 联网权威源（可 WebFetch/WebSearch）：
   - 源码：`https://github.com/tobspr/shapez.io`（v1.5.6 tag）
   - 具体文件：`https://raw.githubusercontent.com/tobspr/shapez.io/v1.5.6/src/js/game/...`
@@ -177,7 +177,7 @@ B2/B3 内置启发式只覆盖 level 1–2；**level 3+ 明确标为超出能力
 ## 4. 交付物与证据纪律（对每个子 Agent 的硬要求）
 
 - **每条结论必须带证据等级 + 具体出处**：文件路径:行号 / 上游 URL / 实测命令与输出 / 明确的【推断】或【待验】。
-- **优先查证而非回忆**：游戏的本地反编译副本、上游 GitHub raw、官方 Wiki。
+- **优先查证而非回忆**：游戏源码、上游 GitHub raw、官方 Wiki。
   凡涉及「游戏里 X 是什么/能不能」，**没有源码或实测支撑就不要下断言**，标【待验】并写清怎么验。
 - **可落地**：产出要能被工程直接接上——写清接口/数据结构/算法伪码/改动点/验证方法/成本。
 - **敢说不知道**：不确定就标注，宁缺毋滥。不要用看似专业的空话填充。

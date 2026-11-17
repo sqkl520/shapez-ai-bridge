@@ -26,7 +26,7 @@ chunk 级: 111/111 个 chunk 逐格完全一致
 
 ## 算法（含关键细节）
 
-来源：`recon/upstream-full/src/js/game/map_chunk.js`、`src/js/core/rng.js`、`src/js/core/config.js:72`
+来源：游戏源码 map_chunk.js、`src/js/core/rng.js`、`src/js/core/config.js:72`
 
 1. **chunk 大小 16×16**（`config.js:72 mapChunkSize: 16`）。
 2. **每 chunk 一个独立 RNG**，种子 = **字符串拼接** `"<chunkX>|<chunkY>|<map.seed>"`（`map_chunk.js:277`）——

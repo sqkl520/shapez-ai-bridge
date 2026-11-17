@@ -29,7 +29,7 @@
 
 事故的两个可能形态（后文分开说，两者都实测过）：
 
-- **形态 B（贴后被游戏翻转）**：编译器的 intent / blueprint 完全自洽（`rv=1/rot=90/code=2`，in=left/out=top），游戏贴对；之后邻格触发 `_updateSurroundingBelt` 把拐角重算成直带（`rotation=90, rv=0, code=1`）。证实：`research/ai-plan/live/results/orig-flip.json` 的 9 格矩阵里 **3/3 个 PULL 扰动都把拐角翻成了直带**（`after: {"r":0,"rv":0,"code":1}`），且游戏源码会**同时改写 code**（`recon/bundle.js` 内 `m.rotation=y,r.updateVariants(...),m.code=Object(h.getCodeFromBuildingData)(...)`）。
+- **形态 B（贴后被游戏翻转）**：编译器的 intent / blueprint 完全自洽（`rv=1/rot=90/code=2`，in=left/out=top），游戏贴对；之后邻格触发 `_updateSurroundingBelt` 把拐角重算成直带（`rotation=90, rv=0, code=1`）。证实：`research/ai-plan/live/results/orig-flip.json` 的 9 格矩阵里 **3/3 个 PULL 扰动都把拐角翻成了直带**（`after: {"r":0,"rv":0,"code":1}`），且游戏源码会**同时改写 code**（游戏实现内 `m.rotation=y,r.updateVariants(...),m.code=Object(h.getCodeFromBuildingData)(...)`）。
 - **形态 C（编译器自己写错且内部矛盾）**：`intent.entities[]` 里 `rot=90 / rv=0 / code=1`（直带几何），但同一对象的 `inDir="left" / outDir="top"`（拐角语义）。`L4-ATTEMPT-LOG.md:41` 记的就是"intent 里写的是 in=left out=top（rv=1）"但"运行时 r=90"——若贴后逐实体核对全过，则世界里的 code 必须等于 intent 的 code，**即 intent 的几何字段本来就是直带**。
 
 | 闸 | 事故下的结果 | 是否假绿 | 依据（行号） |

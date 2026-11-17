@@ -214,7 +214,7 @@ tunnel 10078 (-7,-14) code 23 receiver
 ejector dump: {"cell":[-7,-14],"slot":0,"item":"CuCu----","progress":0.7875}
 ```
 
-- 配对规则（`recon/upstream-full/src/js/game/systems/underground_belt.js:246-285`）：sender 沿自己朝向前方
+- 配对规则（游戏源码 underground_belt.js）：sender 沿自己朝向前方
   ≤5 格找同 tier、同 rotation 的 receiver；`(-7,-13)` 是普通带子、跳过，`(-7,-14)` 命中。
 - receiver 的 ItemEjector 朝 top 喷 → `(-7,-15)` 正是 `trash#10037`。
 

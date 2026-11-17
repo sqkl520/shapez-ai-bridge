@@ -1,6 +1,6 @@
 # 形状运算精确语义（主 Agent 亲自核证 + 端到端验证）
 
-> 全部读自 `recon/upstream-full/`（精确 1.5.6 @ ee2279d）。实现见 `research/ai-player/proto/shape-ops.mjs`（可运行、有自检）。
+> 全部读自 游戏源码（精确 1.5.6 @ ee2279d）。实现见 `research/ai-player/proto/shape-ops.mjs`（可运行、有自检）。
 
 ## 1. 象限与索引（`shape_definition.js:33`）
 

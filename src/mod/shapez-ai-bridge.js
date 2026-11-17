@@ -1739,7 +1739,7 @@ class Mod extends shapez.Mod {
     /*
      * 为什么不能用 `entity.clone()`
      * ------------------------------------------------------------------
-     * recon/upstream-full/src/js/game/entity.js:88-106 的 clone() 只调每个组件的
+     * 游戏源码 entity.js 的 clone() 只调每个组件的
      * `copyAdditionalStateTo()`，而全仓只有 4 个组件实现它：
      *   constant_signal.js:21 / goal_acceptor.js:64 / lever.js:19 / static_map_entity.js:86
      * Belt / Storage / Filter / UndergroundBelt / ItemEjector / ItemProcessor / Wire 全是
@@ -4961,7 +4961,7 @@ class Mod extends shapez.Mod {
      * 旧实现是 `root.canvas.toDataURL()` —— 它有三个硬缺陷，都是实测踩到的：
      *
      *  1. **HUD 画在同一张 canvas 上**。`core.draw()` 的最后一步是 `root.hud.draw(params)`
-     *     （recon/upstream-full/src/js/game/core.js:490），所以工具栏、任务面板、
+     *     （游戏源码 core.js），所以工具栏、任务面板、
      *     正在看的 hub 弹窗全都会被截进去，把世界内容挡住。
      *     实测：钌切割机 `(4,-13)` 被 hub 面板完全遮住，截图里根本看不见。
      *
@@ -5495,7 +5495,7 @@ class Mod extends shapez.Mod {
      * 于是：`list_saves` 返回空数组、`load_save` 报 `2002 no savegame`、
      * `in_game` 永远是 false —— 真机闭环完全起不来。
      *
-     * 根因链（`recon/upstream-full/src/js/savegame/savegame_manager.js`）：
+     * 根因链（游戏源码 savegame_manager.js）：
      *   · `getSavegamesMetaData()` 直接返回 `this.currentData.savegames`（:75-77）
      *   · `initialize()` 读完立刻 `updateAfterSavegamesChanged()` **回写**（:226-235）
      *   ⇒ 读到一次空，就把空写回去，`.backup` 也被覆盖成空。自我强化。

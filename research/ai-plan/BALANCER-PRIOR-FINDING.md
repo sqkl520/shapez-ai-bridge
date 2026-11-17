@@ -14,7 +14,7 @@
 ### 源码真相
 
 ```js
-// recon/upstream-full/src/js/game/buildings/balancer.js:179-200
+// 游戏源码 balancer.js
 // default 变体（2×1）：2 个输入（底部），2 个输出（顶部）
 entity.components.ItemEjector.setSlots([
     { pos: new Vector(0, 0), direction: enumDirection.top },
@@ -23,7 +23,7 @@ entity.components.ItemEjector.setSlots([
 ```
 
 ```js
-// recon/upstream-full/src/js/game/systems/item_processor.js:146-157
+// 游戏源码 item_processor.js
 } else {
     // We can eject on any slot
     slot = ejectorComp.getFirstFreeSlot();
@@ -31,7 +31,7 @@ entity.components.ItemEjector.setSlots([
 ```
 
 ```js
-// recon/upstream-full/src/js/game/components/item_ejector.js:117-125
+// 游戏源码 item_ejector.js
 getFirstFreeSlot() {
     for (let i = 0; i < this.slots.length; ++i) {
         if (this.canEjectOnSlot(i)) return i;

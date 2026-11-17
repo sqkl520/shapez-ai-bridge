@@ -11,7 +11,7 @@
 
 > 布局设计产物。**本文件只描述坐标，不包含任何已执行的动作。**
 > 设计时全部依据只读 RPC（`world_info` / `obs` / `debug_items` / `status` / `resources` / `production`）。
-> 几何与连接性语义取自 `recon/upstream-full` 里的游戏源码，不是猜测。
+> 几何与连接性语义取自 游戏源码 里的游戏源码，不是猜测。
 
 ---
 
@@ -39,7 +39,7 @@
 
 ### 1.1 带子的方向语义（已用源码 + 实机双重确认）
 
-`recon/upstream-full/src/js/game/systems/belt_path.js:246`
+游戏源码 belt_path.js
 ——下游带子接受来料的条件是 **`ejectSlotWsDirection === targetStaticComp.localDirectionToWorld(top)`**，
 即"上游的喷射方向 == 下游带子的行进方向"。所以：
 

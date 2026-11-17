@@ -512,11 +512,11 @@ node .tmpverify/rt-correct.mjs
 ```bash
 node -e 'import("./research/ai-player/proto/shape-ops.mjs").then(S=>{
 console.log("cut(RuRu----) =",S.cutHalf(S.parse("RuRu----")).map(x=>S.hash(x)));})'
-sed -n "374,383p" recon/upstream-full/src/js/game/systems/item_processor.js
+sed -n "374,383p" 游戏源码 item_processor.js
 ```
 
 ### 9.13 balancer 到底轮不轮转
-`recon/upstream-full/src/js/game/systems/item_processor.js:341-362`：
+游戏源码 item_processor.js：
 
 ```js
 process_BALANCER(payload) {

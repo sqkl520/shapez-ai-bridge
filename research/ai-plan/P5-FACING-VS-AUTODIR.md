@@ -134,7 +134,7 @@ planToTxOps 生成的 op:
 ## 六、下一轮该往哪走
 
 1. **先确认游戏的自动定向到底能不能绕过。** 上游源码
-   `recon/upstream-full/src/js/game/systems/belt.js:156-185` 有 `updateVariants`
+   游戏源码 belt.js 有 `updateVariants`
    的调用链。如果能找到一个「先放带子、再单独改 rv」的两步写法，facing 就能兑现。
    这是最值得先查的一条。
 2. **如果绕不过**，那「修方向错的带子」在 shapez 里就是做不到的 ——

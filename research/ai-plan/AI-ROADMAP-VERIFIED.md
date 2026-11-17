@@ -12,7 +12,7 @@
 
 ### 源码依据
 
-`recon/upstream-full/src/js/game/logic.js:61-100` `checkCanPlaceEntity`：
+游戏源码 logic.js `checkCanPlaceEntity`：
 只查三件事 —— 格子碰撞（含 `getIsReplaceable`）、编辑器 `puzzleLocked`、
 `prePlacementCheck` 信号。**没有 `getIsUnlocked`**。
 
@@ -37,7 +37,7 @@
 
 **规划 agent 的判断正确，已核实。**
 
-`recon/upstream-full/src/js/game/entity.js:88-106` 的 `clone()`：
+游戏源码 entity.js 的 `clone()`：
 
 ```js
 clone() {
@@ -67,7 +67,7 @@ components/static_map_entity.js:86
 
 ## 结论 3：恢复原语应该是 `serialize()`，不是 `clone()`
 
-`recon/upstream-full/src/js/savegame/serializer_internal.js:44-68` `deserializeEntity`：
+游戏源码 serializer_internal.js `deserializeEntity`：
 
 ```js
 deserializeEntity(root, payload) {

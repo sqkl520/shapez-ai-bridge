@@ -1,7 +1,7 @@
 # AI 操控 shapez：可执行路线图（2026-10-27）
 
 > 输入：`AI-CONTROL-GAPS.md` 的四项短板 + 本轮已修的 4 项。
-> 方法：只读源码（`recon/upstream-full/src/js/`）+ 只读 RPC（`status`/`obs`/`production`）。
+> 方法：只读源码（游戏源码）+ 只读 RPC（`status`/`obs`/`production`）。
 > 约束：本轮不做任何写操作。所有「完成判据」写成可直接跑的命令或可观测数字。
 
 ---
@@ -20,7 +20,7 @@
   **它缺条目 = 编译器不能规划/发射这条线，不等于调不动这个建筑。**
 
 第二个相关事实：**`place` 目前不受解锁等级限制。**
-`logic.tryPlaceBuilding` → `checkCanPlaceEntity`（`recon/upstream-full/src/js/game/logic.js:61-100`）
+`logic.tryPlaceBuilding` → `checkCanPlaceEntity`（游戏源码 logic.js）
 只查三件事：格子碰撞（含 `getIsReplaceable`）、编辑器 puzzleLock、`prePlacementCheck` 信号。
 **没有 `getIsUnlocked`**。解锁检查只存在于 HUD 层（`hud/parts/base_toolbar.js:254`）。
 所以 L5 存档里 RPC 现在就能放 storage/filter/wire。
@@ -45,7 +45,7 @@
 |---|---|---|
 | 游戏自带 undo / revert | **不存在** | 全仓 grep `undo\|Undo\|revert\|Revert` 命中 **0**。`logic.js` 只有 `tryPlaceBuilding` / `tryDeleteBuilding`（`:117-133` / `:209-226`），无反向操作 |
 | 撤销**新增**（删除自己加的） | **已能做到** | `opBulkDelete`（`bridge:2064+`）+ `gates.mjs:1295` 的 region 回滚。已知局限写在 `gates.mjs:1300-1345`（只能区域删、region 混入旧实体就拒、靠 tick drift 判完整性） |
-| 撤销**删除**（凭快照重建） | **可以，且能保住 uid / 组件 / 层级** | `recon/upstream-full/src/js/savegame/serializer_internal.js:44-68` 就是现成的单实体重建器 |
+| 撤销**删除**（凭快照重建） | **可以，且能保住 uid / 组件 / 层级** | 游戏源码 serializer_internal.js 就是现成的单实体重建器 |
 | 撤销**修改**（组件状态，如 storage 里存了多少） | **可以，但只覆盖 `getSchema()` 里的字段** | `entity.js:78-83` 的 schema 是 `components: keyValueMap(objData(gComponentRegistry))`；`deserializeComponents`（`serializer_internal.js:80-100`）逐组件回灌 |
 | 跨 RPC 的 `begin`/`commit`/`rollback` 作为**真事务** | **做不到** | 游戏主循环在两次 RPC 之间继续跑：`gates.mjs:1355-1366` 实测 10 次回滚里 tick 漂移常态 0.025~0.067 游戏秒，最长接近 1 秒。带子在动、storage 在填、hub 在收货 |
 | 单次 RPC 内的**原子事务**（快照→执行→失败回滚） | **可以，推荐做成这个** | 一次调用内无 tick 插入；`performBulkOperation`（`logic.js:170-182`）已提供"屏蔽中间重算"的批语义 |

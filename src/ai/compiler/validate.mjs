@@ -70,7 +70,7 @@ export const VALIDATOR_VERSION = 1;
 export const CHECK_ORDER = Object.freeze([...CHECK_IDS]);
 
 /**
- * 弯带 0.78 的折算系数。真值 = recon/upstream-full/src/js/game/components/belt.js:6
+ * 弯带 0.78 的折算系数。真值 = 游戏源码 belt.js
  * `curvedBeltLength = 0.78`、`:64-71` getEffectiveLengthTiles()（直带 1.0 / 弯带 0.78）。
  * ⚠️ P4 的 route.mjs 里同名常量 CORNER_COST_TILES；本包不 import P4（防环 + 可先行），
  *    所以独立声明，**值必须相同** —— L0 有对拍断言（见 test.mjs A5）。

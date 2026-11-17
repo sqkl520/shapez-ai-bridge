@@ -357,7 +357,7 @@ test("E2 CAPACITY 的速率与 rules.mjs 的源码核证值一致（不是本文
 
 test("E3 升级需求表与源码一致（含 carry-over —— 这是本包修掉的真实 bug）", () => {
     const r = verifyRules();
-    assert.equal(r.ok, true, `与 recon/upstream-full 不符：${JSON.stringify(r.mismatches)}`);
+    assert.equal(r.ok, true, `与游戏源码不符：${JSON.stringify(r.mismatches)}`);
     /* 逐条钉住最容易漏的那一档：processors T2 **必须**带 SuSuSuSu×1200。
        旧表只有 RuRu----×600 ⇒ 会把「一个 Su 都没有」的存档判成买得起。 */
     const p2 = UPGRADES.processors.find(t => t.tier === 2);

@@ -345,7 +345,7 @@
 ### 结论（可直接用什么）
 
 **先给最重要的一条：项目里已有的 0.78 说法是"弯带弧长"，不是"容量折扣"——不能按字面拿去算吞吐。**
-- 【实测，读游戏源码】`recon/upstream-full/src/js/game/components/belt.js:6`：`export const curvedBeltLength = /* Math.PI / 4 */ 0.78;`
+- 【实测，读游戏源码】游戏源码 belt.js：`export const curvedBeltLength = /* Math.PI / 4 */ 0.78;`
 - 同文件 `getEffectiveLengthTiles()`（:64-71）：`return this.direction === enumDirection.top ? 1.0 : curvedBeltLength;`
 - `this.direction` 在 **rv0（直带）时是 `top`**（局部出口 rv0=top，`src/ai/belt-rules.mjs:36`），rv1/rv2 是 `left`/`right`。→ **直带有效长度 1.0、弯带 0.78 确实成立**，`ADVERSARIAL-REVIEW.md:221-223` 的"拐角不是免费的"**结论正确**；但它写的"curved belt 有效长度 0.78 格"要精确成：**每条弯带比直带短 0.22 格的弧长 ⇒ 同一 item 间隔下，弯带能容纳的在途物品少一些**（`review:223` "布局器'拐角=免费'的隐含假设错了：拐角多的线吞吐上限更低" 是【推断】中肯，但**要落地必须先把 0.78 换算成 item-capacity，这一层目前没有任何文档给出公式** → **标【待验】**，验证办法见下）。
 
@@ -377,7 +377,7 @@
 - `geom.go:45-61` `BeltPose`（`inDir==outDir → false`；`rot` 表 `{south:0,west:90,north:180,east:270}`；variant 局部出口 `[north,west,east]`）；`:63-71` `BeltIO` 反向。【实测】
 - `router.py:3` 头注 `Features orthogonal turn penalties for clean Manhattan factory layouts, modular processing cells, and line reuse.`；`:32-33` `manhattan_distance`；`:126-140` 签名 `max_search=5000, turn_penalty=1.5` + docstring "heavily favor straight, clean, aesthetic conveyor runs over chaotic zigzagging (Manhattan bus routing)"；`:142-146` 状态/`cost_so_far`；`:163-171` 代价与入堆；`:175-176` 无解 `return None`；`:189-247` `path_to_belts`；`:229-243` rv 判定。【实测】
 - `router.py:35-111` `get_cutter_geometry`/`get_painter_geometry` 把 4 个旋转下的**占地/输入口/丢弃口/输出口**全部写死；`:114` `hub_bounds=(-2,-2,4,4)`；`:123-124` `is_blocked = tile in hub_tiles or obstacles`；`:249-279` `find_nearest_hub_slot`；`:826-870` `plan_mix_and_paint_line` 的 **cell_footprint 预占 + 逐条 path 串行加障碍**（`obs_out / obs_shape / obs_c1 / obs_c2`，每找一条路就把它的格加进下一次搜索的障碍集）；`:367-429` 候选位枚举 + `cost = len(path1)*1.5 + len(path2)` 取最小。【实测】
-- `recon/upstream-full/src/js/game/components/belt.js:6`（`curvedBeltLength=0.78`，源码注释保留 `/* Math.PI / 4 */`）、`:64-71`（`getEffectiveLengthTiles()`，`direction===top ? 1.0 : curvedBeltLength`）、`:103-119`（按 direction 分支走弧长进度，`assert(progress <= curvedBeltLength + 0.02)`）。【实测，本仓库一手源码】
+- 游戏源码 belt.js（`curvedBeltLength=0.78`，源码注释保留 `/* Math.PI / 4 */`）、`:64-71`（`getEffectiveLengthTiles()`，`direction===top ? 1.0 : curvedBeltLength`）、`:103-119`（按 direction 分支走弧长进度，`assert(progress <= curvedBeltLength + 0.02)`）。【实测，本仓库一手源码】
 - `src/ai/belt-rules.mjs:36-56` `EXIT_LOCAL`/`beltExit`/`beltEntry`/`solveTurn`（**`inDir===outDir → null`**，注释:43「有解 ⟺ in≠out 且为直角或直线」）；`:9` rv1↔rv2 可证伪判据。【实测，本仓库】
 
 ### 移植成本
@@ -580,6 +580,6 @@ export function routeChannel(ch, occ, { straightCost = 1, turnCost = 2, cap = 40
 | `redruin1/factorio-draftsman` | 【实测】`classes/collection.py`(2200，grep+关键段)、`mixins/circuit_connectable.py`(117 全文)、`classes/association.py`(全文)、`constants.py`(1150，取 `Direction`/`WireConnectorID`)、`classes/blueprint.py`(snap 字段 :84-153)、`docs/source/concepts/environment.rst` | §4 |
 | `QXIKmIJ/shapez-ai` | 【实测】`shapez-ai/python/planner/router.py` 924 行下载，读 `find_path`/`path_to_belts`/`plan_mix_and_paint_line`/`get_*_geometry`；**NOTICE 声明专利保护 ⇒ 只取思路不取代码** | §6 §8 |
 | `xaviershay/factorio-layout-designer` / `w-flo/Foreman` | 【文档】README + 目录列表（Foreman **未读源码**） | §4 |
-| 本仓库一手 | `src/ai/belt-rules.mjs`(全文)、`recon/upstream-full/src/js/game/components/belt.js`(:6,64-71,103-119)、`research/ai-player/plan-compiler.md`(:80-135,230-292)、`designs/layout-compiler-DESIGN.md`(阶段 A/B 全文)、`facts/ecosystem.md`、`review/ADVERSARIAL-REVIEW.md:221-223` | §0 §4 §5 §6 |
+| 本仓库一手 | `src/ai/belt-rules.mjs`(全文)、游戏源码 belt.js(:6,64-71,103-119)、`research/ai-player/plan-compiler.md`(:80-135,230-292)、`designs/layout-compiler-DESIGN.md`(阶段 A/B 全文)、`facts/ecosystem.md`、`review/ADVERSARIAL-REVIEW.md:221-223` | §0 §4 §5 §6 |
 | arXiv API（`https://export.arxiv.org/api/query`，http 被拦、https 通） | 【实测】`id_list=2005.03192,2404.05472,2310.01505` 取回摘要（标题/摘要实读：`2005.03192` = Factorio 机制 PSPACE-完全、`2404.05472` = splitter 网络稳态 + 均衡 Ω(n log n) 下界、`2310.01505` = Factorio 蓝图 CP 自动设计）；`all:"crossing minimization"` 命中 **2412.06361**；`all:"left-edge algorithm"` / `all:"Hybrid A*"` / `all:"switchbox routing"` = **0 命中（负面结果，已如实记录）** | §1 §7 |
 | 计算实验（本会话） | 临时脚本 `validate-channel-routing.mjs` + `brute.mjs`（**在 `<tmp-dir>/`，未写入仓库**）：left-edge vs 暴力色数，穷举 27405 例 + 随机 400 例 | §1 §8 |
