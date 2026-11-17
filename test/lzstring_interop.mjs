@@ -6,8 +6,8 @@
  * - 桥接/工具端：使用 vendored 的 src/shared/lz-string.cjs
  * 两端必须逐字节兼容，否则蓝图字符串无法跨端使用。
  *
- * 本测试用上游游戏源码的原始 lzstring.js（ee2279d5 的 src/js/core/lzstring.js，
- * test/fixtures/ 内）作为"游戏端"，与 vendored 副本做双向对拍。
+ * 本测试用上游游戏源码里的原始 lzstring.js（test/fixtures/ 内，游戏原样 vendor
+ * 的 Pieroxy 实现）作为"游戏端"，与 vendored 副本做双向对拍。
  */
 import { createRequire } from "node:module";
 import path from "node:path";

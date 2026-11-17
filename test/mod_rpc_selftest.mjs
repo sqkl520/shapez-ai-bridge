@@ -94,7 +94,9 @@ const stubShapez = {
     gBuildingVariants: {},
     // The game exposes its real build metadata; the mod must read version from
     // here rather than trusting a hard-coded constant (red-team finding).
-    BUILD_OPTIONS: { BUILD_VERSION: "1.5.6", BUILD_COMMIT_HASH: "ee2279d5" },
+    // The values below are deliberately fake: the point is that the mod echoes
+    // back whatever the game reports, so a made-up hash proves it is not hard-coded.
+    BUILD_OPTIONS: { BUILD_VERSION: "1.5.6", BUILD_COMMIT_HASH: "0000000f" },
 };
 
 const timers = [];
@@ -186,7 +188,7 @@ await (async () => {
     {
         const m = newMod();
         assert(m.gameVersion() === "1.5.6", "reads BUILD_OPTIONS.BUILD_VERSION");
-        assert(m.buildHash() === "ee2279d5", "reads BUILD_OPTIONS.BUILD_COMMIT_HASH");
+        assert(m.buildHash() === "0000000f", "reads BUILD_OPTIONS.BUILD_COMMIT_HASH");
         // And when the game reports a different version, the mod reports that.
         const orig = sandbox.shapez.BUILD_OPTIONS.BUILD_VERSION;
         sandbox.shapez.BUILD_OPTIONS.BUILD_VERSION = "9.9.9";

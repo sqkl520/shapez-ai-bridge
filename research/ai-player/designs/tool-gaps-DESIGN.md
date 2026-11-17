@@ -398,7 +398,7 @@ summary: 483 paths with items / 521 total; 17 saturated (head_spacing<0.63); 3 s
 
 | 项 | 状态 | 怎么验 |
 |---|---|---|
-| `shapez.globalConfig` 在 mod 内可用性 | 【待验】（bundle.pretty.js:843 有导出声明，但未实机读） | 实机 `console.log(typeof shapez.globalConfig)`；不可用则 mod 侧 fallback 常量 `0.63`（config.js:86 已核证），agent 侧不依赖 mod 判定 |
+| `shapez.globalConfig` 在 mod 内可用性 | 【待验】（游戏实现里有导出声明，但未实机读） | 实机 `console.log(typeof shapez.globalConfig)`；不可用则 mod 侧 fallback 常量 `0.63`（已核证），agent 侧不依赖 mod 判定 |
 | `obs include_belt_items` 与 `traffic` 的 items 数严格相等 | 【待验】 | 交叉对拍（§4.5 测试 2）；允许 ±2 的时序差需实测定界 |
 | `only_uids` 对 wires 层实体的行为 | 【推断】layer 过滤沿用现有逻辑即可 | 单测加 `layer:"all"` + wires 实体用例 |
 | `max_belt_paths` 缺省 200 是否够 | 【推断】level-11 实测有 521 条路径但大部分为空 | 实机统计；必要时按"有物品的路径优先"排序再截断 |

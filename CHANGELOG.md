@@ -15,6 +15,26 @@
 
 ## [Unreleased]
 
+### Changed — 清掉 `recon/` 解包产物的所有引用（含行号级）
+
+`recon/` 本身早就在 `.gitignore` 里、不随仓库分发，但**它的名字还出现在公开文件里**，
+而且带具体行号 —— 等于告诉读者「我们解包了游戏，证据在 bundle.pretty.js 第 10059 行」。
+这正是「逆向细节脱敏」那轮的目标，当时只清了 `PHASE0-RECON.md`，别处漏了。
+
+清了 12 处：
+
+- `src/mod/shapez-ai-bridge.js`（3 处注释，会随包分发）
+- `src/ai/machine-spec.md`（6 处，含 `bundle.pretty.js:10059,10061` 这样的行号）
+- `gui/DESIGN-TOKENS.md`（1 处，还带 `app.asar` 和内部设计文档路径）
+- `research/` 下 5 个文件（4+… 处）
+
+改法统一为「只留结论、去掉产物名」：`（来源：bundle.pretty.js findNiceValue）`
+→ `（来源：游戏自身的取整规则）`。设计结论一条没少，读者能核对的仍然能核对。
+
+`test/mod_rpc_selftest.mjs` 里那个 `BUILD_COMMIT_HASH: "ee2279d5"` 换成假值
+`"0000000f"` —— 这个测试的本意是「mod 读的是游戏上报的值而非硬编码」，
+用假值反而更能表达这个意图。
+
 ### Fixed — 安全：`Origin: null` 曾被放行，任何网页都能遥控游戏
 
 `originAllowed()` 里有一行 `if (origin === "null") return true;`，注释理由是

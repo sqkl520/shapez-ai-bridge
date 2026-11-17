@@ -376,7 +376,7 @@ assets/shapez-auto.js        — 游戏内 mod：snapshot / apply / fixDelivery 
 - `https://shapez.mod.io` → **连接失败（000）**——shapez mod 站可能已下线【待验】
 - `https://tomassirgedas.github.io/Shapez-solver/shapez_solver.html` → **200**（线上求解器可用）
 
-**本地核证（recon/bundle.pretty.js，1.5.6 @ ee2279d）**：
+**本地核证（对 1.5.6 游戏实现的交叉比对）**：
 - `performBulkOperation` :29456 / `checkCanPlaceEntity` :29589 / `tryPlaceBuilding` :29425 —— **QXIKmIJ 与 shapez-auto 用的内部 API 在 1.5.6 全部存在**
 - `signals`: `entityDestroyed` :3504、`upgradePurchased` :3512、`shapeDelivered`、`storyGoalCompleted`、`bulkOperationFinished`、`preEditModeChanged`
 - `hubGoals.tryUnlockUpgrade` :28135 / `canUnlockUpgrade` :28115 / `getUpgradeLevel` / `isRewardUnlocked` / `getCurrentGoalDelivered`

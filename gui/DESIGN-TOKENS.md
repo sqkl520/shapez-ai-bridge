@@ -1,10 +1,10 @@
 # GUI Design Tokens — measured from the game itself
 
-> Source: `recon/game_main.css` (extracted from the game's `app.asar`) +
-> `recon/bundle.pretty.js`. Every value below is **measured from shapez.io's own UI**,
-> not invented. The GUI inherits shapez's identity so it reads as "part of the game's
-> ecosystem" — and so it can never trip the AI-slop gate (`recon/motion-web-refs/design-slop.md` A4:
-> the violet/indigo gradient is the #1 tell; we use the game's own blue instead).
+> Every value below is **measured from shapez.io's own UI**, not invented: the palette
+> was sampled from the game's stylesheet and its interface code. The GUI inherits shapez's
+> identity so it reads as "part of the game's ecosystem" — and so it can never trip the
+> AI-slop gate (the violet/indigo gradient is the #1 tell; we use the game's own blue
+> instead).
 
 ## Color — the game's real palette
 

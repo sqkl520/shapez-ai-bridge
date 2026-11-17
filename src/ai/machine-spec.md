@@ -1,7 +1,7 @@
 # shapez 1.5.6 机器规格表（machine-spec）
 
 > 交付物 2/2（机器可读版：`src/ai/machine-spec.json`）。布局编译器（P1–P8）的静态数据底座。
-> 纯离线规格检索：权威源码 `recon/upstream-full/src/js/game/`（commit `ee2279d`，精确对应 1.5.6）。
+> 纯离线规格检索：权威来源是与 1.5.6 精确对应的游戏源码。
 > 本文所有路径相对于仓库根 `<repo>`。
 > **本次派发（第 2 次）已完成**：59 码全量机械对拍 + 8 个指定变体逐字段全核 + `notes`/`rateMeta` 全部引用行号复核。发现并修正 3 处错误（见 §4）。
 
@@ -12,11 +12,11 @@
 | 标记 | 含义 | 允许的出处 |
 |---|---|---|
 | 【实机】 | 从 1.5.6 实机桥接会话提取，已与真实游戏行为对拍 | `research/ai-player/facts/building-codes-live.json`（M1b/M2a）、`facts/MILESTONE-M3-stacker-verified.md`、`MILESTONE-M4-*.md`、`facts/RV-FIX-verified.md`、`facts/live/world-full.json`（真实存档 dump）、`facts/GEOMETRY-TABLE.md`、`facts/ops-semantics-VERIFIED.md` |
-| 【源码】 | 仅由上游源码读出（文件:行号），未在实机验证 | `recon/upstream-full/src/js/game/**/*.js` |
+| 【源码】 | 仅由游戏源码读出，未在实机验证 | 游戏源码 |
 | 【内嵌表】 | 本仓库已固化的常量表（可能与源码版本或解读有偏差） | `src/ai/belt-rules.mjs`、`src/ai/op-templates.mjs`（`ALL_TEMPLATES`/`MACHINE_CODES`/`UNLOCK_LEVEL_FALLBACK`） |
 | 【未验证】 | 源码中找不到确定答案，或证据互相冲突且无法裁决 | — |
 
-裁决优先级：**实机观测 > 上游源码（含 `recon/bundle.pretty.js` 二次比对）> 内嵌表/文档**。冲突一律进入 §4「矛盾清单」。
+裁决优先级：**实机观测 > 上游源码（二次比对）> 内嵌表/文档**。冲突一律进入 §4「矛盾清单」。
 
 **注意【实机】的两种强度，本文严格区分**：
 - **实机-流动**：真实产线上跑过、产物逐字符比对过（只有 belt / miner / cutter-default / rotater / stacker / painter-default / trash 及其 code）。
@@ -77,7 +77,7 @@ MetaXxxBuilding.static getAllVariantCombinations()   ← 手写静态数组（�
 | 含 **pin**（WiredPins）的变体 | **22** | 电线层 + storage/reader/hub/painter-quad |
 | 含任一槽位的变体 | **45** | 零槽位仅 4 个：wire×2 / wire_tunnel / block（源码确实无槽，见 §2.10） |
 | 与实机 code 记录对拍 | **60/60** | `building-codes-live.json` 全部 60 条记录、15 组 (building,variant,rv)→code 全命中（本次重跑复核） |
-| 与 `bundle.pretty.js` 对拍 | **59/59** | internalId 集合完全一致，0 差、0 重（本次重跑复核） |
+| 与游戏源码对拍 | **59/59** | internalId 集合完全一致，0 差、0 重（本次重跑复核） |
 
 ---
 
@@ -444,7 +444,7 @@ processor type 是 `goal`（≠ hub 的 `hub`）→ **`inputsPerCharge` 未设**
 **C1 — balancer 两个反向变体的 variant 字符串错误【已改 JSON】**
 - spec 原写：`variant: "mergerInverse"` / `"splitterInverse"`（用了 enum 的**键名**，驼峰）。
 - 源码真值：`enumBalancerVariants = { mergerInverse: **"merger-inverse"**, splitterInverse: **"splitter-inverse"** }`（`buildings/balancer.js:14-19`）。`getAllVariantCombinations` 传的是 enum **成员**，`getCodeFromBuildingData` 用 `buildingId/variant/rotationVariant` 拼 hash（`building_codes.js:67-69`）⇒ 运行时字符串**必须**是带连字符的值。
-- 二次佐证：`recon/bundle.pretty.js:10059,10061` = `mergerInverse: "merger-inverse"` / `splitterInverse: "splitter-inverse"`。
+- 二次佐证：游戏源码中各一处 = `mergerInverse: "merger-inverse"` / `splitterInverse: "splitter-inverse"`。
 - 影响面：**任何按 variant 字符串查 code 的路径都会 miss**（`"balancer/mergerInverse/0"` ≠ 缓存里的 `"balancer/merger-inverse/0"`）。硬失败，不是显示问题。
 - 已改：`codes[6].variant`、`codes[48].variant`、`buildings.balancer.variants` 的两个 key。改后 59 码对拍 **0 mismatch**（此前 2 处）。
 
@@ -468,7 +468,7 @@ processor type 是 `goal`（≠ hub 的 `hub`）→ **`inputsPerCharge` 未设**
 | K1 | 隧道「同向、跨度均 ≤5」是否属实（我最初按 `r+180` 反向找，得 **0/91**） | 源码 `underground_belt.js:212-262` 的配对判据是 **同 rotation**（不是相反！`:232 staticComp.rotation === targetRotation`，`targetSenderRotation = rotation`）。按此重跑 `world-full.json`：**91/91 全中**，跨度 {2:8, 3:83} 全 ≤5。**facts 正确，我的假设错误。** |
 | K2 | 4 个变体物品槽/pin **全空**：wire(default/second)、wire_tunnel、block —— 是否漏填？ | 逐个读源码：`wire.js:137-140` / `wire_tunnel.js:60-62` / `block.js:38` 的 `setupEntityComponents` **只挂非物品组件**（WireComponent / WireTunnelComponent / **空函数**）。确实无 acceptor/ejector/pin。**null 正确，无需补。** |
 | K3 | balancer merger/splitter 变体不在 `building-codes-live.json` | 该文件只覆盖 level≤11 实机；`reward_merger`=L9、`reward_splitter`=L19，且 merger 在 deterministic 模式不可用 → **未解锁，非漏采**。`liveEvidence` 已说明。 |
-| K4 | 缺号 41/56/57/58/59 | 本次机械枚举 1–64，恰缺这 5 个；`bundle.pretty.js` internalId 集合 59/59 一致，无差无重。**`codeTableSummary` 正确。** |
+| K4 | 缺号 41/56/57/58/59 | 本次机械枚举 1–64，恰缺这 5 个；与游戏源码的 internalId 集合 59/59 一致，无差无重。**`codeTableSummary` 正确。** |
 | K5 | pin 计数：JSON 11 vs 源码 5（logic_gate）、JSON 14 vs 源码 8（virtual_processor）、JSON 6 vs 源码 3（transistor） | 源码把 AND/XOR/OR、cutter/unstacker、stacker/painter **合并在同一个 `setSlots` 块**，JSON 按变体独立复制展开。逐变体核后**每个变体槽集都与源码分支一致**，非错误。 |
 | K6 | `notes[7]` cutter「cutHalf 返回 [quads(2,3)=左列, quads(0,1)=右列]」 | 按 `arrayQuadrantIndexToOffset`（`shape_definition.js:40-45`：quads 0/1 在 x=+1，2/3 在 x=-1）+ M1b 实机（`RuRuRuRu → 槽0 ----RuRu 槽1 RuRu----`）三方对齐 —— **JSON 正确**。⚠ 上游变量名 `rightSide=clone([2,3])` 是**反的**（见 §2.3），读码只信数组顺序。 |
 | K7 | `notes[8]` stacker 槽0=下层/槽1=上层 | `payload.items` 即 `inputSlots`，其键 = 匹配到的 acceptor 槽号（`belt_path.js:334` → `components/item_processor.js:124-141`）；`process_STACKER` 取 `get(0)=lower`/`get(1)=upper`（`systems/item_processor.js:461-463`）⇒ **正确**，并解释了 trash/hub/goal 为何不同（`:126-133` 用 inputCount 而非槽号）。 |
@@ -536,7 +536,7 @@ processor type 是 `goal`（≠ hub 的 `hub`）→ **`inputsPerCharge` 未设**
 ## 7. 本次校验方法（可复现）
 
 1. **code/variant/rv 全量对拍**：机械解析 28 个 `getAllVariantCombinations` 的 59 条组合，把 `enumXxxVariants`/`enumWireVariant` 的**键→值**代入还原运行时 variant 字符串，再与 JSON `codes[]` 逐条比 `building`/`variant`/`rotationVariant` → 修 C1 前 **2 mismatch**（code 6/48），修后 **0 mismatch，59/59**。
-2. **`bundle.pretty.js` 交叉**：提取 59 个 internalId 与 JSON 比集合 → **59/59 完全一致，0 差 0 重**；balancer 连字符值在 `:10059-10061` 二次确认。
+2. **与游戏源码交叉**：提取 59 个 internalId 与 JSON 比集合 → **59/59 完全一致，0 差 0 重**；balancer 连字符值二次确认。
 3. **实机回灌**：`building-codes-live.json` 60 条 → 按 `building|variant|rv` 查 JSON `codes[]` → **60/60 命中**。
 4. **槽位逐变体核**：8 个指定变体全字段核（cutter/quad、stacker、painter×4、mixer、underground_belt×2rv、balancer×5、hub）+ 其余 20 建筑 acceptor/ejector/pin 计数与源码 `Vector` 计数比对 → 全部吻合；pin 计数差全归因于源码共用 `setSlots` 块（K5）。
 5. **`world-full.json` 实测复核**：14 组 (type,variant,rv,code) 全对；hub 1 台 c26 @(-2,-2)；balancer 475；belt rv0/1/2 = 1487/223/196；painter 16×29 / 17×15；mixer 24；tunnel **91/91 配对全中**，跨度 ≤5。
@@ -551,4 +551,4 @@ processor type 是 `goal`（≠ hub 的 `hub`）→ **`inputsPerCharge` 未设**
   - 本次改动：**C1** balancer variant 字符串（`codes[6]`/`codes[48]` + `buildings.balancer.variants` 两个 key）；**C2** `rateMeta.upgradeLadder.liveWorldLevels`（+ 新增 `formula`/`correctionNote`）；**C3** belt `source.lines` 行号越界。
   - 附带精化：`rateMeta.formulas.painterDouble`/`painterQuad`/`filter`（区分 charge/s 与件/s、filter 无 ItemProcessor）、`rateMeta.multiplierTargets.filter` 与新增 `note`（组映射表）。
   - 校验后规模：28 建筑 / 49 变体 / 59 code / 29 含物品槽 / 45 含任一槽位 / 实机 60/60。
-- 只读引用（本次未改动，遵守纪律）：`src/ai/belt-rules.mjs` · `src/ai/op-templates.mjs` · `src/ai/compiler/*` · `research/ai-player/facts/*` · `recon/upstream-full/**` · `recon/bundle.pretty.js`
+- 只读引用（本次未改动，遵守纪律）：`src/ai/belt-rules.mjs` · `src/ai/op-templates.mjs` · `src/ai/compiler/*` · `research/ai-player/facts/*`

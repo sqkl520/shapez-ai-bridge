@@ -236,7 +236,7 @@ arg 拼错怎么办、宏间同轮依赖排序），契约就可以开工。**
 - 「`L4-behavior` … `:714`」→ 实际 `:760`。
 
 **附：契约自己的事实性小错**
-- `TICKS_MAX: 24000 // = 200 游戏秒 @120Hz`（第 635 行）：游戏默认 `refreshRate = "60"`（`recon/bundle.pretty.js` 的 `SettingsStorage`），
+- `TICKS_MAX: 24000 // = 200 游戏秒 @120Hz`（第 635 行）：游戏默认 `refreshRate = "60"`（游戏实现（本地反编译副本） 的 `SettingsStorage`），
   且 `DynamicTickrate` 用 `getDesiredFps()` 设 tick 率 → 24000 tick = **400 秒**，不是 200 秒。
   另外 mod 的 `MAX_STEP_TICKS = 20000`（`bridge:78`），**24000 一次性发不进去**（会 2001）。
   `checkBehavior` 的 `2400 // 20 游戏秒 @120Hz` 同样是 40 秒。

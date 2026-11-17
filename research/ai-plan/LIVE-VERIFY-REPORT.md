@@ -65,7 +65,7 @@ node src/ai/compiler/cli.mjs --goal "RuRu----" --seed 60908 --hub "-2,-2" --leve
 - 实测游戏时间窗口：`obs.tick` 从 **32168.416 涨到 32270.375 = 101.96 游戏秒**
   （即该世界约 **118 tick/游戏秒**，与 `dynamicTickrate` 的 120Hz 相符）。
 - 交付增量 20 → 71 = **51 个 / 101.96 秒 = 0.500 个/秒**。
-- 理论值（从 `recon/bundle.pretty.js` 直接读）：
+- 理论值（从游戏实现直接读）：
   `getProcessorBaseSpeed(cutter) = 2 × upgradeImprovements.processors × buildingSpeeds.cutter`。
   该世界 `upgradeLevels.processors = 0`，而 `upgradeImprovements` 初始化为 1 ⇒
   `2 × 1 × 0.25 = 0.5`。`_startNewCharge()` 里 `remainingTime = 1 / 0.5 = 2 秒`，

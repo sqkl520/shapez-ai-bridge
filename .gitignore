@@ -97,3 +97,6 @@ research/ai-plan/harness/out/
 # 真机实验的原始世界快照（含真实存档数据、单文件近 600KB）
 # 复现应当重跑实验装置，而不是提交测量数据。
 research/ai-player/facts/live/
+
+# Release 打包临时目录（git archive 解包验证用）
+.relbuild/

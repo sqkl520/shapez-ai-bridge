@@ -23,7 +23,7 @@ const METADATA = {
     minimumGameVersion: "1.5.6",
     // true = this mod does not touch savegame structure, so it is NOT written into
     // the savegame's mod list. The game's loader filter is `!doesNotAffectSavegame`
-    // (recon/bundle.pretty.js `_getModsListForSavega`), i.e. false would make every
+    // (the game treats an undefined flag as true), i.e. false would make every
     // save record the mod and warn "missing mods" after uninstall. We only read the
     // world and place/remove entities through official APIs — the savegame shape is
     // unchanged, so true is the correct value.
@@ -4050,7 +4050,7 @@ class Mod extends shapez.Mod {
 
     /**
      * 无渲染同步快进 N 逻辑 tick。
-     * 复刻游戏自身 puzzle 校验循环（bundle.pretty.js _startReview）：
+     * 复刻游戏自身 puzzle 校验循环：
      *   time.performTicks(deltaMs, core.boundInternalTick) 每次消费一个 deltaMs 预算 → 跑一次 updateLogic。
      * 注意 performTicks 在 speed=paused 时不推进（timeMultiplier=0），且 hud 暂停时预算清零。
      */
@@ -4618,7 +4618,7 @@ class Mod extends shapez.Mod {
     /**
      * 游戏蓝图成本公式的精确复刻：findNiceIntegerValue(4 * n^1.1)
      * = ceil(findNiceValue(4 * n^1.1))，findNiceValue 会把数值向下对齐到"友好"步长
-     * （来源：bundle.pretty.js findNiceValue；用于观测里预告成本，与实际扣费完全相同）。
+     * （来源：游戏自身的取整规则；用于观测里预告成本，与实际扣费完全相同）。
      */
     blueprintCost(n) {
         return Math.ceil(this.findNiceValue(4 * Math.pow(n, 1.1)));
