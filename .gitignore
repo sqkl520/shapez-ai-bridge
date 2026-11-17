@@ -74,9 +74,6 @@ research/ai-plan/.*.mjs
 
 .tmpx/
 
-# 桥的 stdout/stderr（运行时被占用，不该提交）
-.bridge.log
-.bridge.err.log
 .tmpbench/
 
 # mod 备份（280KB × N，运行时生成）
@@ -86,7 +83,10 @@ research/ai-plan/.*.mjs
 # run transcript / 调试脚本 / 原始测量数据：机器相关，复现应重跑装置而非提交数据
 .tmp-live/
 .tmpx2/
-research/ai-plan/tmp/
+
+# 工作目录根上的 run 产物（脚本从 cwd 写出的 run 目录）
+/runs/
+
 # 一次性页面快照（写作时误存的 HTML）
 bing.html
 out.html

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: 1280px 640px; margin: 0; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1280px; height:640px; overflow:hidden; }
+
+  body {
+    background:#222428;
+    font-family:"Segoe UI",system-ui,-apple-system,sans-serif;
+    color:#e8e9ec;
+    position:relative;
+  }
+
+  /* soft vignette — no gradient banding, no violet */
+  .vign {
+    position:absolute; inset:0;
+    background:radial-gradient(120% 90% at 78% 8%, rgba(74,151,223,.16) 0%, rgba(34,36,40,0) 62%);
+  }
+
+  /* faint grid so the card reads as a factory floor */
+  .grid {
+    position:absolute; inset:0;
+    background-image:
+      linear-gradient(to right, rgba(83,88,102,.16) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(83,88,102,.16) 1px, transparent 1px);
+    background-size:40px 40px;
+    mask-image:radial-gradient(115% 85% at 20% 30%, #000 0%, transparent 78%);
+    -webkit-mask-image:radial-gradient(115% 85% at 20% 30%, #000 0%, transparent 78%);
+  }
+
+  .stage { position:absolute; inset:0; padding:64px 72px; display:flex; flex-direction:column; }
+
+  .kicker {
+    display:flex; align-items:center; gap:12px;
+    font-size:15px; font-weight:600; letter-spacing:.22em;
+    text-transform:uppercase; color:#7d808a;
+  }
+  .kicker .dot { width:7px; height:7px; border-radius:50%; background:#66bb6a; }
+
+  h1 {
+    margin-top:18px;
+    font-size:68px; line-height:.98; font-weight:600; letter-spacing:-.03em;
+    color:#fff;
+  }
+  h1 .accent { color:#4a97df; }
+
+  .sub {
+    margin-top:16px;
+    font-size:23px; line-height:1.32; font-weight:400;
+    color:#bfc3cc; max-width:900px;
+  }
+  .sub b { color:#e8e9ec; font-weight:600; }
+
+  /* code sample — fills the middle, and is the strongest "developer tool" signal */
+  .code {
+    margin-top:34px;
+    border:1.5px solid #3c404a; border-radius:12px;
+    background:rgba(23,26,35,.82);
+    padding:20px 24px;
+    font-family:"Cascadia Mono","Consolas",ui-monospace,monospace;
+    font-size:16.5px; line-height:1.72;
+    width:max-content; max-width:100%;
+  }
+  .code .ln { white-space:pre; }
+  .code .p  { color:#66bb6a; }        /* shell prompt */
+  .code .c  { color:#a4a8b2; }        /* command */
+  .code .s  { color:#ffac0f; }        /* string literal */
+  .code .k  { color:#4a97df; }        /* key */
+  .code .dim{ color:#6d717b; }        /* comment */
+
+  /* chain diagram, bottom */
+  .chain {
+    margin-top:auto;
+    display:flex; align-items:center; gap:0;
+    font-size:16px;
+  }
+  .node {
+    border:1.5px solid #535866; border-radius:10px;
+    background:rgba(60,64,74,.85);
+    padding:13px 19px; white-space:nowrap;
+    color:#d5d8df; font-weight:600;
+  }
+  .node.game   { border-color:#535866; background:rgba(72,76,88,.9); }
+  .node.bridge { border-color:#4a97df; background:rgba(74,151,223,.14); color:#a9cdf2; }
+  .node.sink   { border-color:#535866; }
+  .node small { display:block; font-size:11.5px; font-weight:500; letter-spacing:.06em;
+                color:#8d919b; text-transform:uppercase; margin-top:3px; }
+  .link { position:relative; width:52px; height:2px; background:#535866; flex:0 0 auto; }
+  .link::after {
+    content:""; position:absolute; right:-1px; top:-4px;
+    border-left:7px solid #535866;
+    border-top:5px solid transparent; border-bottom:5px solid transparent;
+  }
+  .link.hot { background:#4a97df; }
+  .link.hot::after { border-left-color:#4a97df; }
+
+  .foot {
+    margin-top:26px; display:flex; align-items:center; gap:22px;
+    font-size:15.5px; color:#7d808a;
+  }
+  .foot .k { color:#a4a8b2; font-weight:600; }
+  .sep { width:1px; height:15px; background:#3c404a; }
+</style>
+</head>
+<body>
+  <div class="vign"></div>
+  <div class="grid"></div>
+
+  <div class="stage">
+    <div class="kicker"><span class="dot"></span>shapez.io · official mod API</div>
+
+    <h1>shapez&#8209;ai<span class="accent">&#8209;bridge</span></h1>
+
+    <div class="sub">
+      Drive a live shapez.io factory from <b>any script or MCP client</b> —
+      observe, place and delete buildings, fast&#8209;forward deterministically.
+      All over <b>127.0.0.1</b>.
+    </div>
+
+    <div class="code">
+<div class="ln"><span class="p">$</span> <span class="c">curl -s 127.0.0.1:7777/rpc</span> <span class="s">\</span></div>
+<div class="ln"><span class="s">    -d '{"method":"obs"}'</span></div>
+<div class="ln"><span class="dim">  →</span> entity_count 1544 <span class="dim">·</span> goal 37<span class="dim">/</span>100 <span class="dim">·</span> tick 20654</div>
+    </div>
+
+    <div class="chain">
+      <div class="node game">shapez.io<small>single-file mod</small></div>
+      <div class="link hot"></div>
+      <div class="node bridge">bridge<small>zero deps</small></div>
+      <div class="link hot"></div>
+      <div class="node sink">MCP&nbsp;/&nbsp;HTTP<small>8 tools</small></div>
+      <div class="link"></div>
+      <div class="node sink">agent loop<small>reference</small></div>
+    </div>
+
+    <div class="foot">
+      <span><span class="k">Node</span> ≥ 20</span>
+      <span class="sep"></span>
+      <span><span class="k">No</span> in-game code modification</span>
+      <span class="sep"></span>
+      <span><span class="k">MIT</span></span>
+    </div>
+  </div>
+</body>
+</html>

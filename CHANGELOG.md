@@ -15,6 +15,30 @@
 
 ## [Unreleased]
 
+### Changed — 仓库对外呈现：许可证识别、About 面板、第三方声明拆出
+
+GitHub 把 `LICENSE` 识别成了 **"Other"** 而不是 MIT，因为文件末尾追加了第三方组件
+声明，许可证识别器无法与纯 MIT 文本匹配。About 侧栏于是显示 "Other"，对来访者
+是不必要的疑问。
+
+- `LICENSE` 恢复为**纯 MIT 全文**，让识别器能匹配。
+- 第三方声明（lz-string 双许可、shapez.io 版权与「本仓不含游戏代码」、Steam 成就
+  与 DLC 的两条官方行为）移到 `THIRD-PARTY-NOTICES.md`，内容一条不少。
+- `package.json` 的 `files` 加上该文件，发布物里不会只有 MIT 正文而丢掉第三方说明。
+
+### Added — README 首屏的 GUI 截图与 social preview 卡片
+
+`docs/social-preview.png`（1280×640）从 `docs/social-preview.html` 渲染，
+配色直接取自 `gui/DESIGN-TOKENS.md` 里那套**从游戏本身量出来**的值，
+不用渐变、不引入新颜色。卡片上的 RPC 示例字段（`entity_count` / `goal` / `tick`）
+逐字对照 `docs/PROTOCOL.md` §4 的 Observation 契约，没有编造的字段。
+
+### Fixed — `.gitignore` 漏掉根目录 `runs/`，且有重复条目
+
+`runs/` 是脚本从 cwd 写出的 run 产物目录，一直没被忽略——只是恰好为空才没进仓库。
+同时 `dist/` 和 `research/ai-plan/tmp/` 各出现两次，`.bridge.log` / `.bridge.err.log`
+也重复。去重并补上 `/runs/`。
+
 ### Added — `## STICKY GOAL`：跨多轮的成因不许被更近的红点挤掉
 
 `## THIS RUN` 解决了「忘了自己决定过什么」，但还不够：第 9 关实测，
