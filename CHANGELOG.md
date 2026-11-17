@@ -15,6 +15,31 @@
 
 ## [Unreleased]
 
+### Changed — README 重写为转化漏斗，并修掉一处写错的数字
+
+README 原来是按「架构说明优先」写的：开头三段是 ASCII 架构图，快速开始排在
+第 50 行之后。来访者要在 5 秒内判断这东西是不是给自己用的，那个顺序做不到。
+
+改成参考 `dsh-fcl-android-launcher` 的结构：首屏 = 名称 + 一句话定位 + 徽章 +
+下载入口 → 能做什么（带可粘贴的 curl）→ 快速开始 → FAQ → 架构（折叠到后半）→
+当前进度 → 已知限制。
+
+**顺带修掉一个事实错误**：README 从第一版起就写着「8 MCP tools」，
+实际是 **12 个**（`shapez_status` / `observe` / `production` / `items` / `world` /
+`resources` / `action` / `batch` / `screenshot` / `blueprint` / `save` / `load`）。
+同一个错误也印在 social preview 卡片上，一并改了。徽章里的数字都逐条跑过：
+677 单测、桥自检 19、MCP 自检 97、`dependencies` 确实是 0、`node_modules` 确实不存在。
+
+`docs/gui/*.log` 和 `research/` 里的「8 tools」保持原样 —— 那是当时的历史记录，
+不该被事后改写。
+
+### Added — README 增加「闭环 agent 还不能用」的显式声明
+
+原来的「Known limitations」里有这条，但埋在第 9 条，且措辞是「the remaining
+blocker is...」。现在提到首屏的警告块和「当前进度」表格里各说一次，措辞直白：
+**第 12 关实测产出恒为 0**。这个项目最容易被误读成「AI 会自己通关」，
+与其让来访者自己发现，不如开门见山。
+
 ### Changed — 仓库对外呈现：许可证识别、About 面板、第三方声明拆出
 
 GitHub 把 `LICENSE` 识别成了 **"Other"** 而不是 MIT，因为文件末尾追加了第三方组件
