@@ -72,7 +72,7 @@ plan 行: partial=true skipped=[{macro:"connect",reason:"macro_failed"}] ops=3
 
 ```
 TX_UNAVAILABLE: tx 抛异常：snapshot_save: mod_error:
-  savegame file not found: …\savegame-<testsave>….bin
+  savegame file not found: …\savegame-<testsave>.bin
 ```
 
 但那个文件**实际存在**（3178 字节，mtime 就是那一刻）。

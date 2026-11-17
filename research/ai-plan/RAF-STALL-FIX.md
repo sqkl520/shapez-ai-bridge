@@ -179,9 +179,9 @@ fallback_delta > 0 ⇒ rAF 被掐停，垫片在补帧
 **自动存档写到一半**，结果是：
 
 ```
-savegame-<testsave>….bin                      ← 主文件消失
-savegame-<testsave>….bin.backup-1793640887219.7   ← 旧内容被改名到这
-savegame-<testsave>….bin.tmp-1793640887219.7      ← 半写的新内容
+savegame-<testsave>.bin                      ← 主文件消失
+savegame-<testsave>.bin.backup-1793640887219.7   ← 旧内容被改名到这
+savegame-<testsave>.bin.tmp-1793640887219.7      ← 半写的新内容
 ```
 
 游戏用的是「写 tmp → 改名 backup → 改名正式」的三步法。在中间态被杀，

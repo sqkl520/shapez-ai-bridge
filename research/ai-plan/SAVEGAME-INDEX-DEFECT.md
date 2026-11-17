@@ -12,7 +12,7 @@
 | 游戏进程 | 已启动（shapezio.exe），mod 已连上（`/health` → `mod_connected: true`） |
 | `GET /status` | `in_game: false`（停在主菜单） |
 | `list_saves` | **`{"saves":[]}`** —— 一个存档都不列 |
-| `load_save <testsave>…` | **2002 `game_rejected: no savegame with internal_id …`** |
+| `load_save <testsave>` | **2002 `game_rejected: no savegame with internal_id …`** |
 | 磁盘上的 `savegame-*.bin` | **全部完好**，能离线解码 |
 
 ---

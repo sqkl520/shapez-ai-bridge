@@ -30,8 +30,9 @@ const { decodeSave } = require("../../../recon/decode_full.cjs");
 
 export const BASE = "http://127.0.0.1:7777";
 
-/** level-11 save: the world every experiment must return to, plus its snapshot. */
-export const HOME_INTERNAL_ID = "<usersave>";
+/** level-11 save: the world every experiment must return to, plus its snapshot.
+ *  The id is machine-local, so it comes from the environment rather than the repo. */
+export const HOME_INTERNAL_ID = process.env.SHAPEZ_HOME_SAVE_ID || "";
 export const HOME_SNAPSHOT = "ai-research-base";
 export const HOME_BASELINE_COUNT = 2805;
 

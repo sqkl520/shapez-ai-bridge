@@ -2,7 +2,8 @@ import { computeBelt } from "../../../src/ai/compiler/belt-sim.mjs";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { decodeSave } = require("../../../recon/decode_full.cjs");
-const d = decodeSave(process.env.APPDATA + "/shapez.io/saves/savegame-<usersave>.bin");
+if (!process.env.SHAPEZ_SAVE_ID) throw new Error("SHAPEZ_SAVE_ID is required (the savegame id to inspect)");
+const d = decodeSave(process.env.APPDATA + "/shapez.io/saves/savegame-" + process.env.SHAPEZ_SAVE_ID + ".bin");
 const BELT = new Set([1,2,3]);
 const g = new Map();
 for (const e of (d.obj.dump.entities||[])) { const s=e.components?.StaticMapEntity; if(!s) continue; g.set(s.origin.x+","+s.origin.y,{code:s.code,r:s.rotation,orig:s.originalRotation,belt:BELT.has(s.code)}); }

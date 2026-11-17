@@ -14,7 +14,8 @@ import { createRequire } from "node:module";
 const require = createRequire("file:///" + process.cwd().replace(/\\/g, "/") + "/x.js");
 const { decodeSave } = require("./recon/decode_full.cjs");
 
-const SAVE = process.env.APPDATA + "/shapez.io/saves/savegame-<usersave>.bin";
+if (!process.env.SHAPEZ_SAVE_ID) throw new Error("SHAPEZ_SAVE_ID is required (the savegame id to inspect)");
+const SAVE = process.env.APPDATA + "/shapez.io/saves/savegame-" + process.env.SHAPEZ_SAVE_ID + ".bin";
 const BELT_CODES = new Set([1, 2, 3]);
 const DIRV = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
 const OPP = { top: "bottom", bottom: "top", left: "right", right: "left" };

@@ -19,7 +19,7 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const args = process.argv.slice(2);
 const argVal = (n, d) => { const i = args.indexOf(n); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
-const SAVE_ID = argVal("--save", "<usersave>");
+const SAVE_ID = argVal("--save", process.env.SHAPEZ_SAVE_ID || "");
 const NO_LOAD = args.includes("--no-load");
 
 let rpcId = 1;

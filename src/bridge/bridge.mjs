@@ -438,7 +438,7 @@ async function snapshotSave(p) {
      *
      * 实测（真机 loop 的 guard 里）：`save_now` 返回 ok 且 internal_id 正确，
      * 但紧接着 `fs.existsSync` 得到 false ⇒
-     *   `savegame file not found: …\savegame-<testsave>….bin`
+     *   `savegame file not found: …\savegame-<id>….bin`
      * 而那个文件实际上是存在的（3178 字节，mtime 就是那一刻）。
      *
      * 根因：游戏的 `saveNow()` 走 `Savegame.writeAsync()`，返回 Promise 但

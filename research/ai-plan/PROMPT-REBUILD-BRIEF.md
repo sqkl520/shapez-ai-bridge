@@ -181,7 +181,7 @@ plan          0.24s   1.7%
 ## 5. 安全约束
 
 1. 游戏实例独占：同一时刻只允许一个 agent 做写操作
-2. 用户存档 `<usersave>` 绝不碰；目标是 `<testsave>...`
+2. 用户存档 `<usersave>` 绝不碰；目标是 `<testsave>`
 3. 不许 kill / 重启 shapezio
 4. 写前必 snapshot，先 dry_run
 5. 实机前确认 7777 上跑的是 `src/bridge/bridge.mjs`

@@ -219,7 +219,7 @@ async function main() {
 
   // ⑥ 恢复原 level-11 世界
   log("\n[6] 恢复原存档（load 5c9670… level 11）...");
-  try { await rpc("load_save", { internal_id: "<usersave>" }); } catch (e) { log("  恢复失败（旧档文件未损，可手动载入）:", e.message); }
+  try { await rpc("load_save", { internal_id: process.env.SHAPEZ_HOME_SAVE_ID }); } catch (e) { log("  恢复失败（旧档文件未损，可手动载入）:", e.message); }
   for (let i = 0; i < 40; i++) { await sleep(1000); const s = await rpc("status", {}, 8000); if (s.in_game) { const o = await rpc("obs", { max_entities: 1 }); log(`  已回到 level-11 世界，实体=${o.stats.total}（基线 2805）${o.stats.total === 2805 ? " ✅" : " ⚠️"}`); break; } }
 }
 main().catch(e => { console.error("FATAL:", e.message, e.rpc ? JSON.stringify(e.rpc) : ""); process.exit(1); });

@@ -246,10 +246,12 @@ test("★ originalRotation 旁证：弯带 final−orig 只可能是 {0, rv1→9
 });
 
 // world-full.json 不带 originalRotation；存档路径 + 解码器为可选依赖，缺失即跳过。
+// 存档 id 由环境变量给（SHAPEZ_TEST_SAVE_ID），不硬编码任何人的真实存档。
 function savePath() {
     const appdata = process.env.APPDATA;
-    if (!appdata) return null;
-    const p = resolve(appdata, "shapez.io/saves/savegame-<usersave>.bin");
+    const id = process.env.SHAPEZ_TEST_SAVE_ID;
+    if (!appdata || !id) return null;
+    const p = resolve(appdata, `shapez.io/saves/savegame-${id}.bin`);
     try { readFileSync(p); return p; } catch { return null; }
 }
 function loadDecoder() {

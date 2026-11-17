@@ -96,7 +96,7 @@ PASS = true
 seed = 60908
 ```
 
-目标世界 `savegame-<testsave>…bin` 未被修改：
+目标世界 `savegame-<testsave>.bin` 未被修改：
 
 ```
 sha256 = 0ed96dd439be9331f136bf92865f2414c108a90560987960e47cdccfd11fad1c
@@ -140,7 +140,7 @@ G.assertUserSaveUntouched(G.loadUserSaveBaseline(), G.recordUserSaveFingerprint(
 POST /rpc {"method":"list_saves"} → {"saves":[]}          ← 一个存档都没有
 ```
 
-`load_save <testsave>…` 的失败原文，**时间戳 21:00:54，早于我的第一次操作**：
+`load_save <testsave>` 的失败原文，**时间戳 21:00:54，早于我的第一次操作**：
 
 ```json
 {"code":2002,

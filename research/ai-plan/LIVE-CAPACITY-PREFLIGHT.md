@@ -53,8 +53,8 @@ POST /rpc {"method":"list_saves"}
 
 | 存档 | 解码结果 |
 |---|---|
-| `savegame-<testsave>…`（目标） | entities=42 / uids=42 / static=42 / **seed=60908** |
-| `savegame-<usersave>…`（用户） | entities=3093 / uids=3093 / static=3093 / **seed=43391** |
+| `savegame-<testsave>`（目标） | entities=42 / uids=42 / static=42 / **seed=60908** |
+| `savegame-<usersave>`（用户） | entities=3093 / uids=3093 / static=3093 / **seed=43391** |
 
 两个都解得开。目标世界的 **uid 集合与 2026-11-01 01:50 存档的真实 obs 逐 uid 完全一致**：
 
@@ -145,8 +145,8 @@ Steam 的权威日志（`D:/Steam/logs/console_log.txt`）：
 
 | 红线 | 状态 | 证据 |
 |---|---|---|
-| 只许写 `<testsave>…` | ✅ 未违反 | 我**没有发出任何写 RPC**，一次都没有 |
-| 用户存档 `<usersave>…` 绝对禁止碰 | ✅ 未违反，**sha256 逐字节未变** | `f5944ccd…b7115`，与 guard 基线完全一致，mtime 仍是 2026-10-28 17:02 |
+| 只许写 `<testsave>` | ✅ 未违反 | 我**没有发出任何写 RPC**，一次都没有 |
+| 用户存档 `<usersave>` 绝对禁止碰 | ✅ 未违反，**sha256 逐字节未变** | `f5944ccd…b7115`，与 guard 基线完全一致，mtime 仍是 2026-10-28 17:02 |
 | 每次写之前 `snapshot_save` | N/A | 没有写，所以不需要；也**没有**任何一步绕过 guard |
 | 不 kill / restart shapezio | ✅ 未 kill | 但进程在 21:18:31 自行退出（见 §3，我如实报告了当时我在操作窗口） |
 | 独占资源 | ❌ **前提不成立** | 见 §4，另一 agent 并发活动 |
