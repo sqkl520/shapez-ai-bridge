@@ -39,6 +39,26 @@ const KEY = process.env.SCRUB_KEY;
 if (!KEY) { console.error("需要 SCRUB_KEY 环境变量"); process.exit(2); }
 const REPLACEMENT = "<REDACTED-API-KEY>";
 
+/* 额外的 (搜索, 替换) 对，用于清理 key 之外的东西。
+   格式：SCRUB_EXTRA='[{ "find": "...", "repl": "..." }]'（JSON 数组）
+   动机：这类清理往往要一次跑完 —— 每跑一次 fast-export/import 都要重写全部
+   提交的 SHA，跑两遍只会让第一次的 SHA 失效。 */
+let EXTRA_PAIRS = [];
+if (process.env.SCRUB_EXTRA) {
+    try {
+        EXTRA_PAIRS = JSON.parse(process.env.SCRUB_EXTRA);
+        if (!Array.isArray(EXTRA_PAIRS)) throw new Error("不是数组");
+    } catch (e) {
+        console.error("SCRUB_EXTRA 解析失败:", e.message);
+        process.exit(2);
+    }
+}
+/* 统一的替换表：先 key，再 extras。 */
+const PAIRS = [
+    { find: KEY, repl: REPLACEMENT },
+    ...EXTRA_PAIRS.filter(p => p && typeof p.find === "string" && p.find && typeof p.repl === "string"),
+];
+
 const TMP = path.join(".scrub");
 fs.mkdirSync(TMP, { recursive: true });
 
@@ -74,8 +94,15 @@ console.log(`   ${(stat.size / 1048576).toFixed(1)} MB`);
    决定要跳过多少字节。 */
 
 const ENTRIES = [
-    /* 含密钥、且本来就不该进公开仓的临时文件 —— 从历史里整个删掉 */
-    /^\.tmpverify\/(ab-hint|ab-real|live-loop|live-multiround)\//,
+    /* 含密钥、且本来就不该进公开仓的临时文件 —— 从历史里整个删掉。
+       后来把范围扩到整个临时目录：这些路径在 .gitignore 里早有规则，
+       只是规则加得比它们进仓晚，于是整段历史都有。 */
+    /^\.tmpverify\//,
+    /^\.tmpx2\//,
+    /^\.tmp-live\//,
+    /^research\/ai-plan\/tmp\//,
+    /^research\/ai-plan\/harness\/out\//,
+    /^research\/ai-player\/facts\/live\//,
     /^research\/ai-plan\/live\/guard\.mjs$/,
     /^research\/ai-plan\/live\/loop-live\.mjs$/,
     /^research\/ai-plan\/live\/guard\.test\.mjs$/,
@@ -135,9 +162,17 @@ while (i < N) {
          * 正确做法：在 data 块内部替换，同时**重写 `<n>`**。
          * 这样长度恒等于实际内容，流结构不会坏。 */
         const bodyStr = body.toString("latin1");
-        const patched = bodyStr.includes(KEY) ? bodyStr.split(KEY).join(REPLACEMENT) : null;
-        if (patched !== null) {
-            redacted += bodyStr.split(KEY).length - 1;
+        /* 按 PAIRS 依次替换。每一对都算长度、重写 `<n>` —— 长度必须与实际
+           内容恒等，否则流结构会坏。 */
+        let patched = bodyStr;
+        let hit = false;
+        for (const pr of PAIRS) {
+            if (!patched.includes(pr.find)) continue;
+            hit = true;
+            redacted += patched.split(pr.find).length - 1;
+            patched = patched.split(pr.find).join(pr.repl);
+        }
+        if (hit) {
             const nb = Buffer.from(patched, "latin1");
             push(Buffer.from(`data ${nb.length}`, "latin1"));
             push(buf.subarray(contentEnd, bodyStart));      // 行尾（\r\n 或 \n）
