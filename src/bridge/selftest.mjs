@@ -474,6 +474,15 @@ try {
         assert(evil.includes("403"), "browser origin must be 403, got: " + evil);
         const https = await handshake("https://attacker.test");
         assert(https.includes("403"), "https origin must be 403, got: " + https);
+        // ★ 回归：字面量 "null" 不是「无害的未知来源」★
+        // 沙箱 iframe（sandbox 且无 allow-same-origin）、data:、blob: 页面都会发
+        // `Origin: null`。放行它等于任何网页嵌个 iframe 就能遥控游戏。
+        // 这条曾经是放行的（注释写着「file:// 的某些 UA 上报 null」），
+        // 但那只是猜测，实测游戏 mod 发的是 file://，永远不会是 null。
+        const nullOrigin = await handshake("null");
+        assert(nullOrigin.includes("403"), "literal 'null' origin (sandboxed iframe) must be 403, got: " + nullOrigin);
+        const dataOrigin = await handshake("data:text/html,<script>");
+        assert(dataOrigin.includes("403"), "data: origin must be 403, got: " + dataOrigin);
         const file = await handshake("file://");
         assert(file.includes("101"), "file:// (the game mod) must pass, got: " + file);
         const none = await handshake(null);

@@ -20,6 +20,14 @@ MIT text shipped with it is in
 
 WTFPL v2 text: <http://www.wtfpl.net/>
 
+### `test/fixtures/game_lzstring_*`
+
+These two files exist so the interop test can check our vendored copy against
+the implementation the game actually uses. They are **Pieroxy's lz-string, not
+shapez.io's own code** — the game vendors it unmodified, and we take it from the
+same upstream source. Same copyright and same dual MIT/WTFPL licence as above.
+See [`test/fixtures/README.md`](test/fixtures/README.md) for provenance.
+
 ## Not bundled — interoperated with
 
 ### shapez.io

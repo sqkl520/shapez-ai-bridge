@@ -104,14 +104,22 @@ for (const k in COMPAT.mods || {}) {
 // text/plain POST（免 CORS 预检）连到 127.0.0.1:7777，从而遥控游戏。
 // 合法调用方只有两类：
 //   - 游戏 mod：Electron 渲染进程，页面是 file:// → Origin 为 "file://" 或以 file:// 开头
-//   - 本地脚本/MCP/工具：Node 的 WebSocket/fetch 不发 Origin（或发 "null"）
-// 因此：拒绝一切 http(s) 来源的 Origin。
+//   - 本地脚本/MCP/工具：Node 的 WebSocket/fetch 不发 Origin
+//
+// 因此：无 Origin 放行（Node 客户端），file:// 放行（游戏 mod），
+// 其余一律拒绝 —— 包括字面量 "null"。
+//
+// ★ 为什么 "null" 必须拒绝 ★
+// `Origin: null` 不是一个无害的「未知来源」，而是**浏览器可以主动制造的**：
+// 沙箱化 iframe（`sandbox` 无 allow-same-origin）、`data:` / `blob:` 页面，
+// 都会把 Origin 发成字面量 "null"。也就是说，任何网页只要嵌一个沙箱 iframe，
+// 就能拿到这条通路 —— 放行 "null" 等于放行互联网。
+// 这和「Node 客户端不发 Origin」是两回事：Node 侧压根没有这个头（走上面的判空分支）。
 function originAllowed(req) {
     const origin = req.headers["origin"];
-    if (!origin) return true; // Node 客户端（mod 之外的本地工具）
-    if (origin === "null") return true; // file:// 的某些 UA 上报 null
+    if (!origin) return true; // Node 客户端（本地脚本 / MCP / 工具）
     if (origin.startsWith("file://")) return true; // Electron file:// 页面（游戏 mod）
-    return false; // 网页（http/https 来源）——拒绝
+    return false; // 网页（http/https/data/blob/沙箱 null）——拒绝
 }
 
 function rejectBadOrigin(res) {

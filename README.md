@@ -317,8 +317,12 @@ This project's code is **MIT** — see [`LICENSE`](LICENSE); third-party notices
 - Vendored [lz-string](https://github.com/pieroxy/lz-string) 1.4.5: © 2013 Pieroxy,
   **MIT / WTFPL** dual-licensed. It compresses blueprints and mirrors the game's own
   savegame compression.
-- **This repository contains no shapez.io game code.** All integration goes through the
+- **This repository contains no shapez.io game code or assets.** All integration goes through the
   game's official mod API. shapez.io is © [tobspr Games](https://shapez.io).
+  One qualification worth stating plainly: [`test/fixtures/`](test/fixtures/) holds a copy of
+  **lz-string**, which the game vendors unmodified — it is © Pieroxy under MIT/WTFPL, not
+  tobspr Games' code, and it exists only so the interop test can check our codec against the
+  implementation the game actually uses. See [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 - This is an **unofficial community project**, not affiliated with, endorsed by, or
   supported by tobspr Games. Please do not report problems with this mod to them.
 

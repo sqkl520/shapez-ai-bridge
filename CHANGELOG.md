@@ -15,6 +15,51 @@
 
 ## [Unreleased]
 
+### Fixed — 安全：`Origin: null` 曾被放行，任何网页都能遥控游戏
+
+`originAllowed()` 里有一行 `if (origin === "null") return true;`，注释理由是
+「file:// 的某些 UA 会上报 null」。这个理由不成立，而且方向反了：
+
+`Origin: null` 不是「未知来源」，而是**浏览器可以主动制造的** —— 沙箱化 iframe
+（`sandbox` 且无 `allow-same-origin`）、`data:` / `blob:` 页面都会发字面量 `null`。
+也就是说，任意网页只要嵌一个沙箱 iframe，就能拿到这条通路，在默认配置
+（`token: null`）下遥控游戏。这是「别人能远程操作你的工厂」的唯一入口，且开箱即用。
+
+修法：删掉那一行。`file://` 分支保留（游戏 mod 走这条），Node 客户端走无 Origin 分支。
+
+**先实测再改**：重启桥接后游戏 mod 照常连上（`mod connected from 127.0.0.1:9320`），
+证明 mod 发的是 `file://` 或没有 Origin，从不是 `null`。改后实测：
+`Origin: null` → 403、`https://evil.example` → 403、`file://` → 200、无 Origin → 200。
+
+**加了回归测试并做了变异验证**：新增对字面量 `null` 和 `data:` 两条断言。
+把 `null` 放回去后测试立刻失败（`got: HTTP/1.1 101`），证明这个测试真的能挡住回归，
+不是摆设。原先的测试只覆盖了 http/https/file:///无 Origin 四种，恰好漏掉 `null` ——
+这正是这个漏洞能长期存在的原因。
+
+### Fixed — CONTRIBUTING 把 smoke test 说反了
+
+原文写「starts a bridge, connects a fake game … It needs no game」。事实相反：
+`scripts/smoke_test.mjs` 自己的头注释是「against a RUNNING game + bridge」，
+退出码 `2` 就是「桥起来了但游戏没连上或还在菜单」。照这段文档做的新贡献者会看到
+退出码 2，然后以为自己环境坏了。
+
+改成把两类测试分开说清：`npm test` / `selftest:bridge` / `selftest:mcp` 不需要游戏
+（这才是开 PR 前该跑的），smoke test 是真正的端到端、必须先把游戏载入世界。
+
+### Fixed — `test/fixtures/README.md` 的版本号写错，且留着提交 hash 与 CDN 直链
+
+写的是「npm 1.5.0 版本」，实际 vendored 的是 **1.4.5**（`src/shared/lz-string.cjs`
+文件头自述 1.4.5）。同一段还留着 `tobspr-games/shapez.io@ee2279d5` 的提交 hash 和
+一条 jsDelivr 直链 —— 这正是「逆向细节脱敏」那一轮要求清掉的内容，当时漏了这里。
+一并去掉，只保留「来自游戏仓库 vendor 的上游原样副本」。
+
+### Changed — 「本仓库不含任何游戏代码」这句绝对声明补上了唯一例外
+
+这句话在 README / LICENSE / THIRD-PARTY-NOTICES 里都出现过。事实是
+`test/fixtures/` 下确实有一份 lz-string 副本 —— 但它是 **Pieroxy 的代码，不是
+tobspr Games 的**，游戏只是原样 vendor，我们取的是同一上游源。绝对声明留着会
+站不住脚，改成「不含游戏代码或素材」并显式点出这一份的出处与许可。
+
 ### Changed — README 重写为转化漏斗，并修掉一处写错的数字
 
 README 原来是按「架构说明优先」写的：开头三段是 ASCII 架构图，快速开始排在

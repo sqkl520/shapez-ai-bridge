@@ -15,15 +15,36 @@ because it is the actual process, not a template.
 
 ## Get it running
 
+Most of the codebase can be checked out and tested with nothing but Node — no
+game, no bridge:
+
 ```bash
 git clone https://github.com/sqkl520/shapez-ai-bridge.git
 cd shapez-ai-bridge
-node scripts/smoke_test.mjs
+npm test                  # 677 unit tests, no game needed
+node src/bridge/selftest.mjs   # bridge layer, no game needed
+node src/mcp/selftest.mjs      # MCP layer, no game needed
 ```
 
-The smoke test starts a bridge, connects a fake game, and exercises the observe
-/ place / delete round trip. If it prints `SMOKE TEST PASSED`, your checkout is
-healthy. It needs no game.
+Those three are the ones to run before opening a PR.
+
+The **smoke test** is different: it is genuinely end-to-end and needs the real
+thing. Start the bridge, open shapez.io with the mod installed, and load a
+savegame first:
+
+```bash
+node src/bridge/bridge.mjs      # terminal 1
+node scripts/smoke_test.mjs     # terminal 2, after the game is in a world
+```
+
+If it prints `SMOKE TEST PASSED (5/5)`, all five layers are wired up. Its exit
+codes tell you which layer is missing: `1` the bridge is not running, `2` the
+bridge is up but no game is connected or it is still in the menu, `3` another
+check failed. It briefly places and deletes one belt near the hub to prove
+writes work, and leaves your world unchanged.
+
+There is no way to fake this one — the whole point is that it exercises the
+real game. For a test that runs without a game, use `npm test` above.
 
 ## Running the tests
 

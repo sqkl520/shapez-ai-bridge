@@ -294,8 +294,12 @@ npm run smoke             # 端到端（需要游戏 + 桥在跑）
 
 - 内置 [lz-string](https://github.com/pieroxy/lz-string) 1.4.5：© 2013 Pieroxy，
   **MIT / WTFPL** 双许可。用来压缩蓝图，并镜像游戏自己的存档压缩。
-- **本仓库不含任何 shapez.io 游戏代码。** 所有集成都走游戏官方 mod API。
+- **本仓库不含任何 shapez.io 游戏代码或素材。** 所有集成都走游戏官方 mod API。
   shapez.io 版权归 [tobspr Games](https://shapez.io)。
+  有一点值得说明白：[`test/fixtures/`](test/fixtures/) 里有一份 **lz-string** 的副本，
+  游戏是原样 vendor 它的 —— 该文件版权属 Pieroxy，MIT/WTFPL 双许可，不是 tobspr Games 的代码，
+  放在那里只是为了让互操作测试能拿我们的编解码器和游戏实际用的那份实现对拍，
+  见 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)。
 - 这是一个**非官方社区项目**，与 tobspr Games 无隶属、背书或支持关系。
   请不要把这个 mod 的问题反馈给他们。
 
