@@ -176,4 +176,22 @@ R1 和 R2 的 `actKey` 相同（都是 `connect,connect`），却被记成 `seen
 但 `NO_REVERSIBLE_CALL` 和 `port_already_bound` 这两个诊断的候选表里没有它 ——
 而那正是「端口被占」时唯一能走通的路。
 
+**已改**（`constants.mjs` 的 `RETRIEVAL_TABLE.NO_REVERSIBLE_CALL`，权重 2）。
+验证方式值得记下来，因为它差点让我以为改动没生效：
+
+```
+candidatesFor([{code:'NO_REVERSIBLE_CALL'}])              → ["connect","extend_line","replace_run"]
+candidatesFor([NO_REVERSIBLE_CALL, BELT_HANDOFF, NO_PROD]) → [..., "remove_machine", ...]
+```
+
+单诊断时它被 `cap=6` 和 top-3 截掉了 —— **但 L12 的实际诊断永远不止一条**
+（`NO_PRODUCTION` + `BELT_HANDOFF_REJECTED` ×2 + `MIXER_COLOR_AIMED`），
+所以在真实场景里它会出现。判断「候选有没有送到」必须用**真实的诊断组合**，
+只喂单条会得到误导性的结论。
+
+改了之后又跑了 6 轮（`.agent-run4.log`）：1 次 `stalled_growth`（机器 +3）、
+3 次 `inert`，垃圾桶从 6 涨到 13 —— 它在**加**垃圾桶而不是拆，`remove_machine`
+还是没被选中。候选送到了不等于会被选，这一层还没打通。
+
+
 
