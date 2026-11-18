@@ -1116,7 +1116,12 @@ const CODE_RANK = Object.freeze({
  * @returns {Array<object>} Diagnosis[]（确定性排序，每码 ≤3、总量 ≤8）
  */
 export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
-    void items;
+    /* ★ 第二个参数是真数据，以前被 `void items;` 丢掉了 ★
+     *
+     * 想报 `HUB_FED_BY_COLOR`（hub 入口在送颜料）就必须知道带子上有什么，
+     * 而那就是这个参数。历史实现只读几何，所以它一路被忽略。
+     * 这里保持「没有 items 也不崩」：下面用到的地方都有 null 检查。 */
+    const itemsDoc = (items && typeof items === "object") ? items : null;
     const o = unwrapObs(obs);
     const recipe = opts.recipe;
     /* ★ 配方不可用**不等于**什么都别说了（2026-11-15 夜，L12 真机）★
@@ -2804,6 +2809,134 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                     },
                     candidates: ["connect", "replace_run"],
                 });
+            }
+
+            /* ★ `HUB_FED_BY_COLOR` —— hub 的入口在送**颜料**，而 hub 只收**形状** ★
+             *
+             * 游戏源码实证（`recon/bundle.js` 的 `MetaHubBuilding._setupEntityComponent`）：
+             * hub 的全部 16 个入口都写成 `filter:"shape"`：
+             *
+             *   for(var t=[],r=0;r<4;++r) t.push(
+             *     {pos:new Vector(r,0),direction:top,   filter:"shape"},
+             *     {pos:new Vector(r,3),direction:bottom,filter:"shape"},
+             *     {pos:new Vector(0,r),direction:left,  filter:"shape"},
+             *     {pos:new Vector(3,r),direction:right, filter:"shape"});
+             *
+             * 而 `ColorItem.getItemType()` 返回 `"color"`（@153912），
+             * `ShapeItem.getItemType()` 返回 `"shape"`（@121252）。
+             * BeltPath 的收货判据按 `slot.filter` 过滤 => **颜料永远进不了 hub**。
+             *
+             * 实测（真机 L12）：hub 的 4 条装有货的入口带，上面全是 `green` / `red`
+             * 颜料，共 233 件排在 hub 门口进不去；而另外 5 条**本来就能收形状**的
+             * 空入口一个都没人用。`delivered` 于是恒为 0 —— 不是线路断，
+             * 是**送错了东西**，而且是从源头就送错了。
+             *
+             * 这条诊断之前不存在：代码里对此一无所知，agent 一直把颜料往 hub 送。
+             *
+             * 判据故意保守：只在「入口带子上确实有货，且这些货是颜料」时报。
+             * 拿不到 items 信息（没有 debug_items）⇒ 不报，不猜。 */
+            try {
+                /* ★ `debug_items` 的真实形状（**实测，不是猜**）★
+                 *
+                 * `{ belts:[{cell, path, idx, pos, spacing_to_next, item}], ejectors, …, paths, counts }`
+                 * —— 每行是**一件货**，`item` 是字符串键（`"green"` / `"ScSc----"`）。
+                 * **没有 uid，也没有 items 数组**（见 `dist/shapez-ai-bridge.js:1119` 的 push）。
+                 *
+                 * 第一版按 `{belts:[{uid, items:[…]}]}` 解析，那个形状**根本不存在**：
+                 * `Number(undefined)` → NaN，map 退化成 `{NaN: []}`，于是永远查不到货，
+                 * 诊断一次都没触发过 —— 而整个块被 try/catch 包着，所以是**静默**失效。
+                 * 这正是本项目反复出现的「算出来 ≠ 送到」，只是这次连第一段都没算对。
+                 *
+                 * 按 cell 分组，用 pos 取靠近出口的那一件（游戏在 acceptor 端 `items.pop()`，
+                 * pos 越大越靠近出口）；不用 idx 猜顺序。 */
+                const rows = (itemsDoc && Array.isArray(itemsDoc.belts)) ? itemsDoc.belts : [];
+                const byCell = new Map();
+                for (const r of rows) {
+                    if (!r || !Array.isArray(r.cell)) continue;
+                    const k = r.cell[0] + "," + r.cell[1];
+                    if (!byCell.has(k)) byCell.set(k, []);
+                    byCell.get(k).push(r);
+                }
+                const PAINT = new Set(["red", "green", "blue", "yellow", "purple", "cyan", "white"]);
+                /* ★ 不要只扫 `live`（方向判对的那几条）★
+                 *
+                 * 第一版用 `live.map(...)`，而 `live` 只收「出口正好对着 hub、
+                 * 且 hub 接受这个来向」的带子。实测的 L12 世界里 4 条送颜料的入口带
+                 * **全部**不在 `live` 里（它们的来向被判成 misaimed 或干脆不进表），
+                 * 于是扫不到 —— 这也是它一次没触发的原因之一。
+                 *
+                 * 而「入口格上放着一条带、带上是颜料」本身就是要报的事实，
+                 * 与那条带方向对不对无关：方向错了照样送不进去，方向对了颜色也进不去。
+                 * 所以直接从 hub 的 16 个入口格扫，不看 live/misaimed 的分类。 */
+                const hubEnt = idx.ent.find(e => e && e.type === "hub");
+                const inletCells = [];
+                if (hubEnt) {
+                    const hs2 = slotsOf("hub", hubEnt.variant, hubEnt.x, hubEnt.y, hubEnt.r || 0, beltRvOf(hubEnt));
+                    for (const sl of (hs2 && Array.isArray(hs2.inputs) ? hs2.inputs : [])) inletCells.push(sl.cell);
+                }
+                const beltsAtInlets = inletCells.map(c => at(idx, c)).filter(e => e && isBelt(e));
+                const colorHeads = [];
+                for (const b of beltsAtInlets) {
+                    const list = byCell.get(b.x + "," + b.y);
+                    if (!Array.isArray(list) || !list.length) continue;
+                    /* pos 最大 = 最靠近出口 = 正要进 hub 的那一件 */
+                    const head = list.slice().sort((p, q) => (q.pos || 0) - (p.pos || 0))[0];
+                    const label = head && head.item;
+                    if (typeof label === "string" && PAINT.has(label)) {
+                        colorHeads.push({ uid: b.uid, handle: handleOf(handles, b.uid), color: label });
+                    }
+                }
+                if (colorHeads.length) {
+                    const subj = subjectOf(handles, hub.uid, "hub");
+                    const names = [...new Set(colorHeads.map(c => c.color))];
+                    out.push({
+                        code: "HUB_FED_BY_COLOR",
+                        layer: "L3",
+                        severity: "blocker",
+                        subject: subj,
+                        expected: `hub 的入口送的是**形状**`,
+                        observed: `${colorHeads.length} 条入口带上有货，但它们是**颜料**（${names.join(" / ")}），`
+                            + `而 hub 只收形状（游戏里 hub 的 16 个入口全是 filter:"shape"）。`
+                            + `这些货永远进不去 —— 它们会一路顶到 hub 门口堆着。`,
+                        evidence: {
+                            handles: [subj.handle, ...colorHeads.map(c => c.handle)].filter(Boolean),
+                            uids: [hub.uid, ...colorHeads.map(c => c.uid)],
+                            tier: tierOf(hub.uid),
+                            color_inlets: colorHeads.slice(0, 6),
+                            colors: names,
+                        },
+                        candidates: ["replace_run", "remove_run", "connect"],
+                        hint: `hub 的 16 个入口**只接受形状，不接受颜料** —— 这是游戏写死的`
+                            + `（每个入口的 filter 都是 "shape"）。`
+                            + `现在有 ${colorHeads.length} 条入口带在送 ${names.join("/")}，它们到门口会被弹回来。`
+                            + `处置：把这几个入口改接**已经染好色的形状**（painter 的输出），`
+                            + `颜料那一路应该接到 painter 的 color 槽，而不是 hub。`,
+                    });
+                }
+            } catch (e) {
+                /* ★ 「没有数据」和「解析出错」必须分开 ★
+                 *
+                 * 第一版这里是个光秃秃的 `catch {}`，于是 schema 猜错（`debug_items`
+                 * 真实形状和代码假设的不一样）被静默吞掉 —— 诊断一次没触发，
+                 * 而所有测试都是绿的，直到有人在真机上量才发现。
+                 *
+                 * 现在：解析异常**记一条 SHAPE_UNKNOWN**（info 级，不阻塞），
+                 * 让它在诊断流里可见；没数据（itemsDoc 为空）仍然静默，
+                 * 因为那确实什么都不该说。 */
+                if (itemsDoc && itemsDoc.__schema_warned !== true) {
+                    try {
+                        out.push({
+                            code: "SHAPE_UNKNOWN",
+                            layer: "L3",
+                            severity: "info",
+                            subject: null,
+                            expected: "能从 debug_items 读到带子上的货",
+                            observed: `读取 debug_items 时出错：${String((e && e.message) || e)}`,
+                            evidence: { stage: "hub-color-scan", error: String((e && e.message) || e) },
+                            candidates: [],
+                        });
+                    } catch { /* 连报错都失败就算了 */ }
+                }
             }
         }
     }

@@ -1652,3 +1652,65 @@ test("M25c ★ 对照：目标颜色都有矿（不需要合成）⇒ 不许报 
     assert.ok(!ds.some(d => d.code === "MIXER_MISSING"),
         `★ 目标色有矿就不需要 mixer（实得 ${JSON.stringify(ds.map(x => x.code))}）`);
 });
+
+/* ═══════ HUB_FED_BY_COLOR：按 debug_items 的**真实**结构解析 ═══════ */
+
+/**
+ * 这个测试存在的理由：第一版实现按 `{belts:[{uid, items:[…]}]}` 解析，
+ * 而桥接**从来不发那个形状** —— `dist/shapez-ai-bridge.js:1119` push 的是
+ * 扁平的每件货一行：`{cell, path, idx, pos, spacing_to_next, item}`，
+ * 没有 uid、没有 items 数组。
+ *
+ * 结果：`Number(undefined)` → NaN，查不到任何货，诊断一次都没触发；
+ * 而整块被 try/catch 包着，静默失效，所有测试都是绿的。
+ *
+ * 所以这里用**真实 schema** 钉住它。任何把结构改回臆想形状的改动都会红。
+ */
+test("HUB_FED_BY_COLOR：按真实 debug_items 结构识别「hub 入口在送颜料」", () => {
+    /* hub 在世界 (0,0)，4×4 ⇒ 16 个入口。在它的上侧入口格 (-1,-3) 上放一条带子，
+       带子上有一件 green 颜料，pos 最大（最靠近出口）。 */
+    const w = {
+        goal: { level: 12, requirement: { shape: "RuRu----", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            /* 带子放在 hub 上侧入口格里，朝向朝下（喷进 hub） */
+            { uid: 2, type: "belt", x: 0, y: -1, r: 180, rv: 0, code: 1, layer: "regular" },
+        ],
+        resources: [[9, 9, "RuRuRuRu"]],
+    };
+    /* ★ 真实 schema：扁平、每件货一行、item 是字符串键 ★ */
+    const items = {
+        belts: [
+            { cell: [0, -1], path: 0, idx: 0, pos: 0.1, spacing_to_next: 0.63, item: "green" },
+            { cell: [0, -1], path: 0, idx: 1, pos: 0.9, spacing_to_next: 0, item: "green" },
+        ],
+        ejectors: [], underground: [], pending: [],
+        pathCount: 1, truncatedPaths: false, paths: [], counts: { belts: 2 },
+    };
+    const ds = semanticDiagnoses(w, items, "RuRu----", buildHandles(w, null),
+        { recipe: { ok: false }, level: 12 });
+    const hit = ds.find(d => d.code === "HUB_FED_BY_COLOR");
+    assert.ok(hit, `带子上是颜料时必须报 HUB_FED_BY_COLOR（实得 ${JSON.stringify(ds.map(x => x.code))}）`);
+    assert.match(hit.observed, /颜料/);
+    assert.ok(hit.evidence.colors.includes("green"), "要把颜色名报出来");
+});
+
+test("HUB_FED_BY_COLOR：形状货不报（不能反向误报）", () => {
+    const w = {
+        goal: { level: 12, requirement: { shape: "RuRu----", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            { uid: 2, type: "belt", x: 0, y: -1, r: 180, rv: 0, code: 1, layer: "regular" },
+        ],
+        resources: [[9, 9, "RuRuRuRu"]],
+    };
+    const items = {
+        belts: [{ cell: [0, -1], path: 0, idx: 0, pos: 0.9, spacing_to_next: 0, item: "RuRu----" }],
+        ejectors: [], underground: [], pending: [],
+        pathCount: 1, truncatedPaths: false, paths: [], counts: { belts: 1 },
+    };
+    const ds = semanticDiagnoses(w, items, "RuRu----", buildHandles(w, null),
+        { recipe: { ok: false }, level: 12 });
+    assert.ok(!ds.some(d => d.code === "HUB_FED_BY_COLOR"),
+        "形状货是合法的，不该报");
+});

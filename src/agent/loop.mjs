@@ -1170,6 +1170,19 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
          * 排在 8 而不是更前：产线断了的时候升级救不了（断线的瓶颈不在倍率），
          * 所以「配方跑不起来」必须仍然优先。而没有这类阻塞时，它就该进前 8。 */
         UPGRADE_AVAILABLE: 8,
+        /* ★ 两个 hub 入口诊断必须排在大批地形诊断**之前** ★
+         *
+         * `DEAD_LINES` / `ORPHAN_MACHINES` 那段注释（上方）已经记过一次：
+         * 一个诊断类没进这张表 ⇒ 默认 50 ⇒ 被 cap 8 整批挤掉 ⇒ 「整批消失」。
+         *
+         * 而 hub 入口是**因果最上游**：货送不进 hub，下游修多少条带子产出都是 0。
+         * `HUB_FED_BY_COLOR` 更特殊 —— 它说的是「送的东西类型就不对」
+         * （颜料进不了 `filter:"shape"` 的入口），这比「线断了」更该先看：
+         * 线修好了照样进不去。
+         *
+         * 实测（L12）：这两个码原本都不在表里，默认 50，排在
+         * `CHAIN_UNFED`(10) / `BELT_HANDOFF_REJECTED`(9) 之后，被 cap 压掉。 */
+        HUB_FED_BY_COLOR: 3, HUB_INLET_THIN: 4,
         DEAD_END: 9, BELT_HANDOFF_REJECTED: 9,
         CHAIN_UNFED: 10, WASTE_NO_SINK: 10, RAW_MATERIAL_MISSING: 10,
         LANDING_MISSING: 11, LANDING_MISMATCH: 11, DELETE_NOT_REPLAYED: 11,

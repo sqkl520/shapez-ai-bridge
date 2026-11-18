@@ -138,6 +138,7 @@ export const DIAG_CODES = Object.freeze({
        而 hub 一件货都没收到时 `inlet`/`wrong` 都是空的，于是什么都不报。
        agent 于是看到「没有产线」而去加更多带子，那些带子同样接不上。 */
     HUB_INLET_THIN: "L3: too few of the hub's 16 inlet cells can actually deliver (a belt sitting there with the wrong direction does not count); with nothing delivered this is the first thing to fix",
+    HUB_FED_BY_COLOR: "L3: hub inlet belts are carrying pigment, but every hub inlet is filter:shape in the game source — color items can never enter",
     DISCARDED_INTERMEDIATE: "L4: a multi-output machine sends a useful half (in orbit(goal) or the recipe closure) into trash/nowhere while the other half is delivered and is not the goal",
     SHAPE_UNKNOWN: "L4: shape propagation stopped (no-resources/tunnel/unknown-op/unverified-rotation/cycle/unknown-color); info only, never a blocker and never fed to the LLM as an action",
     /* 2026-11-13：用户直接指着屏幕说「这么多废弃的路线都没有拆」。
@@ -589,6 +590,12 @@ export const RETRIEVAL_TABLE = Object.freeze({
     HUB_INLET_THIN: cand([
         ["connect", 9],
         ["replace_run", 5],
+    ]),
+    /* 送错东西不能靠再连一条解决 —— 要把那一条改成接 painter 的输出。 */
+    HUB_FED_BY_COLOR: cand([
+        ["replace_run", 8],
+        ["connect", 5],
+        ["remove_run", 3],
     ]),
     DISCARDED_INTERMEDIATE: cand([
         ["replace_run", 7],
