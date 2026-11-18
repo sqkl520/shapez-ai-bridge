@@ -122,3 +122,58 @@ agent 每轮都在修第 1、2 类，因为它们是**看得见的红点**；
 
 **在 1 或 2 落地之前，继续加轮次不会有产出** —— 这个结论 12 轮实测支持。
 
+## 2026-11-18 第二轮：分层提示生效，但仍未交付
+
+给 solver capped 加了分层分解提示（详见 `src/agent/loop/recipe.mjs`）后，
+又跑了 10 轮（`.agent-run3.log`）。**诚实结论：没有交付。**
+
+净效果分布：6 次 `inert`、2 次 `churn`、1 次 `stalled_growth`、1 次 `regressive`。
+
+| 指标 | 第一轮后 | 第二轮后 |
+|---|---|---|
+| 产出 | 0/1000 | **0/1000** |
+| 矿机 | 11 | **15** |
+| mixer | 1 | **1** |
+| stacker | 1 | **1** |
+| 带子 | 673 | 724 |
+
+**变化是真实的**：矿机从 11 台涨到 15 台，说明模型开始按「分层」思路建产线了。
+但 mixer 一台没加 —— 而白料链至少需要两台（一台混 cyan、一台混 white）。
+
+### 新发现：反复尝试一个必败动作，烧掉整个轮次预算
+
+6 次 `inert` 里有 3 个 run 是同一个模式：模型每轮都提
+`connect C1 → B40 / B45`（把切割机的两路输出接到没源头的带上），每轮失败，
+每轮换一种端口写法重试：
+
+```
+R1: {"from":{"$ref":"C1"},"to":{"$ref":"B40"}}                    → port_already_bound
+R2: {"from":{"$ref":"C1","port":{"role":"left","index":0}}, ...}   → occupied
+R3: {"from":{"$ref":"C1"},"to":{"$ref":"B40"},"opts":{"rebind":true}} → 仍失败
+```
+
+失败信息其实很清楚（`port_already_bound` 的 hint 直说「传 opts.rebind=true」，
+`occupied` 说「换一条不经过 trash#17138 的路」），模型也确实照做了 ——
+但**两条一起失败**，于是 plan 被 `NO_REVERSIBLE_CALL` 整体拒掉
+（`loop.mjs:1953`：有失败且剩下的不可撤销 ⇒ 拒）。
+
+那个闸门本身是对的（提交「不完整且不可撤销」的子集是最糟的组合），
+问题在于模型没有别的牌：它想改的两条带子都被占着，而它不会去拆那个挡路的垃圾桶。
+
+### 循环检测是工作的，但不够快
+
+`repair_decide` 里能看到 `world_fingerprint` 的 `seen` 计数是 1, 1, 2, 3，
+第 4 轮触发 `NO_PROGRESS_3X` 停机。所以检测没坏，但**前两轮已经白烧了**。
+
+key 是 `${fp}#${actKey}`，而 `actionSetHash` 只哈希宏**名**。
+R1 和 R2 的 `actKey` 相同（都是 `connect,connect`），却被记成 `seen:1` ——
+说明 R2 的 key 变了。这一点没查清，可能是 `lastMacros` 在失败后带了不同的内容。
+
+### 下一轮该先做的
+
+不是继续加轮次，而是**让模型有「拆掉挡路的东西」这张牌**。
+`remove_machine` 已经在 `NO_PRODUCTION` 的候选表里（权重 6），
+但 `NO_REVERSIBLE_CALL` 和 `port_already_bound` 这两个诊断的候选表里没有它 ——
+而那正是「端口被占」时唯一能走通的路。
+
+

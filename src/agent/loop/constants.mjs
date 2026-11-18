@@ -376,6 +376,22 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["extend_line", 4],
         ["replace_run", 3],
         ["remove_run", 2],
+        /* ★ `remove_machine` —— 清障，不是「再试一次」★
+         *
+         * 上面那条注释说得很对：推 `insert_machine` / `trash_unused` 等于让模型
+         * 在走不通的路上再试一次。但 `remove_machine` 是**反方向**的动作 ——
+         * 它拆掉挡路的东西，让原来走不通的路变得能走。
+         *
+         * 实测 L12（r-20261118130245-3dec / r-20261118130323-cf12）：
+         * 模型连续 3 个 run 都提 `connect C1 → B40 / B45`，每次卡在两个错误上：
+         *   `port_already_bound`（hint：传 opts.rebind=true）
+         *   `occupied`（hint：换一条不经过 trash#17138 的路）
+         * 它照 hint 改了两次参数，都还是失败 —— 因为挡路的是一个**垃圾桶**，
+         * 而它手上没有「拆掉那个垃圾桶」这张牌。
+         *
+         * 权重 2：排在带子类动作之后。多数情况下换条路确实比拆东西好，
+         * 但「端口被占」这种场景下拆是最直接的解，必须让它有机会被想到。 */
+        ["remove_machine", 2],
     ]),
     PLAN_REJECTED: cand([
         ["remove_run", 4],
