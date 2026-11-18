@@ -43,7 +43,7 @@
     "smoke": "node scripts/smoke_test.mjs",
     "selftest:bridge": "node src/bridge/selftest.mjs",
     "selftest:mcp": "node src/mcp/selftest.mjs",
-    "test": "node --test src/agent/"
+    "test": "node --test src/agent/ src/ai/compiler/"
   },
   "engines": {
     "node": ">=20"

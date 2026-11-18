@@ -1046,7 +1046,24 @@ export function siteStage(layout, ctx) {
 			   两者处置完全不同（前者只能换地方/改增量宏，后者可以扩 range）。现在统一走
 			   `siteNotEmptyFailure`：reason 仍是 §2.5 枚举里的 `no-site-large-enough`（冻结枚举不能加项），
 			   但带 `code:"site-not-empty"` + `precondition:"empty-site"` + 既有实体证据，hint 指向增量宏。 */
-			return siteNotEmptyFailure(regionClearReport(ctx), { goal: ctx.goal || null, hub: ctx.hub });
+			/* ★ `siteScoped`：只看**计划要占的那块地**，不看整个世界 ★
+			 *
+			 * 默认判据是「世界里有任何非 hub 实体就拒」。对**真实存档**（L12 有 762 个实体）
+			 * 那条闸永远是红的，于是 build_line 在用户场景下 100% 不可用 ——
+			 * 这正是 `build_line.mjs` 文件头自己承认的「真实存档 0/6」。
+			 *
+			 * 但那个判据问的其实是「我的新产线会不会压到别人的东西」。
+			 * 只要**计划矩形内**是空的，压不到；世界别处有 700 台机器与本计划无关。
+			 * 所以给一个显式开关：`ctx.siteScoped = true` 时只检查 rect 内的既有实体。
+			 *
+			 * 默认**关闭**，既有行为一字不改 —— 这条闸曾经因为「某条几何先挂了」而
+			 * 误报成别的 reason（文件头 a/b 两条理由），不能凭一个新选项就放松它。 */
+			const rep = ctx && ctx.siteScoped === true
+				? regionClearReportScoped(ctx, rect, hubWorldFixed)
+				: regionClearReport(ctx);
+			if (!rep.clear) {
+				return siteNotEmptyFailure(rep, { goal: ctx.goal || null, hub: ctx.hub });
+			}
 		}
 		const anchor = [hubWorldFixed[0] - ctx.hubLocal[0], hubWorldFixed[1] - ctx.hubLocal[1]];
 		const minersW = miners.map(m => ({ nodeId: m.nodeId, cell: [anchor[0] + m.cell[0], anchor[1] + m.cell[1]], shape: m.shape }));
@@ -1185,7 +1202,17 @@ function regionClear(ctx) {
  * @param {{world?:{entities?:Array}}} ctx
  * @returns {{clear:boolean, count:number, foreign:Array<{type:string,x:number,y:number}>, hub:object|null, snapshot:boolean}}
  */
-export function regionClearReport(ctx) {
+export function regionClearReport(ctx, rect, hubWorld, hubLocal) {
+	/* ★ 三个可选参数是「区域判据」的入口 ★
+	 *
+	 * 只传 `ctx` 时行为与历史完全一致（整体判据）。传了 rect + hubWorld 就改成
+	 * 只判计划矩形内 —— 这是让 build_line 在真实存档（762 实体）里可用的关键：
+	 * 那道闸真正要回答的是「新产线会不会压到别人的东西」，不是「这个世界有没有机器」。
+	 *
+	 * 三个参数一起给才生效（缺 anchor 就没法换算坐标系，见 regionClearReportScoped）。 */
+	if (rect !== undefined || hubWorld !== undefined) {
+		return regionClearReportScoped(ctx, rect, hubWorld, hubLocal);
+	}
 	const world = ctx && ctx.world;
 	if (!world || !Array.isArray(world.entities)) {
 		// 没有快照 ≠ 世界是空的：调用方没给观测，我们**不知道**。按旧契约当作可用（不改既有行为），
@@ -1200,6 +1227,56 @@ export function regionClearReport(ctx) {
 		foreign: foreign.slice(0, 8).map(e => ({ type: String(e.type), x: e.x, y: e.y })),
 		hub: hub ? { type: "hub", x: hub.x, y: hub.y } : null,
 		snapshot: true,
+	};
+}
+
+/**
+ * `regionClearReport` 的**区域版**：只看计划矩形内的既有实体。
+ *
+ * 为什么需要它：默认判据是「世界里有任何非 hub 实体 ⇒ 不净」，而真实存档
+ * （L12 有 762 个实体）永远是红的。可那个判据真正要回答的是
+ * 「我的新产线会不会压到别人的东西」—— 世界别处有 700 台机器与本计划无关。
+ *
+ * 坐标两套：`rect` 是**设计系**（局部原点），`world.entities` 是**世界系**。
+ * 换算靠 `anchor = hubWorld − hubLocal`（与 siteStage 里 anchor 的定义同一式）。
+ * `hubWorld` 缺失时**拒绝猜**：没有 anchor 就只能比局部坐标和世界坐标，
+ * 那是把两套坐标系混着用 —— 全都会误判。这种情况退回整体判据（保守）。
+ *
+ * @param {{world?:{entities?:Array}}} ctx
+ * @param {number[]} [rect] 设计系实体矩形 [x0,y0,x1,y1]（siteScoped 时才需要）
+ * @param {[number,number]|null} [hubWorld] 真实 hub 世界左上角（同上）
+ * @param {[number,number]} [hubLocal] 作图局部系 hub 左上角，默认 [0,0]
+ * @returns {ReturnType<typeof regionClearReport>}
+ */
+function regionClearReportScoped(ctx, rect, hubWorld, hubLocalArg) {
+	const world = ctx && ctx.world;
+	if (!world || !Array.isArray(world.entities)) {
+		return { clear: true, count: 0, foreign: [], hub: null, snapshot: false };
+	}
+	if (!Array.isArray(rect) || rect.length !== 4 || !Array.isArray(hubWorld)
+		|| hubWorld.length !== 2 || !hubWorld.every(Number.isFinite)) {
+		/* 没有可用的 anchor ⇒ 不知道计划落在世界哪里 ⇒ 不能判区域。退回整体判据。 */
+		return regionClearReport(ctx);
+	}
+	const hubLocal = Array.isArray(hubLocalArg) ? hubLocalArg : (Array.isArray(ctx.hubLocal) ? ctx.hubLocal : [0, 0]);
+	const ax = hubWorld[0] - hubLocal[0];
+	const ay = hubWorld[1] - hubLocal[1];
+	/* 设计系矩形 → 世界系矩形。用**格点**而不是中心点判断：机器只占一格，
+	   而 rect 是包围盒，含边界。 */
+	const wx0 = rect[0] + ax, wy0 = rect[1] + ay;
+	const wx1 = rect[2] + ax, wy1 = rect[3] + ay;
+	const inside = e => e && typeof e === "object"
+		&& Number.isFinite(e.x) && Number.isFinite(e.y)
+		&& e.x >= wx0 && e.x <= wx1 && e.y >= wy0 && e.y <= wy1;
+	const foreign = world.entities.filter(e => e && typeof e === "object" && e.type !== "hub" && inside(e));
+	const hub = world.entities.find(e => e && e.type === "hub") || null;
+	return {
+		clear: foreign.length === 0,
+		count: foreign.length,
+		foreign: foreign.slice(0, 8).map(e => ({ type: String(e.type), x: e.x, y: e.y })),
+		hub: hub ? { type: "hub", x: hub.x, y: hub.y } : null,
+		snapshot: true,
+		scoped: { rect: [wx0, wy0, wx1, wy1] },
 	};
 }
 
@@ -1615,6 +1692,9 @@ function compileInner(input) {
 		seed, world: input.world || entitiesToWorld(input.worldEntities),
 		range: input.range, origin: normalizeOrigin(input.origin), region: input.region,
 		hubDesign: hubWorldIn.design, hubLocal, hub: hubWorldIn.world, entityRect: entityRectOf(entsLocal),
+		/* ★ 透传 `siteScoped` ★ 漏了这一行，选项就只是写在签名上、永远不生效 ——
+		 * 这正是本项目记录过多次的「算出来 ≠ 送到」。 */
+		...(input.siteScoped === true ? { siteScoped: true } : {}),
 	});
 	if (site.ok === false) { trace(stages, "siteStage", site); return bail(site); }
 	trace(stages, "siteStage", { ok: true, anchor: site.anchor });

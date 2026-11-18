@@ -132,7 +132,7 @@ export function buildLine(goal, site = {}, opts = {}) {
 	   没有快照（entities === null）⇒ 我们**不知道**世界是否干净：不假装知道，交给编译器按旧契约走。 */
 	const entities = s.entities || (o.world && Array.isArray(o.world.entities) ? o.world.entities : null)
 		|| (Array.isArray(o.world) ? o.world : null);
-	if (Array.isArray(entities)) {
+	if (Array.isArray(entities) && o.siteScoped !== true) {
 		const foreign = entities.filter(isForeign);
 		if (foreign.length) {
 			const hubInSnapshot = entities.find(e => e && e.type === "hub") || null;
@@ -179,6 +179,16 @@ export function buildLine(goal, site = {}, opts = {}) {
 		// 本宏不重复判 —— 否则就是第二份真值（与 MIN_LEVEL_FOR_MACHINE 的教训同源）。
 		...(Number.isInteger(o.minersPerLine) ? { minersPerLine: o.minersPerLine } : {}),
 		...(o.allowCutQuad === true ? { noCutQuad: false } : {}),
+		/* ★ `siteScoped` —— 只看计划矩形内有没有既有建筑 ★
+		 *
+		 * 默认判据是「世界里有任何非 hub 实体就拒」，于是真实存档（L12 有 762 个实体）
+		 * 永远拿不到线。但那条闸真正要回答的是「新产线会不会压到别人的东西」——
+		 * 世界别处有 700 台机器与本计划无关。
+		 *
+		 * 开了之后只检查计划矩形内。**默认关闭**：这是放松既有安全闸，
+		 * 必须由调用方显式要求，且粘贴前仍应 dry_run（`build_line.mjs` 文件头那条
+		 * 「本宏零游戏写操作」不变）。 */
+		...(o.siteScoped === true ? { siteScoped: true } : {}),
 		// 世界快照：两条入口合成一条（空数组按"无快照"处理，与 entitiesToWorld 同口径）
 		...(Array.isArray(entities) && entities.length ? { world: { entities } } : {}),
 	};
