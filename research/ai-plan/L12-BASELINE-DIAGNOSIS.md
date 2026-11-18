@@ -362,3 +362,55 @@ candidates 也相应换成 `insert_machine` 打头。
 「能把一条线真正接活」这道坎。** 下一步该查的是 `connect` 在两个 cutter
 输出口都被占的世界里到底有没有可行解 —— 如果物理上无解，
 那问题在「世界布局」而不是「agent 决策」，应该先腾出一条路。
+
+## 2026-11-18 第六轮：查清了「connect 到底有没有解」
+
+这一轮不再猜，直接按世界快照逐对试 `connect`。
+
+### 先说修的这一处：两端歧义一次报全
+
+cutter 16598 和 mixer 16742 **两端都是歧义的**。原实现 from 失败就 return，
+to 根本没检查 —— 模型补了 from 的 `{role,index}`，下一轮才撞到 to 的歧义。
+**一次只报一个错 = 修一个歧义要多花一轮。**
+
+现在合并成一个失败对象，hint 直接写出两端该写什么：
+
+```
+这个连接两端都有多个端口，**一次把两个都写上** ——
+from.port: {role:"left",index:0} / {role:"right",index:0}；
+to.port: {role:"color",index:0} / {role:"color",index:1}
+```
+
+### 但按 hint 写也接不上 —— 因为端口已经占满了
+
+照 hint 把两端都写全，结果是：
+
+```
+{"role":"left","index":0}  → {"role":"color","index":0}  port_already_bound
+{"role":"left","index":0}  → {"role":"color","index":1}  port_already_bound
+{"role":"right","index":0} → {"role":"color","index":0}  port_already_bound
+```
+
+**cutter 16598 的两个 ejector 都已经被带子占着**（`left#0@29,-52`、
+`right#0@29,-51`，都接满了）。所以从这个 cutter 出来的 connect **物理上无解** ——
+除非 `rebind` 拆掉现有的，而预演会因为拆掉到 hub 的活带（596→539，-57）
+把整个计划拒掉。
+
+### 结论：这是世界布局问题，不是 agent 决策问题
+
+模型这几十轮的表现，逐轮看其实一直在改进：
+收窄调用数、照 hint 补端口、加 rebind、说出「让两台 mixer 级联成脉」。
+但**它反复要连的那台 cutter 没有空口可接**。
+
+再怎么调 prompt，只要世界是这样，它就接不上。
+
+### 下一步该做的（按优先级）
+
+1. **先腾空一个 ejector**：拆掉 cutter 16598 某一侧的下游带子（用 `remove_run`
+   定向删那一段，而不是 rebind 抢整个端口），让出一个空口，再 connect。
+   这需要 agent 理解「先拆再连」，而当前候选表里 remove_run 权重低于 connect。
+2. **或者换一台机器**：世界还有 cutter@84,-16 和 cutter@-5,9，先看它们的口占没占。
+3. **或者接受 rebind 的代价**：-57 条到 hub 的带子如果本来就是冗余的，
+   预演那条闸的门槛可以重新评估 —— 但那要先用数据证明它们真是冗余的。
+
+**在这三条里挑一条之前，继续加轮次不会有产出。**
