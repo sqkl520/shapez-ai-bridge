@@ -100,3 +100,7 @@ research/ai-player/facts/live/
 
 # Release 打包临时目录（git archive 解包验证用）
 .relbuild/
+
+# agent 循环的 stdout（每次跑都覆盖，机器相关）
+.agent-run*.log
+.bridge-run.log
