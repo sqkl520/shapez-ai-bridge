@@ -494,3 +494,36 @@ test("S6 ★ 同批两条 connect：不撞格、不静默丢弃", () => {
         }
     }
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * S6 —— 纯删除造成的死带子增长，hint 不能再说「你白铺了」
+ *
+ * 实测（r-20261118212231-034e 等 6 个 run）：模型提的是**纯删除**
+ *   remove_run {uids:[B452,B454,B455,B575]}   ← hub 入口带，送颜料
+ * 一格都没铺。但死带子 159→308 —— 那 4 条是 4 条长链的**下游末端**，
+ * 删掉让上游 153 格失去可达性。
+ *
+ * 模型收到的却是「这一步新铺了 149 格通不到 hub 的带子 —— 不是删坏了，是白铺了」。
+ * 那句话对它毫无意义：它的计划里没有任何「铺」。
+ *
+ * 这条测试钉住：纯删除场景下，hint 必须说「你删掉的是别人的下游」，
+ * 并且给出可执行的两条出路，而不是「白铺」那句。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("S7 ★ 纯删除造成的死带子增长 ⇒ hint 不许说「白铺了」", () => {
+    const handles = buildHandles(OBS, null);
+    /* 用 remove_run 删链中段 —— 与真机入口带同构：删的是别人的下游末端。 */
+    const r = buildTxPlan(
+        { calls: [{ macro: "remove_run", args: { uids: { $uids: ["B2"] } } }] },
+        OBS, null, handles, { partial: true },
+    );
+    assert.equal(r.ok, false, "这条夹具必须被预演拦下，否则测不到措辞");
+    const d = r.diagnosis || {};
+    assert.equal(d.code, "PLAN_REJECTED", `必须是 PLAN_REJECTED（实得 ${d.code}）`);
+    const ev = d.evidence || {};
+    assert.equal(ev.pure_removal, true,
+        `这条夹具必须是纯删除形态（实得 pure_removal=${ev.pure_removal}）`);
+    assert.doesNotMatch(String(d.hint || ""), /白铺了/,
+        `纯删除的计划说「白铺了」是错误措辞（模型一格没铺）。实得：${d.hint}`);
+    assert.match(String(d.hint || ""), /上游|下游/,
+        `要说清删的是别人的下游。实得：${d.hint}`);
+});

@@ -2328,9 +2328,30 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                     return null;
                 })();
                 if (deadGrowth >= 20 && !landsOnMachine) {
+                    /* ★ 「死带子变多」有两个完全相反的成因，hint 必须分开说 ★
+                     *
+                     * 原来这里只有一句：「这一步新铺了 N 格通不到 hub 的带子 ——
+                     * 不是『删坏了』，是『白铺了』」。那句话假设了**新增**。
+                     *
+                     * 实测（r-20261118212231-034e 等 6 个 run）：模型提的是**纯删除**
+                     * —— `remove_run {uids:[B452,B454,B455,B575]}`，一格没铺。
+                     * 死带子 159→308 是因为那 4 条入口带是 4 条长链的**下游末端**，
+                     * 删掉它们让上游 153 格失去可达性。这跟「白铺」正好相反。
+                     *
+                     * 模型收到的却是「你白铺了 149 格」—— 它没法照做，
+                     * 因为它的计划里没有任何「铺」。
+                     *
+                     * 现在按这一步**实际做了什么**分流：净新增带子 ⇒ 原话；
+                     * 净删减带子 ⇒ 说清「你删掉的这段是别人的下游」并给出代价。 */
+                    const addedCells = txPlan.ops.filter(o => o && (o.op === "place" || o.op === "place_path")).length;
+                    const removedCells = txPlan.ops.filter(o => o && (o.op === "delete" || o.op === "bulk_delete")).length;
+                    const isPureRemoval = addedCells === 0 && removedCells > 0;
+                    const lostReach = Math.max(0, (before.belts_reaching_hub || 0) - (after.belts_reaching_hub || 0));
                     return reject("PLAN_REJECTED", {
                         layer: "plan", stage: "simulate",
-                        expected: "这一步不会凭空增加大量通不到 hub 的带子",
+                        expected: isPureRemoval
+                            ? "删除不应让大量上游带子失去到 hub 的通路"
+                            : "这一步不会凭空增加大量通不到 hub 的带子",
                         observed: `预演：死带子 ${before.belts_dead} → ${after.belts_dead}`
                             + `（+${deadGrowth}），到 hub 的带子 ${before.belts_reaching_hub} → ${after.belts_reaching_hub}；`
                             + `这一步是 ${txPlan.ops.length} 条 op`,
@@ -2339,14 +2360,26 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                             before: { reach: before.belts_reaching_hub, dead: before.belts_dead },
                             after: { reach: after.belts_reaching_hub, dead: after.belts_dead },
                             dead_growth: deadGrowth,
+                            pure_removal: isPureRemoval,
+                            lost_reach: lostReach,
                             /* 与上面那条闸门同名同义 —— 下游（测试与 prompt）按它取
                                「这一步的代价」，不因为拦在哪条判据上而改变形状。 */
                             loss,
                         },
-                        candidates: ["connect", "remove_run", "trash_unused"],
-                        hint: `这一步新铺了 ${deadGrowth} 格**通不到 hub** 的带子 —— `
-                            + `不是"删坏了"，是"白铺了"。先确认那条线的终点能出货，再铺；`
-                            + `或者换个更近的接法。`,
+                        candidates: isPureRemoval
+                            ? ["remove_run", "connect", "replace_run"]
+                            : ["connect", "remove_run", "trash_unused"],
+                        hint: isPureRemoval
+                            /* 纯删除：说清真实代价。模型没做错事，代价是真的。 */
+                            ? `你删掉的是 ${removedCells} 处带子，但它们是**上游长链的下游末端** —— `
+                                + `删掉之后上游有 ${lostReach} 格再也走不到 hub（死带子 +${deadGrowth}）。`
+                                + `两种走法：① 如果你确认这些带子上的货本来就送不进 hub（比如送的是颜料），`
+                                + `那这个代价可以接受 —— 但先把上游也一起清掉，别让它们变成死线：`
+                                + `用 \`remove_run\` 把**整条链**一起删（\`region\` 覆盖整段，或 \`allow_scattered:true\` 选多段）。`
+                                + `② 或者别删，改用 \`replace_run\` 把那几条入口带改成接 painter 的输出。`
+                            : `这一步新铺了 ${deadGrowth} 格**通不到 hub** 的带子 —— `
+                                + `不是"删坏了"，是"白铺了"。先确认那条线的终点能出货，再铺；`
+                                + `或者换个更近的接法。`,
                     });
                 }
                 if (tooMuch) {
