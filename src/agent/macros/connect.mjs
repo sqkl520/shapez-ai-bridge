@@ -375,13 +375,25 @@ function selectPort(list, sel, kindWord, field) {
         return {
             ok: false, code: "ambiguous_port",
             message: `${field} 有 ${list.length} 个${kindWord}，必须显式给 port`,
+            /* ★ hint 必给 ★ 与下面 `bad_type` 同一个教训（2026-11-15 L12）：
+             * 候选算出来了、hint 是 null，prompt 就渲染不出「该怎么写」，
+             * 模型下一轮用同样的写法再试 —— 实测连续 3 个 run 都这样烧掉了。 */
+            hint: `这个端点有 ${list.length} 个${kindWord}，不能靠 "auto" 猜。`
+                + `写成 \`port:{role:"<角色>", index:<第几个>}\` —— `
+                + `可选：${list.map(p => `{role:"${p.role}",index:${p.index}}`).join(" / ")}。`,
             candidates: list.map(p => ({ role: p.role, index: p.index, cell: p.cell })),
         };
     }
     if (typeof sel === "string") {
         const hit = list.filter(p => p.role === sel);
         if (hit.length === 1) return { ok: true, port: hit[0] };
-        if (hit.length > 1) return { ok: false, code: "ambiguous_port", message: `${field}.port="${sel}" 命中 ${hit.length} 个，需 {role,index}`, candidates: hit.map(p => ({ role: p.role, index: p.index, cell: p.cell })) };
+        if (hit.length > 1) return {
+            ok: false, code: "ambiguous_port",
+            message: `${field}.port="${sel}" 命中 ${hit.length} 个，需 {role,index}`,
+            hint: `角色 "${sel}" 在${field}上有 ${hit.length} 个，光给角色名不够。`
+                + `补上 index：${hit.map(p => `{role:"${sel}",index:${p.index}}`).join(" / ")}。`,
+            candidates: hit.map(p => ({ role: p.role, index: p.index, cell: p.cell })),
+        };
         /* ★ `bad_type` 也要带 hint —— 光有 candidates 送不到模型眼前 ★
          *
          * 2026-11-15 夜，L12 真机：模型写 `port:"right"` / `port:"left"`，
