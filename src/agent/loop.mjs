@@ -82,7 +82,7 @@ import { validateMacroCall, MACRO_NAMES } from "./macros/contract.mjs";
  * 本文件内部现在只 import `indexOf`（改名 `buildIndex`）：结构判据全部走
  * `structuralDiagnoses`，下游可达性由它在内部按 tier 使用，不再在这里重复算。 */
 import { at as atCell } from "./loop/topology.mjs";
-import { indexOf as buildIndex } from "./loop/topology.mjs";
+import { indexOf as buildIndex, hubReachable } from "./loop/topology.mjs";
 import { structuralDiagnoses } from "./loop/structural.mjs";
 /* 语义层（P-a）：形状传播 + 配方闭包 + 作业分配。**不自己 spawn** ——
    配方由 loop 首轮 observe 后预计算一次、放进 `ctx.recipe` 注入；
@@ -1044,18 +1044,42 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
                 && e.type !== "underground_belt" && e.type !== "hub" && e.type !== "trash").length;
             const mixerCount = idx.ent.filter(e => e && e.type === "mixer").length;
             const machineRich = machineCount >= 8;
-            /* ★ 阈值不能卡在 1 ★
+            /* ★ 判据不能是「mixer 有几台」，也不能是「矿机接没接线」★
              *
-             * 第一版写 `mixerCount <= 1`，结果模型补到 2 台之后判据立刻翻转回
-             * 「太脏」，hint 又变回「先清理」—— 而刚补的两台还没接上线。
-             * L12 的白料链本身就需要级联（bl+gr→cyan，cyan+red→white），
-             * 再加上给上下两层各配一路，四台以内都不算「工序齐了」。
+             * 前几版依次试过：`mixerCount <= 1`、`< 4`、`paths_with_items < 30`、
+             * 「矿机是否接上带子」。全部失败，原因各不相同但教训一样：
+             *   · 数机器台数 —— 模型补够之后判据立刻翻转，指令掉头；
+             *   · `paths_with_items` 是 health 的字段，`p` 是 production 对象，恒 undefined；
+             *   · 「矿机接线」—— 实测 16 台里 10 台接了，判据说「接得挺好」，
+             *     但那些带子并不通向 hub，产出照样是 0。
              *
-             * 阈值取 `mixerCount < 4`：低于这个数说明工序还没成形，
-             * 该继续补；到 4 台之后如果仍然零产出，那才可能真的是布局脏。 */
-            const needsCascade = machineRich && mixerCount < 4;
-            /* 腐化：带子多**且**工序并不缺 —— 那种情况下大部分带子确实是接不上的旧线。 */
-            const rotten = beltCount >= 300 && !needsCascade;
+             * 真正的问题是**工序有没有连成一条到 hub 的路**。
+             * 直接量它：把「能到 hub 的带子数」和「带子总数」比 —— 如果大量带子
+             * 到不了 hub，那说明它们各自为政，不是缺机器也不是脏。
+            /* ★ 实测数据推翻了「腐化」这条判据本身 ★
+             *
+             * 2026-11-18 直接在 L12 世界上量：**701 条带子里 532 条能到 hub（76%）**。
+             * 也就是说这个世界一点都不脏 —— 绝大多数带子是真的通到 hub 的活线。
+             * 而「腐化」判据用的是 `beltCount >= 300`，它把「带子多」当成了「垃圾多」，
+             * 于是每轮都让模型去拆一批正在工作的线。
+             *
+             * 这才是 0 产出的真正解释：不是缺机器、不是缺空间、更不是脏，
+             * 而是**这些活着的带子运的不是目标形状**。
+             *
+             * 所以这条 hint 不再建议清理，而是直说这一点。
+             * `rotten` 保留字段（下游有测试依赖它），但恒为 false ——
+             * 「带子多」不再被当成脏的证据。 */
+            let reachableBelts = null;
+            try {
+                const reach = hubReachable(o, idx);   // Set<uid>，见 topology.mjs:596
+                const belts = idx.ent.filter(e => e && (e.belt || e.type === "belt" || e.type === "underground_belt"));
+                reachableBelts = belts.filter(b => reach.has(b.uid)).length;
+            } catch { reachableBelts = null; }
+            const reachRatio = (reachableBelts !== null && beltCount > 0)
+                ? reachableBelts / beltCount : null;
+            const rotten = false;
+            const poorlyLinked = reachRatio !== null && beltCount > 100 && reachRatio < 0.5;
+            const needsCascade = machineRich && mixerCount >= 1 && !poorlyLinked;
             out.push(mkDiag("NO_PRODUCTION", {
                 layer: "L4",
                 subject,
@@ -1080,14 +1104,17 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
                         + `**先清理，别再往上加**：用 \`remove_run\` 把到不了 hub 的旧线成片拆掉，`
                         + `腾出空间之后，正解往往只要几十格。继续铺新线只会撞上自己。`
                     : (needsCascade
-                        /* 这条 hint 直接点名「缺哪台机器」，因为模型反复拆带子而不建工序 ——
-                         * 而它其实知道白颜料要级联（prompt 的 PIGMENT 段写着），
-                         * 只是没有一条诊断把「你现在就少一台 mixer」说出来。 */
-                        ? `世界有 ${machineCount} 台机器和 ${beltCount} 条带子，但 **mixer 只有 ${mixerCount} 台**，产出为 0。`
-                            + `这不是「太脏」，是**缺工序**：目标需要混色，而混色要 mixer —— `
-                            + `白颜料本身就是级联（先混两色，再和第三色混），一套链至少要 2–3 台。`
-                            + `先用 \`insert_machine\` 补到 3 台以上（\`{cell,machine:"mixer",facing}\`，facing 指输出方向），`
-                            + `再用 \`connect\` 把原料接进每台的 color 槽。别再拆带子了 —— 已经拆了很多轮，产出没变过。`
+                        /* 这条 hint 说的是「工序建了但没接通」—— 与「缺工序」是两回事，
+                         * 因为实测里模型已经把 mixer 补到 4 台了，缺的是接线。 */
+                        ? `世界有 ${machineCount} 台机器（其中 mixer ${mixerCount} 台）、${beltCount} 条带子，`
+                            + (reachRatio !== null
+                                ? `其中**${reachableBelts} 条（${Math.round(reachRatio * 100)}%）已经通到 hub**，`
+                                : "")
+                            + `但 hub 一件 ${goalShape} 都没收到。`
+                            + `所以问题不是「太脏」也不是「缺机器」，是**这些通着的带子运的不是目标形状**。`
+                            + `下一步：顺着一条已经通到 hub 的链，往前找它运的是什么，`
+                            + `在源头把它换成 ${goalShape} 需要的原料/工序（\`replace_run\` / \`insert_machine\` / \`connect\`）。`
+                            + `**别再成片拆带子了** —— 它们大多数在正常工作，拆掉是在拆自己的产能。`
                         : "首轮没有 report：这是「目标形状没有产线在造」的初始诊断，不是对某条 check 的复述。"),
             }));
         }
