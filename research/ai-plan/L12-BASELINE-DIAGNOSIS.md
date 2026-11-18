@@ -193,5 +193,75 @@ candidatesFor([NO_REVERSIBLE_CALL, BELT_HANDOFF, NO_PROD]) → [..., "remove_mac
 3 次 `inert`，垃圾桶从 6 涨到 13 —— 它在**加**垃圾桶而不是拆，`remove_machine`
 还是没被选中。候选送到了不等于会被选，这一层还没打通。
 
+## 2026-11-18 第三轮：`build_line` 根本不在 agent 的调用链里
+
+这一轮查清了那条结构性瓶颈的全部真相，比任何代码改动都重要：
+
+```
+build_line 存在于 src/agent/macros/build_line.mjs
+  ├─ MACRO_SPECS（contract.mjs 的宏注册表）  → 只有 8 个，没有它
+  ├─ MACRO_IMPLS（remove.mjs 的分派表）      → 只有 4 个，没有它
+  └─ RETRIEVAL_TABLE（候选表）               → 没有它
+```
+
+**agent 连发都发不出这条调用。** `constants.mjs` 里那段
+「为什么不推 build_line」的注释（理由是「世界非空就拒，推它等于推一个必然
+失败的选项」）其实是在解释一个它压根碰不到的东西。
+
+### 已修：净地闸改成可以只判计划矩形
+
+`build_line` 的前置条件是「世界里有任何非 hub 实体就拒」。但那条闸真正要回答的
+是「我的新产线会不会压到别人的东西」—— 世界别处有 700 台机器与本计划无关。
+
+新增 `siteScoped` 选项，只检查计划矩形内的实体（按 `anchor = hubWorld − hubLocal`
+换算坐标系）。实测真实 L12 快照（762 实体）：
+
+| 场景 | 结果 |
+|---|---|
+| 默认整体判据 | `site-not-empty`，**761** 个既有实体 |
+| `siteScoped`（真 hub −2,−2） | `site-not-empty`，**8** 个既有实体（都紧贴 hub，这条计划确实会撞） |
+| `siteScoped`（空地 hub 70,0） | **`ok:true`，建出 2 实体的线** |
+| `siteScoped`（空地 hub 55,5） | **`ok:true`，建出 12 实体的线** |
+
+判据第一次能回答实际问题了。
+
+### 还没做：把它接进 agent
+
+三张表都要加，而且加之前想清楚两件事：
+
+1. **`build_line` 只返回蓝图，不写世界。** 文件头写着「本宏零游戏写操作」——
+   落盘/粘贴是调用方的事。所以接进 agent 还需要一个「粘贴蓝图」的步骤
+   （`paste_blueprint` 有 `dry_run`，正好是那道安全检查）。
+2. **`siteScoped` 放松了安全闸。** 默认判据存在的理由（「带子被静默覆盖」）
+   是真实的，所以粘贴前必须 `dry_run`，否则就是拿一个已知会覆盖别人建筑的
+   蓝图去贴。
+
+在 1、2 都落地之前，把 `build_line` 放进候选表只会让 agent 反复拿到一张
+它没法执行的牌 —— 那是本轮实测已经证明过的失败形态（`NO_REVERSIBLE_CALL`
+反复拒同一个必败动作，烧掉整个轮次预算）。
+
+### 还发现一件更根本的事：`build_line` 天生建在 hub 旁边
+
+编译器的坐标契约（`compile.mjs:718-727`）：
+
+> ⓐ `ctx.hub` 给了（真实世界 hub 左上角 W）⇒ **局部原点 = W**（`site = hub = W`）
+
+也就是说**只要给了真 hub，产线就必然从 hub 旁边开始铺**。L12 的 hub 周围
+恰好有 8 个既有实体（stacker@(-2,5)、rotater@(-2,3)、belts@(-5,2..5)…），
+所以「在远处空地建线」这条路 **`origin` 参数解决不了** —— origin 不决定产线建在哪。
+
+我试过 `origin=[60,-10]` / `[70,0]`，两者都仍然 `site-not-empty`。
+
+要让 `build_line` 真正对真实存档有用，需要的是第三条路：
+**允许 anchor 与 hub 解耦**（产线建在远处，收集带走到 hub）。
+那是编译器的结构性改动，不是加个选项能解决的 —— 而且收集带要横跨几十格，
+本身就是一条需要规划的产线。
+
+在这一步做成之前，这个项目的 agent 只能靠增量宏（connect / insert_machine /
+replace_run）改造既有工厂，而 L12 需要的 mixer 混白料链是结构性工程。
+**这就是 0/1000 的最深层原因。**
+
+
+
 
 
