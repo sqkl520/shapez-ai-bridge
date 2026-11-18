@@ -2910,7 +2910,22 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             + `（每个入口的 filter 都是 "shape"）。`
                             + `现在有 ${colorHeads.length} 条入口带在送 ${names.join("/")}，它们到门口会被弹回来。`
                             + `处置：把这几个入口改接**已经染好色的形状**（painter 的输出），`
-                            + `颜料那一路应该接到 painter 的 color 槽，而不是 hub。`,
+                            + `颜料那一路应该接到 painter 的 color 槽，而不是 hub。`
+                            /* ★ 把「怎么写」提前说出来，别等被拒之后才说 ★
+                             *
+                             * 实测（r-20261118210356-3d48 R5）：模型读懂了这条诊断，
+                             * 名字也全对，提出了
+                             *   remove_run {uids:{$uids:["B452","B454","B455","B575"]}}
+                             * —— 但那 4 条是**四格互不相邻的 1 格带**，
+                             * 默认的 4-邻接连续性检查直接拒：`run_not_contiguous`。
+                             * 而 `allow_scattered` 的提示是在**被拒之后**才出现的，
+                             * 那时 `ROUNDS_MAX=5` 已经用完，没有第 6 轮用它。
+                             *
+                             * 也就是说：正确做法存在、模型也想对了，只是这句话
+                             * 出现得太晚了一步。诊断本来就该在这时候说。 */
+                            + `**这几条入口带通常互不相邻**（各在 hub 的不同侧面），`
+                            + `所以删除它们要给 \`remove_run\` 传 \`opts:{allow_scattered:true}\`，`
+                            + `否则会被「4-邻接不连通」拒掉。`,
                     });
                 }
             } catch (e) {

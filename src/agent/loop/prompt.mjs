@@ -2353,7 +2353,22 @@ function renderDiagnoses(diagnoses) {
          * 180 够覆盖第一句 + 半句补充。整段超过预算时宁可截断也不整条丢 ——
          * **解法的一部分 > 一点没有**。 */
         if (typeof d.hint === "string" && d.hint.trim()) {
-            const h = clip(sanitize(d.hint).text.trim(), 180);
+            /* ★ 不同诊断的 hint 需要不同额度 ★
+             *
+             * 默认 180 是给 `connect` 那种「一句解法 + 半句补充」写的。
+             * 但有些诊断的解法**必须包含操作语法**，截到 180 就只剩前半句的「为什么」，
+             * 后半句「怎么写」被吃掉 —— 模型看懂病因却动不了手。
+             *
+             * 实测（r-20261118210356-3d48）：`HUB_FED_BY_COLOR` 的 hint 里，
+             * 「这几条入口带互不相邻，删除要给 remove_run 传 allow_scattered:true」
+             * 落在 180 之后，从未到达。模型于是提出一个必然被
+             * `run_not_contiguous` 拒掉的 remove_run。
+             *
+             * 给这类「解法含语法」的诊断 400：它排在 DIAGNOSIS 第一行，
+             * 而且整个 prompt 仍有 24000 的硬预算兜底。 */
+            const CAP_WIDE = 400;
+            const wide = d.code === "HUB_FED_BY_COLOR" || d.code === "HUB_INLET_THIN";
+            const h = clip(sanitize(d.hint).text.trim(), wide ? CAP_WIDE : 180);
             /* ★ 同一条 hint 只渲染一次（2026-11-15 夜，L12 真机）★
              *
              * 实测：8 条诊断里三条 `BELT_HANDOFF_REJECTED` 的 hint 是 226/225/225 字符，

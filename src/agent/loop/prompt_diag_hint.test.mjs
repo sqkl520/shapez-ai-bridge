@@ -478,3 +478,44 @@ test("hub_inlets 里的句柄必须出现在渲染结果里", () => {
     assert.match(text, /B455/);
     assert.match(text, /hub-inlet belts are/, "要说清这些是可操作的入口带");
 });
+
+/* ═══════ 入口类诊断的 hint 需要更大额度（解法含语法） ═══════ */
+
+/**
+ * 默认 180 字符是给 `connect` 那种「一句解法 + 半句补充」写的。
+ * 但 `HUB_FED_BY_COLOR` 的解法里**含操作语法**（要传 allow_scattered），
+ * 后半句被截掉就只剩「为什么」，模型看懂病因却动不了手。
+ *
+ * 实测（r-20261118210356-3d48）：模型提出
+ * `remove_run {uids:[B452,B454,B455,B575]}` —— 4 条互不相邻的 1 格带，
+ * 必然被 run_not_contiguous 拒。而「要传 allow_scattered」那句落在 180 之后，
+ * 从未到达。它没有第 6 轮可以重试（ROUNDS_MAX=5）。
+ */
+test("HUB_FED_BY_COLOR 的 hint 不被截到 180：allow_scattered 必须能到达模型", () => {
+    /* ★ 关键句必须落在 180 字符**之后**，否则这条测试抓不住截断 ★ */
+    const padding = "hub 的 16 个入口只接受形状，不接受颜料 —— 这是游戏写死的（每个入口的 filter 都是 shape）。".repeat(3);
+    const longHint = padding + "所以删除它们要给 `remove_run` 传 `opts:{allow_scattered:true}`。";
+    assert.ok(longHint.indexOf("allow_scattered") > 180, "夹具没构造好：关键句必须在 180 之后");
+    assert.ok(longHint.length > 180, "夹具本身要超过 180 才有意义");
+    const text = (render([{
+        code: "HUB_FED_BY_COLOR", layer: "L3", severity: "blocker",
+        subject: { handle: "H1" }, expected: "hub 入口送形状", observed: "4 条入口带在送颜料",
+        evidence: { handles: ["H1"], hub_inlets: ["B452"], colors: ["green"] },
+        candidates: ["remove_run"], hint: longHint,
+    }]) || {}).user || "";
+    assert.match(text, /allow_scattered/,
+        "这句是「怎么写」，被截掉等于诊断只说了「为什么」");
+});
+
+test("其它诊断仍然截 180（不因这条放宽就把预算整体放大）", () => {
+    const longHint = "x".repeat(400);
+    const text = (render([{
+        code: "MACRO_REFUSED", layer: "plan", severity: "blocker",
+        subject: { handle: "M1" }, expected: { ok: true }, observed: { code: "occupied" },
+        evidence: { macro: "connect", macro_code: "occupied" },
+        candidates: ["connect"], hint: longHint,
+    }]) || {}).user || "";
+    const m = text.match(/hint: (x+)/);
+    assert.ok(m, "hint 应该渲染出来");
+    assert.ok(m[1].length <= 181, `其它诊断仍应截到 180 附近（实得 ${m[1].length}）`);
+});
