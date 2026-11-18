@@ -414,3 +414,44 @@ to.port: {role:"color",index:0} / {role:"color",index:1}
    预演那条闸的门槛可以重新评估 —— 但那要先用数据证明它们真是冗余的。
 
 **在这三条里挑一条之前，继续加轮次不会有产出。**
+
+## 2026-11-18 第七轮：agent 换机器了，mixer 从 2 涨到 4
+
+上一轮查清「cutter 16598 两个口都占满、而另外两台 cutter 有空口」之后，
+把这条写进了 `port_already_bound` 的 hint（三步：同机器换端口 → 换一台同类机器 → 才 rebind）。
+
+### 实测效果
+
+**模型不再死盯那一台机器了。** 之前的 run 清一色是 `connect(C1)` / `connect(C2)`，
+现在变成 `connect(C4)` / `connect(C3)`：
+
+```
+R1 replace_run,connect(C4),connect(C3)
+R2 connect(C4),connect(C3),connect(B178)
+R4 connect(C4),trash_unused
+```
+
+**mixer 从 2 台涨到 4 台**（两次 `机器 +1`）。这正是 `needs_cascade` 阈值
+（`mixerCount < 4`）指引的方向 —— 白料级联需要的台数到了。
+
+### 但还是 0 产出
+
+12 轮的净效果：3 cleanup、1 constructive、4 inert、1 regressive、2 stalled_growth。
+
+新加的四台 mixer 还没被接进任何活着的货流 —— `stalled_growth` 的原话：
+「结构变了（机器 +1），但世界完全没动：带上的货没有增加」。
+
+而且 `trash` 从 12 涨到 15，说明它还在用垃圾桶止损。
+
+### 现在的位置
+
+| 阶段 | 状态 |
+|---|---|
+| 知道缺什么（白料级联要 mixer） | ✅ 确诊并说得出 |
+| 会补机器 | ✅ mixer 1 → 4 |
+| 会把机器接进产线 | ❌ 停在这一步 |
+| 产出 | ❌ 0 |
+
+**下一步该查的是：新放的四台 mixer 周围有没有可用的接入口。**
+如果它们被放在没有带子通道的位置，那 `insert_machine` 放对了台数但放错了地方，
+应该先看 `insert_machine` 选址用的判据是不是只看了「空不空」而没看「接不接得上」。
