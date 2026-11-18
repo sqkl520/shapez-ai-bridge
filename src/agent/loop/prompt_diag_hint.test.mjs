@@ -452,3 +452,29 @@ test("H17 对照：其它错误码不渲染 candidates（预算撑不住，且�
         "非 ambiguous_port 不该渲染候选清单（会挤掉 hint）");
     assert.match(s5, /allow_replace/, "hint 必须还在");
 });
+
+/* ═══════ hub_inlets 必须渲染 —— 否则 HUB_FED_BY_COLOR 无法执行 ═══════ */
+
+/**
+ * `dropInlets`（loop.mjs:812）把 hub 入口带的句柄从 `evidence.handles` 摘走
+ * （避免它们经 `pickBelts` 挤进 BELTS 段）。那对旧诊断是对的，但
+ * `HUB_FED_BY_COLOR` 的整个 payload 就是那几条带 —— 摘走后若不渲染 `hub_inlets`，
+ * 模型收到的是一句**无法执行**的话。
+ *
+ * 实测代价（8 个 run / 40 轮）：诊断 40/40 出现在第 1 行，94 次调用里
+ * **零次**提到那 4 条入口带，它只能去够最近的可指名目标，继续空转。
+ */
+test("hub_inlets 里的句柄必须出现在渲染结果里", () => {
+    const diag = {
+        code: "HUB_FED_BY_COLOR", layer: "L3", severity: "blocker",
+        subject: { handle: "H1" },
+        expected: "hub 入口送形状", observed: "4 条入口带在送颜料",
+        evidence: { handles: ["H1"], hub_inlets: ["B452", "B454", "B455"], colors: ["green", "red"] },
+        candidates: ["replace_run", "connect"],
+        hint: "颜料该接 painter 的 color 槽",
+    };
+    const text = (render([diag]) || {}).user || "";
+    assert.match(text, /B452/, "入口带句柄必须出现（否则模型无法指名）");
+    assert.match(text, /B455/);
+    assert.match(text, /hub-inlet belts are/, "要说清这些是可操作的入口带");
+});

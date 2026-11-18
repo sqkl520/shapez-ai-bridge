@@ -2303,6 +2303,25 @@ function renderDiagnoses(diagnoses) {
         if (Array.isArray(ev.stream_handles) && ev.stream_handles.length) {
             line += `; the stream itself runs through ${ev.stream_handles.slice(0, 3).join(",")} (context only, not the region)`;
         }
+        /* ★ `hub_inlets` 必须渲染 —— 否则整条诊断无法执行 ★
+         *
+         * `dropInlets`（loop.mjs:812）会把 hub 入口带的句柄从 `evidence.handles`
+         * 里摘掉，因为 `pickBelts` 按 `evidence.handles` 决定谁进 BELTS 段，
+         * 留着就等于把入口顶上去。那个设计对**旧**诊断是对的。
+         *
+         * 但 `HUB_FED_BY_COLOR` 的整个 payload 就是那几条入口带 —— 句柄被摘走、
+         * `hub_inlets` 又没人渲染，模型于是收到一句无法执行的话：
+         * 「4 条入口带在送颜料」却不给它任何名字。
+         *
+         * 实测（8 个 run / 40 轮）：这条诊断 40/40 出现在 DIAGNOSIS 第 1 行，
+         * 但 94 次调用**没有一次**提到那 4 条带（B452/B454/B455/B575）——
+         * 它只能去够最近的可指名目标 B106，于是继续空转。
+         *
+         * 现在把名字明确排出来，并说明它们是可操作的入口带。 */
+        if (Array.isArray(ev.hub_inlets) && ev.hub_inlets.length) {
+            line += `; the hub-inlet belts are ${ev.hub_inlets.slice(0, 6).join(",")} `
+                + `(these are real belt handles — you can pass them to replace_run / connect)`;
+        }
         /* ★ 把 `hint` 交给模型 ★
          *
          * ## 为什么这条比前面所有修复都值钱
