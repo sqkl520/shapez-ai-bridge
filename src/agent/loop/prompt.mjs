@@ -3108,9 +3108,18 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     /* ★ 上一轮因「多调用 + 有失败」被整单拒 ⇒ 收窄成「只提 1 个」★
      *
      * 判据用 lastRound 里的失败/拒因，不看诊断 —— 因为这是**上一轮那套计划**的
-     * 性质，不是这一轮世界的性质。`codes` 里出现 NO_REVERSIBLE_CALL 就说明
-     * 上一轮提交了多个调用且至少一个失败（闸门只在那种情况下报这个码）。 */
-    const lastCodes = Array.isArray(lastRound && lastRound.codes) ? lastRound.codes : [];
+     * 性质，不是这一轮世界的性质。
+     *
+     * ⚠️ codes 有两个位置：顶层 `codes` 与 `verify.codes`。`settleFailure` 在
+     * plan 阶段被拒时把码写在 `verify.codes` 里（见 loop.mjs:2884 的
+     * `verify: { checks: [], codes: [...] }`），顶层没有。
+     * 第一版只读顶层，于是收窄**从来没触发过** —— 实测三个 run 都是
+     * `rejected.code === "NO_REVERSIBLE_CALL"`，而 prompt 里仍然是「1 to 6 calls」。
+     * 两处都读。 */
+    const lastCodes = [
+        ...(Array.isArray(lastRound && lastRound.codes) ? lastRound.codes : []),
+        ...(lastRound && lastRound.verify && Array.isArray(lastRound.verify.codes) ? lastRound.verify.codes : []),
+    ];
     const lastFailedMulti = lastCodes.includes("NO_REVERSIBLE_CALL")
         || lastCodes.includes("PARTIAL_APPLY");
     const s6 = lastFailedMulti ? INSTRUCTION_ONE : INSTRUCTION;

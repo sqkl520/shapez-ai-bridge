@@ -69,6 +69,23 @@ test("NO_REVERSIBLE_CALL 之后：变成 Exactly 1 call", () => {
     assert.doesNotMatch(t, /1 to \d+ calls/, "收窄时要撤掉「可以提多个」那句，否则两句自相矛盾");
 });
 
+/* ★ 这条是实测逼出来的 ★
+ *
+ * `settleFailure` 在 plan 阶段被拒时把码写在 `verify.codes` 里
+ * （loop.mjs:2884 `verify: { checks: [], codes: [...] }`），顶层没有。
+ * 收窄的第一版只读顶层 `codes`，于是**从来没触发过** —— 三个 run 的
+ * `rejected.code` 都是 NO_REVERSIBLE_CALL，而 prompt 里仍是「1 to 6 calls」。
+ * 上面那条测试用的是顶层 codes，所以它没抓到这个 bug。 */
+test("码在 verify.codes 里（settleFailure 的真实形态）也必须触发收窄", () => {
+    const t = yourTurn(render({
+        round: 2, calls: [{ macro: "connect" }, { macro: "connect" }],
+        verify: { checks: [], codes: ["NO_REVERSIBLE_CALL"] }, failures: [],
+    }));
+    assert.match(t, /Exactly 1 call/i,
+        "settleFailure 把码写在 verify.codes，只读顶层会漏掉一整类真实情况");
+    assert.doesNotMatch(t, /1 to \d+ calls/);
+});
+
 test("PARTIAL_APPLY 之后：同样收窄", () => {
     const t = yourTurn(render({
         round: 2, calls: [{ macro: "connect" }, { macro: "insert_machine" }],
