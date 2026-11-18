@@ -1027,24 +1027,58 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
              * 577 条意味着绝大部分是废线。 */
             const beltCount = idx.ent.filter(e => e.belt || e.type === "belt" || e.type === "underground_belt").length;
             const trashCount = idx.ent.filter(e => e.type === "trash").length;
-            const rotten = beltCount >= 300;
+            /* ★ 「腐化」不能只看带子数 ★
+             *
+             * 原来的判据是 `beltCount >= 300` —— 于是 L12（716 条带子）被判成腐化，
+             * hint 变成「先清理，别再往上加」。实测跑了十几轮，模型照做了，
+             * 净效果是 cleanup / inert 反复出现，产出一直是 0。
+             *
+             * 那条判据漏了一件事：带子多不等于全是废线。L12 有 **602 条到 hub 的活带**
+             * （`paths_with_items`），它们是真的在流动的干线。真正缺的是**工序级联**：
+             * 目标要白色颜料，而白色 = 蓝+绿+红 三级混，一台 mixer 根本不够。
+             *
+             * 所以加一条并列判据：机器数正常（≥8 台）但 mixer 只有 0–1 台时，
+             * 问题在「缺级联」而不是「太脏」。此时让 hint 指向补工序，而不是拆。
+             * 这个区分是 L12 实测逼出来的：拆了十几轮，机器一台没加。 */
+            const machineCount = idx.ent.filter(e => e && !e.belt && e.type !== "belt"
+                && e.type !== "underground_belt" && e.type !== "hub" && e.type !== "trash").length;
+            const mixerCount = idx.ent.filter(e => e && e.type === "mixer").length;
+            const machineRich = machineCount >= 8;
+            const needsCascade = machineRich && mixerCount <= 1;
+            /* 腐化：带子多**且**工序并不缺 —— 那种情况下大部分带子确实是接不上的旧线。 */
+            const rotten = beltCount >= 300 && !needsCascade;
             out.push(mkDiag("NO_PRODUCTION", {
                 layer: "L4",
                 subject,
                 expected: `有产线在造 ${goalShape}`,
                 observed: p ? `窗口内 ${goalShape} 产出 0（delivered ${delivered === null ? "?" : delivered}/${required === null ? "?" : required}）`
                     + (rotten ? `；世界已有 ${beltCount} 条带子 / ${trashCount} 个垃圾桶，产出仍然是 0` : "")
+                    + (needsCascade ? `；已有 ${machineCount} 台机器、${beltCount} 条带子，但 mixer 只有 ${mixerCount} 台` : "")
                     : "production 不可用，无法确认任何产线在造目标形状",
                 handles: [subject.handle], uids: hub ? [hub.uid] : [],
-                evidence: { stage: "initial", goal: goalShape, ...(rotten ? { belts: beltCount, trash: trashCount, rotten: true } : {}) },
+                evidence: {
+                    stage: "initial", goal: goalShape,
+                    ...(rotten ? { belts: beltCount, trash: trashCount, rotten: true } : {}),
+                    ...(needsCascade ? { machines: machineCount, mixers: mixerCount, needs_cascade: true } : {}),
+                },
                 candidates: rotten
                     ? ["remove_run", "connect", "insert_machine", "trash_unused"]
-                    : ["connect", "insert_machine", "trash_unused"],
+                    : (needsCascade
+                        ? ["insert_machine", "connect", "replace_run", "remove_run"]
+                        : ["connect", "insert_machine", "trash_unused"]),
                 hint: rotten
                     ? `这个世界已经堆了 ${beltCount} 条带子却一件都产不出来 —— 说明绝大部分是接不上的旧线。`
                         + `**先清理，别再往上加**：用 \`remove_run\` 把到不了 hub 的旧线成片拆掉，`
                         + `腾出空间之后，正解往往只要几十格。继续铺新线只会撞上自己。`
-                    : "首轮没有 report：这是「目标形状没有产线在造」的初始诊断，不是对某条 check 的复述。",
+                    : (needsCascade
+                        /* 这条 hint 直接点名「缺哪台机器」，因为模型反复拆带子而不建工序 ——
+                         * 而它其实知道白颜料要级联（prompt 的 PIGMENT 段写着），
+                         * 只是没有一条诊断把「你现在就少一台 mixer」说出来。 */
+                        ? `世界有 ${machineCount} 台机器和 ${beltCount} 条带子，但 **mixer 只有 ${mixerCount} 台**，产出为 0。`
+                            + `这不是「太脏」，是**缺工序**：目标需要混色，而混色要 mixer。`
+                            + `先用 \`insert_machine\` 补一台 mixer（\`{cell,machine:"mixer",facing}\`，facing 指它的输出方向），`
+                            + `再用 \`connect\` 把原料接进它的两个 color 槽。别再拆带子了 —— 已经拆了很多轮，产出没变过。`
+                        : "首轮没有 report：这是「目标形状没有产线在造」的初始诊断，不是对某条 check 的复述。"),
             }));
         }
     }
