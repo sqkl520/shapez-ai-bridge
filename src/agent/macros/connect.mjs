@@ -1080,7 +1080,16 @@ export function connect(a, b, c, d) {
     const toPortSel = hubEntry !== null ? { entry: hubEntry } : te.port;
 
     const spf = selectPort(pfList, fe.port, " ejector（输出槽）", "from");
-    if (!spf.ok) return failure({ code: spf.code, field: "from.port", message: spf.message, candidates: spf.candidates });
+    /* ★ `hint` 必须一起透传 ★
+     *
+     * `selectPort` 算出了「该写成 {role,index}」这句话，但这两处 `failure()`
+     * 只搬了 code/field/message/candidates —— hint 在这里被丢掉。
+     * 下游 `loop.mjs` 的 `hit.hint || d0.hint` 于是拿到 null，
+     * prompt 里只剩一行「connect → ambiguous_port」，模型只能猜。
+     *
+     * 实测（r-20261118163335 那批）：模型连续多个 run 卡在 ambiguous_port，
+     * 每轮换一种端口写法。hint 在源头是有的，断在这两个调用点上。 */
+    if (!spf.ok) return failure({ code: spf.code, field: "from.port", message: spf.message, hint: spf.hint, candidates: spf.candidates });
 
     /* 宿是 hub 且给了 "auto" 时走**入口分配**（契约 PORT_FORMS 明写）：
        hub 有 16 个入口，auto 不是 ambiguous，而是"你来挑"。这里把 16 个都放进候选，
@@ -1092,7 +1101,7 @@ export function connect(a, b, c, d) {
         spt = { ok: true, port: ptList[0] };
     } else {
         spt = selectPort(ptList, toPortSel, " acceptor（输入槽）", "to");
-        if (!spt.ok) return failure({ code: spt.code, field: "to.port", message: spt.message, candidates: spt.candidates });
+        if (!spt.ok) return failure({ code: spt.code, field: "to.port", message: spt.message, hint: spt.hint, candidates: spt.candidates });
     }
 
     const fromPorts = fe.port === "auto" ? pfList : [spf.port];
