@@ -104,3 +104,10 @@ research/ai-player/facts/live/
 # agent 循环的 stdout（每次跑都覆盖，机器相关）
 .agent-run*.log
 .bridge-run.log
+
+# agent 调研时产生的临时探针文件（一次性，机器相关）
+.investigate-*
+.tmp-critic-*
+.agent-driver.log
+.agent-verify.log
+.v-*.json

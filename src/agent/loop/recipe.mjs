@@ -210,6 +210,30 @@ function runSolver(goalShape, opts = {}) {
                     layerHints = solvePerLayer(goalShape, { solver, spawn: doSpawn, timeout, extra });
                 }
             } catch { /* 分解是锦上添花，失败不影响主结论 */ }
+            /* ★ 分层分解必须带「需要哪些机器、够不够解锁」★
+             *
+             * 探测是**故意绕开关卡门控**跑的（见 solvePerLayer 的注释：问的是
+             * 「这个形状本身能不能做出来」）。但那导致它推荐了当前关卡做不到的路线。
+             *
+             * 实测（独立审计）：`Cb------` 的 4 步解法是
+             *   mine → cutQuad(quad 0) → mineColor(blue) → paint
+             * 而 `cutQuad` 的 unlockLevel 是 **16**（op-templates.mjs:89），
+             * 当前是 L12 —— `flagsForLevel(12) = ["--no-cutquad"]`。
+             *
+             * 于是在 L12，prompt 里那句「先用 insert_machine + connect 把每一层的
+             * 产线搭出来」指向一条物理上不存在的路。模型照着做了一百多轮。
+             *
+             * 修法：保留探测（它回答「形状可不可解」是有价值的），
+             * 但渲染时**把解锁关卡差异说出来**，让模型知道这条路现在走不通。 */
+            const layerNeedsQuadCutter = !!(layerHints && layerHints.some(l =>
+                !l.ok && Array.isArray(l.quads) && l.quads.some(q => q.ok)));
+            const lvNum = Number.isFinite(opts.level) ? opts.level : DEFAULT_LEVEL;
+            const gateNote = layerNeedsQuadCutter && lvNum < 16
+                ? `⚠️ 但要注意：按象限拆开用的那台机器（quad cutter）**要到第 16 关才解锁**，`
+                    + `你现在是第 ${lvNum} 关。所以这条「按象限拆」的路**现在走不通**。`
+                    + `在当前关卡能做的，是把每层当作整体去铺（矿机 → 整块切割 → 染色 → 叠），`
+                    + `或者先补一台实现不了的工序（比如 mixer 级联）提升其它环节。`
+                : "";
             const layerText = layerHints && layerHints.length
                 ? ("这个目标可以**分层做**：" + layerHints.map((l, i) => {
                     const head = `第 ${i + 1} 层 \`${l.shape}\` `;
@@ -224,8 +248,8 @@ function runSolver(goalShape, opts = {}) {
                     }
                     return head + "解不出";
                 }).join("；")
-                    + "。先用 insert_machine + connect 把每一层的产线搭出来，"
-                    + "再用 stacker 把下层接到 upper 槽、上层接到 lower 槽叠起来。")
+                    + (gateNote || "。先用 insert_machine + connect 把每一层的产线搭出来，"
+                        + "再用 stacker 把下层接到 upper 槽、上层接到 lower 槽叠起来。"))
                 : null;
             return {
                 ok: false,
@@ -367,7 +391,7 @@ export function recipeFor(goalShape, opts = {}) {
     const gated = flagsForLevel(level);
 
     /* 注意 `tolerateUnsolvable`：solver 不可解时 exit(2) 但仍吐合法 JSON，必须先解析。 */
-    const r = runSolver(goalShape, { ...opts, extraArgs: gated, tolerateUnsolvable: true });
+    const r = runSolver(goalShape, { ...opts, extraArgs: gated, tolerateUnsolvable: true, level });
     /* ★ 失败原因必须逐字带出去，不许在这里收窄成 `{ok:false, reason}` ★
      *
      * `capped` / `stats` / `hint` 是「搜索被截断」与「真不可解」的唯一区分依据。

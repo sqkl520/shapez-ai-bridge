@@ -577,6 +577,44 @@ function makeShapeEngine(obs, idx) {
             }
             return out.size ? out : null;
         }
+        /* ★ `mix` 必须有分支 ★
+         *
+         * 契约 §2 要求传播遇到不认识的 op 时显式降级成 `unknown-op` —— 那是对的，
+         * 但 `mix` 是**已注册**的 op（`op-templates.mjs:454`，机器是 mixer），
+         * 把它算进「不认识」是自己的缺陷，不是契约要求。
+         *
+         * 独立审计实测的后果：425 个 L12 run 里 1444 次 `SHAPE_UNKNOWN`，
+         * 每一台 mixer 都把形状传播链切断；连带 `WRONG_SHAPE_AT_HUB` 在
+         * 2113 条诊断里**一次都没出现过** —— 也就是说「hub 收到的形状不对」
+         * 这件事，这套系统从来没能力说出来。
+         *
+         * L12 恰好需要白颜料的级联（蓝+绿→青，青+红→白），mixer 是关键工序。
+         * 不补这一支，语义层在最需要它的关卡上是瞎的。
+         *
+         * mix 的语义：两个 color 槽的颜料取并集，得到一个颜色。
+         * 形状本身不变（mixer 不改变形状），所以输出的 payload 是那个颜色符号。 */
+        if (op === "mix") {
+            const a = [...(inputValue(m, "color") || [])][0];
+            const b = [...(inputValue(m, "color2") || [])][0];
+            /* 两种写法都接受：有的模板把两个槽都叫 color（两格），
+             * 有的给 color / color2。取不到就退化成「所有 color 槽的值并起来」。 */
+            let cols = [a, b].filter(Boolean);
+            if (cols.length < 2) {
+                const all = [...(inputValue(m, "color") || [])];
+                cols = all.slice(0, 2);
+            }
+            if (cols.length < 2) { mark("mix-missing-input", m.uid, m.type); return null; }
+            /* 混色规则：按位并集。表与 `compile.mjs` 的 `mixColors` 同源
+             * （`validate.mjs:1352-1353` 的 COLOR_BITS / BITS_COLOR）——
+             * 不另抄一份真值，直接按同一规则算。 */
+            const BITS = { red: 1, green: 2, blue: 4, yellow: 3, purple: 5, cyan: 6, white: 7 };
+            const BY_BITS = { 1: "red", 2: "green", 4: "blue", 3: "yellow", 5: "purple", 6: "cyan", 7: "white" };
+            const bit = cols.reduce((acc, c) => acc | (BITS[c] || 0), 0);
+            const merged = BY_BITS[bit];
+            if (!merged) { mark("unknown-color", m.uid, m.type); return null; }
+            const h = safeHash(merged);
+            return h ? new Set([h]) : null;
+        }
         mark("unknown-op", m.uid, m.type);
         return null;
     }
