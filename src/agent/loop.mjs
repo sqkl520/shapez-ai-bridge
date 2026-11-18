@@ -2008,7 +2008,9 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                         + `（${allSkipped.map(s => s.macro + ":" + s.reason).join(", ")}）`,
                     evidence: { skipped: allSkipped },
                     hint: "这些调用只能放机器/垃圾桶，没有一条能靠 remove_run 撤销。"
-                        + "换一条只涉及带子的修法（connect / extend_line / replace_run 的 belt 模式）。",
+                        + "换一条只涉及带子的修法（connect / extend_line / replace_run 的 belt 模式）。"
+                        + "**下一次只提交一个调用**：两条一起提，任何一条失败都会让整个计划作废"
+                        + "（因为剩下的撤不回来）。先做成一条、确认它落地，下一轮再做第二条。",
                 });
             }
         }
