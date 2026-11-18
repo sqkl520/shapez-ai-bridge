@@ -2936,6 +2936,28 @@ const INSTRUCTION = [    "## YOUR TURN",
     `1 to ${PROMPT_RULES.CALLS_MAX} calls. Handles from this prompt only. No coordinates. JSON only.`,
 ].join("\n");
 
+/**
+ * 「上一轮因为多调用被整单拒掉」时的收窄版指令。
+ *
+ * ★ 为什么要单独一版 ★
+ *
+ * `NO_REVERSIBLE_CALL` 的 hint 在说「下一次只提交一个调用」，而固定的
+ * `INSTRUCTION` 在说「1 到 6 calls」—— 两句话直接打架，模型当然听最后那句。
+ *
+ * 实测（r-20261118171858-d768）：连续三轮都提 `connect,connect`，每轮都被拒，
+ * 每轮都收到「只做一个」的 hint，每轮都继续提两个。它不是在忽视 hint，
+ * 是 prompt 里同时存在两条互相矛盾的指令，而显眼的那条是「1 到 6」。
+ *
+ * 收窄只在**真的发生过**这种情况时生效（由调用方判断），不改变常态行为。 */
+const INSTRUCTION_ONE = [    "## YOUR TURN",
+    "Output the calls for THIS round as one raw JSON object:",
+    '{"say":"...","calls":[{"macro":"...","args":{...},"why":"..."}]}',
+    "**Exactly 1 call this round.** Your previous plan was rejected because it had multiple calls and "
+        + "one of them failed — the survivors could not be undone, so the whole plan was thrown away. "
+        + "Do the single most-important call now; the next round can do the next one.",
+    "Handles from this prompt only. No coordinates. JSON only.",
+].join("\n");
+
 /* ══════════════════════════ 8. PromptOverBudget ══════════════════════════ */
 
 export class PromptOverBudget extends Error {
@@ -3083,7 +3105,15 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     /* 残线单独一段，**不再依赖 goalChanged**（见 renderLeftoverLines 的注释：
        把两者绑在一起，导致「本次 run 没换关」时残线整段不可见）。 */
     const sLeftover = renderLeftoverLines(obsoleteLines, goalShape);
-    const s6 = INSTRUCTION;
+    /* ★ 上一轮因「多调用 + 有失败」被整单拒 ⇒ 收窄成「只提 1 个」★
+     *
+     * 判据用 lastRound 里的失败/拒因，不看诊断 —— 因为这是**上一轮那套计划**的
+     * 性质，不是这一轮世界的性质。`codes` 里出现 NO_REVERSIBLE_CALL 就说明
+     * 上一轮提交了多个调用且至少一个失败（闸门只在那种情况下报这个码）。 */
+    const lastCodes = Array.isArray(lastRound && lastRound.codes) ? lastRound.codes : [];
+    const lastFailedMulti = lastCodes.includes("NO_REVERSIBLE_CALL")
+        || lastCodes.includes("PARTIAL_APPLY");
+    const s6 = lastFailedMulti ? INSTRUCTION_ONE : INSTRUCTION;
 
     const selection = pickBelts(tbl, diagList, goalShape, obs);
     /* 配方紧跟在 GOAL 之后：它是「这个目标怎么造」的一部分，不是独立信息 */
