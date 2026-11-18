@@ -1044,7 +1044,16 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
                 && e.type !== "underground_belt" && e.type !== "hub" && e.type !== "trash").length;
             const mixerCount = idx.ent.filter(e => e && e.type === "mixer").length;
             const machineRich = machineCount >= 8;
-            const needsCascade = machineRich && mixerCount <= 1;
+            /* ★ 阈值不能卡在 1 ★
+             *
+             * 第一版写 `mixerCount <= 1`，结果模型补到 2 台之后判据立刻翻转回
+             * 「太脏」，hint 又变回「先清理」—— 而刚补的两台还没接上线。
+             * L12 的白料链本身就需要级联（bl+gr→cyan，cyan+red→white），
+             * 再加上给上下两层各配一路，四台以内都不算「工序齐了」。
+             *
+             * 阈值取 `mixerCount < 4`：低于这个数说明工序还没成形，
+             * 该继续补；到 4 台之后如果仍然零产出，那才可能真的是布局脏。 */
+            const needsCascade = machineRich && mixerCount < 4;
             /* 腐化：带子多**且**工序并不缺 —— 那种情况下大部分带子确实是接不上的旧线。 */
             const rotten = beltCount >= 300 && !needsCascade;
             out.push(mkDiag("NO_PRODUCTION", {
@@ -1075,9 +1084,10 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
                          * 而它其实知道白颜料要级联（prompt 的 PIGMENT 段写着），
                          * 只是没有一条诊断把「你现在就少一台 mixer」说出来。 */
                         ? `世界有 ${machineCount} 台机器和 ${beltCount} 条带子，但 **mixer 只有 ${mixerCount} 台**，产出为 0。`
-                            + `这不是「太脏」，是**缺工序**：目标需要混色，而混色要 mixer。`
-                            + `先用 \`insert_machine\` 补一台 mixer（\`{cell,machine:"mixer",facing}\`，facing 指它的输出方向），`
-                            + `再用 \`connect\` 把原料接进它的两个 color 槽。别再拆带子了 —— 已经拆了很多轮，产出没变过。`
+                            + `这不是「太脏」，是**缺工序**：目标需要混色，而混色要 mixer —— `
+                            + `白颜料本身就是级联（先混两色，再和第三色混），一套链至少要 2–3 台。`
+                            + `先用 \`insert_machine\` 补到 3 台以上（\`{cell,machine:"mixer",facing}\`，facing 指输出方向），`
+                            + `再用 \`connect\` 把原料接进每台的 color 槽。别再拆带子了 —— 已经拆了很多轮，产出没变过。`
                         : "首轮没有 report：这是「目标形状没有产线在造」的初始诊断，不是对某条 check 的复述。"),
             }));
         }
