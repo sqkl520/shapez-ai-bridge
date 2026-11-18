@@ -412,16 +412,56 @@ function selectPort(list, sel, kindWord, field) {
             candidates: list.map(p => ({ role: p.role, index: p.index })),
         };
     }
+    /* ★ 下面三条 `bad_type` 都必须带 hint ★
+     *
+     * 实测（r-20261118183817-edf3 R5）：模型写了
+     * `from:{port:{role:"left",index:0}}` 连 mixer —— 而 mixer 的输入角色是
+     * `color` 不是 `left`。`bad_type` 判对了，但 **hint 是 null**，
+     * 模型只看到一行错误码，不知道合法角色叫什么。
+     *
+     * 后果很重：那次之后它**再也没写过 port**（162 次 connect 里只有这 1 次带 port），
+     * 于是每一轮都回到 `ambiguous_port`，形成死循环。
+     *
+     * 一条不给解法的错误，比不给错误更糟 —— 它会让模型放弃整个写法。
+     * 这里把「这台机器实际有哪些角色」直接列出来。 */
+    const legalRoles = () => [...new Set(list.map(p => p.role))];
+    const legalForms = () => list.slice(0, 6)
+        .map(p => `{role:"${p.role}",index:${p.index}}`).join(" / ");
     if (sel && typeof sel === "object" && isInt(sel.entry)) {
         const p = list.find(q => q.index === sel.entry);
-        return p ? { ok: true, port: p } : { ok: false, code: "bad_type", message: `${field}.port.entry=${sel.entry} 越界（0..${list.length - 1}）` };
+        return p ? { ok: true, port: p } : {
+            ok: false, code: "bad_type",
+            message: `${field}.port.entry=${sel.entry} 越界（0..${list.length - 1}）`,
+            hint: `这个端点的 entry 只有 0..${list.length - 1}。`
+                + `写 \`port:{entry:<0..${list.length - 1}>}\`，或改用 \`{role,index}\`：${legalForms()}。`,
+            candidates: list.slice(0, 8).map(q => ({ role: q.role, index: q.index })),
+        };
     }
     if (sel && typeof sel === "object" && typeof sel.role === "string" && isInt(sel.index)) {
         const hit = list.filter(q => q.role === sel.role);
         const p = hit[sel.index];
-        return p ? { ok: true, port: p } : { ok: false, code: "bad_type", message: `${field}.port {role:"${sel.role}",index:${sel.index}} 不存在（该角色有 ${hit.length} 个）` };
+        if (p) return { ok: true, port: p };
+        return {
+            ok: false, code: "bad_type",
+            message: hit.length
+                ? `${field}.port {role:"${sel.role}",index:${sel.index}} 不存在（该角色有 ${hit.length} 个，index 只能用 0..${hit.length - 1}）`
+                : `${field}.port 的角色 "${sel.role}" 在这台机器上不存在`,
+            hint: hit.length
+                ? `角色 "${sel.role}" 只有 ${hit.length} 个，index 只能是 0..${hit.length - 1}。`
+                    + `可选：${hit.map(q => `{role:"${sel.role}",index:${q.index}}`).join(" / ")}。`
+                : `这台机器在这个端点上接受的角色只有 ${legalRoles().join(" / ")} —— `
+                    + `"${sel.role}" 不是其中之一。写成：${legalForms()}。`,
+            candidates: (hit.length ? hit : list).slice(0, 8).map(q => ({ role: q.role, index: q.index })),
+        };
     }
-    return { ok: false, code: "bad_type", message: `${field}.port 形态不认识` };
+    return {
+        ok: false, code: "bad_type",
+        message: `${field}.port 形态不认识`,
+        hint: `port 只接受三种形态：字符串角色名（如 "color"）、`
+            + `\`{role:"<角色>",index:<第几个>}\`、或 \`{entry:<入口号>}\`（仅 hub）。`
+            + `这台机器这个端点可选：${legalForms()}。`,
+        candidates: list.slice(0, 8).map(q => ({ role: q.role, index: q.index })),
+    };
 }
 
 /** 端点 → 实体记录 */
@@ -1110,15 +1150,27 @@ export function connect(a, b, c, d) {
             !spf.ok ? fmt(spf.candidates, "from.port") : null,
             !sptProbe.ok ? fmt(sptProbe.candidates, "to.port") : null,
         ].filter(Boolean);
+        /* ★ 只有「两端都只是歧义」时才合并成一条通用提示 ★
+         *
+         * 实测踩过：模型写 `{role:"left",index:0}` 连 mixer（合法角色是 `color`），
+         * 这是 `bad_type` —— 一个**具体的、有明确解法**的错误。
+         * 但合并逻辑把它当成「两端歧义」，于是 hint 变成通用的
+         * 「一次把两个都写上 —— from.port: {role:"out",index:0}」，
+         * 完全没有说「left 不是这台机器的角色」。
+         *
+         * 结果比不给 hint 更糟：它看起来像在给答案，实际给的是另一端的答案。
+         * 所以：任一端不是 ambiguous_port 时，**原样透传那一端的 hint**。 */
+        const bothAmbiguous = !spf.ok && !sptProbe.ok
+            && spf.code === "ambiguous_port" && sptProbe.code === "ambiguous_port";
         return failure({
             code: both ? "ambiguous_port" : first.code,
             field: both ? "both" : first.field,
             message: both
                 ? `两端都需要显式端口：from 有 ${pfList.length} 个 ejector，to 有 ${ptList.length} 个 acceptor`
                 : first.message,
-            hint: (hintParts.length
+            hint: bothAmbiguous
                 ? `这个连接两端都有多个端口，**一次把两个都写上** —— ` + hintParts.join("；") + "。"
-                : null) || first.hint,
+                : first.hint,
             candidates: cands,
         });
     }

@@ -2028,16 +2028,51 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                  * 于是诊断里只有 `macro_failed`，模型不知道那些成功的也不能用。
                  * 实测被 `partial_apply.test.mjs` P4 抓到。 */
                 const allSkipped = [...skippedAll, ...skippedLocal];
+                /* ★ 真正的失败原因必须出现在 observed 里 ★
+                 *
+                 * 实测（90 轮 42 次被拒，全部同一个顶层码）：`observed` 只写
+                 * 「connect:macro_failed ×3」，而**每一层下面是什么错误**被藏住了。
+                 * 那次统计里真正的原因是 `ambiguous_port` 37 次、`port_already_bound` 35 次、
+                 * `to_port_on_source` 12 次 —— 全是端口绑定问题，与「可撤销」无关。
+                 *
+                 * 模型拿到的 `NO_REVERSIBLE_CALL` + hint「换一条只涉及带子的修法」
+                 * 于是理解成「再多试几次 connect」，正是同一个死循环。
+                 * 把嵌套码摊到 observed 里，至少让它知道自己在撞什么。 */
+                const nested = allSkipped
+                    .map(s => s.code ? `${s.macro}:${s.code}` : `${s.macro}:${s.reason}`)
+                    .join(", ");
                 return reject("NO_REVERSIBLE_CALL", {
                     layer: "plan", stage: "partial",
                     expected: "至少一条产物可撤销的调用",
-                    observed: `${res.calls.length} 个调用里 0 条可撤销`
-                        + `（${allSkipped.map(s => s.macro + ":" + s.reason).join(", ")}）`,
+                    observed: `${res.calls.length} 个调用里 0 条可撤销（${nested}）`,
                     evidence: { skipped: allSkipped },
-                    hint: "这些调用只能放机器/垃圾桶，没有一条能靠 remove_run 撤销。"
-                        + "换一条只涉及带子的修法（connect / extend_line / replace_run 的 belt 模式）。"
-                        + "**下一次只提交一个调用**：两条一起提，任何一条失败都会让整个计划作废"
-                        + "（因为剩下的撤不回来）。先做成一条、确认它落地，下一轮再做第二条。",
+                    hint: (() => {
+                        /* 按嵌套码分派处置 —— 端口问题有端口问题的解法，
+                         * 跟「不可撤销」是两件事。 */
+                        const codes = new Set(allSkipped.map(s => s.code).filter(Boolean));
+                        if (codes.has("ambiguous_port")) {
+                            return "**这不是「不可撤销」的问题，是端口没绑上。** "
+                                + "`ambiguous_port` 的意思是那台机器在那一端有多个槽，必须写明是哪一个："
+                                + "`port:{role:\"<角色>\",index:<第几个>}`。"
+                                + "每条返回里 `candidates` 列了全部可选值，照抄其中一个即可。"
+                                + "**下一次只提交一个调用**，把端口写全，确认它落地再做下一条。";
+                        }
+                        if (codes.has("port_already_bound")) {
+                            return "**这不是「不可撤销」的问题，是那个端口已经被占。** "
+                                + "按这个顺序试：① 同一台机器的另一个 ejector；"
+                                + "② 两个都满就**换一台同类机器做源头**（世界里往往有空着口的）；"
+                                + "③ 才考虑 `opts.rebind=true`（会让旧支路断流）。"
+                                + "**下一次只提交一个调用。**";
+                        }
+                        if (codes.has("to_port_on_source")) {
+                            return "**这不是「不可撤销」的问题：你把终端接到了源机器自己身上** —— "
+                                + "那条带的输入端就长在源机器上，货会绕回起点。换一个更远的目标。";
+                        }
+                        return "这些调用只能放机器/垃圾桶，没有一条能靠 remove_run 撤销。"
+                            + "换一条只涉及带子的修法（connect / extend_line / replace_run 的 belt 模式）。"
+                            + "**下一次只提交一个调用**：两条一起提，任何一条失败都会让整个计划作废"
+                            + "（因为剩下的撤不回来）。先做成一条、确认它落地，下一轮再做第二条。";
+                    })(),
                 });
             }
         }

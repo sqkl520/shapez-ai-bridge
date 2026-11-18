@@ -1,0 +1,47 @@
+{
+ "ok": false,
+ "rejected": {
+  "code": "NO_REVERSIBLE_CALL",
+  "layer": "plan",
+  "severity": "blocker",
+  "subject": {
+   "handle": null,
+   "type": null
+  },
+  "expected": "至少一条产物可撤销的调用",
+  "observed": "3 个调用里 0 条可撤销（connect:macro_failed, connect:macro_failed, connect:macro_failed）",
+  "evidence": {
+   "handles": [],
+   "uids": [],
+   "skipped": [
+    {
+     "macro": "connect",
+     "reason": "macro_failed",
+     "code": "port_already_bound",
+     "hint": "这个端口已经有一条带子在接货，抢过来它就会断流。按这个顺序试：① **同一台机器的另一个 ejector**（如果它有两个）；② 两个都满时，**换一台同类机器做源头** —— 世界里往往有别的 cutter/miner 空着口；③ 确实要抢，才传 opts.rebind=true，但预演会按「拆掉几条活带」算净效果，如果它连着到 hub 的干线，整个计划会被拒（那不是 bug，是在保护你的世界）。"
+    },
+    {
+     "macro": "connect",
+     "reason": "macro_failed",
+     "code": "to_port_on_source",
+     "hint": "换一个 to 目标 —— 找一个接收槽不在 from 占地内的实体；或换 from 的另一个端口。"
+    },
+    {
+     "macro": "connect",
+     "reason": "macro_failed",
+     "code": "port_already_bound",
+     "hint": "这个端口已经有一条带子在接货，抢过来它就会断流。按这个顺序试：① **同一台机器的另一个 ejector**（如果它有两个）；② 两个都满时，**换一台同类机器做源头** —— 世界里往往有别的 cutter/miner 空着口；③ 确实要抢，才传 opts.rebind=true，但预演会按「拆掉几条活带」算净效果，如果它连着到 hub 的干线，整个计划会被拒（那不是 bug，是在保护你的世界）。"
+    }
+   ]
+  },
+  "hint": "这些调用只能放机器/垃圾桶，没有一条能靠 remove_run 撤销。换一条只涉及带子的修法（connect / extend_line / replace_run 的 belt 模式）。**下一次只提交一个调用**：两条一起提，任何一条失败都会让整个计划作废（因为剩下的撤不回来）。先做成一条、确认它落地，下一轮再做第二条。"
+ },
+ "stage": "partial",
+ "calls": [
+  "connect",
+  "connect",
+  "connect"
+ ],
+ "tx_plan": null,
+ "ops": 0
+}
