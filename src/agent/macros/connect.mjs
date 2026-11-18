@@ -1080,6 +1080,50 @@ export function connect(a, b, c, d) {
     const toPortSel = hubEntry !== null ? { entry: hubEntry } : te.port;
 
     const spf = selectPort(pfList, fe.port, " ejector（输出槽）", "from");
+    /* ★ 两端的歧义必须**一次报全** ★
+     *
+     * 原来是「from 失败就 return，to 根本没检查」。实测（真实 L12 世界）：
+     * cutter 16598 和 mixer 16742 两端都是歧义的 —— 模型照 hint 补了 from 的
+     * `{role:"left",index:0}`，下一轮才撞到 to 的 `ambiguous_port`，
+     * 再补 to、再撞下一个错。**一次只报一个错 = 修一个歧义要多花一轮**。
+     *
+     * 而端口的候选在同一个世界快照里就能全算出来，没有任何理由分批报。
+     * 所以：两端都探，把**所有**歧义合进一个失败对象。
+     * 只有一端歧义时行为与原来一致（code/field/candidates 都是那一个）。 */
+    const sptProbe = rt.rec.type === "hub" && (toPortSel === "auto" || toPortSel === undefined)
+        ? { ok: true, port: null }        // hub 的 auto 是「挑一个」，不是歧义
+        : selectPort(ptList, toPortSel, " acceptor（输入槽）", "to");
+    if (!spf.ok || !sptProbe.ok) {
+        const both = !spf.ok && !sptProbe.ok;
+        const first = !spf.ok ? spf : sptProbe;
+        const cands = both
+            ? [
+                ...(spf.candidates || []).map(c => ({ ...c, end: "from" })),
+                ...(sptProbe.candidates || []).map(c => ({ ...c, end: "to" })),
+            ]
+            : first.candidates;
+        /* hint：两端都给写法，模型一次就能把两个都补上。 */
+        const fmt = (list, end) => (list || []).length
+            ? `${end}: ${list.map(p => `{role:"${p.role}",index:${p.index}}`).join(" / ")}`
+            : null;
+        const hintParts = [
+            !spf.ok ? fmt(spf.candidates, "from.port") : null,
+            !sptProbe.ok ? fmt(sptProbe.candidates, "to.port") : null,
+        ].filter(Boolean);
+        return failure({
+            code: both ? "ambiguous_port" : first.code,
+            field: both ? "both" : first.field,
+            message: both
+                ? `两端都需要显式端口：from 有 ${pfList.length} 个 ejector，to 有 ${ptList.length} 个 acceptor`
+                : first.message,
+            hint: (hintParts.length
+                ? `这个连接两端都有多个端口，**一次把两个都写上** —— ` + hintParts.join("；") + "。"
+                : null) || first.hint,
+            candidates: cands,
+        });
+    }
+    const spf_ok = spf, spt_ok = sptProbe;
+    void spf_ok; void spt_ok;
     /* ★ `hint` 必须一起透传 ★
      *
      * `selectPort` 算出了「该写成 {role,index}」这句话，但这两处 `failure()`
@@ -1088,8 +1132,10 @@ export function connect(a, b, c, d) {
      * prompt 里只剩一行「connect → ambiguous_port」，模型只能猜。
      *
      * 实测（r-20261118163335 那批）：模型连续多个 run 卡在 ambiguous_port，
-     * 每轮换一种端口写法。hint 在源头是有的，断在这两个调用点上。 */
-    if (!spf.ok) return failure({ code: spf.code, field: "from.port", message: spf.message, hint: spf.hint, candidates: spf.candidates });
+     * 每轮换一种端口写法。hint 在源头是有的，断在这两个调用点上。
+     *
+     * ⚠️ 这两处检查已经上移到上面的「两端一次报全」块里 —— 保留注释是为了
+     * 记住 hint 曾经在这里被丢掉，别再把它搬回来。 */
 
     /* 宿是 hub 且给了 "auto" 时走**入口分配**（契约 PORT_FORMS 明写）：
        hub 有 16 个入口，auto 不是 ambiguous，而是"你来挑"。这里把 16 个都放进候选，
@@ -1100,8 +1146,7 @@ export function connect(a, b, c, d) {
         // 供内层报错用的"代表端口"：取 0 号；候选是真·16 个
         spt = { ok: true, port: ptList[0] };
     } else {
-        spt = selectPort(ptList, toPortSel, " acceptor（输入槽）", "to");
-        if (!spt.ok) return failure({ code: spt.code, field: "to.port", message: spt.message, hint: spt.hint, candidates: spt.candidates });
+        spt = sptProbe;   // 已在上面判过歧义；到这里必然是 ok
     }
 
     const fromPorts = fe.port === "auto" ? pfList : [spf.port];
