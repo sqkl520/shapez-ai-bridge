@@ -543,3 +543,78 @@ test("recipe.mjs 自带 19 条自测全绿（真 solver；唯一会在测试里 
     assert.equal(m[1], "19", "原有 19 条自测必须全部保留");
     assert.equal(r.status, 0);
 });
+
+/* ═══════ 9. 多层目标的分层分解（solver capped 时给出可执行路径）═══════ */
+
+/* 夹具：只有「单层里每个象限都一样」的形状才解得出来，其余一律 capped。
+   这模拟真实的 L12：整体 `CbCbCbRb:CwCwCwCw` 穷举不动，但按层/按象限拆就能解。
+   关键点：**带 --no-cutquad 时必须解不出** —— 现实中 L12 的门控正是它。 */
+function layeredStub(argv) {
+    const target = argv[1];
+    const noCutQuad = argv.includes("--no-cutquad");
+    const capped = { target, solved: false, plan: null, stats: { capped: true, expanded: 3300 } };
+    if (noCutQuad) return JSON.stringify(capped);
+    // 单象限（如 "Cb------"）或单层全同（"CwCwCwCw"）→ 可解
+    const isQuad = /^[A-Za-z-]{2}-{6}$/.test(target);
+    const layer = target.split(":")[0];
+    const pairs = [];
+    for (let i = 0; i < layer.length; i += 2) pairs.push(layer.slice(i, i + 2));
+    const uniform = target.length === 8 && new Set(pairs).size === 1;
+    if (isQuad || uniform) {
+        return JSON.stringify({
+            target, solved: true,
+            plan: { targetHash: target, steps: [{ hash: target, op: "mine", args: {}, inputs: [], parents: [] }] },
+        });
+    }
+    return JSON.stringify(capped);
+}
+
+test("多层目标 capped 时给出分层分解：每层能不能解、几步", () => {
+    clearRecipeCache();
+    const r = recipeFor("CbCbCbRb:CwCwCwCw", { level: 12, spawn: makeSpawn(layeredStub) });
+    assert.equal(r.ok, false);
+    assert.equal(r.capped, true);
+    assert.ok(Array.isArray(r.layers), "capped 时必须带 layers");
+    assert.equal(r.layers.length, 2);
+    // 下层 CbCbCbRb 整体解不出，但象限拆开后 Cb / Rb 都能解
+    assert.equal(r.layers[0].ok, false);
+    assert.ok(Array.isArray(r.layers[0].quads), "解不出的层要给象限级分解");
+    assert.deepEqual(r.layers[0].quads.map(q => q.shape), ["Cb", "Rb"]);
+    assert.equal(r.layers[0].quads.every(q => q.ok), true, "象限必须绕开 --no-cutquad 才解得出");
+    // 上层 CwCwCwCw 整体可解
+    assert.equal(r.layers[1].ok, true);
+    // 且这句话进了 hint（否则模型看不到）
+    assert.match(r.hint, /分层做/, "hint 必须告诉模型可以分层");
+    assert.match(r.hint, /CwCwCwCw/, "hint 必须点名哪一层可解");
+});
+
+test("象限探测**不**继承关卡门控（--no-cutquad 会让它恒 capped）", () => {
+    clearRecipeCache();
+    const seen = [];
+    const spy = argv => { seen.push(argv.join(" ")); return layeredStub(argv); };
+    recipeFor("CbCbCbRb:CwCwCwCw", { level: 12, spawn: makeSpawn(spy) });
+    const quadProbes = seen.filter(s => /Cb------|Rb------/.test(s));
+    assert.ok(quadProbes.length >= 2, "应当探测到两个象限");
+    for (const s of quadProbes) {
+        assert.equal(/--no-cutquad/.test(s), false,
+            "象限探测不能带 --no-cutquad —— L12 的 cutquad 正是能把整形状切成单象限的那台: " + s);
+    }
+});
+
+test("单层目标不做分层探测（零信息，纯开销）", () => {
+    clearRecipeCache();
+    let calls = 0;
+    const stub = argv => { calls++; return layeredStub(argv); };
+    recipeFor("RuRu----", { level: 12, spawn: makeSpawn(stub) });
+    assert.equal(calls, 1, "单层目标只该 spawn 1 次，不该为「分层」多跑");
+});
+
+test("层间完全相同时不做分层探测（测试夹具 RuRuRuRu:RuRuRuRu 依赖这条）", () => {
+    clearRecipeCache();
+    let calls = 0;
+    const stub = argv => { calls++; return layeredStub(argv); };
+    const r = recipeFor("RuRuRuRu:RuRuRuRu", { level: 12, spawn: makeSpawn(stub) });
+    assert.equal(r.capped, true);
+    assert.equal(r.layers, undefined, "层间无差异 ⇒ 不探测、不给 layers");
+    assert.equal(calls, 1, "只该 spawn 1 次");
+});

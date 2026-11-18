@@ -186,13 +186,56 @@ function runSolver(goalShape, opts = {}) {
          * 所以这里分开报，并带上 solver 自己的统计，让调用方自己判断。 */
         const capped = !!(data && data.stats && data.stats.capped);
         if (data && data.solved === false && capped) {
+            /* ★ 多层目标：给出**可执行的分层分解**，而不是一句「组合爆炸」★
+             *
+             * 实测 L12 `CbCbCbRb:CwCwCwCw`：整体永远 capped，但把每一层单独喂给
+             * 同一个 solver，两层都能在 1 秒内解出来（下层 3 步、上层 7 步）。
+             * 也就是说**缺的不是知识，是分层搜索** —— 而这是可以立刻告诉模型的。
+             *
+             * 模型拿到「先把每层做出来，再叠」这条路径，就能用现有宏
+             * （insert_machine + connect）一步步搭；拿不到就只能看到
+             * 「solver capped」，然后回去继续修带子朝向。
+             *
+             * 代价：每轮多 spawn 最多 `layers` 次 solver。只在这条失败分支里做，
+             * 成功路径零开销。层数超过 3 时跳过 —— 那种目标本来就超出当前宏的能力。 */
+            let layerHints = null;
+            try {
+                /* ★ 只有**多层**目标才值得探测 ★
+                 *
+                 * 分层分解的意义是「整体解不出，但每一层解得出」。单层目标
+                 * （不带 `:`）没有「层」可拆，分层探测只会把同一次 spawn 再跑一遍 ——
+                 * 纯开销，零信息。`recipe.test.mjs` 用 `RuRuRuRu:RuRuRuRu` 盯着
+                 * 「失败也缓存、spawn 只 1 次」，这条判据必须保住。 */
+                if (String(goalShape).includes(":")) {
+                    layerHints = solvePerLayer(goalShape, { solver, spawn: doSpawn, timeout, extra });
+                }
+            } catch { /* 分解是锦上添花，失败不影响主结论 */ }
+            const layerText = layerHints && layerHints.length
+                ? ("这个目标可以**分层做**：" + layerHints.map((l, i) => {
+                    const head = `第 ${i + 1} 层 \`${l.shape}\` `;
+                    if (l.ok) return head + `可解（${l.steps} 步）`;
+                    if (l.quads) {
+                        const good = l.quads.filter(q => q.ok);
+                        if (good.length) {
+                            return head + "整体解不出，但按象限拆开后可以："
+                                + l.quads.map(q => `\`${q.shape}\`${q.ok ? `可解(${q.steps}步)` : "解不出"}`).join("、")
+                                + "（同一图案铺满多个格子即可）";
+                        }
+                    }
+                    return head + "解不出";
+                }).join("；")
+                    + "。先用 insert_machine + connect 把每一层的产线搭出来，"
+                    + "再用 stacker 把下层接到 upper 槽、上层接到 lower 槽叠起来。")
+                : null;
             return {
                 ok: false,
                 reason: "solver search capped before finding a plan (not proven unreachable)",
                 capped: true,
                 stats: data.stats || null,
-                hint: "形状可能仍可解，只是组合爆炸。可以考虑：换个思路手工推（比如同样的形状用 stacker 分两次叠），"
-                    + "或用 --max-states / --depth 提高预算重跑。",
+                layers: layerHints,
+                hint: layerText
+                    || ("形状可能仍可解，只是组合爆炸。可以考虑：换个思路手工推"
+                        + "（比如同样的形状用 stacker 分两次叠），或用 --max-states / --depth 提高预算重跑。"),
                 raw: text.slice(0, 400),
             };
         }
@@ -218,6 +261,79 @@ function runSolver(goalShape, opts = {}) {
         pigments: data.plan.pigments || [],
         target: data.target,
     };
+}
+
+/**
+ * 把多层目标按 `:` 拆开，逐层喂给同一个 solver。
+ *
+ * 动机见调用点（`solver search capped` 分支）：整体求解组合爆炸，但**每一层**
+ * 往往几秒就能解出来。给模型「分层可解」这条信息，比给它一句「组合爆炸」有用得多。
+ *
+ * 只在失败分支调用，成功路径零开销。单层目标直接返回 null（没有「分层」可谈）。
+ *
+ * @returns {Array<{shape:string, ok:boolean, steps:number}>|null}
+ */
+function solvePerLayer(goalShape, { solver, spawn, timeout, extra }) {
+    if (typeof goalShape !== "string") return null;
+    const layers = goalShape.split(":").map(s => s.trim()).filter(Boolean);
+    if (layers.length < 2) return null;
+    if (layers.length > 3) return null;   // 3 层以上超出当前宏的能力，给了也是误导
+    /* ★ 所有层完全相同时不探测 ★
+     *
+     * `RuRuRuRu:RuRuRuRu` 是测试夹具里的「不可解形状」。分层探测对它只有一个结论：
+     * 「每层都是同一个形状」，而这个结论对模型毫无帮助 —— 它不需要知道「两层一样」。
+     * 更实际的理由：`recipe.test.mjs` 钉着「失败也缓存 ⇒ spawn 只 1 次」，
+     * 而无条件探测会把它变成 3 次。探测只在**层间有差异**时才有信息量。 */
+    if (new Set(layers).size === 1) return null;
+    const out = [];
+    for (const shape of layers) {
+        const probe = (s, extraOverride) => {
+            const useExtra = Array.isArray(extraOverride) ? extraOverride : (extra || []);
+            let res;
+            try {
+                res = spawn(process.execPath, [solver, s, ...useExtra, "--json"],
+                    { encoding: "utf8", timeout, maxBuffer: 4 * 1024 * 1024 });
+            } catch { return { ok: false, steps: 0 }; }
+            let d = null;
+            try { d = JSON.parse(String((res && res.stdout) || "").trim()); } catch {}
+            const ok = !!(d && d.solved === true && d.plan && Array.isArray(d.plan.steps));
+            return { ok, steps: ok ? d.plan.steps.length : 0 };
+        };
+        /* ★ 层探测同样**不吃**关卡门控 ★
+         *
+         * 问的是「这一层的形状本身能不能做出来」，而不是「当前关卡解锁了什么」。
+         * 带 `--no-cutquad` 时连 `CwCwCwCw` 都会被判 capped（实测），
+         * 那样给模型的结论就是「每层都解不出」—— 比不给还糟，因为它会放弃。 */
+        const r = probe(shape, []);
+        /* ★ 一层解不出时，再把这一层按「每个象限」拆一次 ★
+         *
+         * `CbCbCbRb` 整体 capped，但它 3/4 的格子是同一个 `CbCbCb--` 图案。
+         * 把重复的象限合并成单格目标（`Cb------`）往往一下就解出来 ——
+         * 这样模型至少知道「第 1 层要的是一个蓝圆，铺 3 份，再加一个红方」，
+         * 而不是面对一整层的 capped。
+         *
+         * 只对 8 字符（单层 4 象限）形状做，别的形状原样返回。 */
+        let quads = null;
+        if (!r.ok && shape.length === 8) {
+            const pairs = [];
+            for (let i = 0; i < 8; i += 2) pairs.push(shape.slice(i, i + 2));
+            const uniq = [...new Set(pairs)];
+            if (uniq.length > 1) {
+                quads = uniq.map(u => {
+                    /* 单象限目标 = 该 pair + 6 个占位 '-'（共 8 字符）。
+                     * ★ 必须**不带**关卡门控参数 ★
+                     * L12 的门控是 `--no-cutquad`，而 cutquad 正是把完整形状切成
+                     * 单象限的那台机器。带上门控时 `Cb------` 恒 capped（实测 expanded
+                     * 45877 仍解不出），去掉就秒解。象限探测问的是「这个图案本身能不能
+                     * 做出来」，和当前关卡解锁了什么无关。 */
+                    const q = probe(u + "------", []);
+                    return { shape: u, ok: q.ok, steps: q.steps };
+                });
+            }
+        }
+        out.push({ shape, ok: r.ok, steps: r.steps, ...(quads ? { quads } : {}) });
+    }
+    return out.some(l => l.ok || (l.quads && l.quads.some(q => q.ok))) ? out : null;
 }
 
 /**
@@ -263,7 +379,10 @@ export function recipeFor(goalShape, opts = {}) {
             reason: r.reason || "unknown",
             level,
             gated,
-            ...(r.capped === true ? { capped: true, stats: r.stats || null, hint: r.hint || null } : { capped: false }),
+            ...(r.capped === true
+                ? { capped: true, stats: r.stats || null, hint: r.hint || null,
+                    ...(Array.isArray(r.layers) ? { layers: r.layers } : {}) }
+                : { capped: false }),
         };
     }
 
