@@ -1113,7 +1113,20 @@ export function connect(a, b, c, d) {
         return failure({
             code: "port_already_bound", field: "from.port",
             message: `from 的端口 ${describePort(spf.port)} 已经有带子接货，再连一条会让旧的饿死`,
-            hint: "确实要抢过来就传 opts.rebind=true（接受旧支路断流）。",
+            /* ★ hint 不能无条件推荐 rebind ★
+             *
+             * 原来这句只有「传 opts.rebind=true」。实测（r-20261118173404-ef9e）：
+             * 模型照做，`rebind` 让 connect 成功了，但预演报
+             * 「到 hub 的带子 596 → 539（-57，10%），死带子 107 → 167」，
+             * 整个计划被 PLAN_REJECTED 拦下 —— 那个端口上接的是一条活干线。
+             *
+             * 也就是说：**这条 hint 在建议一个会拆掉世界的动作**，
+             * 而模型没有别的信息来判断该不该抢。现在把代价说清楚，
+             * 并把「换个端口 / 换个源」列为优先选项。 */
+            hint: `这个端口已经有一条带子在接货，抢过来它就会断流。`
+                + `**优先换个端口或换个源**（同一个机器往往还有另一个 ejector，见该机器的端口列表）。`
+                + `确实要抢，才传 opts.rebind=true —— 但预演会按「拆掉几条活带」算净效果，`
+                + `如果它连着到 hub 的干线，整个计划会被拒（那不是 bug，是在保护你的世界）。`,
         });
     }
     /* 宿端：逐候选检查，只丢掉"已被供料"的那个入口，而不是整单失败 ——
