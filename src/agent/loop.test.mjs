@@ -39,6 +39,7 @@ import {
     fakeTx, readTranscript, RUN_KINDS, HALT_REASONS, sha256, verifyMacroTokenCoords,
 } from "./loop.mjs";
 import { DIAG_CODES, BUDGET } from "./loop/constants.mjs";
+import { buildHandles } from "./loop/handles.mjs";
 import { phaseTwoVerdict } from "./loop/offline_boundary.mjs";
 import { MockLLMClient, LLMClient, MockExhausted } from "./loop/llm.mjs";
 import FakeGame from "./fake_game.mjs";
@@ -123,16 +124,43 @@ class ScriptedClient extends LLMClient {
     }
 }
 
-/** L4 的正解计划（句柄来自 handles.mjs 的确定性编号：B81/B82/B69 是那三条待改造带子）。 */
-const L4_CALL = {
-    macro: "replace_run",
-    args: {
-        region: { $bbox_of: ["B81", "B82", "B69"] },
-        building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }],
-    },
-    why: "that run is only belts and forms a rectangle",
-};
-const L4_PLAN = JSON.stringify({ say: "swap the run for a cutter and a trash", calls: [L4_CALL] });
+/** L4 的正解计划。
+ *
+ * ★ 句柄必须**运行时查**，不能写死 ★
+ *
+ * 原来这里写死 `["B81","B82","B69"]`，注释说「句柄来自 handles.mjs 的确定性编号」。
+ * 但那个「确定性」只在**同一份 obs** 内成立 —— `buildHandles` 每轮重建，
+ * 编号规则一变（或世界一变），B81 就指向别的带子了。
+ * 实测：`B107` 在不同轮次指向过 46 个不同 uid。
+ *
+ * 写死句柄的测试一直靠运气通过：恰好那三条带子排在第 81/82/69 位。
+ * 现在改成按**位置**查出那三条带子（用它们的 (x,y) 定位，那是世界的真值），
+ * 再取当前句柄 —— 编号怎么排都不影响。
+ */
+function l4ReplaceCall() {
+    /* ⚠️ `L4` 是**文件路径**（第 51 行），不是 obs 对象 —— 直接传给 `buildHandles`
+       会拿到空表，`picks` 为空，`$bbox_of([])` 于是被拒。必须先读文件取 `.result`。 */
+    const obs = JSON.parse(fs.readFileSync(L4, "utf8")).result;
+    /* 那三条待改造的带子：原注释写的是「B69/B81/B82 是 x=4 上 y=-14..-13 的两格
+       + x=5 上 y=-13 的一格（一条拐弯的链段）」—— 按这个描述取坐标，
+       顺序也保持一致（(4,-14) → (4,-13) → (5,-13)）。 */
+    const WANT = [[4, -14], [4, -13], [5, -13]];
+    const t = buildHandles(obs, null);
+    const picks = [];
+    for (const [wx, wy] of WANT) {
+        const hit = [...t.byHandle.values()].find(e => e.x === wx && e.y === wy);
+        if (hit) picks.push(hit.handle);
+    }
+    return {
+        macro: "replace_run",
+        args: {
+            region: { $bbox_of: picks },
+            building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }],
+        },
+        why: "that run is only belts and forms a rectangle",
+    };
+}
+const L4_PLAN = () => JSON.stringify({ say: "swap the run for a cutter and a trash", calls: [l4ReplaceCall()] });
 
 /** 在临时目录写一个单场景夹具，返回 {dir, scenario}。 */
 function writeScenario(texts) {
@@ -217,7 +245,7 @@ console.log("\n── 1. 正常路径（真 FakeGame + 真宏 + 真 verify） �
     const res = await runLoop({
         reader: readerWithRebuiltPaths(g),
         goal: "RuRu----",
-        llmClient: new ScriptedClient([L4_PLAN]),
+        llmClient: new ScriptedClient([L4_PLAN()]),
         mode: "mock",
         runDir: dir,
         game: g,
@@ -327,7 +355,7 @@ console.log("\n── 2. run_end 必写（注入会在 verify 阶段炸的 reade
     };
     const res = await runLoop({
         reader, goal: "RuRu----",
-        llmClient: new ScriptedClient([L4_PLAN]),
+        llmClient: new ScriptedClient([L4_PLAN()]),
         mode: "mock", runDir: dir, game: g,
         budget: { TICKS_MAX: BUDGET.TICKS_MAX },
     });
@@ -427,7 +455,7 @@ console.log("\n── 4. 坐标禁令 ──");
     const gB = l4Game();
     const resB = await runLoop({
         reader: gB.reader(), goal: "RuRu----",
-        llmClient: new ScriptedClient([{ say: "move it to 4, -13 please", calls: [L4_CALL] }]),
+        llmClient: new ScriptedClient([{ say: "move it to 4, -13 please", calls: [l4ReplaceCall()] }]),
         mode: "mock", runDir: dirB, game: gB,
     });
     eq(resB.tx_count, 0, "say 夹带坐标 ⇒ 0 次 tx");
@@ -680,7 +708,7 @@ console.log("\n── 7. offline_boundary 生效 ──");
     const g = l4Game();
     const res = await runLoop({
         reader: readerWithRebuiltPaths(g), goal: "RuRu----",
-        llmClient: new ScriptedClient([L4_PLAN]),
+        llmClient: new ScriptedClient([L4_PLAN()]),
         mode: "mock", runDir: dir, game: g,
     });
     const re = runEnd(res);
@@ -726,7 +754,7 @@ console.log("\n── 8. transcript 可回放 ──");
     const g = l4Game();
     const res = await runLoop({
         reader: readerWithRebuiltPaths(g), goal: "RuRu----",
-        llmClient: new ScriptedClient([L4_PLAN]),
+        llmClient: new ScriptedClient([L4_PLAN()]),
         mode: "mock", runDir: dir, game: g,
     });
     const rows = transcriptOf(res);
@@ -786,7 +814,7 @@ console.log("\n── 9. plan 阶段的两道关（负例） ──");
         "★ LLM_ARGS 的候选是该宏自身（可重试，不是一次就死）", r3.diagnosis.candidates);
 
     /* 9d：溯源 —— 每条 op 都必须有 provenance；删掉一条就是 MISSING_PROVENANCE */
-    const good = buildTxPlan(JSON.parse(L4_PLAN), g.obs, null, tbl);
+    const good = buildTxPlan(JSON.parse(L4_PLAN()), g.obs, null, tbl);
     eq(good.ok, true, "（前置）正解计划通过 plan 阶段");
     ok(good.txPlan.ops.every(o => o.provenance), "每条 op 都有 provenance", good.txPlan.ops);
     const stripped = {
@@ -885,7 +913,7 @@ console.log("\n── 12. dry-run ──");
     const g = l4Game();
     const res = await runLoop({
         reader: g.reader(), goal: "RuRu----",
-        llmClient: new ScriptedClient([L4_PLAN]),
+        llmClient: new ScriptedClient([L4_PLAN()]),
         mode: "mock", runDir: dir, game: g, dryRun: true,
     });
     eq(res.reason, "DRY_RUN", "reason = DRY_RUN");

@@ -50,8 +50,18 @@ gui/mcp-config.generated.json
 # 写作时误产生的 Windows 设备名文件（`> nul` 的 shell 残留）
 nul
 
-# 运行产物：每次 run 的 transcript/timeline，机器相关、无移植价值
-research/ai-plan/runs/
+# 运行产物：每次 run 的完整快照（observations / tx / verify 的原始 JSON）
+# —— 这些是**机器相关的大文件**（339 MB / 541 个 run），复现应重跑而不是提交数据。
+#
+# ★ 但 timeline.log **不在此列** —— 它是「AI 怎么想的」唯一的人类可读记录：
+#   每轮的模型原话（`say`）、每个调用的理由（`why`）、净效果判定、被拒原因。
+#   用户明确要求「复盘应该做成 log 形式，而不是没了以后日志也没了」。
+#
+#   ⚠️ 不能用 `runs/**/*` + `!runs/**/timeline.log` —— git 一旦排除了父目录
+#   就不会再进去看 `!` 规则。必须**逐层**排除：先忽略目录下的文件，
+#   再单独放行 log。
+research/ai-plan/runs/*/*.json
+research/ai-plan/runs/*/*.jsonl
 research/ai-plan/tmp/
 dist/
 
@@ -111,3 +121,4 @@ research/ai-player/facts/live/
 .agent-driver.log
 .agent-verify.log
 .v-*.json
+research/ai-plan/runs/*.json

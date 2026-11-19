@@ -45,6 +45,15 @@ const read = f => {
 };
 const l4 = read("L4-obs.json");
 const t4 = buildHandles(l4, null);
+/* 按坐标查句柄：坐标是世界的真值，编号只是它的投影。
+   句柄编号已从「按 (y,x)」改成「按 uid」（旧规则让同一句柄在不同轮次
+   指向不同实体 —— 实测 B107 指过 46 个不同 uid），所以写死句柄的断言
+   会随编号规则失效，而那与被测的几何逻辑无关。 */
+const handleAt = (x, y) => {
+    const hit = [...t4.byHandle.values()].find(e => e.x === x && e.y === y);
+    if (!hit) throw new Error(`no entity at ${x},${y}`);
+    return hit.handle;
+};
 
 /* 「这 3 条带子」—— 阶段 2 唯一需要的外部输入（`coldstart_l4.test.mjs` 的 WANT_UIDS） */
 const WANT_UIDS = [10143, 10209, 10149];
@@ -407,12 +416,22 @@ console.log("\n── 8. $path_of ──");
     const { pathOf, footprintCells } = await import("./handles.mjs");
     const { PATH_PROVENANCE_PREFIX } = await import("./coords.mjs");
     const uidOf = h => t4.byHandle.get(h).uid;
+    /* ★ 句柄名不能写死 ★
+     *
+     * 原来这里写 `[handleAt(4,-14), handleAt(4,-13), handleAt(5,-13)]`，隐含依赖「编号 = (y,x) 排序」。
+     * 而编号已改成按 uid（因为旧规则让同一句柄在不同轮次指向不同实体 ——
+     * 实测 `B107` 指过 46 个不同 uid）。写死句柄的测试会随编号规则变化而失效，
+     * 而那与被测的几何逻辑毫无关系。
+     *
+     * 改成按**坐标**查句柄：坐标是世界的真值，编号只是它的投影。 */
+    /* 那条拐弯的链段：x=4 上 y=-14..-13 的两格 + x=5 上 y=-13 的一格 */
+    const BEND = [handleAt(4, -14), handleAt(4, -13), handleAt(5, -13)];
 
     /* ── 8.1 精确格集：不含额外的格子 ──
        `B69/B81/B82` 是 x=4 上 y=-14..-13 的两格 + x=5 上 y=-13 的一格（一条拐弯的链段）。
        外接矩形是 2×2 = 4 格，实际只有 3 格 —— 这正是 #5 那次「多框了一格」的形态。 */
     {
-        const p = pathOf(["B69", "B81", "B82"].map(uidOf), l4);
+        const p = pathOf(BEND.map(uidOf), l4);
         jEq(p.cells, [[4, -14], [4, -13], [5, -13]], "$path_of 给精确格集（3 格，按输入顺序展开 footprint）");
         eq(p.cells.length, 3, "格集恰好 3 格（不是矩形的 4 格）");
         eq(p.area, 4, "外接矩形面积 4 —— 与格集长度不等，说明确实有缺口");
@@ -424,9 +443,9 @@ console.log("\n── 8. $path_of ──");
 
     /* ── 8.2 对照：同样的输入交给 $bbox_of，得到更大的矩形 ── */
     {
-        const bb = bboxOf(["B69", "B81", "B82"].map(uidOf), l4);
+        const bb = bboxOf(BEND.map(uidOf), l4);
         jEq(bb, [4, -14, 5, -13], "$bbox_of 同样的输入 → 2×2 矩形（含没被点名的 (5,-14)）");
-        const p = pathOf(["B69", "B81", "B82"].map(uidOf), l4);
+        const p = pathOf(BEND.map(uidOf), l4);
         ok(bb[0] === p.region[0] && bb[1] === p.region[1] && bb[2] === p.region[2] && bb[3] === p.region[3],
             "（对照）两者的 region/bbox 数值相同 —— 差别只在『格集有没有填满它』");
         ok(p.cells.length < p.area, "（对照）bbox 覆盖 4 格而输入只有 3 格：多出的那一格就是 bbox 的病根");
@@ -434,7 +453,7 @@ console.log("\n── 8. $path_of ──");
 
     /* ── 8.3 直线连续链：两者等价（避免「$path_of 处处更严」的误解） ── */
     {
-        const hs = ["B97", "B90", "B81"].map(uidOf);
+        const hs = [handleAt(4,-11), handleAt(4,-12), handleAt(4,-13)].map(uidOf);
         const p = pathOf(hs, l4);
         jEq(p.cells, [[4, -11], [4, -12], [4, -13]], "直线段：格集 = 3 格");
         eq(p.contiguous, true, "直线段：contiguous:true（可以投影成 region）");
@@ -443,7 +462,7 @@ console.log("\n── 8. $path_of ──");
 
     /* ── 8.4 并排 2×2：格集恰好填满 → 可以投影（这不是「非连续」） ── */
     {
-        const p = pathOf(["B69", "B70", "B81", "B82"].map(uidOf), l4);
+        const p = pathOf([handleAt(4,-14), handleAt(5,-14), handleAt(4,-13), handleAt(5,-13)].map(uidOf), l4);
         eq(p.cells.length, 4, "并排两条链各取 2 格 = 4 格");
         eq(p.area, 4, "外接矩形也是 4 格");
         eq(p.contiguous, true, "★ 恰好填满 ⇒ contiguous:true（判据是『填满矩形』，不是『同一条链』）");
@@ -453,7 +472,7 @@ console.log("\n── 8. $path_of ──");
     /* ── 8.5 关键负例：不连续的格集 → 必须报错，**不能**返回把它们都包住的矩形 ──
        `B69`(4,-14) 与 `B112`(4,-9) 之间隔着 4 条带子。若实现返回 region，那就是静默扩大 = bug。 */
     {
-        const hs = ["B69", "B112"].map(uidOf);
+        const hs = [handleAt(4,-14), handleAt(4,-9)].map(uidOf);
         const p = pathOf(hs, l4);
         eq(p.cells.length, 2, "格集只有 2 格（B69 与 B112）");
         eq(p.area, 6, "外接矩形 6 格（纵向 y=-14..-9）");
@@ -464,7 +483,7 @@ console.log("\n── 8. $path_of ──");
 
         /* 走完整的 resolveRefs：region 参数**必须**红，且 calls 里不能留下这条调用 */
         const bad = resolveRefs({
-            calls: [{ macro: "replace_run", args: { region: { $path_of: ["B69", "B112"] }, building: "belt" } }],
+            calls: [{ macro: "replace_run", args: { region: { $path_of: [handleAt(4,-14), handleAt(4,-9)] }, building: "belt" } }],
         }, t4, l4);
         ok(!bad.ok, "★ 不连续选区喂给 replace_run.region ⇒ 解析失败（不是静默扩成矩形）", bad.violations);
         ok(bad.violations.some(v => v.rule === "PATH_NOT_RECT"), "★ 报的是 PATH_NOT_RECT（专用码）",
@@ -482,16 +501,16 @@ console.log("\n── 8. $path_of ──");
         const r = resolveRefs({
             calls: [{
                 macro: "replace_run",
-                args: { region: { $path_of: ["B69", "B70", "B81", "B82"] }, building: "belt" },
+                args: { region: { $path_of: [handleAt(4,-14), handleAt(5,-14), handleAt(4,-13), handleAt(5,-13)] }, building: "belt" },
             }],
         }, t4, l4);
         ok(r.ok, "连续 $path_of → replace_run 解析为绿", r.violations);
         jEq(r.calls[0].args.region, [4, -14, 5, -13], "region 投影成 4 元闭区间（宏只吃这个形态）");
-        eq(r.calls[0].provenance.region, `computed:path_of[B69,B70,B81,B82]`,
+        eq(r.calls[0].provenance.region, `computed:path_of[${[handleAt(4,-14),handleAt(5,-14),handleAt(4,-13),handleAt(5,-13)].join(",")}]`,
             "provenance 是 computed:path_of[…]，存的是句柄不是坐标");
         ok(PROVENANCE_RE.test(r.calls[0].provenance.region), "path_of 标签形态合法");
         jEq(assertNoHumanCoords({
-            calls: [{ macro: "replace_run", args: { region: { $path_of: ["B69", "B70"] }, building: "belt" } }],
+            calls: [{ macro: "replace_run", args: { region: { $path_of: [handleAt(4,-14), handleAt(5,-14)] }, building: "belt" } }],
         }, t4), { ok: true, violations: [], rulesRun: ["V1", "V2", "V3", "V4", "V5", "V6"], rulesSkipped: [] },
         "V1 白名单放行 $path_of 的句柄数组（不误判成字面坐标）");
     }
@@ -499,11 +518,11 @@ console.log("\n── 8. $path_of ──");
     /* ── 8.7 Cell[] 参数：投影成精确格集（remove_run.cells 本来就允许稀疏） ── */
     {
         const r = resolveRefs({
-            calls: [{ macro: "remove_run", args: { cells: { $path_of: ["B69", "B81", "B82"] } } }],
+            calls: [{ macro: "remove_run", args: { cells: { $path_of: [handleAt(4,-14), handleAt(4,-13), handleAt(5,-13)] } } }],
         }, t4, l4);
         ok(r.ok, "Cell[] 位置接受非连续格集（不需要矩形）", r.violations);
         jEq(r.calls[0].args.cells, [[4, -14], [4, -13], [5, -13]], "cells 拿到的是精确格集（3 格）");
-        eq(r.calls[0].provenance.cells, "computed:path_of[B69,B81,B82]", "cells 的 provenance 同样是 path_of");
+        eq(r.calls[0].provenance.cells, `computed:path_of[${[handleAt(4,-14),handleAt(4,-13),handleAt(5,-13)].join(",")}]`, "cells 的 provenance 同样是 path_of");
         /* 但真正的宏要 3 格都是带子 —— 这几格确实是，所以能过 */
         const lint = r.calls.length === 1 && Array.isArray(r.calls[0].args.cells) && r.calls[0].args.cells.length === 3;
         ok(lint, "cells 形态完整（长度为 3，不是矩阵）");
@@ -511,7 +530,7 @@ console.log("\n── 8. $path_of ──");
 
     /* ── 8.8 用错位置：$path_of 给一个非坐标参数 → REF_SHAPE ── */
     {
-        const r = resolveRefs({ calls: [{ macro: "remove_run", args: { uids: { $path_of: ["B69"] } } }] }, t4, l4);
+        const r = resolveRefs({ calls: [{ macro: "remove_run", args: { uids: { $path_of: [handleAt(4,-14)] } } }] }, t4, l4);
         ok(!r.ok && r.violations.some(v => v.rule === "REF_SHAPE"),
             "负例：$path_of 用在 uids（身份参数）上 → REF_SHAPE", r.violations.map(v => v.rule));
         eq(r.calls.length, 0, "负例：没有 call 溜过去");
@@ -526,7 +545,7 @@ console.log("\n── 8. $path_of ──");
         ok(!e2.ok && e2.violations.some(v => v.rule === "V5"), "负例：$path_of 幻觉句柄 → V5", e2.violations);
         /* V6 也认它（否则「未知算子」与「已知算子」的边界会说两套话） */
         ok(Object.values(COORD_SOURCES).includes("$path_of"), "COORD_SOURCES 里有 $path_of（V6 的放行名单从它派生）");
-        const e3 = assertNoHumanCoords({ calls: [{ macro: "replace_run", args: { region: { $path_of: ["B69"] } } }] }, t4);
+        const e3 = assertNoHumanCoords({ calls: [{ macro: "replace_run", args: { region: { $path_of: [handleAt(4,-14)] } } }] }, t4);
         ok(e3.ok, "assertNoHumanCoords 对 $path_of 不报 V6", e3.violations);
     }
 
@@ -535,7 +554,7 @@ console.log("\n── 8. $path_of ──");
         const plan = {
             calls: [{
                 macro: "replace_run",
-                args: { region: { $path_of: ["B69", "B70", "B81", "B82"] }, building: "belt" },
+                args: { region: { $path_of: [handleAt(4,-14), handleAt(5,-14), handleAt(4,-13), handleAt(5,-13)] }, building: "belt" },
             }],
         };
         const res = resolveRefs(plan, t4, l4);
@@ -619,13 +638,13 @@ console.log("\n── 9. 变异：连续性检查恒真 → 必须被抓 ──"
         ok(typeof M.pathOf === "function", "变异体可加载（pathOf 存在）");
 
         /* ① 先确认变异体**真的**改变了行为：同一个非连续输入被判 contiguous:true */
-        const pm = M.pathOf(["B69", "B112"].map(h => t4.byHandle.get(h).uid), l4);
+        const pm = M.pathOf([[4,-14],[4,-9]].map(([x,y]) => [...t4.byHandle.values()].find(e=>e.x===x&&e.y===y).uid), l4);
         eq(pm.contiguous, true, "★ 变异体：不连续选区被判 contiguous:true（说明变异生效）");
 
         /* ② 原实现下 resolveRefs 必红，变异体下同样的计划必绿 —— 两条都要断言。
               只断言 ② 不够：原实现若也绿，这个测试就是恒真的。 */
         const mkPlan = () => ({
-            calls: [{ macro: "replace_run", args: { region: { $path_of: ["B69", "B112"] }, building: "belt" } }],
+            calls: [{ macro: "replace_run", args: { region: { $path_of: [handleAt(4,-14), handleAt(4,-9)] }, building: "belt" } }],
         });
         const real = resolveRefs(mkPlan(), t4, l4);
         ok(!real.ok && real.violations.some(v => v.rule === "PATH_NOT_RECT"),

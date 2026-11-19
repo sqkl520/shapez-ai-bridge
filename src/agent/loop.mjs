@@ -423,16 +423,44 @@ class Timeline {
     constructor(dir) {
         this.file = path.join(dir, "timeline.log");
         this.lines = [];
+        /* ★ 立刻落盘，不再攒到最后 ★
+         *
+         * 原来是 `push()` 攒内存、`flush()` 一次性写。后果：**进程崩溃 = 日志全丢**，
+         * 而 transcript 还在。实测三个 run 就是这么丢掉人读记录的
+         * （r-20261112135950-ca86 / r-20261115153214-82b8 / r-20261118122101-e997
+         * 都跑了 2–4 轮、有 plan 和 apply，但 timeline.log 一个字都没留下）。
+         *
+         * 用户的要求是「不是没了以后日志也没了」—— 一个缓冲到最后的日志设计
+         * 恰恰在最需要它的时候（崩溃）什么都不留。所以改成 push 即追加。
+         *
+         * 代价：每个 run 多几百次小 write。timeline 单个不到 9 KB，
+         * 这点 I/O 与一轮 LLM 调用（几秒）比可以忽略。
+         * 仍然全部包在 try/catch 里 —— 日志不该有搞坏 run 的能力。 */
+        try {
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(this.file, "", "utf8");   // 先清空，免得和旧内容混
+            this.live = true;
+        } catch { this.live = false; }
     }
 
     /** 追加若干行。**任何失败都吞掉**：这不是证据源，不该有能力搞坏一次 run。 */
     push(...lines) {
-        for (const l of lines) if (typeof l === "string") this.lines.push(l);
+        for (const l of lines) {
+            if (typeof l !== "string") continue;
+            this.lines.push(l);
+            if (this.live) {
+                try { fs.appendFileSync(this.file, l + "\n", "utf8"); }
+                catch { this.live = false; }   // 落盘失败就退回纯内存，flush 时再试一次
+            }
+        }
     }
 
     flush() {
         try {
+            /* 已经逐行追加过；这里只在「落盘失败退回内存」时补写 */
+            if (this.live) return this.file;
             fs.writeFileSync(this.file, this.lines.join("\n") + "\n", "utf8");
+            this.live = true;
             return this.file;
         } catch { return null; }
     }
@@ -3077,6 +3105,42 @@ export async function runLoop(opts = {}) {
     const settleFailure = (diagnoses, macros, roundNo, phase) => {
         st.diagnoses = diagnoses;
         st.lastMacros = Array.isArray(macros) ? macros.slice() : [];
+        /* ★ 失败必须进 timeline —— 否则日志只剩「成功做了什么」★
+         *
+         * 用户要求：「复盘 AI 怎么想的应该做成 log 形式，而不是没了以后日志也没了」。
+         *
+         * 而实测（2026-11-19）：`timeline.log` 里**完全没有记录被拒的计划**。
+         * 541 个 run 里 1466 次 plan 被拒 vs 1010 次 apply 成功 ——
+         * **59% 的动作根本没落地**，而那 59% 在日志里一个字都没有。
+         *
+         * 恰恰是这部分最该复盘：模型想做什么、被什么拦住、它下一轮有没有换招。
+         * 所以把「这一轮失败了、为什么」也写成人话。 */
+        try {
+            const d0 = Array.isArray(diagnoses) && diagnoses[0] ? diagnoses[0] : null;
+            const code = d0 && d0.code ? d0.code : "?";
+            const calls = (Array.isArray(macros) ? macros : []).join(",") || "none";
+            /* ★「未落地」只对 apply/parse 成立；verify 是另一回事 ★
+             *
+             * 实测（验证 agent）：**24/24 个 `[verify]` 标记都紧跟在
+             * `tx ✓ applied 2/2` 下面**，却写着「调用 replace_run 未落地」——
+             * 上一行刚说它落地了。线性读日志的人会被直接带反。
+             *
+             * 真相是：verify 失败**不是「没落地」**，是「落地了但没达成目标」。
+             * 同一个 `settleFailure` 被两个语义完全不同的阶段共用，
+             * 而我只写了一套措辞。现在按阶段分开说。 */
+            if (phase === "verify") {
+                tl.push(`    ✗ 本轮未通过 [verify] ${code}  （tx 已落地，是世界没达成目标）`);
+                tl.push(`      本轮调用 ${calls}`);
+            } else {
+                tl.push(`    ✗ 未落地 [${phase}] ${code}  调用 ${calls}`);
+            }
+            if (d0 && typeof d0.observed === "string" && d0.observed) {
+                tl.push(`      ${d0.observed.slice(0, 200)}`);
+            }
+            if (d0 && typeof d0.hint === "string" && d0.hint) {
+                tl.push(`      → ${d0.hint.slice(0, 200)}`);
+            }
+        } catch { /* 日志不该有能搞坏 run 的能力 */ }
         /* ★ 失败的这一轮也要写进 `lastPlanSummary` ★
          *
          * 原来这里只写 transcript 的 `repair_decide`，不更新 `lastPlanSummary`。
@@ -3274,20 +3338,34 @@ export async function runLoop(opts = {}) {
                这个错误在第一次端到端跑里立刻现形了（timeline 里连着两条 inert）。 */
             let roundNetEffect = null;
             const beforeSnapshot = st.healthBefore;
+            /* ★ 上一轮的净效果必须排在**上一轮**下面，不是这一轮的标题下 ★
+             *
+             * 原来是先 `tl.push("── r${roundNo}")` 再算上一轮的 delta ——
+             * 于是 r1 的结果被写在了 r2 的标题下面。实测（验证 agent）：
+             *
+             *   ── r2  …  带上货 377
+             *         ▲ items_on_belts 375→377(+2)
+             *       净效果: cleanup …
+             *
+             * 那两行是 **r1** 的结果。按标题数效果的人，每一轮都会错位一格。
+             * 现在把 delta/净效果先写，再写本轮标题。 */
+            if (beforeSnapshot) {
+                const dd0 = healthDelta(beforeSnapshot, healthNow);
+                const ne0 = classifyNetEffect(beforeSnapshot, healthNow, dd0);
+                /* 这两个值下面还要用（st.netEffects / markRunLog），
+                   所以算一次、存起来，下面复用而不是重算 —— 重算会得到同一个数，
+                   但多算一遍意味着两处可能漂移。 */
+                roundNetEffect = ne0;
+                st.netEffects.push({ round: roundNo, kind: ne0.kind, why: ne0.why });
+                markRunLog(roundNo, ne0.kind);
+                tl.push(`      ${formatDelta(dd0)}`);
+                tl.push(`    ${formatNetEffect(ne0)}`);
+            }
             tl.push(`── r${roundNo}  ${formatHealth(healthNow)}`);
             if (beforeSnapshot) {
-                const dd = healthDelta(beforeSnapshot, healthNow);
-                roundNetEffect = classifyNetEffect(beforeSnapshot, healthNow, dd);
-                st.netEffects.push({ round: roundNo, kind: roundNetEffect.kind, why: roundNetEffect.why });
-                /* ★ 把真实净效果回填进 runLog（见 st.runLog 的注释）★
-                 *
-                 * 计划阶段只能记 `planned` —— 那时 tx 还没跑。
-                 * 下一轮渲染 `## THIS RUN` 时，模型需要看到的是「我那一轮**实际**做了什么」，
-                 * 而不是「我打算做什么」。没有这一次回填，整段就退化成意图列表，
-                 * 「说了要做 X、结果改坏了」这个最有价值的对照就消失了。 */
-                markRunLog(roundNo, roundNetEffect.kind);
-                tl.push(`      ${formatDelta(dd)}`);
-                tl.push(`    ${formatNetEffect(roundNetEffect)}`);
+                /* 净效果已在上面（标题之前）写过了，这里只保留 runLog 回填
+                   与 `lastNetEffect` 的更新 —— 不要再 push 一次，
+                   否则日志里每一轮会出现两遍同样的 delta。 */
                 /* ★ 撤销的观感优先级高于这一轮的 inert ★
                  *
                  * 撤销发生时我们把 `healthBefore` 也重置成了「撤销后的世界」，
@@ -3931,9 +4009,57 @@ export async function runLoop(opts = {}) {
                    它是排查时最有信息量的一行 —— 「它当时到底以为自己在干什么」。 */
                 if (parsed && parsed.ok && parsed.plan) {
                     const say = typeof parsed.plan.say === "string" ? parsed.plan.say.replace(/\s+/g, " ").trim() : "";
+                    /* ★ 参数必须进日志 —— 只写宏名等于什么都没说 ★
+                     *
+                     * 实测（验证 agent）：「调用 connect,connect,connect」+「tx ✓ applied 2/2」
+                     * 能看出它试了三次、成了两次，但**看不出它指的是哪些格子/端口**。
+                     * 而 L12 的全部失败模式就是端口绑定（`ambiguous_port` /
+                     * `port_already_bound`）—— 唯一能解释失败的那个字段恰好没打。
+                     *
+                     * 压缩成一行：`connect B107→C4{color,0}` 这种。
+                     * 只取 `from`/`to`/`at`/`uids`/`machine`/`facing` 这几个有信息量的键，
+                     * 其余丢掉 —— 这是给人读的，不是序列化。 */
+                    const brief = (v, depth = 0) => {
+                        if (v === null || v === undefined) return "?";
+                        if (typeof v === "string") return v;
+                        if (typeof v === "number" || typeof v === "boolean") return String(v);
+                        if (depth > 1) return "…";
+                        if (Array.isArray(v)) return `[${v.slice(0, 3).map(x => brief(x, depth + 1)).join(",")}${v.length > 3 ? ",…" : ""}]`;
+                        if (typeof v === "object") {
+                            if (typeof v.$ref === "string") return v.$ref;
+                            if (typeof v.$ore === "string") return `$ore:${v.$ore}`;
+                            if (v.port !== undefined) {
+                                const p = v.port;
+                                const ps = typeof p === "object" && p
+                                    ? `${p.role || ""}${p.index !== undefined ? `,${p.index}` : ""}`
+                                    : String(p);
+                                return `${brief(v.cell ?? v.uid ?? v.$ref ?? "?", depth + 1)}{${ps}}`;
+                            }
+                            if (v.cell !== undefined) return `@${brief(v.cell, depth + 1)}`;
+                            return Object.keys(v).slice(0, 3).map(k => `${k}:${brief(v[k], depth + 1)}`).join(",");
+                        }
+                        return String(v);
+                    };
+                    const argOf = (c) => {
+                        const a = (c && c.args) || {};
+                        const bits = [];
+                        if (a.from !== undefined) bits.push(brief(a.from));
+                        if (a.to !== undefined) bits.push("→" + brief(a.to));
+                        if (a.at !== undefined) bits.push("@" + brief(a.at));
+                        if (a.uids !== undefined) bits.push(`uids=${brief(a.uids)}`);
+                        if (a.region !== undefined) bits.push(`region=${brief(a.region)}`);
+                        if (a.machine !== undefined) bits.push(String(a.machine));
+                        if (a.facing !== undefined) bits.push(`facing:${a.facing}`);
+                        if (a.opts && typeof a.opts === "object") {
+                            const keys = Object.keys(a.opts).filter(k => a.opts[k] === true);
+                            if (keys.length) bits.push(`{${keys.join(",")}}`);
+                        }
+                        return bits.join(" ");
+                    };
                     const calls = (parsed.plan.calls || []).map(c => {
                         const w = typeof c.why === "string" && c.why.trim() ? `"${c.why.replace(/\s+/g, " ").trim()}"` : "";
-                        return `${c.macro}${w ? " " + w : ""}`;
+                        const args = argOf(c);
+                        return `${c.macro}${args ? " " + args : ""}${w ? " " + w : ""}`;
                     });
                     tl.push(`    模型 ${calls.join(" ; ") || "(无调用)"}${say ? `\n         say: ${say}` : ""}`);
                 } else if (code) {
@@ -4174,6 +4300,33 @@ export async function runLoop(opts = {}) {
                     });
                     st.diagnoses = [p.diagnosis];
                     st.lastMacros = parsed.plan.calls.map(c => c.macro);
+                    /* ★ plan 阶段被拒也必须进 timeline ★
+                     *
+                     * 这条路径**不走 `settleFailure`** —— 它自己设 st.* 然后 break，
+                     * 所以我在 settleFailure 里加的那段日志在这里永远不触发。
+                     * 实测（验证 agent）：4 个 run 里 **11 次 plan 被拒、0 条日志**；
+                     * 而 547 个 run 的语料里 plan 被拒有 1477 次，
+                     * 占全部失败的 57% —— **最该复盘的那一类，日志里一个字都没有**。
+                     *
+                     * 模型想做什么、被哪条闸拦、它拿到了什么提示 —— 这三样
+                     * 才是「AI 怎么想的」的核心，而现在只存在于机器格式里。 */
+                    try {
+                        const rej = p.diagnosis || {};
+                        tl.push(`    ✗ 未落地 [plan] ${rej.code || "?"}  调用 ${st.lastMacros.join(",") || "none"}`);
+                        if (typeof rej.observed === "string" && rej.observed) {
+                            tl.push(`      ${rej.observed.slice(0, 200)}`);
+                        }
+                        if (typeof rej.hint === "string" && rej.hint) {
+                            tl.push(`      → ${rej.hint.slice(0, 200)}`);
+                        }
+                        /* 哪一个调用真的失败了 —— 上面那段 `failures` 已经算过，
+                           这里只把结论摊到人读日志里。 */
+                        const ev = rej.evidence || {};
+                        const sk = Array.isArray(ev.skipped) ? ev.skipped : [];
+                        if (sk.length) {
+                            tl.push(`      跳过的调用 ${sk.map(s => `${s.macro}:${s.code || s.reason}`).join(", ")}`);
+                        }
+                    } catch { /* 日志不该有搞坏 run 的能力 */ }
                     /* plan 阶段被拒 ⇒ **一条 op 都没生成** ⇒ 没有任何宏真正执行过。
                        清空：下一轮的「必须换动作」不该剔除这些（它们没被检验过）。 */
                     st.lastExecutedMacros = [];

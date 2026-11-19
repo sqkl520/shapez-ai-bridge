@@ -100,7 +100,16 @@ ok(l4.goal.requirement.shape === "RuRu----" && l5.goal.requirement.shape === "Cu
 {
     const t = buildHandles(l5, l5items);
     const sorted = [...t.byHandle.values()].slice();
-    /* 按句柄的同类序号顺序取实体，检查 (y,x) 单调不减 —— 这是「先按 (y,x) 排序」的可执行判据 */
+    /* ★ 编号规则已从「按 (y,x)」改成「按 uid」★
+     *
+     * 旧判据（同类句柄按 (y,x) 递增）钉住的是**编号看起来整齐**，
+     * 而那个整齐性正是灾难的来源：`buildHandles` 每轮重建，
+     * 世界一变排序就变，所有序号整体平移。
+     * 实测：`B107` 在不同轮次指向过 **46 个**不同 uid，`B106` 指向过 28 个 ——
+     * 模型上一轮记住「B106 错了」，下一轮 B106 已是另一个东西。
+     *
+     * 现在钉住真正重要的性质：**同类句柄按 uid 递增**。
+     * 它保证「同一台机器在任何一轮都拿到同一个序号」。 */
     const byPrefix = new Map();
     for (const e of sorted) {
         const p = e.handle[0];
@@ -112,10 +121,33 @@ ok(l4.goal.requirement.shape === "RuRu----" && l5.goal.requirement.shape === "Cu
         list.sort((a, b) => Number(a.handle.slice(1)) - Number(b.handle.slice(1)));
         for (let i = 1; i < list.length; i++) {
             const a = list[i - 1], b = list[i];
-            if (b.y < a.y || (b.y === a.y && b.x < a.x)) broken.push([p, a.handle, b.handle]);
+            if (b.uid < a.uid) broken.push([p, a.handle + "@" + a.uid, b.handle + "@" + b.uid]);
         }
     }
-    ok(broken.length === 0, "同类句柄严格按 (y,x) 递增编号", broken);
+    ok(broken.length === 0, "同类句柄按 uid 递增编号（不是按 (y,x)）", broken);
+}
+
+{
+    /* ★ 跨轮稳定性：世界变了，旧句柄必须仍指旧对象 ★
+     *
+     * 这条是上面那个改动的**真正目的**。构造：在 l5 世界里加一条位置很靠前的带子，
+     * 然后断言原有实体的句柄一个都没变。
+     * 旧实现下这条必然失败（新带子挤进排序，后面全部 +1）。 */
+    const before = buildHandles(l5, l5items);
+    const extra = (l5.entities || []).slice();
+    /* 找世界的最上沿，在它之上再加一条 —— (y,x) 排序下这会挤到最前面 */
+    const minY = Math.min(...extra.map(e => e.y));
+    extra.push({ uid: 999001, type: "belt", x: 0, y: minY - 5, r: 0, rv: 0, code: 1, layer: "regular" });
+    const after = buildHandles({ ...l5, entities: extra }, l5items);
+
+    const shifted = [];
+    for (const [h, e] of before.byHandle) {
+        const h2 = after.byUid.get(e.uid);
+        if (h2 !== h) shifted.push(`${h}(uid${e.uid}) → ${h2}`);
+    }
+    ok(shifted.length === 0,
+        `加一条新带子后，已有实体的句柄必须不变（实得 ${shifted.length} 个移位：${shifted.slice(0, 5).join(", ")}）`,
+        shifted.slice(0, 10));
 }
 
 /* ═══════════ 3. resolveHandle ═══════════ */

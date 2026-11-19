@@ -4,10 +4,22 @@
     {
       "macro": "replace_run",
       "args": {
-        "region": { "$bbox_of": ["B69", "B81", "B82"] },
+        "region": {
+          "$bbox_of": [
+            "B105",
+            "B156",
+            "B111"
+          ]
+        },
         "building": [
-          { "kind": "cutter" },
-          { "kind": "trash", "port": "left", "confirm_waste": true }
+          {
+            "kind": "cutter"
+          },
+          {
+            "kind": "trash",
+            "port": "left",
+            "confirm_waste": true
+          }
         ]
       },
       "why": "those three belts are the run to convert; replace_run solves the machine origin and facing internally"

@@ -47,6 +47,17 @@ const g = FakeGame.fromFiles(path.join(REPO, "test/fixtures/saves/L4-obs.json"),
 const OBS = structuredClone(g.observe({ max_entities: 50000 }));
 const ITEMS = g.debugItems();
 const H = buildHandles(OBS, ITEMS);
+/* ★ 句柄名不能写死（2026-11-19）★
+   编号已从「按 (y,x)」改成「按 uid」—— 因为旧规则让同一句柄在不同轮次指向不同实体
+   （实测 B107 指过 46 个不同 uid）。写死句柄的测试会随编号规则失效，
+   而那与它要测的 bbox/path 语义毫无关系。按**坐标**查，坐标是世界的真值。 */
+const at = (x, y) => {
+    const hit = [...H.byHandle.values()].find(e => e.x === x && e.y === y);
+    if (!hit) throw new Error(`no entity at ${x},${y}`);
+    return hit.handle;
+};
+const BEND3 = () => [at(4, -14), at(4, -13), at(5, -13)];
+const BOX4 = () => [at(4, -14), at(5, -14), at(4, -13), at(5, -13)];
 
 /** 按 loop 的真实顺序走一遍：text → parse → coords → 宏 → planToTxOps → provenance */
 function pipeline(text, opts = {}) {
@@ -323,7 +334,7 @@ function provenanceOfOp(op, calls, txp, idx) {
         const text = JSON.stringify({
             calls: [{
                 macro: "replace_run",
-                args: { region: { $path_of: ["B69", "B81", "B82"] }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+                args: { region: { $path_of: BEND3() }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
             }],
         });
         const r = pipeline(text);
@@ -349,7 +360,7 @@ function provenanceOfOp(op, calls, txp, idx) {
         const text = JSON.stringify({
             calls: [{
                 macro: "replace_run",
-                args: { region: { $bbox_of: ["B69", "B81", "B82"] }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+                args: { region: { $bbox_of: BEND3() }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
             }],
         });
         const r = pipeline(text);
@@ -379,7 +390,7 @@ function provenanceOfOp(op, calls, txp, idx) {
         const text = JSON.stringify({
             calls: [{
                 macro: "replace_run",
-                args: { region: { $path_of: ["B69", "B81", "B82"] }, building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }] },
+                args: { region: { $path_of: BEND3() }, building: ["cutter", { kind: "trash", port: "left", confirm_waste: true }] },
             }],
         });
         const r = pipeline(text);
@@ -396,7 +407,7 @@ function provenanceOfOp(op, calls, txp, idx) {
         const text = JSON.stringify({
             calls: [{
                 macro: "replace_run",
-                args: { region: { $path_of: ["B69", "B70", "B81", "B82"] }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+                args: { region: { $path_of: BOX4() }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
             }],
         });
         const r = pipeline(text);
@@ -421,7 +432,7 @@ function provenanceOfOp(op, calls, txp, idx) {
         const text = JSON.stringify({
             calls: [{
                 macro: "replace_run",
-                args: { region: { $path_of: ["B69", "B70", "B81", "B82"] }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
+                args: { region: { $path_of: BOX4() }, building: ["cutter", { kind: "trash", port: "right", confirm_waste: true }] },
             }],
         });
         const r = pipeline(text);
