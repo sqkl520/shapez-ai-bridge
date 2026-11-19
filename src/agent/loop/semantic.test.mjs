@@ -1714,3 +1714,74 @@ test("HUB_FED_BY_COLOR：形状货不报（不能反向误报）", () => {
     assert.ok(!ds.some(d => d.code === "HUB_FED_BY_COLOR"),
         "形状货是合法的，不该报");
 });
+
+/* ═══════ hint 里给出的 insert_machine 示例必须语法正确 ═══════ */
+
+/**
+ * 实测（2026-11-19）：我给 `ORE_UNMINED` 写的 hint 教了
+ * `insert_machine {cell,machine:"miner",facing}` —— **`cell` 这个参数不存在**。
+ * 真机校验返回 `unknown_field: 不允许 cell；可用 at/facing/machine/opts`，
+ * 而 `unknown_field` 的候选表是空的 ⇒ 模型照着 hint 做就走进死路，
+ * 而且没有恢复路径。
+ *
+ * 这类缺陷的共性是：hint 是**自由文本**，没有任何东西校验它。
+ * 这条测试用一个小的模式匹配把 hint 里的示例抠出来，逐条过真校验器。
+ * 它抓不到所有形态，但能抓住「教了一个不存在的参数」这种最常见的错。
+ */
+
+/* ═══════ ORE_UNMINED 的 hint 必须教**能执行**的写法 ═══════ */
+
+/**
+ * 实测（2026-11-19）：第一版 hint 教 `insert_machine {cell,machine:"miner",facing}`。
+ * **`cell` 这个参数不存在** —— 真机校验返回
+ * `unknown_field: 不允许 cell；可用 at/facing/machine/opts`，
+ * 而 `unknown_field` 的候选表是空的 ⇒ 模型照做就走进没有恢复路径的死路。
+ *
+ * 同一版还有两处错：
+ *   · 「16 台矿机**全**在挖颜料」是假的（有一台踩在矩形矿上），与自己 evidence 矛盾；
+ *   · `spots` 为空时仍说「把矿机放到那个矿格上」，而根本没有那种矿
+ *     ⇒ 模型去 `$ore:"Su"` 拿到 `ORE_NOT_FOUND`，同样候选为空。
+ *
+ * 这条测试只盯这一条诊断的几处措辞 —— 不做通用语法解析。
+ * （试过写通用的「扫描所有 hint 里的示例」提取器，它自己成了 bug：
+ *  括号计数在 `{"$ore":"Cu"}` 处提前配平。不值得。）
+ */
+test("ORE_UNMINED hint 用 at:{$ore} 而不是不存在的 cell 参数", () => {
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            { uid: 2, type: "miner", x: 5, y: 5, r: 0, variant: "default", layer: "regular" },
+        ],
+        resources: [[-9, 3, "CuCuCuCu"], [2, -6, "RuRuRuRu"]],
+    };
+    const ds = semanticDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null),
+        { recipe: { ok: false }, level: 12 });
+    const d = ds.find(x => x.code === "ORE_UNMINED");
+    assert.ok(d, `没有矿机踩在圆形矿上时必须报 ORE_UNMINED（实得 ${JSON.stringify(ds.map(x => x.code))}）`);
+    const hint = String(d.hint || "");
+    assert.doesNotMatch(hint, /\{cell,/, "`cell` 不是合法参数，教它等于把模型送进死路");
+    assert.match(hint, /\{at:\{/, "正确写法是 {at:{$ore:...}}");
+    assert.match(hint, /\$ore/, "点名 $ore 让宏自己挑格子，不用模型写坐标");
+});
+
+test("ORE_UNMINED：描述当前状态时不能与自己的 evidence 矛盾", () => {
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            /* 这台踩在矩形矿上 —— 所以「全都在挖颜料」是假话 */
+            { uid: 2, type: "miner", x: 2, y: -6, r: 0, variant: "default", layer: "regular" },
+        ],
+        resources: [[-9, 3, "CuCuCuCu"], [2, -6, "RuRuRuRu"]],
+    };
+    const ds = semanticDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null),
+        { recipe: { ok: false }, level: 12 });
+    const d = ds.find(x => x.code === "ORE_UNMINED");
+    assert.ok(d);
+    /* evidence 说 1 台在形状矿上，文字就不能说「全在挖颜料」 */
+    assert.equal(d.evidence.miners_on_shape_ore, 1);
+    const text = `${d.hint} ${d.observed}`;
+    assert.doesNotMatch(text, /全在挖颜料|全都在挖颜料/,
+        `evidence 说有 1 台踩在形状矿上，文字说「全在挖颜料」是自相矛盾。实得：${text}`);
+});

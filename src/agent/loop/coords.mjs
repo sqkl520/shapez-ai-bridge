@@ -268,9 +268,20 @@ function checkRefShape(opKey, v, path, add) {
         const isPigment = typeof v === "string" && /^[a-z]{3,8}$/.test(v);
         /* ★ 复合矿名也要收（2026-11-15，L12）★
          *
-         * 后期关卡的矿大多是**复合矿**：一格上叠着好几种形状或颜料，
-         * 例如 `RuRuWuWu`（含 white）、`CuRuCuCu`、`RuCuCuRu`。
-         * 实测 L12 需要的 white 颜料只存在于复合矿里 —— 纯 white 矿根本不存在。
+         * 后期关卡的矿大多是**复合矿**：一格上叠着好几种形状，
+         * 例如 `CuRuCuCu`、`RuCuCuRu`、`RuRuWuWu` —— 这些是**形状**组合，
+         * 颜色码统一是 `u`（无色）。
+         *
+         * ★★ 更正（2026-11-19）：这段原来写「`RuRuWuWu`（含 white）」
+         * 和「white 颜料只存在于复合矿里」—— **两句都错** ★★
+         *
+         *   · `W` 是 windmill（风车）**形状**码，不是 white 颜色码；
+         *   · 白颜料**从来不是矿**：`internalGenerateColorPatch` 只生成
+         *     red / green（r>2 时加 blue），`enumColorMixingResults` 是按位或，
+         *     white = (red|green)|blue，必须**两次 mixer** 混出来。
+         *
+         * 这正是 memory 里 `shape-code-vs-color-code` 记过的混淆：
+         * 形状码大写、颜色码小写，是两套字母表，不是大小写关系。
          *
          * 旧判据只认 `Cu` / `red` 这种单色，于是模型看见了矿却**没有合法方式指定**，
          * 只能报错或者瞎猜。R1 就是这么被 `LLM_COORD` 拦下的：

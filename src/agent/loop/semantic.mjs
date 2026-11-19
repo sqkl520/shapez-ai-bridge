@@ -3358,6 +3358,124 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
     }
 
     /* ────────────────────────────────────────────────────────────────────
+     * ③c2 ORE_UNMINED —— **有矿，但没矿机在上面**
+     *
+     * 与 `ORPHAN_MACHINES` 正好相反：那条说的是「机器没接东西」，
+     * 这条说的是「矿没被机器接」。后者更根本 —— 机器可以再放，矿是固定的。
+     *
+     * 实测（2026-11-19，L12）：全图 3,481 格「含圆形」的矿，
+     * **0 台矿机在上面**；而目标 `CbCbCbRb:CwCwCwCw` 每一格都是圆形。
+     * 16 台矿机全在挖颜料（红 4 / 蓝 6 / 绿 4 / 钌 1）。
+     *
+     * 更尖锐的一例：矩形矿（`RuRuRuRu`）就在距 hub 8 格处，
+     * 一台矿机已经坐在上面 —— 但它的输出口朝右喷进空格，差**一条带子**。
+     * 也就是说「缺料」这件事，有时只差一格。
+     *
+     * 判据保守：只在**目标需要的形状**完全没被开采时报。
+     * 目标串里出现的形状码（R/C/S/W），逐个查「有没有矿机踩在含该形状的矿上」。
+     * 有矿图才算，没矿图不报（不猜）。
+     * ──────────────────────────────────────────────────────────────────── */
+    if (!o.truncated && engine && engine.ore instanceof Map && engine.ore.size) {
+        const SHAPE_NAME = { R: "rect", C: "circle", S: "star", W: "windmill" };
+        /* 目标里出现哪些形状码 */
+        const wantShapes = new Set();
+        for (const ch of String(goalShape).replace(/:/g, "")) {
+            if (SHAPE_NAME[ch]) wantShapes.add(ch);
+        }
+        if (wantShapes.size) {
+            const miners = idx.ent.filter(e => e && e.type === "miner");
+            /* 每台矿机脚下是什么矿 → 含哪些形状码 */
+            const minedShapes = new Set();
+            let minersOnShapeOre = 0;
+            for (const m of miners) {
+                const key = engine.ore.get(`${m.x},${m.y}`);
+                if (typeof key !== "string") continue;
+                let hit = false;
+                for (const [ch] of Object.entries(SHAPE_NAME)) {
+                    if (key.includes(ch)) { minedShapes.add(ch); hit = true; }
+                }
+                if (hit) minersOnShapeOre++;
+            }
+            const missing = [...wantShapes].filter(ch => !minedShapes.has(ch));
+            if (missing.length) {
+                /* 这些形状的矿在哪、最近的一格多远 */
+                const hub0 = idx.ent.find(e => e.type === "hub");
+                const spots = [];
+                for (const [cell, key] of engine.ore) {
+                    if (typeof key !== "string") continue;
+                    if (!missing.some(ch => key.includes(ch))) continue;
+                    const [x, y] = cell.split(",").map(Number);
+                    const d = hub0 ? Math.abs(x - hub0.x) + Math.abs(y - hub0.y) : 0;
+                    spots.push({ x, y, key, d });
+                }
+                spots.sort((a, b) => a.d - b.d);
+                const names = missing.map(ch => `${SHAPE_NAME[ch]}(${ch})`).join(" / ");
+                /* ★ 提示里的措辞必须**与 evidence 一致**，且语法必须可执行 ★
+                 *
+                 * 实测（验证 agent）抓出三个缺陷，都只在文案里：
+                 *
+                 * ① 原话「现在 16 台矿机**全**在挖颜料」是**假的** ——
+                 *    其中一台（16597）就踩在矩形矿上，与自己的
+                 *    `evidence.miners_on_shape_ore: 1` 自相矛盾。
+                 *    模型读字面会以为矩形也没人挖，而它其实只差一条带子。
+                 *
+                 * ② 原话教 `{cell,machine:"miner",facing}` —— **这个参数不存在**。
+                 *    真机校验返回 `unknown_field: 不允许 cell；可用 at/facing/machine/opts`，
+                 *    而 unknown_field 的候选表是空的 ⇒ 模型照着做就走进死路。
+                 *    本文件别处的正确写法是 `{at:{"$ore":"<前缀>"}}`（见上面 mixer 那段）。
+                 *
+                 * ③ `spots` 为空时仍然说「放到那个矿格上」—— 而根本没有那种矿。
+                 *    模型会去 `$ore:"Su"`，拿到 `ORE_NOT_FOUND`，候选表同样为空 ⇒ 停机。
+                 *
+                 * 另外：诊断行会过 `sanitize()`，坐标会被改写成 `[<coord>]`，
+                 * 所以**不要靠字面坐标传达位置** —— 用 `$ore` 让宏自己去挑格子。 */
+                const missingPrefixes = missing.map(ch => {
+                    /* 形状矿的 `$ore` 前缀用形状字母：`CuCuCuCu` → "Cu"，
+                       取矿种名头两个字符即可（矿表里形状矿都是 XX 重复或组合）。 */
+                    const hit = spots.find(s => s.key.includes(ch));
+                    return hit ? { ch, prefix: hit.key.slice(0, 2) } : null;
+                }).filter(Boolean);
+                const canPlace = missingPrefixes.length > 0;
+                out.push({
+                    code: "ORE_UNMINED",
+                    layer: "L4",
+                    severity: "blocker",
+                    subject: subjectOf(handles, hub0 && hub0.uid, "hub"),
+                    expected: `目标需要的形状 ${[...wantShapes].map(c => SHAPE_NAME[c]).join("/")} 各自至少有一台矿机在开采`,
+                    observed: `目标要 ${names}，但 ${miners.length} 台矿机里**没有一台**踩在含这些形状的矿上`
+                        + `（踩在形状矿上的只有 ${minersOnShapeOre} 台）`
+                        + (spots.length
+                            ? `；最近的一格这类矿距 hub ${spots[0].d} 格`
+                            : "；扫描范围内也找不到这类矿"),
+                    evidence: {
+                        handles: [subjectOf(handles, hub0 && hub0.uid, "hub").handle].filter(Boolean),
+                        uids: hub0 ? [hub0.uid] : [],
+                        tier: hub0 ? tierOf(hub0.uid) : null,
+                        missing_shapes: missing,
+                        miners_total: miners.length,
+                        miners_on_shape_ore: minersOnShapeOre,
+                        nearest: spots.slice(0, 4),
+                    },
+                    candidates: canPlace ? ["insert_machine", "connect"] : [],
+                    hint: canPlace
+                        ? `目标要 ${names}，而**没有一台矿机在挖这类矿**`
+                            + `（${miners.length} 台矿机里只有 ${minersOnShapeOre} 台踩在形状矿上，其余都在挖颜料）。`
+                            + `放一台上去：\`insert_machine {at:{"$ore":"${missingPrefixes[0].prefix}"}, `
+                            + `facing:<朝外>, machine:"miner"}\` —— \`$ore\` 会让宏自己挑一格矿，`
+                            + `不用你写坐标。放好再 \`connect\` 把输出接出去。`
+                            + `**在挖到目标形状的原料之前，改带子朝向不会有任何产出。**`
+                        /* spots 为空：不要说「去放矿机」，那是做不到的事。 */
+                        : `目标要 ${names}，而扫描范围内**根本没有这类矿**，`
+                            + `也没有任何矿机在挖它 —— 这不是放一台矿机能解决的。`
+                            + `换一条思路：先确认 goal 是不是抄错了形状码（形状码大写 R/C/S/W，`
+                            + `颜色码小写 r/g/b/y/p/c/w，两者是两套字母表），`
+                            + `或者扩大扫描半径看远处有没有这种矿。**别再改现有带子。**`,
+                });
+            }
+        }
+    }
+
+    /* ────────────────────────────────────────────────────────────────────
      * ③d UPGRADE_AVAILABLE —— hub 里存着的形状已经够买下一档升级
      *
      * 用户的原话：「AI 不会用更高级的方法提高效率」。

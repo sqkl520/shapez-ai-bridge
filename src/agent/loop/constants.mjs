@@ -105,6 +105,7 @@ export const DIAG_CODES = Object.freeze({
     CHAIN_UNFED: "L2: a belt run has no effective supply upstream (empty cell, a source that never ejects, or a barren miner)",
     WASTE_NO_SINK: "L3: a declared waste slot's run ends at {trash, empty, rejected} while the world has zero trash buildings",
     RAW_MATERIAL_MISSING: "L4: the recipe needs mine but the world has zero miners",
+    ORE_UNMINED: "L4: the goal needs a shape (rect/circle/star/windmill) that NO miner is standing on — the ore exists but nothing is extracting it",
 
     /* ── 语义层（P-a，`loop/semantic.mjs`） ──
      * 判据写在说明里（同上：码有名字、判据没字段 = 假绿）。
@@ -471,6 +472,11 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["insert_machine", 7],        // insert_machine 的 allowed 表里有 trash（place.mjs:378）
         ["connect", 4],
         ["trash_unused", 4],
+    ]),
+    /* 有矿没矿机：正解是放矿机，不是改带子。权重与 RAW_MATERIAL_MISSING 同级。 */
+    ORE_UNMINED: cand([
+        ["insert_machine", 10],
+        ["connect", 4],
     ]),
     RAW_MATERIAL_MISSING: cand([
         ["insert_machine", 9],        // 只有「放一台矿机」能修
