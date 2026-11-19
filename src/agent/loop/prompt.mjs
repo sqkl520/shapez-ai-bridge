@@ -2076,6 +2076,49 @@ export function renderCapacity(capacity, options = null, opts = {}) {
     if (processCap === null) return null;
     if (!(supply > 0) && processCap === 0) return null;
 
+    /* ★ 先问「有货在流吗」，再谈吞吐 ★
+     *
+     * 2026-11-20，L12 真机：CAPACITY 段理直气壮地说
+     *
+     *     supply 12.8/s | processing 0.25/s | 2% utilized
+     *     bottleneck: stacker — 98% of supply is stuck here
+     *     · add 51 stacker (1→52) ⇒ 13/s — fills the line
+     *
+     * 而同一轮的 `delivered_total` 是 `{}`、`produced_total` 是 `{}` ——
+     * **一件都没产出、一件都没交货**。在那种状态下，「98% 的供给堵在 stacker」
+     * 的分子和分母都是虚构的：没有一个 items/s 真的发生过。
+     *
+     * 这是整份 prompt 里**最有说服力**的一段（有数字、有对比、有可执行动作、
+     * 还有「fills the line」的承诺），而它把模型引向了「再铺 51 台 stacker」。
+     *
+     * 所以降级顺序是：**先确认有货在流，再谈瓶颈**。
+     *   · 产出与交付都空 ⇒ 吞吐数字毫无意义，整段改成「先让货动起来」
+     *   · 有产出但零交付 ⇒ 堵在**交付端**，加加工机器不解决问题
+     * 两种都要把可执行的下一步写清楚，而不是留一个漂亮的百分比。 */
+    const prod = (opts && opts.production && typeof opts.production === "object") ? opts.production : null;
+    if (prod) {
+        const sumOf = o => (o && typeof o === "object" && !Array.isArray(o))
+            ? Object.values(o).reduce((s, v) => s + (num(v) || 0), 0) : 0;
+        const produced = sumOf(prod.produced_total);
+        const delivered = sumOf(prod.delivered_total);
+        if (produced === 0 && delivered === 0) {
+            /* 注意措辞：不说「产能不够」，也不说「平衡」。世界的问题在别处。 */
+            const iso = num(cap.miners && cap.miners.isolated);
+            return "## CAPACITY\n"
+                + "no goods are moving at all — nothing produced, nothing delivered, "
+                + "so supply/processing rates describe a line that is not running. "
+                + "Do NOT add machines for throughput; first make one complete path carry items"
+                + (iso > 0 ? ` (${iso} miner(s) have no processor connected)` : "")
+                + ".";
+        }
+        if (produced > 0 && delivered === 0) {
+            return "## CAPACITY\n"
+                + `goods ARE being produced (${fmt(produced)} items in the window) but ZERO reach the hub — `
+                + "the blockage is at the DELIVERY end, not in processing. "
+                + "Do not add processing machines; trace the output path and make it end at a hub inlet.";
+        }
+    }
+
     const room = num(opts.room);
     const form = opts.form === "short" ? "short" : "full";
 
@@ -3510,7 +3553,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
             if (room >= 120) {
                 /* 先试 full，塞不下再退 short，还塞不下就不出现 —— 每一级都**显式**挑。 */
                 for (const form of ["full", "short"]) {
-                    const text = renderCapacity(capacityInfo.capacity, capacityInfo.options, { room, form });
+                    const text = renderCapacity(capacityInfo.capacity, capacityInfo.options, { room, form, production });
                     if (text) {
                         s3Capacity = text;
                         capacityDowngraded = form === "short";

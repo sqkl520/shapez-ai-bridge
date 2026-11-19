@@ -176,15 +176,18 @@ function upgradeGaps(obs) {
  * 产能评估：现在有多少台矿机、能喂满几条带、瓶颈在哪。
  *
  * 这是这一轮我最缺的东西 —— 我一直不知道"1 台矿机"意味着什么。
+ *
+ * @param {object} obs
+ * @param {number} [suppliedPerSec] `capacityOf().supplyPerSec`（**唯一**的供给真值）。
+ *   给了就用它，不再自己数矿机 —— 见下面 `totalPerSec` 的注释。
  */
-function throughput(obs) {
+function throughput(obs, suppliedPerSec) {
     const miners = (Array.isArray(obs.entities) ? obs.entities : []).filter(e => e.type === "miner");
     /* 与 upgradeGaps 同口径：两种 obs 形态都读（见那里的注释）。 */
     const up = (obs && obs.upgrades) || (obs && obs.goal && obs.goal.upgrade_levels) || {};
     const perBelt = machinesForOneBelt("miner", up);
     const beltSpeed = RATES.beltPerSec * UPGRADE_MULTIPLIERS[Math.min(up.belt || 0, 7)];
     const minerSpeed = RATES.minerPerSec * UPGRADE_MULTIPLIERS[Math.min(up.miner || 0, 7)];
-    const total = miners.length * minerSpeed;
 
     // 每台矿机压着什么矿
     const oreAt = new Map(oreCellsOf(obs).map(c => [`${c.x},${c.y}`, c.kind]));
@@ -194,11 +197,24 @@ function throughput(obs) {
     }));
     const idle = mining.filter(m => !m.onOre);
 
+    /* ★ `totalPerSec` 宁可**不知道**，也不要再给一个虚高的数 ★
+     *
+     * 原来是 `miners.length * minerSpeed` —— 与 `capacityOf` 里那个
+     * `activeMiners × minerRate` 是**同一个错误的两份实现**（两套真值，
+     * 这个项目已经因此出过三次事故）。2026-11-20 修 `capacityOf` 时发现
+     * `describe()` 的摘要还在念旧数（L12 上「16 台矿机合计 12.8/s」，
+     * 而其中 6 台根本没有任何加工机器接得住）。
+     *
+     * 这里不再重算，直接读调用方传进来的 `supply`（来自 `capacityOf`）。
+     * 没传就如实报 null —— 摘要宁可少一句话，也不许与 CAPACITY 段互相矛盾。 */
+    const supplied = Number.isFinite(suppliedPerSec) ? suppliedPerSec : null;
+
     return {
         minerCount: miners.length,
         minerSpeedPerSec: +minerSpeed.toFixed(3),
-        totalPerSec: +total.toFixed(3),
-        beltsFed: +(total / beltSpeed).toFixed(2),
+        /** 只算「压在矿上 **且** 有加工机器接得住」的矿机产出；null = 不知道 */
+        totalPerSec: supplied === null ? null : +supplied.toFixed(3),
+        beltsFed: supplied === null ? null : +(supplied / beltSpeed).toFixed(2),
         minersPerBeltNeeded: perBelt,
         beltSpeedPerSec: beltSpeed,
         /** 闲置（没压在矿上）的矿机 —— 纯浪费 */
@@ -235,8 +251,12 @@ function throughput(obs) {
  *     加在一起比较，可能低估单链上的堵塞。判据用「总供给 vs 总处理」，
  *     那是这个 agent 现阶段唯一能可靠算出的东西。
  *   · 只算「矿机 → 第一道加工」这一段。更深的链（cut→paint→stack）没有逐步模拟。
- *   · 不带 resources（`obs.oreCells` 为空）时算不出「压在矿上」，于是**全部**矿机
- *     都算进供给 —— 会偏高。`confidence` 字段会标出来。
+ *   · **没有第三个环节：交付。** 处理完的货有没有真的进 hub，这里不判 ——
+ *     那是 `renderCapacity` 的交付闸（读 `production.delivered_total`）在做的事。
+ *     两者必须一起看：CAPACITY 说「处理能力 0.25/s、供给 8/s」时，
+ *     若交付为 0，真正的问题既不在供给也不在处理，而在路。
+ *   · 不带 resources（`obs.oreCells` 为空）时算不出「压在矿上」，此时只看连通性
+ *     —— 不因缺数据判 0。`confidence` 字段会如实降级为 `low`。
  *
  * @returns {object} 见下面 return 的点
  */
@@ -251,7 +271,64 @@ export function capacityOf(obs) {
     /* ── 1. 谁在产线上：从所有矿机出发，沿带子/机器格 BFS ──
        不算这一步的话，一座废弃工厂里的孤儿机器会被算进处理能力。 */
     const byCell = new Map(entities.map(e => [`${e.x},${e.y}`, e]));
+
+    /* ── 1a. 无向连通分量 ──
+     *
+     * ★ 为什么需要它（2026-11-20，L12 真机实测）★
+     *
+     * 下面那段 BFS 从**所有矿机**出发，于是「一条矿机 + 55 条带子、尽头什么都没有」
+     * 也算「在产线上」。而 `supply` 又是拿 `activeMiners × minerRate` 直接算的 ——
+     * 于是**孤岛矿机全额计进供给**。
+     *
+     * L12 实测（748 实体的存档，无向分量）：
+     *
+     *     size=338  {hub,belt×313,miner×4,balancer,trash×15,cutter,mixer×3}  ← 有加工机
+     *     size=325  {miner×6,belt×314,trash×3,stacker,rotater}              ← 有加工机
+     *     size=56   {miner×1,belt×55}                                       ← 没有
+     *     size=3    {miner×3}   size=1{miner×1}×3                           ← 没有
+     *
+     * 16 台矿机里只有 **10 台**与任何加工机器连通，6 台是孤岛，
+     * 却全部被算进 `supply 12.8/s` —— 那个数字从未发生过。
+     *
+     * 判据：矿机只有在**与至少一台加工机器同一个连通分量**里时才算供给。
+     * 这是「矿挖出来了，有没有东西接得住」的物理条件；缺了它，供给是纸面数字。 */
+    const PROCESSOR_TYPES = new Set(["cutter", "rotater", "stacker", "painter", "painterDouble", "painterQuad", "mixer"]);
     const miners = entities.filter(e => e.type === "miner");
+    const compOf = new Map();              // "x,y" → 分量 id
+    const compHasProcessor = new Set();
+    {
+        let cid = 0;
+        for (const e of entities) {
+            const k0 = `${e.x},${e.y}`;
+            if (compOf.has(k0)) continue;
+            const q = [k0];
+            compOf.set(k0, cid);
+            while (q.length) {
+                const k = q.shift();
+                const [x, y] = k.split(",").map(Number);
+                for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                    const nk = `${x + dx},${y + dy}`;
+                    if (compOf.has(nk) || !byCell.has(nk)) continue;
+                    compOf.set(nk, cid);
+                    q.push(nk);
+                }
+            }
+            cid++;
+        }
+        /* ⚠️ 必须遍历 `entities` 而不是 `byCell`。
+         *
+         * `byCell` 是 cell → **一个** 实体的 Map（后面的覆盖前面的），于是同一格上
+         * 叠了两个实体时只有最后一个可见。测试夹具里就有这种格子（B1 的 cutter
+         * 与带子同格），真实存档通常不会有 —— 但判据不能因此对夹具失效。
+         * 数「这个分量里有没有加工机器」要看**全部**实体。 */
+        for (const e of entities) {
+            const c = compOf.get(`${e.x},${e.y}`);
+            if (c !== undefined && PROCESSOR_TYPES.has(e.type)) compHasProcessor.add(c);
+        }
+    }
+    /** 这台矿机挖出来的东西，物理上有没有机器能接住 */
+    const feedsAProcessor = m => compHasProcessor.has(compOf.get(`${m.x},${m.y}`));
+
     const commandeered = new Set();
     const queue = miners.map(m => `${m.x},${m.y}`);
     for (const k of queue) commandeered.add(k);
@@ -272,14 +349,38 @@ export function capacityOf(obs) {
 
     /* ── 2. 矿机：压没压在矿上 ── */
     const oreAt = new Map(oreCells.map(c => [`${c.x},${c.y}`, c.kind]));
-    const mining = miners.map(m => ({ at: [m.x, m.y], onOre: oreAt.get(`${m.x},${m.y}`) || null }));
+    const mining = miners.map(m => ({
+        at: [m.x, m.y],
+        onOre: oreAt.get(`${m.x},${m.y}`) || null,
+        /* 有没有机器接得住它挖出来的东西（见 1a）。 */
+        connected: feedsAProcessor(m),
+    }));
     const idle = mining.filter(m => !m.onOre);
     /* resources 没给时 onOre 一律 null，不能据此说"全都没压在矿上" ——
        那会把一座正常工厂报成 0 产能。此时按「全在挖」算，并降 confidence。 */
     const haveOreMap = oreCells.length > 0;
-    const activeMiners = haveOreMap ? miners.length - idle.length : miners.length;
+    const onOre = haveOreMap ? miners.length - idle.length : miners.length;
 
-    const supply = activeMiners * minerRate;
+    /* ★ 供给只算「压在矿上 **且** 有加工机器接得住」的矿机 ★
+     *
+     * 只过滤一半是不够的：L12 上两块都缺 —— 16 台里 6 台是孤岛，
+     * 而这些孤岛的产出**永远进不了任何工序**，却按全速率计入供给。
+     *
+     * 下面两个数分开报，因为它们指向**不同的修法**：
+     *   isolatedMiners  —— 有矿、没机器接 ⇒ 接通它，或把它挪到有线的矿点
+     *   strandedMiners  —— 有机器、脚下没矿 ⇒ 挪到矿上，或删掉
+     * 比一个虚高的 supply 有用得多。 */
+    const isolatedMiners = mining.filter(m => !m.connected).length;
+    const strandedMiners = mining.filter(m => m.connected && haveOreMap && m.onOre === null).length;
+
+    /* 有矿图：onOre 非空 且 connected；无矿图：onOre 恒 null（不知道），只看 connected
+       —— 不能因为缺 data 就把一座正常工厂判成 0 产能。 */
+    const activeMiners = haveOreMap
+        ? mining.filter(m => m.onOre !== null && m.connected).length
+        : mining.filter(m => m.connected).length;
+    const countedMiners = activeMiners;
+
+    const supply = countedMiners * minerRate;
 
     /* ── 3. 加工机器：处理能力（按**成品**出件口径，与供给同单位） ── */
     const PROCESSORS = ["cutter", "rotater", "stacker", "painter", "painterDouble", "painterQuad", "mixer"];
@@ -356,7 +457,16 @@ export function capacityOf(obs) {
             processors: levels.processors | 0,
             painting: levels.painting | 0,
         },
-        miners: { count: miners.length, active: activeMiners, idle: idle.length, ratePerSec: +minerRate.toFixed(3) },
+        miners: {
+            count: miners.length,
+            active: activeMiners,
+            idle: idle.length,
+            ratePerSec: +minerRate.toFixed(3),
+            /** 有矿、但没有机器接得住（不在任何含加工机器的连通分量里） */
+            isolated: isolatedMiners,
+            /** 有机器接、但脚下没矿 —— 空转的机器等料 */
+            stranded: strandedMiners,
+        },
         supplyPerSec: +supply.toFixed(3),
         process: { capacityPerSec: processCapacity === null ? null : +processCapacity.toFixed(3), machines },
         /** 带子只报**数量**，不报"容量" —— 理由见上面第 4 条 */
@@ -364,6 +474,8 @@ export function capacityOf(obs) {
         bottleneck,
         bottleneckMachine,
         bottleneckDetail,
+        activeMiners,
+        idleMiners: idle.length,
         /** 处理能力 ÷ 供给。1.0 = 平衡；<1 = 产出堵住。null = 无法判定 */
         utilization,
         /** 这个数的可信度。`low` 时不许拿它做结论 */
@@ -664,9 +776,11 @@ export function capacityFor(raw) {
 export function assess(obs) {
     const goal = goalGap(obs);
     const upgrades = upgradeGaps(obs);
-    const tp = throughput(obs);
-    const oreUtil = oreUtilization(obs);
+    /* ⚠️ 顺序：`capacity` 必须先算 —— `throughput` 的供给数**只从它读**。
+       两处各算一份供给，就是两套真值（2026-11-20 修的就是这个）。 */
     const capacity = capacityOf(obs);
+    const tp = throughput(obs, capacity && capacity.supplyPerSec);
+    const oreUtil = oreUtilization(obs);
     const options = capacityOptions(capacity, upgrades, goal && goal.shape);
     const gaps = { goal, upgrades, throughput: tp, oreUtilization: oreUtil, capacity, options };
     const actions = nextActions(obs, gaps);
@@ -706,8 +820,14 @@ function describe(g) {
         parts.push(`瓶颈 ${m}${util}`);
     }
 
-    parts.push(`${t.minerCount} 台矿机合计 ${t.totalPerSec}/s`);
-    parts.push(`只喂满 ${t.beltsFed} 条带`);
+    /* 供给可能为 null —— 那是「算不出来」，不是「0」。宁可不说，也不印一个 null。
+       见 `throughput()` 里 `totalPerSec` 的注释。 */
+    if (t.totalPerSec !== null) {
+        parts.push(`${t.minerCount} 台矿机合计 ${t.totalPerSec}/s`);
+        if (t.beltsFed !== null) parts.push(`只喂满 ${t.beltsFed} 条带`);
+    } else {
+        parts.push(`${t.minerCount} 台矿机（有效供给算不出来）`);
+    }
     const low = g.oreUtilization.filter(u => u.available >= 4 && u.utilization < 0.5);
     if (low.length) parts.push(`闲置矿簇：${low.map(u => `${u.kind} ${u.used}/${u.available}`).join(" ")}`);
     if (t.idleMiners.length) parts.push(`⚠ ${t.idleMiners.length} 台矿机没压在矿上`);

@@ -65,7 +65,6 @@ const promptFor = (obs, over = {}) => buildPrompt({
 });
 
 /* ═══════════════════ A. 正例：L4 真实数据 ═══════════════════ */
-
 test("A1 真实 L4 数据（miner:1，3 矿机 / 1 cutter）⇒ 供给 1.8、处理 0.5、利用率 28%", () => {
     const { capacity } = capacityFor(L4_LIVE);
     assert.equal(capacity.confidence, "ok");
@@ -129,12 +128,81 @@ test("A5 「machinesToSaturate」与供给自洽（不是一个拍出来的数�
 });
 
 test("A6 L4 冷启动夹具（miner:0，8 矿机）也说得出瓶颈（说明不依赖某一档升级）", () => {
+    /* ★ 2026-11-20 改：供给从 2.8 变成 1.6 —— 不是回归，是修掉了一个虚高 ★
+     *
+     * 这个夹具的 8 台矿机分在两个互不相连的分量里：
+     *
+     *   comp 0  4 台  (-9,4)(-8,5)(-10,4)(-7,5)  ＋ cutter ＋ hub   ← 有机器接
+     *   comp 1  4 台  (2,-8)(3,-8)(4,-8)(5,-8)   ＋ 100 条带子      ← **没有任何加工机器**
+     *
+     * comp 1 那 4 台的产出物理上永远进不了任何工序，而旧实现把 8 台全算进供给
+     * （7 × 0.4 = 2.8）。修完只算能接住的：一个在矿上、且与 cutter 连通 ⇒ 1.6。
+     *
+     * 这条测试的价值正在于它**带着**这个真实缺陷：L4 冷启动的世界里就有一半矿机
+     * 是接不上任何东西的，而 prompt 从来没有说过这件事。 */
     const { capacity } = capacityFor(L4);
     assert.equal(capacity.confidence, "ok");
-    assert.equal(capacity.supplyPerSec, 2.8, "7 台压在矿上 × 0.4");
+    assert.equal(capacity.miners.count, 8);
+    assert.equal(capacity.miners.isolated, 4, "4 台矿机在任何加工机器的连通分量之外");
+    assert.equal(capacity.supplyPerSec, 1.6, "4 台压在矿上 **且** 有机器接住 × 0.4");
     assert.equal(capacity.bottleneckMachine, "cutter");
     const p = promptFor(L4);
     assert.match(p.blocks.s3_capacity, /bottleneck: cutter/);
+});
+
+/* ═══════════════════ A7-A9：供给不许把孤岛矿机算进来 ═══════════════════ */
+
+/**
+ * 这三条的由来（2026-11-20）：
+ *
+ * 用户在 556 个 run 之后问「AI 能不能自主做出更高效率的机器」。
+ * 查下来 `supply` 是 `矿机台数 × 速率`，唯一判据是「脚下有没有矿」——
+ * **从不检查这台矿机的产出有没有任何机器能接住**。
+ *
+ * L12 真机实测：16 台矿机里 6 台在任何含加工机器的连通分量之外，
+ * 却全部按全速率计入 `supply 12.8/s`，于是 CAPACITY 建议「再加 51 台 stacker」。
+ */
+test("A7 孤岛矿机（有矿、但分量里没有加工机器）不计入供给", () => {
+    /* 左边一组：矿机 → 带子 → cutter → 带子 → hub（连通，算供给）
+       右边一组：矿机 → 一条长带子，尽头什么都没有（孤岛，不算） */
+    const entities = [
+        { type: "hub", x: 0, y: 0 },
+        { type: "miner", x: 0, y: 4 }, { type: "belt", x: 0, y: 3 },
+        { type: "cutter", x: 0, y: 2 }, { type: "belt", x: 0, y: 1 },
+        /* 孤岛：远离左边，完全不相邻 */
+        { type: "miner", x: 20, y: 4 }, { type: "belt", x: 20, y: 3 },
+        { type: "belt", x: 20, y: 2 }, { type: "belt", x: 20, y: 1 },
+    ];
+    const oreCells = [{ x: 0, y: 4, kind: "RuRuRuRu" }, { x: 20, y: 4, kind: "RuRuRuRu" }];
+    const cap = capacityOf({ upgrades: { belt: 0, miner: 0, processors: 0, painting: 0 }, entities, oreCells });
+    assert.equal(cap.miners.count, 2, "两台矿机都在世界里");
+    assert.equal(cap.miners.isolated, 1, "右边那台是孤岛");
+    assert.equal(cap.miners.active, 1, "只有左边那台算供给");
+    assert.equal(cap.supplyPerSec, 0.4, "1 × 0.4，不是 2 × 0.4");
+});
+
+test("A8 同一格叠了 cutter 与带子时，仍要认出这个分量里有加工机器", () => {
+    /* 回归：第一版用 `byCell`（cell → 一个实体，后者覆盖前者）判「分量里有机器」，
+       于是同格叠放时加工机器会不可见，整组矿机被判成孤岛、供给归零。
+       B1 夹具里正好有这种格子，当场打红。 */
+    const entities = [
+        { type: "miner", x: 0, y: 4 }, { type: "belt", x: 0, y: 3 },
+        { type: "belt", x: 0, y: 2 }, { type: "cutter", x: 0, y: 2 },   // 同格
+        { type: "belt", x: 0, y: 1 },
+    ];
+    const cap = capacityOf({ upgrades: {}, entities, oreCells: [{ x: 0, y: 4, kind: "RuRuRuRu" }] });
+    assert.equal(cap.miners.isolated, 0, "同格叠放不许让加工机器消失");
+    assert.equal(cap.supplyPerSec, 0.4);
+});
+
+test("A9 没有矿图时不能因为连不上就判成 0 产能（缺数据 ≠ 没产能）", () => {
+    const entities = [
+        { type: "miner", x: 0, y: 4 }, { type: "belt", x: 0, y: 3 },
+        { type: "cutter", x: 0, y: 2 }, { type: "belt", x: 0, y: 1 },
+    ];
+    const cap = capacityOf({ upgrades: {}, entities, oreCells: [] });
+    assert.equal(cap.confidence, "low", "没有矿图 ⇒ 本来就不可信");
+    assert.equal(cap.supplyPerSec, 0.4, "连得上就算（0.4），不许因缺矿图判 0");
 });
 
 /* ═══════════════════ B. 正例：产能平衡 ⇒ 不许硬报问题 ═══════════════════ */
@@ -193,6 +261,66 @@ test("B3 供给为 0（矿机全闲置）⇒ 不报「处理能力堵住」", ()
     /* 没有矿机 ⇒ BFS 没种子 ⇒ cutter 不在产线上 ⇒ process=null ⇒ 什么都不说 */
     assert.equal(cap.supplyPerSec, 0);
     assert.equal(renderCapacity(cap, null, {}), null);
+});
+
+/* ══════════ B4-B6：交付闸 —— 没货在流时不许谈吞吐 ══════════ */
+
+/**
+ * 这三条的由来（2026-11-20，L12 真机）：
+ *
+ *   ## CAPACITY
+ *   supply 12.8/s | processing 0.25/s | 2% utilized
+ *   bottleneck: stacker — 98% of supply is stuck here
+ *   · add 51 stacker (1→52) ⇒ 13/s — fills the line
+ *
+ * 而同一轮 `produced_total` 与 `delivered_total` 都是 `{}`。**一件都没产出、
+ * 一件都没交货。** 那段话的分子和分母都是虚构的，而它是整份 prompt 里
+ * 最有说服力的一段（有数字、有对比、有可执行动作、还承诺 fills the line）。
+ *
+ * 模型照着它去铺 stacker —— 556 个 run 的 timeline 里 `stacker` 出现 199 次。
+ */
+
+const CAP_FOR_GATE = {
+    confidence: "ok", supplyPerSec: 12.8,
+    miners: { count: 16, active: 16, idle: 0, isolated: 6 },
+    process: { capacityPerSec: 0.25, machines: [{ kind: "stacker", count: 1, productPerSec: 0.25, ratePerSec: 0.25 }] },
+    bottleneck: "process", bottleneckMachine: "stacker", utilization: 0.02,
+};
+
+test("B4 零产出 + 零交付 ⇒ 不许报利用率/瓶颈，改说「产线根本没在跑」", () => {
+    const seg = renderCapacity(CAP_FOR_GATE, { doNow: [{ action: "add-machines", kind: "stacker", from: 1, to: 52, add: 51 }] },
+        { production: { produced_total: {}, delivered_total: {} } });
+    assert.ok(seg, "仍然要有一段（沉默比说错更糟）");
+    assert.match(seg, /no goods are moving/);
+    assert.doesNotMatch(seg, /98% of supply/, "不许再说「98% 堵住」——那 98% 从未发生");
+    assert.doesNotMatch(seg, /utilized/);
+    assert.doesNotMatch(seg, /add 51 stacker/, "不许再建议加机器");
+    assert.match(seg, /Do NOT add machines/, "必须明确劝阻加机器");
+    assert.match(seg, /6 miner/, "要点名有几台矿机没有机器接住（可执行的线索）");
+});
+
+test("B5 有产出但零交付 ⇒ 指明堵在交付端，而不是处理端", () => {
+    const seg = renderCapacity(CAP_FOR_GATE, null,
+        { production: { produced_total: { CuCuCuCu: 40 }, delivered_total: {} } });
+    assert.ok(seg);
+    assert.match(seg, /ZERO reach the hub/);
+    assert.match(seg, /DELIVERY end/);
+    assert.doesNotMatch(seg, /add 51 stacker/, "加加工机器解决不了交付问题");
+    assert.doesNotMatch(seg, /stuck here/);
+});
+
+test("B6 有产出且有交付 ⇒ 照常报吞吐（闸不能把正常工作也挡掉）", () => {
+    const seg = renderCapacity(CAP_FOR_GATE, null,
+        { production: { produced_total: { CuCuCuCu: 40 }, delivered_total: { CuCuCuCu: 12 } } });
+    assert.ok(seg);
+    assert.match(seg, /supply 12\.8\/s/, "正常状态仍要给出数字");
+    assert.match(seg, /bottleneck: stacker/);
+});
+
+test("B7 没给 production（老调用方 / 离线测试）⇒ 闸不生效，行为与以前一致", () => {
+    const seg = renderCapacity(CAP_FOR_GATE, null, {});
+    assert.match(seg, /supply 12\.8\/s/);
+    assert.match(seg, /bottleneck: stacker/);
 });
 
 /* ═══════════════════ C. 反例：优雅降级 ═══════════════════ */
@@ -447,8 +575,18 @@ test("F1 接线：runLoop 走一遍，模型收到的 prompt 里真有 CAPACITY 
     const seg = seen[0].blocks.s3_capacity;
     assert.ok(seg, `loop 必须把 CAPACITY 送到 prompt 里（unavailable=${seen[0].blocks.capacity_unavailable}）`);
     assert.match(seg, /## CAPACITY/);
-    assert.match(seg, /bottleneck: cutter/, `真实存档的瓶颈是 cutter，实际：${JSON.stringify(seg)}`);
+    /* 这一条测的是**接线**，不是某一句措辞。
+     *
+     * 2026-11-20 起 CAPACITY 多了一道「先确认有货在流」的闸：夹具里
+     * `produced_total` / `delivered_total` 都是空 ⇒ 渲染的是
+     * 「no goods are moving at all …」，而不是 `bottleneck: cutter`。
+     * 那不是接线的退化 —— 恰恰是**新判据在起作用**。
+     *
+     * 所以这里只钉「段出现了、而且真的来自这份 obs」，具体措辞由 A3/A6 负责。
+     * 仍然要求它提到 cutter 或明确说产线没跑 —— 不许出现一段与这份世界无关的文字。 */
+    assert.match(seg, /bottleneck: cutter|no goods are moving/, `实际：${JSON.stringify(seg)}`);
     assert.match(seen[0].user, /## CAPACITY/, "user 里也要有（不只是 blocks）");
-    /* 与「另一个 bug」对照：矿机是 3 台、供给 1.8，这数字必须来自真实 obs，不是常量 */
-    assert.match(seg, /supply 1\.8\/s/);
+    /* 与「另一个 bug」对照：矿机是 3 台、供给 1.8，这数字必须来自真实 obs，不是常量。
+       走交付闸时这段数字不会渲染，所以只在非降级形态下要求。 */
+    if (!/no goods are moving/.test(seg)) assert.match(seg, /supply 1\.8\/s/);
 });

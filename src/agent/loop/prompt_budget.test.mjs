@@ -161,7 +161,15 @@ test("B5 ★ 生产路径：runLoop 在大存档上把 CAPACITY 送到 prompt �
         + `（unavailable=${b.blocks.capacity_unavailable}，belts=${b.blocks.belts_shown}/${b.blocks.belts_total}）。`
         + ` 修法见 loop.mjs 的 budget 字面量。`);
 
-    assert.match(b.blocks.s3_capacity, /bottleneck: cutter/);
+    /* 这条测的是**预算上限有没有传下去**，不是 CAPACITY 的具体措辞。
+     *
+     * 2026-11-20：CAPACITY 多了一道「先确认有货在流」的闸（见
+     * `capacity-supply-is-fake`）。这个夹具的 `produced_total` / `delivered_total`
+     * 都是空 ⇒ 渲染的是「no goods are moving at all …」，而不再是
+     * `bottleneck: cutter`。那不是预算接线断了 —— 恰恰是新判据在起作用。
+     * 所以这里接受两种形态；措辞本身由 prompt_capacity.test.mjs 的 A/B 组负责。 */
+    assert.match(b.blocks.s3_capacity, /bottleneck: cutter|no goods are moving/,
+        `CAPACITY 段出现了，内容必须来自这份 obs：${JSON.stringify(b.blocks.s3_capacity)}`);
     /* ★ 从 `=== STATE_BELTS_MAX` 改成 `>=` ★
      *
      * 2026-11-10 起诊断点名的带子**追加在 cap 之外**（cap + STATE_BELTS_DIAG_RESERVE），
