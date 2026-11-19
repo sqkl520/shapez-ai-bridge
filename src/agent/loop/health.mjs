@@ -103,6 +103,9 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
     let reachBelts = null;
     let deadBelts = null;
     let deadBySource = null;
+    /* 类型口径（hub 只收形状）—— 与上面那份几何口径并列，互不覆盖 */
+    let reachBeltsDeliverable = null;
+    let deadBeltsUndeliverable = null;
     if (ents.length) {
         try {
             const idx = indexOf(o);
@@ -111,6 +114,27 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
             const beached = belts.filter(b => !set.has(b.uid));
             reachBelts = belts.length - beached.length;
             deadBelts = beached.length;
+            /* ★ 再算一份**类型感知**的可达数 ★
+             *
+             * 上面那份是纯几何的（每跳验 accepts），看不见「货的类型」。
+             * 但 hub 的 16 个入口全是 `filter:"shape"`，颜料永远进不去 ——
+             * 一条「几何上通到 hub、末端却运颜料」的带子物理上交付不了。
+             *
+             * 实测（2026-11-18 L12）：702 条带子、几何可达 535 条（76%），
+             * 但那 4 条入口带送的**全是**颜料，233 件货堵在门口，delivered 恒 0。
+             * 那个偏高的数让预演闸门去「保护」零价值的带子。
+             *
+             * **不覆盖 `belts_reaching_hub`**（那是既有语义，多处依赖，
+             * 改它会连带改变净效果分类和断点判据）。新增一个字段，
+             * 由预演闸门自己选择用哪个。 */
+            if (items && Array.isArray(items.belts)) {
+                try {
+                    const typed = flowReachable(o, idx, { itemsDoc: items });
+                    const beachedTyped = belts.filter(b => !typed.has(b.uid));
+                    reachBeltsDeliverable = belts.length - beachedTyped.length;
+                    deadBeltsUndeliverable = beachedTyped.length;
+                } catch { /* 类型口径算不出来就留 null，不冒充 */ }
+            }
             /* 死带子按「它想从哪个源头取货」归类 —— 这比一个总数有用得多：
                全是 miner 说明矿机在空转，全是 cutter 说明加工链断了。
                `sourceEntityOf` 是既有的上游爬行，不另写一套。 */
@@ -191,6 +215,10 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
         /* 连通性 */
         belts_reaching_hub: reachBelts,
         belts_dead: deadBelts,
+        /* 类型口径：扣掉那些「几何上通到 hub、但末端货物是颜料」的路径。
+           与 `belts_reaching_hub` 并列而非替换 —— 后者有其它依赖方。 */
+        belts_deliverable: reachBeltsDeliverable,
+        belts_undeliverable: deadBeltsUndeliverable,
         reach_pct: (reachBelts !== null && belts.length) ? Math.round((reachBelts / belts.length) * 1000) / 1000 : null,
         dead_by_source: deadBySource,
 

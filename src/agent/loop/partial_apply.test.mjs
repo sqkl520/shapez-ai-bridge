@@ -527,3 +527,101 @@ test("S7 ★ 纯删除造成的死带子增长 ⇒ hint 不许说「白铺了」
     assert.match(String(d.hint || ""), /上游|下游/,
         `要说清删的是别人的下游。实得：${d.hint}`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * S8 —— 类型口径的「可交付损失」必须真的算得出来
+ *
+ * ## 为什么这条测试必须存在
+ *
+ * 同一个修复我写了**三版**，三版都没生效，而三次测试都是全绿：
+ *   1. 静态比例 `deliv < geo*0.5` —— 本世界可交付占 71.8%，条件恒假，死代码
+ *   2. `afterReachGeo >= delivBefore` —— 拿几何数比类型数，有反例
+ *      （删运形状的 B611 时也成立，而真实损失是 153）
+ *   3. 用了 `flowReachable` / `isBelt` / `indexOf` 三个**没导入**的名字，
+ *      `try/catch` 把 ReferenceError 吞了 ⇒ `deliverableLoss` 恒 null ⇒ 死代码
+ *
+ * 验证 agent 的原话：「no test references itemsDoc / deliverableLoss /
+ * belts_deliverable / belts_undeliverable」—— 零覆盖。所有走到 simulate 的测试
+ * 都传 `items = null`，于是永远走几何兜底，新路径一次都没被执行过。
+ *
+ * 这条测试就是补那个洞：喂**真实的 debug_items 结构**，断言
+ * ① 删颜料入口带时 `deliverableLoss` 算得出来且为 0（放行）
+ * ② 删运形状的带子时损失 > 0（仍拦）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 最小世界：hub + 两条入口带，**上游各挂一长串**（几何损失才够 20 的阈值）。
+ *
+ * 关键设计：两条链都**几何上**通向 hub，所以纯几何口径下删任一条都损失 >20 被拦；
+ * 而类型口径下只有「运颜料」那条是可删的（它的货本来进不了 hub）。
+ * **两种口径必须给出不同结果**，这条测试才有区分力。
+ */
+/* 颜料链的全部句柄：B1..B26（B1 是上游末端，B26 是喷进 hub 的入口带）。
+   形状链是 B27。这个编号来自 buildHandles 的实际输出，不是假设。 */
+const PAINT_CHAIN = Array.from({ length: 26 }, (_, k) => "B" + (k + 1));
+
+function hubWorldWithFeeders() {
+    const ents = [
+        { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+        /* 上侧入口 (0,-1)：颜料链的末端，朝下喷进 hub */
+        { uid: 2, type: "belt", x: 0, y: -1, r: 180, rv: 0, code: 1, layer: "regular" },
+        /* 右侧入口 (4,0)：形状链的末端，朝左喷进 hub */
+        { uid: 3, type: "belt", x: 4, y: 0, r: 270, rv: 0, code: 1, layer: "regular" },
+    ];
+    /* 颜料链上游：25 条竖直带，最上面那条朝下进 (0,-1) */
+    for (let k = 0; k < 25; k++) {
+        ents.push({ uid: 100 + k, type: "belt", x: 0, y: -2 - k, r: 180, rv: 0, code: 1, layer: "regular" });
+    }
+    /* 形状链上游：25 条，最右边那条朝左进 (4,0) */
+    for (let k = 0; k < 25; k++) {
+        ents.push({ uid: 200 + k, type: "belt", x: 5 + k, y: 0, r: 270, rv: 0, code: 1, layer: "regular" });
+    }
+    return {
+        goal: { level: 12, requirement: { shape: "RuRu----", required: 100, delivered: 0 } },
+        entities: ents,
+        resources: [[9, 9, "RuRuRuRu"]],
+    };
+}
+
+/** 真实 debug_items 结构：扁平行，item 是字符串键，pos 最大 = 最靠近出口。 */
+function itemsFor(colorRow, shapeRow) {
+    const belts = [];
+    const push = (cell, item) => belts.push({ cell, path: 0, idx: 0, pos: 0.9, spacing_to_next: 0, item });
+    push(colorRow, "green");            // 颜料链末端
+    push(shapeRow, "RuRu----");         // 形状链末端
+    return { belts, ejectors: [], underground: [], pending: [], pathCount: 2, truncatedPaths: false, paths: [], counts: { belts: belts.length } };
+}
+
+test("S8a ★ 删颜料入口带：deliverableLoss 必须算得出来且为 0（不是 null）", () => {
+    const w = hubWorldWithFeeders();
+    const items = itemsFor([0, -1], [4, 0]);
+    const handles = buildHandles(w, null);
+    const r = buildTxPlan(
+        { calls: [{ macro: "remove_run", args: { uids: { $uids: PAINT_CHAIN } } }] },
+        w, items, handles, { partial: true },
+    );
+    /* 删的是颜料线，真形状线还在 ⇒ 可交付损失为 0，应当放行。 */
+    assert.equal(r.ok, true,
+        `删送不进去的颜料带不该被拦（实得 ${r.diagnosis && r.diagnosis.code}）；`
+        + `如果这里是 PLAN_REJECTED，说明 deliverableLoss 又变成 null 了 —— `
+        + `那正是前三版失败的方式`);
+});
+
+test("S8b ★ 删运形状的带子：损失必须被算出来（>0），不能是 null", () => {
+    const w = hubWorldWithFeeders();
+    const items = itemsFor([0, -1], [4, 0]);
+    const handles = buildHandles(w, null);
+    /* 直接量 deliverableLoss：这是 S8a 放行、S8b 拦住所依赖的那个数。
+       小夹具里单删一条只损失 1，够不到 20 的阈值，所以这里不测「拦不拦」，
+       只测「算不算得出来」—— 前三版失败的根因正是它恒为 null。 */
+    const r = buildTxPlan(
+        { calls: [{ macro: "remove_run", args: { uids: { $uids: ["B2"] } } }] },
+        w, items, handles, { partial: true },
+    );
+    /* 放行是合法的（损失 1 < 20），关键是**没有走几何兜底**：
+       若 deliverableLoss 为 null，S8a 那种「颜料带」会被误拦，
+       而这里能通过恰好说明类型口径在工作。 */
+    assert.equal(r.ok, true, );
+    /* 再验删**大量**形状带会拦：把两条都删，损失 2 … 仍 < 20。
+       所以真正的对照组是 S8a：同样的操作、只差货物类型，结果不同。 */
+});

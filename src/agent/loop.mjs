@@ -82,7 +82,7 @@ import { validateMacroCall, MACRO_NAMES } from "./macros/contract.mjs";
  * 本文件内部现在只 import `indexOf`（改名 `buildIndex`）：结构判据全部走
  * `structuralDiagnoses`，下游可达性由它在内部按 tier 使用，不再在这里重复算。 */
 import { at as atCell } from "./loop/topology.mjs";
-import { indexOf as buildIndex, hubReachable } from "./loop/topology.mjs";
+import { indexOf as buildIndex, hubReachable, flowReachable, isBelt } from "./loop/topology.mjs";
 import { structuralDiagnoses } from "./loop/structural.mjs";
 /* 语义层（P-a）：形状传播 + 配方闭包 + 作业分配。**不自己 spawn** ——
    配方由 loop 首轮 observe 后预计算一次、放进 `ctx.recipe` 注入；
@@ -2215,9 +2215,12 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
             const simGoal = (typeof opts.goalShape === "string" && opts.goalShape)
                 ? opts.goalShape
                 : ((o.goal && o.goal.requirement && o.goal.requirement.shape) || null);
-            const before = worldHealth({ obs: o, goalShape: simGoal });
+            const before = worldHealth({ obs: o, items, goalShape: simGoal });
             const afterObs = applyTxOpsToObs(o, txPlan.ops);
-            const after = afterObs ? worldHealth({ obs: afterObs, goalShape: simGoal }) : null;
+            /* ⚠️ 预演后的世界**没有**对应的 debug_items（`applyTxOpsToObs` 只改实体表），
+               所以 `after` 只能拿几何口径。下面的判据据此只在**两边都可判定**时
+               才启用类型口径 —— 不拿一边的类型数去减另一边的几何数。 */
+            const after = afterObs ? worldHealth({ obs: afterObs, items: null, goalShape: simGoal }) : null;
             if (after && Number.isInteger(before.belts_reaching_hub) && Number.isInteger(after.belts_reaching_hub)) {
                 const loss = before.belts_reaching_hub - after.belts_reaching_hub;
                 const pct = before.belts_reaching_hub > 0 ? loss / before.belts_reaching_hub : 0;
@@ -2250,7 +2253,68 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                     return false;
                 });
                 void risky;
-                const tooMuch = loss >= 20 || (loss >= 5 && pct >= 0.25);
+                /* ★ 损失只按「**可交付**」口径算，别用几何口径 ★
+                 *
+                 * `belts_reaching_hub` 是纯几何的：hub 的 16 个入口全是
+                 * `filter:"shape"`（游戏源码 `MetaHubBuilding._setupEntityComponent`），
+                 * 一条几何上通到 hub、末端却运颜料的带子**物理上永远交付不了**。
+                 * 删它不该算「拆掉产能」。
+                 *
+                 * 实测（2026-11-18 L12）：模型提出删掉 4 条送颜料的 hub 入口带，
+                 * 预演报「到 hub 的带子 543 → 390」拒了 9 次。而那 153 条「损失」
+                 * **全是颜料**，真正能交付的产能一条没少（可交付数 390 → 390）。
+                 *
+                 * ## 前两版的错误（都记下来，免得再犯）
+                 *
+                 * 第一版：只看 `deliv < geo * 0.5` 这个静态比例。但本世界可交付占
+                 * 71.8%，条件恒假 —— 那段代码**永远不可能生效**。
+                 *
+                 * 第二版：比 `after.belts_reaching_hub >= before.belts_deliverable`。
+                 * **拿几何数比类型数**，这是两个口径。反例：删一条运形状的带子
+                 * （B611，运 `ScSc----`）时，390 ≥ 390 也成立，而真实可交付损失是 153。
+                 * 数字碰巧相等是因为间隙（153）恰好等于那个子图的规模。
+                 *
+                 * ## 正确做法
+                 *
+                 * 把删除的实体从 obs 里剪掉，用**同一份 items** 重跑类型闭包 ——
+                 * 两个数就都是可交付口径了，可以直接比。
+                 *   · 4 条颜料入口带：390 → 390（损失 0，放行，正确）
+                 *   · B611（运形状）：  390 → 237（损失 153，拦住，正确）
+                 *
+                 * ⚠️ `applyTxOpsToObs` 不更新 items（货物位置会变），所以不能用它
+                 * 算类型口径。这里只用 `txPlan.ops` 里的 delete 覆盖的 uid 做剪枝。
+                 * 如果这一步有 place，新带子上还没有货，剪枝后重算依然一致。 */
+                let deliverableLoss = null;
+                try {
+                    const delivBefore = Number.isInteger(before.belts_deliverable)
+                        ? before.belts_deliverable : null;
+                    if (delivBefore !== null && items) {
+                        const deletedUids = new Set();
+                        for (const op of txPlan.ops) {
+                            if (op && op.op === "delete" && Number.isInteger(op.uid)) deletedUids.add(op.uid);
+                            if (op && op.op === "bulk_delete" && Array.isArray(op.uids)) {
+                                for (const u of op.uids) if (Number.isInteger(u)) deletedUids.add(u);
+                            }
+                        }
+                        if (deletedUids.size) {
+                            const pruned = { ...o, entities: o.entities.filter(e => e && !deletedUids.has(e.uid)) };
+                            const typedAfter = flowReachable(pruned, buildIndex(pruned), { itemsDoc: items });
+                            const prunedBelts = pruned.entities.filter(e => isBelt(e) || e.type === "underground_belt");
+                            const delivAfter = prunedBelts.filter(b => typedAfter.has(b.uid)).length;
+                            deliverableLoss = Math.max(0, delivBefore - delivAfter);
+                        }
+                    }
+                } catch { deliverableLoss = null; }
+
+                const deliv = Number.isInteger(before.belts_deliverable)
+                    ? before.belts_deliverable : null;
+                const geo = Number.isInteger(before.belts_reaching_hub) ? before.belts_reaching_hub : 0;
+                /* 有可交付口径就用它；算不出来才退回几何口径（老行为）。 */
+                const effectiveLoss = deliverableLoss !== null ? deliverableLoss : loss;
+                const effectiveBase = deliverableLoss !== null ? (deliv || 0) : geo;
+                const effectivePct = effectiveBase > 0 ? effectiveLoss / effectiveBase : 0;
+                const mostlyUndeliverable = false;   // 静态比例判据已废弃（见上）
+                const tooMuch = effectiveLoss >= 20 || (effectiveLoss >= 5 && effectivePct >= 0.25);
                 /* ★ 「加了一堆死带子」也是改坏 ★
                  *
                  * 真机 r-20261112190707-de26（第 9 关）：模型完全按 hint 执行
@@ -2347,6 +2411,43 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                     const removedCells = txPlan.ops.filter(o => o && (o.op === "delete" || o.op === "bulk_delete")).length;
                     const isPureRemoval = addedCells === 0 && removedCells > 0;
                     const lostReach = Math.max(0, (before.belts_reaching_hub || 0) - (after.belts_reaching_hub || 0));
+                    /* ★ 纯删除且删的全是「本来就交付不了」的带子 ⇒ 不算改坏 ★
+                     *
+                     * `belts_reaching_hub` 是纯几何的；`belts_deliverable`（类型口径）
+                     * 扣掉了「几何上通到 hub、末端却送颜料」的那些。而 hub 的 16 个入口
+                     * 全是 `filter:"shape"`，颜料物理上永远进不去。
+                     *
+                     * 判据：`after.belts_reaching_hub`（预演后剩余的几何可达数）
+                     * **≥** `before.belts_deliverable`（删之前真正能交付的数量）
+                     * ⇒ 这一步删掉的带子全部落在「本来就不交付」那一侧，
+                     * 真正能交付的产能一条都没少。
+                     *
+                     * 实测（2026-11-18 L12）：before 几何 543 / 可交付 390；
+                     * 删掉 4 条颜料入口带后几何剩 **390** —— 恰好等于可交付数。
+                     * 也就是说那 153 条「损失」**全是颜料**，一条形状线都没伤到。
+                     * 而预演把它当成「拆掉 153 条产能」拒了 9 次。
+                     *
+                     * ⚠️ 这条只在 `isPureRemoval` 时成立：如果这一步既删又铺，
+                     * `after` 的几何数里混进了新铺的带子，这个比较就不再有意义。 */
+                    /* 与上面 `tooMuch` 用**同一个口径**：可交付损失算得出来就用它。
+                       那 4 条颜料入口带的死带子增长是 149，可交付损失是 **0** ——
+                       死带子多了，但能交付的东西一件没少。 */
+                    /* ★ 必须同时要求 `isPureRemoval` ★
+                     *
+                     * 只判 `deliverableLoss === 0` 会漏掉**混合批次**：
+                     * 「删一条送不进去的带子 + 顺手瞎铺一条新线」这种计划，
+                     * 可交付损失是 0（删的那条本来就不交付），于是整单跳过了
+                     * 「你白铺了 N 格」这道闸 —— 而新铺的那条线一条货都送不到 hub。
+                     *
+                     * 实测（验证 agent）：`connect C6→B180`（77 op，deadGrowth 81）
+                     * 在 HEAD 上被拒，在只判 dl===0 的版本上被放行。
+                     * 396 组随机机器→带子连接里翻掉了 1 组 —— 罕见，但确实是个洞。
+                     *
+                     * 这条闸的本意就是「纯删除不该因为留下死带子被拦」，
+                     * 加上 `isPureRemoval` 才是它想说的意思。 */
+                    if (isPureRemoval && deliverableLoss !== null && deliverableLoss === 0) {
+                        /* 放行：全是送不进去的东西变成了死带子。 */
+                    } else
                     return reject("PLAN_REJECTED", {
                         layer: "plan", stage: "simulate",
                         expected: isPureRemoval

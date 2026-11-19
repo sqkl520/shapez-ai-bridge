@@ -535,9 +535,15 @@ function flowOutlets(idx, e) {
  *
  * @param {object} obs ObsSnapshot
  * @param {object} [idx] `indexOf(obs)`（可选，省一次索引）
+ * @param {{itemsDoc?:object}} [opts]
+ *   `opts.itemsDoc`：`debug_items` 的原始返回。给了就额外做**类型检查** ——
+ *   hub 的 16 个入口全是 `filter:"shape"`（游戏源码 `MetaHubBuilding._setupEntityComponent`），
+ *   而 `ColorItem.getItemType()` 返回 `"color"`。所以一条「几何上通到 hub，
+ *   但末端货物是颜料」的路径，物理上**永远交付不了**，不该算可达。
+ *   不给则维持原有的纯几何口径（老行为一字不改）。
  * @returns {Set<number>} 能到达 hub 的实体 uid（**含 hub 自己**，与 `hubReachable` 一致）
  */
-export function flowReachable(obs, idx) {
+export function flowReachable(obs, idx, opts) {
     const ix = idx || indexOf(obs);
     const out = new Set();
     const hub = ix.ent.find(e => e.type === "hub");
@@ -572,6 +578,64 @@ export function flowReachable(obs, idx) {
             if (out.has(up)) continue;
             out.add(up);
             q.push(up);
+        }
+    }
+
+    /* ★ 类型检查：hub 只收形状，不收颜料 ★
+     *
+     * 上面那段闭包是**纯几何**的（每跳验 `accepts`），它看不见「货的类型」。
+     * 而游戏源码写死：hub 的 16 个入口全带 `filter:"shape"`
+     * （`MetaHubBuilding._setupEntityComponent`），`ColorItem.getItemType()` 返回 `"color"`。
+     * 于是「几何上通到 hub、末端却运颜料」的路径被判成可达 —— 它物理上永远交付不了。
+     *
+     * 实测（2026-11-18 L12）：543/702 条带子被判「能到 hub」，其中 4 条入口带
+     * 送的全是 green/red，233 件货堵在门口；而真正装着形状的入口一条都没有。
+     * 这个偏高的可达数让预演闸门去「保护」那些零价值的带子。
+     *
+     * 只在调用方给了 `itemsDoc` 时才做 —— 没有 `debug_items` 就无从判断类型，
+     * 那时维持纯几何口径（不猜）。 */
+    const PAINT = new Set(["red", "green", "blue", "yellow", "purple", "cyan", "white"]);
+    const doc = opts && opts.itemsDoc;
+    if (doc && Array.isArray(doc.belts)) {
+        /* cell → 该格上最靠近出口的那件货（pos 最大）。同一入口格可能有多条带子的货，
+         * 取 pos 最大的那件 —— 它才是正要进 hub 的。 */
+        const byCell = new Map();
+        for (const r of doc.belts) {
+            if (!r || !Array.isArray(r.cell)) continue;
+            const k = r.cell[0] + "," + r.cell[1];
+            const cur = byCell.get(k);
+            if (!cur || (r.pos || 0) > (cur.pos || 0)) byCell.set(k, r);
+        }
+        /* 找出那些「直接喂 hub」的带子 —— 它们是唯一需要类型检查的边。 */
+        const badFeeders = new Set();
+        for (const e of ix.ent) {
+            if (e.uid === hub.uid || !isBelt(e)) continue;
+            for (const o of flowOutlets(ix, e)) {
+                const dst = at(ix, o.cell);
+                if (!dst || dst.uid !== hub.uid) continue;
+                if (!accepts(ix, o.cell, o.dir).ok) continue;
+                const row = byCell.get(e.x + "," + e.y);
+                if (row && typeof row.item === "string" && PAINT.has(row.item)) {
+                    badFeeders.add(e.uid);
+                }
+            }
+        }
+        if (badFeeders.size) {
+            /* 把这些带子从可达集里摘掉，**并连带摘掉只有经它们才能到达的上游**。
+             * 做法：重做一次闭包，但在建边时跳过 badFeeders 的所有出入边。
+             * 这比「直接从 out 里删」严格 —— 后者会让它们上游的带子仍然显示可达。 */
+            out.clear();
+            out.add(hub.uid);
+            const q2 = [hub.uid];
+            while (q2.length) {
+                const cur = q2.shift();
+                for (const up of feeds.get(cur) || []) {
+                    if (badFeeders.has(up)) continue;   // 这条边送不进去，上游也不算可达
+                    if (out.has(up)) continue;
+                    out.add(up);
+                    q2.push(up);
+                }
+            }
         }
     }
     return out;
