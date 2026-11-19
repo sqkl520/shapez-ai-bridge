@@ -215,25 +215,36 @@ function runSolver(goalShape, opts = {}) {
              * 探测是**故意绕开关卡门控**跑的（见 solvePerLayer 的注释：问的是
              * 「这个形状本身能不能做出来」）。但那导致它推荐了当前关卡做不到的路线。
              *
-             * 实测（独立审计）：`Cb------` 的 4 步解法是
+             * 实测（独立审计）：`Cb------` 的**最短** 4 步解法是
              *   mine → cutQuad(quad 0) → mineColor(blue) → paint
-             * 而 `cutQuad` 的 unlockLevel 是 **16**（op-templates.mjs:89），
-             * 当前是 L12 —— `flagsForLevel(12) = ["--no-cutquad"]`。
+             * 而 `cutQuad` 的 unlockLevel 是 **16**（op-templates.mjs:89），当前 L12。
              *
-             * 于是在 L12，prompt 里那句「先用 insert_machine + connect 把每一层的
-             * 产线搭出来」指向一条物理上不存在的路。模型照着做了一百多轮。
+             * ★★ 但「最短解需要 quad cutter」**不等于**「这条路走不通」★★
              *
-             * 修法：保留探测（它回答「形状可不可解」是有价值的），
-             * 但渲染时**把解锁关卡差异说出来**，让模型知道这条路现在走不通。 */
-            const layerNeedsQuadCutter = !!(layerHints && layerHints.some(l =>
-                !l.ok && Array.isArray(l.quads) && l.quads.some(q => q.ok)));
-            const lvNum = Number.isFinite(opts.level) ? opts.level : DEFAULT_LEVEL;
-            const gateNote = layerNeedsQuadCutter && lvNum < 16
-                ? `⚠️ 但要注意：按象限拆开用的那台机器（quad cutter）**要到第 16 关才解锁**，`
-                    + `你现在是第 ${lvNum} 关。所以这条「按象限拆」的路**现在走不通**。`
-                    + `在当前关卡能做的，是把每层当作整体去铺（矿机 → 整块切割 → 染色 → 叠），`
-                    + `或者先补一台实现不了的工序（比如 mixer 级联）提升其它环节。`
-                : "";
+             * 第一版我在这里写了「所以这条按象限拆的路**现在走不通**」，那是错的，
+             * 而且是**主动误导** —— 后来被一份完整的代数证明推翻：
+             *
+             *   `cutHalf` 按垂直轴切成两半，但 `rotateCW/CCW` 会**置换象限索引**。
+             *   所以在两次 cut 之间插一次旋转，就能从「半边」里切出**单个象限**：
+             *     cutHalf(CuCuCuCu) → ----CuCu（列 2,3）
+             *     rotateCCW(----CuCu) → --CuCu--（列变成行 1,2）
+             *     cutHalf(--CuCu--)   → ----Cu--（单个象限 2）
+             *
+             *   再加上 `stack` 在象限**不相交**时会合进同一层，
+             *   任何 4 象限图案都能从象限碎片拼出来 —— 包括 3:1。
+             *
+             * 完整构造（12 步，`validate.mjs` S1 逐节点 hash 对拍通过）：
+             *   mine RuRu → cut right → RuRu----
+             *   mine CuCu → cut left  → ----CuCu
+             *   stack → RuRuCuCu ; rotate ccw → RuCuCuRu ; cut left → ----CuRu
+             *   cut right CuCu → CuCu---- ; stack → CuCuCuRu ; paint blue → CbCbCbRb
+             *
+             * 而且仓库自己的 `levelForGoal("CbCbCbRb:CwCwCwCw")` = **10**
+             * （`compile.mjs:162`），`opsImpliedByGoal` 里根本没有 cutQuad。
+             * 也就是说编译器的静态分析早就知道这目标不需要 quad cutter ——
+             * 只有我那段 prompt 文案在说反话。
+             *
+             * 所以这里**不该有「走不通」的警告**。改成给出正确路径。 */
             const layerText = layerHints && layerHints.length
                 ? ("这个目标可以**分层做**：" + layerHints.map((l, i) => {
                     const head = `第 ${i + 1} 层 \`${l.shape}\` `;
@@ -248,8 +259,10 @@ function runSolver(goalShape, opts = {}) {
                     }
                     return head + "解不出";
                 }).join("；")
-                    + (gateNote || "。先用 insert_machine + connect 把每一层的产线搭出来，"
-                        + "再用 stacker 把下层接到 upper 槽、上层接到 lower 槽叠起来。"))
+                    + `。**不需要 quad cutter**：两次 \`cut\` 之间插一次 \`rotate\` 就能切出单个象限`
+                    + `（旋转把「列半边」转成「行半边」，下一次 cut 就分开了）；`
+                    + `再用 \`stack\` 把象限不相交的碎片合进同一层，3:1 的图案也拼得出来。`
+                    + `最后用 stacker 把两层叠起来。白颜料另算（mixer 级联：blue+green→cyan，cyan+red→white）。`)
                 : null;
             return {
                 ok: false,

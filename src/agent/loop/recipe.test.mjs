@@ -618,3 +618,31 @@ test("层间完全相同时不做分层探测（测试夹具 RuRuRuRu:RuRuRuRu �
     assert.equal(r.layers, undefined, "层间无差异 ⇒ 不探测、不给 layers");
     assert.equal(calls, 1, "只该 spawn 1 次");
 });
+
+/* ═══════ 9b. 分层提示不许说「按象限拆现在走不通」 ═══════ */
+
+/**
+ * 第一版这里写过：「quad cutter 要到第 16 关才解锁，所以这条按象限拆的路
+ * **现在走不通**」。那是**错的，而且主动误导**。
+ *
+ * 一份完整的代数证明推翻了它：`cutHalf` 按垂直轴切，但 `rotateCW/CCW`
+ * 会置换象限索引 —— 在两次 cut 之间插一次旋转，就能从「半边」里切出单个象限：
+ *   cutHalf(CuCuCuCu) → ----CuCu ; rotateCCW → --CuCu-- ; cutHalf → ----Cu--
+ * 再加上 `stack` 在象限不相交时合进同一层，3:1 的图案照样拼得出来。
+ *
+ * 而且仓库自己的 `levelForGoal("CbCbCbRb:CwCwCwCw")` = **10**
+ * （compile.mjs:162），`opsImpliedByGoal` 里根本没有 cutQuad。
+ * 也就是说编译器的静态分析一直知道这目标不需要 quad cutter ——
+ * 只有那段 prompt 文案在说反话。
+ */
+test("分层提示不许说「走不通」：那需要 quad cutter 的推论是错的", () => {
+    clearRecipeCache();
+    const r = recipeFor("CbCbCbRb:CwCwCwCw", { level: 12, spawn: makeSpawn(layeredStub) });
+    const hint = String(r.hint || "");
+    assert.doesNotMatch(hint, /走不通/,
+        `航道是通的，不能告诉模型走不通。实得：${hint}`);
+    assert.doesNotMatch(hint, /到第 16 关才解锁.*走不通/s,
+        "尤其不能把「需要 16 关」和「走不通」连在一起说");
+    assert.match(hint, /rotate/,
+        "要给出真正的做法：cut 之间插 rotate 才能切出单个象限");
+});
