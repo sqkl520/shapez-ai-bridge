@@ -2424,14 +2424,37 @@ class Mod extends shapez.Mod {
         if (want === "default") return "default";
         // 校验该建筑是否支持
         if (meta.getAvailableVariants) {
+            let avail = null;
             try {
-                const avail = meta.getAvailableVariants(root);
-                if (Array.isArray(avail) && avail.includes(want)) return want;
+                const a = meta.getAvailableVariants(root);
+                if (Array.isArray(a)) avail = a;
             } catch (e) {
-                /* fallthrough */
+                /* 拿不到就退回宽容（老行为） */
+            }
+            if (avail) {
+                if (avail.includes(want)) return want;
+                /* ★ 变体未解锁必须显式拒绝，不能 fail-open ★
+                 *
+                 * 这里原来是 `/* 宽容：直接返回让游戏自己判 *\/ return want;`。
+                 * 问题：`variant:"quad"` 这种未解锁的变体会被原样放过去，
+                 * 然后由游戏决定「静默降级成 default」还是「抛错」—— 两者都不可控：
+                 *   · 静默降级 ⇒ agent 以为放了一台 quad cutter，实际放的是普通 cutter，
+                 *     后续所有基于「有 cutQuad」的推理全部错位，而且**没有任何错误信号**；
+                 *   · 抛错 ⇒ 错误来自游戏内部，看不出「这是解锁问题」。
+                 *
+                 * 而 `op-templates.mjs:89` 的 `cutQuad: 16` 门控正是想在**这一层**拦住的。
+                 * fail-open 等于把那个门控绕过去了。
+                 *
+                 * 现在明确报错，并把该建筑**实际可用**的变体列出来 —— 那才是可执行的修法。 */
+                throw this.rpcError(2001, "invalid_action",
+                    `building "${meta.getId()}": variant "${want}" is not unlocked`,
+                    `available variants: ${avail.join(", ")}. `
+                    + `(A variant can be locked by a reward you have not earned yet — e.g. `
+                    + `cutter/quad needs reward_cutter_quad. Pick one of the available variants, `
+                    + `or use the "default" one.)`);
             }
         }
-        // 宽容：直接返回让游戏自己判
+        // 拿不到可用变体表 ⇒ 保持老行为（宽容），因为此时无法判断，误拒更糟
         return want;
     }
 
