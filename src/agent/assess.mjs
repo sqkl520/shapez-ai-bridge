@@ -361,22 +361,44 @@ export function capacityOf(obs) {
     const haveOreMap = oreCells.length > 0;
     const onOre = haveOreMap ? miners.length - idle.length : miners.length;
 
-    /* ★ 供给只算「压在矿上 **且** 有加工机器接得住」的矿机 ★
+    /* ★ 供给只算「压在矿上 **且** 有加工机器接得住 **且 挖的是形状**」的矿机 ★
      *
-     * 只过滤一半是不够的：L12 上两块都缺 —— 16 台里 6 台是孤岛，
-     * 而这些孤岛的产出**永远进不了任何工序**，却按全速率计入供给。
+     * 两层过滤，是两次实测分别补上的：
      *
-     * 下面两个数分开报，因为它们指向**不同的修法**：
-     *   isolatedMiners  —— 有矿、没机器接 ⇒ 接通它，或把它挪到有线的矿点
-     *   strandedMiners  —— 有机器、脚下没矿 ⇒ 挪到矿上，或删掉
-     * 比一个虚高的 supply 有用得多。 */
+     * ① 连通性（2026-11-20 早）：L12 上 16 台里 6 台是孤岛，产出永远进不了任何工序，
+     *    却按全速率计入供给。
+     * ② **矿的类型**（2026-11-20 晚，真机推翻我自己的建议之后）：L12 上剩下那 10 台
+     *    里有 **9 台在挖颜料**（red×4 / blue×7 / green×4），只有 1 台挖形状矿。
+     *
+     * 第 ② 层为什么必须单独做：颜料矿机的产出**永远到不了 hub**
+     * （`MetaHubBuilding._setupEntityComponent` 把 16 个入口全设成 `filter:"shape"`，
+     * 而 `ColorItem.getItemType()` 返回 `"color"`），也**不经过任何加工机器**——
+     * 它们只喂 painter/mixer，而 painter/mixer 的产能由另一条线算。
+     *
+     * 把它们算进「供给」会让 `utilization = 处理能力 / 供给` 的分母虚高 10 倍：
+     *
+     *     报出来的：supply 8.0/s，stacker 0.25/s ⇒ 3%  ⇒「97% 过不去」
+     *     真实的：  挖形状的只有 1 台 = 0.8/s，stacker 0.25/s ⇒ 31%
+     *
+     * 而 3% 那个数让我上一轮建议模型「再加 32 台 stacker」——**那是在让它
+     * 去处理一个根本不存在的形状流量**。模型没采纳是对的。
+     *
+     * 判据：矿种名首字母大写 = 形状矿（`CuCuCuCu` / `ScSc----`）；
+     *       小写 = 颜料（`red` / `blue` / `green`）。与 `shape-code-vs-color-code`
+     *       记的是同一套字母表。
+     *
+     * ⚠️ 没有矿图时无法分辨类型 ⇒ 只能退回「全算」，并在 `confidence` 里降级。
+     *    宁可偏高，也不能因为缺数据把一座正常工厂判成 0 产能。 */
+    const isShapeOre = kind => typeof kind === "string" && /^[A-Z]/.test(kind);
     const isolatedMiners = mining.filter(m => !m.connected).length;
     const strandedMiners = mining.filter(m => m.connected && haveOreMap && m.onOre === null).length;
+    const pigmentMiners = haveOreMap
+        ? mining.filter(m => m.onOre !== null && !isShapeOre(m.onOre)).length : 0;
 
-    /* 有矿图：onOre 非空 且 connected；无矿图：onOre 恒 null（不知道），只看 connected
+    /* 有矿图：onOre 是形状矿 且 connected；无矿图：onOre 恒 null（不知道），只看 connected
        —— 不能因为缺 data 就把一座正常工厂判成 0 产能。 */
     const activeMiners = haveOreMap
-        ? mining.filter(m => m.onOre !== null && m.connected).length
+        ? mining.filter(m => m.onOre !== null && isShapeOre(m.onOre) && m.connected).length
         : mining.filter(m => m.connected).length;
     const countedMiners = activeMiners;
 
@@ -466,6 +488,8 @@ export function capacityOf(obs) {
             isolated: isolatedMiners,
             /** 有机器接、但脚下没矿 —— 空转的机器等料 */
             stranded: strandedMiners,
+            /** **在挖颜料**：产出不进 hub（入口全 filter:"shape"），也不算供给 */
+            pigment: pigmentMiners,
         },
         supplyPerSec: +supply.toFixed(3),
         process: { capacityPerSec: processCapacity === null ? null : +processCapacity.toFixed(3), machines },

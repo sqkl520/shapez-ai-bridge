@@ -239,6 +239,81 @@ test("A9 没有矿图时不能因为连不上就判成 0 产能（缺数据 ≠ 
     assert.equal(cap.supplyPerSec, 0.4, "连得上就算（0.4），不许因缺矿图判 0");
 });
 
+/* ══════════ A10：颜料矿机的产出不算「供给」 ══════════ */
+
+/**
+ * 2026-11-20 晚，真机跑完之后推翻我自己前一轮的建议才发现。
+ *
+ * L12 上 `capacityOf` 报 `supply 8/s`、`utilization 3%`，
+ * 于是我让模型「再加 32 台 stacker ⇒ 97% 的产出不再堵」。
+ *
+ * 而真相是：那 8/s 来自 10 台矿机，其中 **9 台在挖颜料**
+ * （red×4 / blue×7 / green×4），只有 1 台挖形状矿。
+ *
+ * 颜料矿机的产出：
+ *   · **永远到不了 hub** —— 16 个入口全是 `filter:"shape"`（见
+ *     `hub-only-accepts-shapes-not-pigment`）；
+ *   · **不经过 stacker/cutter/rotater** —— 只喂 painter/mixer。
+ *
+ * 把它们算进分母，「加工能力够不够」这个问题的答案就虚高了 10 倍。
+ * 模型没采纳那条建议是对的。
+ */
+test("A10 挖颜料的矿机不计入供给（它们的产出不进 hub、也不经加工机器）", () => {
+    /* 3 台矿机：1 台挖形状矿 RuRuRuRu，2 台挖颜料 red / blue。
+       几何上全部连到同一台 cutter。 */
+    const entities = [
+        { type: "miner", x: 0, y: 4 }, { type: "miner", x: 1, y: 4 }, { type: "miner", x: 2, y: 4 },
+        { type: "belt", x: 0, y: 3 }, { type: "belt", x: 1, y: 3 }, { type: "belt", x: 2, y: 3 },
+        { type: "belt", x: 0, y: 2 }, { type: "belt", x: 1, y: 2 }, { type: "belt", x: 2, y: 2 },
+        { type: "cutter", x: 0, y: 1 },
+    ];
+    const oreCells = [
+        { x: 0, y: 4, kind: "RuRuRuRu" },   // 形状矿
+        { x: 1, y: 4, kind: "red" },        // 颜料
+        { x: 2, y: 4, kind: "blue" },       // 颜料
+    ];
+    const cap = capacityOf({ upgrades: {}, entities, oreCells });
+    assert.equal(cap.miners.count, 3);
+    assert.equal(cap.miners.pigment, 2, "两台在挖颜料");
+    assert.equal(cap.miners.active, 1, "只有挖形状矿那台算供给");
+    assert.equal(cap.supplyPerSec, 0.4, "1 × 0.4，不是 3 × 0.4");
+});
+
+test("A11 全是颜料矿机 ⇒ 供给 0，不许报「处理能力不足」", () => {
+    /* 一台形状矿机都没有 —— 这时「加工能力」根本无从谈起，
+       报 utilization 只会误导模型去加机器。 */
+    const entities = [
+        { type: "miner", x: 0, y: 4 }, { type: "miner", x: 1, y: 4 },
+        { type: "belt", x: 0, y: 3 }, { type: "belt", x: 1, y: 3 },
+        { type: "belt", x: 0, y: 2 }, { type: "belt", x: 1, y: 2 },
+        { type: "cutter", x: 0, y: 1 },
+    ];
+    const oreCells = [
+        { x: 0, y: 4, kind: "red" },
+        { x: 1, y: 4, kind: "green" },
+    ];
+    const cap = capacityOf({ upgrades: {}, entities, oreCells });
+    assert.equal(cap.miners.pigment, 2);
+    assert.equal(cap.supplyPerSec, 0);
+    assert.notEqual(cap.bottleneck, "process", "供给为 0 时「加工是瓶颈」没有意义");
+});
+
+test("A12 有矿图但没有颜料时行为不变（别把正常情况误伤）", () => {
+    const entities = [
+        { type: "miner", x: 0, y: 4 }, { type: "miner", x: 1, y: 4 },
+        { type: "belt", x: 0, y: 3 }, { type: "belt", x: 1, y: 3 },
+        { type: "belt", x: 0, y: 2 }, { type: "belt", x: 1, y: 2 },
+        { type: "cutter", x: 0, y: 1 },
+    ];
+    const oreCells = [
+        { x: 0, y: 4, kind: "RuRuRuRu" },
+        { x: 1, y: 4, kind: "CuCuCuCu" },
+    ];
+    const cap = capacityOf({ upgrades: {}, entities, oreCells });
+    assert.equal(cap.miners.pigment, 0);
+    assert.equal(cap.supplyPerSec, 0.8, "2 × 0.4，两台都在挖形状矿");
+});
+
 /* ═══════════════════ B. 正例：产能平衡 ⇒ 不许硬报问题 ═══════════════════ */
 
 test("B1 供给≈处理（15 台矿机 × 0.4 = 6/s vs 12 台 cutter × 0.5 = 6/s）⇒ 说「不是瓶颈」", () => {
