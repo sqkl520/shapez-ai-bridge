@@ -2364,7 +2364,23 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                 const effectiveBase = deliverableLoss !== null ? (deliv || 0) : geo;
                 const effectivePct = effectiveBase > 0 ? effectiveLoss / effectiveBase : 0;
                 const mostlyUndeliverable = false;   // 静态比例判据已废弃（见上）
-                const tooMuch = effectiveLoss >= 20 || (effectiveLoss >= 5 && effectivePct >= 0.25);
+                /* ★ `loss` 可以是负数，而负数不是损失 ★
+                 *
+                 * 2026-11-20 真 LLM 实测（`r-20261120114323-f14c` r1）：
+                 * 模型提议 `replace_run` + `connect`，预演显示
+                 * **到 hub 的带子 390 → 391（+1）**，也就是这一步让世界变好了。
+                 * 而它被判成「会让世界明显变差」并**在写盘前拦下**。
+                 *
+                 * 两个独立的错：
+                 *   ① `loss = before - after` 在变好时是负数，而下面只判 `>= 20`，
+                 *      所以负数是靠 `deliverableLoss` 恰好为 0 才没触发 —— 运气。
+                 *   ② 提示文案写的是 `（-${loss}，${pct}%）` —— loss=-1 时
+                 *      渲染成 **`--1`**，并且说「那 N 格背后挂着 -1 条到 hub 的带子」。
+                 *      模型读到的是一句自我矛盾的话。
+                 *
+                 * 这里把损失夹到非负：**「没损失」就是 0，不是负增益计入损失**。 */
+                const lossClamped = Math.max(0, effectiveLoss);
+                const tooMuch = lossClamped >= 20 || (lossClamped >= 5 && effectivePct >= 0.25);
                 /* ★ 「加了一堆死带子」也是改坏 ★
                  *
                  * 真机 r-20261112190707-de26（第 9 关）：模型完全按 hint 执行
@@ -2514,8 +2530,9 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                             pure_removal: isPureRemoval,
                             lost_reach: lostReach,
                             /* 与上面那条闸门同名同义 —— 下游（测试与 prompt）按它取
-                               「这一步的代价」，不因为拦在哪条判据上而改变形状。 */
-                            loss,
+                               「这一步的代价」，不因为拦在哪条判据上而改变形状。
+                               夹到非负：这一条闸讲的是「白铺」，代价不会是负数。 */
+                            loss: lossClamped,
                         },
                         candidates: isPureRemoval
                             ? ["remove_run", "connect", "replace_run"]
@@ -2534,17 +2551,39 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                     });
                 }
                 if (tooMuch) {
+                    /* ★ 展示的指标必须是**判定用的那个** ★
+                     *
+                     * 判定走 `lossClamped`（优先可交付口径），而这里原来印的是几何
+                     * `loss`。真机实测（`r-20261120114323-f14c` r1）：几何 390→391
+                     * 是**变好**，可交付口径却掉了 26 条 —— 于是模型读到
+                     * 「到 hub 的带子 390 → 391（--1，0%）」，被拒绝，却完全不知道
+                     * 拒绝的理由是什么。两个数字指向相反方向，模型只能猜。
+                     *
+                     * 用 `deliverableLoss` 时把它**单独说出来**，并说明为什么与几何
+                     * 数不一致（颜料进不了 hub，所以几何可达 ≠ 真的能交付）。 */
+                    const usingDeliverable = deliverableLoss !== null;
+                    const metricName = usingDeliverable
+                        ? "能真正交付的形状带子" : "到 hub 的带子";
+                    const beforeMetric = usingDeliverable ? deliv : before.belts_reaching_hub;
+                    const afterMetric = usingDeliverable
+                        ? Math.max(0, (deliv || 0) - lossClamped) : after.belts_reaching_hub;
                     return reject("PLAN_REJECTED", {
                         layer: "plan", stage: "simulate",
-                        expected: "这一步不会大幅减少到 hub 的带子",
-                        observed: `预演：到 hub 的带子 ${before.belts_reaching_hub} → ${after.belts_reaching_hub}`
-                            + `（-${loss}，${Math.round(pct * 100)}%），死带子 ${before.belts_dead} → ${after.belts_dead}；`
-                            + `这一步是 ${txPlan.ops.length} 条 op`,
+                        expected: `这一步不会大幅减少${metricName}`,
+                        observed: `预演：${metricName} ${beforeMetric} → ${afterMetric}`
+                            + `（-${lossClamped}，${Math.round(effectivePct * 100)}%），`
+                            + `死带子 ${before.belts_dead} → ${after.belts_dead}；`
+                            + `这一步是 ${txPlan.ops.length} 条 op`
+                            + (usingDeliverable && before.belts_reaching_hub !== after.belts_reaching_hub
+                                ? `（几何上到 hub 的带子是 ${before.belts_reaching_hub} → ${after.belts_reaching_hub}，`
+                                    + `但几何可达只是「路能走通」——hub 的入口只收形状，运颜料的带子物理上交付不了）`
+                                : ""),
                         evidence: {
                             stage: "simulate",
-                            before: { reach: before.belts_reaching_hub, dead: before.belts_dead },
+                            before: { reach: before.belts_reaching_hub, deliverable: deliv, dead: before.belts_dead },
                             after: { reach: after.belts_reaching_hub, dead: after.belts_dead },
-                            loss, pct: Math.round(pct * 1000) / 1000,
+                            metric: usingDeliverable ? "belts_deliverable" : "belts_reaching_hub",
+                            loss: lossClamped, pct: Math.round(effectivePct * 1000) / 1000,
                             ops: txPlan.ops.length,
                             calls: executed.map(c => c.macro),
                         },
@@ -2552,7 +2591,7 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
                            因为宏的 warning 只报「几格」，不报到 hub 少了多少。 */
                         hint: `这一步会让世界明显变差，已在写盘前拦下（世界没有被改）。`
                             + `最常见的原因是 \`connect {allow_replace:true}\` 或 \`trash_unused\` 覆盖/封死了**正在工作**的带子 ——`
-                            + `宏只会说「覆盖了 N 格」，不会说那 N 格背后挂着 ${loss} 条到 hub 的带子。`
+                            + `宏只会说「覆盖了 N 格」，不会说那 N 格背后挂着 ${lossClamped} 条到 hub 的带子。`
                             + `换一条更短的路径（先不带 allow_replace 试），或先确认那几格确实是废料。`,
                     });
                 }

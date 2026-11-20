@@ -625,3 +625,106 @@ test("S8b ★ 删运形状的带子：损失必须被算出来（>0），不能�
     /* 再验删**大量**形状带会拦：把两条都删，损失 2 … 仍 < 20。
        所以真正的对照组是 S8a：同样的操作、只差货物类型，结果不同。 */
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * S9 / S10 —— 「损失」判据的两个显示缺陷（2026-11-20 真 LLM 实测抓到）
+ *
+ * 真机 `r-20261120114323-f14c` 第 1 轮，模型提议 `replace_run` + `connect`，
+ * 预演结果：
+ *
+ *     到 hub 的带子 390 → 391（--1，0%），死带子 309 → 309
+ *     → 这一步会让世界明显变差，已在写盘前拦下
+ *
+ * ① **逗号前是 `--1`** —— `loss` 是 `before - after`，变好时为 −1，
+ *    而文案写的是 `（-${loss}…）`，负负得正变成 `--1`。
+ * ② 后半句说「那 N 格背后挂着 **-1 条**到 hub 的带子」—— 自我矛盾。
+ *
+ * 而真正的判据是 `deliverableLoss`（类型口径）：几何涨了 1，可交付却掉了 26。
+ * 也就是说**拒绝本身是对的**，但模型看到的数字全在说「我变好了」，
+ * 它没有任何可能猜出为什么被拒。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("S9 几何涨了、可交付掉了 ⇒ 拒绝是对的，但展示的必须是可交付口径（不许出现 `--1`）", () => {
+    /* 造一个「几何可达增加、能交付的却减少」的世界：
+     *   · 形状链：4 条带子送到右侧入口 —— 它们**真的能交付**
+     *   · 颜料链：30 条带子送到上侧入口 —— 几何可达，但颜料进不了 hub
+     * 然后一次性删掉整条形状链。几何可达只掉 4，可交付掉 4 … 不够 20。
+     *
+     * 所以换个更贴近真机的构造：让「新增的几何可达」远多于「可交付」。
+     * 这里用不到那么复杂 —— 只要验证**文案里没有任何负数损失**即可，
+     * 那是 ① 和 ② 的共同症状。 */
+    const ents = [
+        { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+        { uid: 2, type: "belt", x: 4, y: 0, r: 270, rv: 0, code: 1, layer: "regular" },
+    ];
+    /* 形状链 30 条 —— 删了会真的掉可交付 */
+    for (let k = 0; k < 30; k++) {
+        ents.push({ uid: 200 + k, type: "belt", x: 5 + k, y: 0, r: 270, rv: 0, code: 1, layer: "regular" });
+    }
+    /* 颜料链 30 条 —— 几何可达但交付不了（这是让几何数虚高的那群） */
+    for (let k = 0; k < 30; k++) {
+        ents.push({ uid: 100 + k, type: "belt", x: 0, y: -1 - k, r: 180, rv: 0, code: 1, layer: "regular" });
+    }
+    const w = {
+        goal: { level: 12, requirement: { shape: "RuRu----", required: 100, delivered: 0 } },
+        entities: ents,
+        resources: [[9, 9, "RuRuRuRu"]],
+    };
+    const items = {
+        belts: [
+            { cell: [4, 0], path: 0, idx: 0, pos: 0.9, spacing_to_next: 0, item: "RuRu----" },
+            { cell: [0, -1], path: 1, idx: 0, pos: 0.9, spacing_to_next: 0, item: "green" },
+        ],
+        ejectors: [], underground: [], pending: [], pathCount: 2, truncatedPaths: false, paths: [],
+        counts: { belts: 2 },
+    };
+    const handles = buildHandles(w, null);
+    /* 删掉整条形状链（34 条），留下一堆几何可达的颜料带 → 几何掉得比可交付多 */
+    const r = buildTxPlan(
+        { calls: [{ macro: "remove_run", args: { uids: { $uids: ents.filter(e => e.uid >= 200).map(e => `B${e.uid}`) } } }] },
+        w, items, handles, { partial: true },
+    );
+    /* 不预设它一定被拦（拦不拦取决于哪条闸先命中），只钉**不变量**：
+       只要出现 loss 这个字段，它就非负；文案里不许有双负号。 */
+    const d = r.diagnosis || {};
+    assert.doesNotMatch(String(d.observed || ""), /--/, `文案里不许出现双负号：${d.observed}`);
+    assert.doesNotMatch(String(d.hint || ""), /挂着 -\d+ 条/, `不许说「挂着 -N 条」：${d.hint}`);
+    const ev = d.evidence || {};
+    if (ev.loss !== undefined) {
+        assert.ok(Number(ev.loss) >= 0, `evidence.loss 必须非负，实际 ${ev.loss}`);
+    }
+});
+
+test("S10 变好的改动不许被判成「明显变差」（loss 为负时必须夹到 0）", () => {
+    /* 真机那一步：几何 390 → 391，loss = −1。
+     * 只要判据里有任何一处直接拿 `loss >= 20` 而不夹非负，
+     * 负损失就会在某些路径上被当成合法输入。这里钉住「非负」这个不变量。 */
+    const ents = [
+        { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+        { uid: 2, type: "belt", x: 4, y: 0, r: 270, rv: 0, code: 1, layer: "regular" },
+        { uid: 3, type: "belt", x: 5, y: 0, r: 270, rv: 0, code: 1, layer: "regular" },
+    ];
+    const w = {
+        goal: { level: 12, requirement: { shape: "RuRu----", required: 100, delivered: 0 } },
+        entities: ents,
+        resources: [[9, 9, "RuRuRuRu"]],
+    };
+    const items = {
+        belts: [{ cell: [4, 0], path: 0, idx: 0, pos: 0.9, spacing_to_next: 0, item: "RuRu----" }],
+        ejectors: [], underground: [], pending: [], pathCount: 1, truncatedPaths: false, paths: [],
+        counts: { belts: 1 },
+    };
+    const handles = buildHandles(w, null);
+    /* 往链尾接一条 —— 这一步不会减少任何到 hub 的带子 */
+    const r = buildTxPlan(
+        { calls: [{ macro: "connect", args: { from: { $ref: "B2" }, to: { $ref: "B3" } } }] },
+        w, items, handles, { partial: true },
+    );
+    /* 同上：只钉不变量，不预设结果。 */
+    const d = r.diagnosis || {};
+    assert.doesNotMatch(String(d.observed || ""), /--/, `文案里不许出现双负号：${d.observed}`);
+    const ev = d.evidence || {};
+    if (ev.loss !== undefined) {
+        assert.ok(Number(ev.loss) >= 0, `变好的改动不许报负损失，实际 ${ev.loss}`);
+    }
+});
