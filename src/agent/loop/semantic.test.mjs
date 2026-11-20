@@ -555,6 +555,16 @@ test("P-a 只产出已登记的码（越界即红：别顺手加了没登记的�
         "SHAPE_UNKNOWN", "MIXER_UNFED", "HUB_INLET_THIN",
         "DEAD_LINES", "ORPHAN_MACHINES", "UPGRADE_AVAILABLE",
         "PROCESSING_FAR_TOO_SLOW",
+        /* 2026-11-20 补登 `MINER_UNWIRED`。
+         *
+         * 触发它需要「矿机站在矿上 + 输出口空着」，而 L4 / L5 两个夹具都
+         * 没有这种中间态 —— 白名单成立、测试是绿的，但方式与那三个旧码相同：
+         * **夹具不覆盖 ≠ 纪律不存在**。
+         *
+         * 依据：真机 `r-20261120194302-bc94`，`insert_machine` 把矿机放对了位置
+         * （`(-10,9)` 的圆形铜矿），四周却全是空地。`ORE_UNMINED` 因它消失、
+         * `ORPHAN_MACHINES` 因「站在矿上永不算孤儿」豁免它 —— 两条都不管。 */
+        "MINER_UNWIRED",
     ]);
     for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {
         for (const d of run(obs, rec, { level: 5 })) {
@@ -1806,4 +1816,70 @@ test("ORE_UNMINED：描述当前状态时不能与自己的 evidence 矛盾", ()
     const text = `${d.hint} ${d.observed}`;
     assert.doesNotMatch(text, /全在挖颜料|全都在挖颜料/,
         `evidence 说有 1 台踩在形状矿上，文字说「全在挖颜料」是自相矛盾。实得：${text}`);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MINER_UNWIRED —— 「矿机就位、只差接线」（2026-11-20 真机撞出来的盲区）
+ *
+ * 真机 `r-20261120194302-bc94`：`insert_machine {at:{$ore:"Cu"}, facing:left,
+ * machine:"miner"}` 成功落盘（`tx ✓ applied 3/3`、`entities 748→749`），
+ * 新矿机在 `(-10,9)`，脚下正是 `CuCuCuCu` —— **放得完全正确**。
+ *
+ * 但四周全是空地。而下一轮**没有任何诊断提到它**：
+ *   · `ORE_UNMINED` 消失（判据是「有没有矿机在挖」，现在有了）
+ *   · `ORPHAN_MACHINES` 豁免它（「站在矿上的矿机永不算孤儿」，
+ *     那是为了防止模型删掉刚放的矿机）
+ *
+ * 于是「矿机已就位、只差一条带子」这个状态无人覆盖 —— 而它正是这套系统
+ * 唯一可行的施工顺序（先放机器、下一轮接线）的中间态。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("MINER_UNWIRED：矿机在矿上但输出口空着 ⇒ 要报（ORE_UNMINED 和 ORPHAN 都不管它）", () => {
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            /* 矿机朝左（r=270），输出口在 (-1,0)，那里是空地 */
+            { uid: 2, type: "miner", x: 0, y: 0, r: 270, variant: "default", rotation_variant: 0, layer: "regular" },
+        ],
+        resources: [[0, 0, "CuCuCuCu"]],
+    };
+    const ds = semanticDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null),
+        { recipe: { ok: false }, level: 12 });
+    const d = ds.find(x => x.code === "MINER_UNWIRED");
+    assert.ok(d, `应当报 MINER_UNWIRED，实际 ${ds.map(x => x.code).join(",")}`);
+    assert.equal(d.evidence.unwired_count, 1);
+    assert.match(d.hint, /别拆/,
+        `必须明确说「别拆」—— 位置是对的，缺的只是线。实际：${d.hint}`);
+    assert.ok(d.candidates.includes("connect"), "首要修法是接线");
+});
+
+test("MINER_UNWIRED 负例：输出口已接带子 ⇒ 不报", () => {
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            { uid: 2, type: "miner", x: 0, y: 0, r: 270, variant: "default", rotation_variant: 0, layer: "regular" },
+            /* 输出口 (-1,0) 上有带子 ⇒ 已经接了 */
+            { uid: 3, type: "belt", x: -1, y: 0, r: 90, rv: 0, code: 2, layer: "regular" },
+        ],
+        resources: [[0, 0, "CuCuCuCu"]],
+    };
+    const ds = semanticDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null),
+        { recipe: { ok: false }, level: 12 });
+    assert.ok(!ds.some(x => x.code === "MINER_UNWIRED"), "接了带子就不该报");
+});
+
+test("MINER_UNWIRED 负例：矿机不在矿上 ⇒ 不报（那是 ORE_UNMINED 的事）", () => {
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            { uid: 2, type: "miner", x: 5, y: 5, r: 270, variant: "default", rotation_variant: 0, layer: "regular" },
+        ],
+        resources: [[0, 0, "CuCuCuCu"]],   // 矿在 (0,0)，矿机在 (5,5)
+    };
+    const ds = semanticDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null),
+        { recipe: { ok: false }, level: 12 });
+    assert.ok(!ds.some(x => x.code === "MINER_UNWIRED"), "不在矿上的矿机不算这条");
 });

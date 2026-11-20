@@ -3310,6 +3310,77 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             });
         }
 
+        /* ★ ③c-bis MINER_UNWIRED —— 矿机站在矿上，但输出口空着 ★
+         *
+         * 2026-11-20 真机实测（`r-20261120194302-bc94`）撞出来的一个**诊断盲区**。
+         *
+         * 那一轮 `insert_machine {at:{$ore:"Cu"}, facing:left, machine:"miner"}` 成功落盘：
+         * 新矿机在 `(-10,9)`，脚下正是 `CuCuCuCu`（目标需要的圆形铜矿），
+         * `tx ✓ applied 3/3`、`entities 748→749`。**放得完全正确。**
+         *
+         * 但它四周 `(-9,9) (-11,9) (-10,8) (-10,10)` 全是空地 —— 输出口 `(-11,9)` 空着。
+         * 它挖得出铜矿，送不出去，一件也到不了 hub。
+         *
+         * 而下一轮的诊断里**没有任何一条提到它**：
+         *
+         *   · `ORE_UNMINED` 消失了 —— 判据是「有没有矿机踩在含该形状的矿上」，
+         *     现在有了，所以满足。它说的是**有没有人在挖**，不是**挖出来的能不能走**；
+         *   · `ORPHAN_MACHINES` 也**不报** —— 那条的判据里有一句
+         *     「站在矿上的矿机**永远**不算孤儿」，是 2026-11-16 为了阻止模型
+         *     把刚放的矿机删掉而加的。理由当时成立（`insert_machine` 之后、
+         *     `connect` 之前必然两端全空），但它把这一类**彻底豁免**了。
+         *
+         * 于是「矿机已就位、只差接线」这个状态没有任何诊断覆盖 ——
+         * 而它恰恰是这套系统**唯一可行的施工顺序**的中间态。
+         *
+         * 判据：矿机 + 脚下有矿 + 输出口那格是空的。
+         * 与 `ORPHAN_MACHINES` 的分工：那条管「删」，这条管「接」。
+         * 与 `ORE_UNMINED` 的分工：那条管「该不该挖」，这条管「挖了送不送得出去」。 */
+        {
+            const unwired = [];
+            for (const m of idx.ent) {
+                if (m.type !== "miner") continue;
+                const ore = engine && engine.ore instanceof Map ? engine.ore : null;
+                if (ore && !ore.has(`${m.x},${m.y}`)) continue;      // 不在矿上 ⇒ 另一条诊断的事
+                let sl = null;
+                try {
+                    sl = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m));
+                } catch { continue; }
+                const outs = (sl && Array.isArray(sl.outputs)) ? sl.outputs : [];
+                if (!outs.length) continue;
+                /* 输出口全空 = 挖得出来但送不出去。有一格接了就不算（可能还在铺）。 */
+                if (outs.every(x => !at(idx, x.cell))) {
+                    unwired.push({ miner: m, cell: outs[0].cell });
+                }
+            }
+            if (unwired.length) {
+                const hs = unwired.map(u => handleOf(handles, u.miner.uid)).filter(Boolean);
+                out.push({
+                    code: "MINER_UNWIRED",
+                    layer: "L2",
+                    severity: "warn",
+                    subject: subjectOf(handles, unwired[0].miner.uid, "miner"),
+                    expected: "a miner standing on ore has a belt at its output so what it digs can travel",
+                    observed: `${unwired.length} miner(s) stand on ore but their output cell is empty — `
+                        + `they dig, and nothing carries it away`,
+                    evidence: {
+                        handles: hs,
+                        uids: unwired.map(u => u.miner.uid),
+                        /* 落点坐标是允许出现在**证据**里的（与 `site_cells` 同一条纪律：
+                           `assertNoHumanCoords` 管的是 LLM 的**输出**，不是喂给它的材料）。 */
+                        out_cells: unwired.slice(0, 6).map(u => u.cell),
+                        unwired_count: unwired.length,
+                    },
+                    candidates: ["connect", "insert_machine"],
+                    hint: `${unwired.length} 台矿机已经踩在矿上了，但输出口那格是空的 —— `
+                        + `**挖得出来、送不出去**，一件都到不了 hub。`
+                        + `接线：\`connect {from:{ref:"${hs[0] || "M1"}"}, to:<下游>}\`，`
+                        + `或者先铺一段带子再连进已有的链。`
+                        + `**别拆它们** —— 位置是对的，缺的只是一条线。`,
+                });
+            }
+        }
+
         /* ★ ③c-bis TRASH_OVERGROWN —— 垃圾桶太多（2026-11-15 夜，L12 真机）★
          *
          * 实测：最近 5 次 run 的 59 个调用里 `trash_unused` 占 **12 个（20%）**，

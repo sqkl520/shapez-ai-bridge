@@ -117,6 +117,14 @@ export const DIAG_CODES = Object.freeze({
      * 那条按配方**计数**（配方要 1 台 cutter、有 3 台 ⇒ 认为够了），
      * 这条按**吞吐**（3 台只处理 1.5/s，对 8/s 远远不够）。
      * 两种口径会给出相反答案，而此前只有配方口径进了诊断/候选表。 */
+    /* ★ 「矿机站在矿上但没接线」（2026-11-20 真机）★
+     *
+     * `insert_machine` 放对了位置（`(-10,9)` 的圆形铜矿），但输出口空着。
+     * 而 `ORE_UNMINED` 因它消失、`ORPHAN_MACHINES` 因「站在矿上永不算孤儿」豁免它 ——
+     * 两条诊断都不管这个状态，模型于是没有理由去接它。
+     *
+     * 这与 `ORPHAN_MACHINES` 分工：那条管「删」，这条管「接」。 */
+    MINER_UNWIRED: "L2: a miner stands on ore but its output cell is empty — it digs and nothing carries the ore away",
     PROCESSING_FAR_TOO_SLOW: "L4: the bottleneck processing stage can only handle a small fraction of what the miners supply — the machines are there but far too few (throughput basis, not recipe count)",
 
     /* ── 语义层（P-a，`loop/semantic.mjs`） ──
@@ -509,6 +517,12 @@ export const RETRIEVAL_TABLE = Object.freeze({
     ORE_UNMINED: cand([
         ["insert_machine", 10],
         ["connect", 4],
+    ]),
+    /* 矿机就位但没接线 ⇒ **接**，不是拆。
+       `insert_machine` 作为次选：有时它需要先有下游机器才接得上。 */
+    MINER_UNWIRED: cand([
+        ["connect", 10],
+        ["insert_machine", 4],
     ]),
     /* 加工能力不足 ⇒ **并联**是唯一正解：再放同类机器。
      * `connect` 给次权重是因为可能先要把新机器的口接上线，
