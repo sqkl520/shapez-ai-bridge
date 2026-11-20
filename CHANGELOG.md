@@ -15,6 +15,48 @@
 
 ## [Unreleased]
 
+### Changed — 按 D:\Projects\docs\PROJECT-RULES.md 整改；Release 说明按实测格式重写
+
+两件事，起因不同。
+
+**① 仓库合规整改**（依据 `PROJECT-RULES.md`，见 `64bf82c`）
+
+- §6 文档语言：`README.md` 与 `README.zh-CN.md` 的中英角色原来是反的，
+  改成规则要求的 `README.md`(中) + `README-EN.md`(英)。
+  `CONTRIBUTING` / `SECURITY` 原先只有英文，补齐中文版并同样改成 `-EN` 后缀命名。
+  三对文件首行都加双向语言链接。
+- §2.1 真实数据：`research/ai-plan/.s3~.s8.json` 里是游戏截图的 base64（约 1.6MB），
+  连同 14 张无人引用的游戏截图一起 `git rm --cached`。被文档实际引用的 5 张保留，
+  并在 `.gitignore` 里显式放行（否则新加的 `shot*.png` 规则会挡住将来的更新）。
+- §1.4 运行产物：`docs/gui/*.log`（12 个构建日志）、
+  `LIVE-CAPACITY-RAW/evidence-bridge-cc.log`、`live/results/watch.log`。
+- §1.4 根目录：`PHASE0-RECON.md` 移进 `docs/`（4 处引用同步）；
+  `bing.html` / `out.html` / `nul` / `.o.json` 四个可重新获取的垃圾文件删除。
+- 顺带修了一条**本来就断的链接**：`.github/ISSUE_TEMPLATE/config.yml` 指向
+  `README.md#troubleshooting`，而两个 README 里都没有这个锚点（实际是 `## ❓ FAQ`）。
+
+**② Release 说明重写**（依据 `D:\Projects\Release说明写作规则.md`）
+
+原 Release 正文是英文自创结构（`What this is` / `What works today` / …），
+首行不是版本号，也没有 `Upgrade notes` / `Known limitations`。重写为：
+
+    ## 0.1.0-SNAPSHOT
+    ### Added / Changed / Known limitations / Security / Upgrade notes
+
+正文用中文，小标题用英文——与全机 26 条实测 Release 一致。核对时改掉三处过时数字：
+
+| 原写法 | 实际 |
+|---|---|
+| 「七个宏」 | **8 个**（`upgrade` 于 2026-11-13 加入） |
+| 「净效果分六档」 | **7 档**（后来加了 `stalled_growth`） |
+| 「`Cu----Cu` 曾在真机上抵达 65%」 | 那是 **L5** 的 65%，且产线 95% 是脚本手搭的。`P8-METRICS.md` 开头就认过这个账，Release 里不能再写回去 |
+
+还修了一处**会让人照着做然后失败**的指令：原文写 `node install.mjs`，
+而这个文件不存在（只有 `install.sh` / `install.ps1`）。
+
+同时按实测结果完善了 `Release说明写作规则.md` 自身——它和 26 条真实 Release
+有四处系统性偏差，详见该文件的 §2.4 / §2.5 / §规则 9。
+
 ### Changed — 清掉 `recon/` 解包产物的所有引用（含行号级）
 
 `recon/` 本身早就在 `.gitignore` 里、不随仓库分发，但**它的名字还出现在公开文件里**，
