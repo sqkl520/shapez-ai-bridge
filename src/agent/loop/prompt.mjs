@@ -2190,7 +2190,23 @@ export function renderCapacity(capacity, options = null, opts = {}) {
                 + (add.enough ? " — fills the line" : ""));
         }
         if (up && canBuyUpgrade) {
-            const short = up.affordable ? "ready now" : `needs ${fmtShort(up.missing)}`;
+            /* ★ `needs` 那半句要带上「必须专门造」，不能只报缺多少 ★
+             *
+             * 2026-11-20 查实：`upgrade` 是这游戏里**唯一**能让已有产线变快的动作
+             * （全局倍率、零占格），而 556 个 run 的真实 prompt 里它**一次都没出现** ——
+             * 三条入口全关：系统提示只有宏名没语法；卡片挂在 `UPGRADE_AVAILABLE`
+             * 诊断下（判据是「已经买得起」，556 run 触发 0 次）；这一行要求 affordable。
+             *
+             * 光补「缺 498 个 SuSuSuSu」不够：模型会以为那是**顺带攒**得到的。
+             * 而实际需求量是 300-600，单关最多产出 30-170 —— 差一个数量级，
+             * 必须专门开一条线。这句话 `assess()` 里早就写好了（`nextActions` 的
+             * `build-upgrade-line`），但 loop 从来没调用过 `assess()`，一个字都没送出来。
+             *
+             * ⚠️ 长度纪律：CAPACITY 有 260 字符上限（测试 D4），因为它与带子列表
+             * 抢同一份预算。单独加一行会顶到 454/336，两次打红 —— 所以并进这一行。 */
+            const short = up.affordable
+                ? "ready now"
+                : `needs ${fmtShort(up.missing)} by a dedicated line`;
             /* ⚠️ 必须带 `buy` 这个动词，不能只写参数。
              *
              * `short` 版写的是 `act: buy belt T2 ⇒ …`，而 full 版原来写

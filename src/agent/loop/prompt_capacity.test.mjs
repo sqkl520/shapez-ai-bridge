@@ -120,6 +120,40 @@ test("A4 渲染出的 CAPACITY 段能比较「加机器 vs 升级」—— 但**
     assert.equal(options.upgrade.capacityAfter, 0.75, "升完 processors T1 是 0.5×1.5=0.75");
 });
 
+/**
+ * A4b —— 「买不起时也必须说，而且要说明它需要专线」。
+ *
+ * 2026-11-20 查实：`upgrade` 是这游戏里**唯一**能让已有产线变快的动作，
+ * 而 556 个 run 的真实 prompt 里它**一次都没出现**。三条入口全关：
+ * 系统提示只有宏名没语法；卡片挂在 `UPGRADE_AVAILABLE` 下（判据是「已经买得起」，
+ * 556 run 触发 0 次）；CAPACITY 的 `buy` 行要求 `affordable`。
+ *
+ * 最贵的一点是：买不起时**连「差什么」都不说**。模型于是既不知道有这么个动作，
+ * 也不知道那件事需要专门去造 —— 而需求量 300-600 远超单关产出的 30-170，
+ * 靠顺带产永远凑不够。
+ */
+test("A4b 买不起时也要报出缺口，并说明那是专线的活（不能留一个空 needs）", () => {
+    const { capacity, options } = capacityFor(L4_LIVE);
+    assert.equal(options.upgrade.affordable, false, "L4 夹具的 processors T1 买不起");
+    const text = renderCapacity(capacity, options, {});
+    assert.ok(text);
+    assert.match(text, /buy processors T\d/, "买不起也要出现 buy 这一行 —— 那是唯一能提效的动作");
+    assert.match(text, /needs SuSuSuSu×\d+/, "必须点名缺什么、缺多少");
+    assert.match(text, /dedicated line/, "必须说明它要专门开一条线，不是顺带攒");
+});
+
+test("A4c 买得起时不说「专线」那半句（措辞要跟着状态走）", () => {
+    const { capacity, options } = capacityFor(L4_LIVE);
+    const rich = {
+        ...options,
+        upgrade: { ...options.upgrade, affordable: true, missing: [] },
+        doNow: [{ action: "buy-upgrade", line: "processors", tier: 1, capacityAfter: 0.75 }],
+    };
+    const text = renderCapacity(capacity, rich, {});
+    assert.match(text, /ready now/);
+    assert.doesNotMatch(text, /dedicated line/, "买得起就不是「要专门造」了");
+});
+
 test("A5 「machinesToSaturate」与供给自洽（不是一个拍出来的数）", () => {
     const { capacity, options } = capacityFor(L4_LIVE);
     assert.equal(options.machinesToSaturate, 4, "ceil(1.8 / 0.5) = 4 台 cutter 才吃满");
