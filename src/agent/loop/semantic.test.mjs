@@ -433,7 +433,21 @@ test("T10 ★ 总量 ≤8、每码 ≤3，且超限不静默丢弃（首条带 s
     assert.equal(tight.length, 1);
     const sup = tight[0].evidence.suppressed;
     assert.ok(Number.isInteger(sup) && sup > 0, "被压掉的条数必须记在首条 evidence.suppressed 上");
-    assert.equal(1 + sup, full.length, "suppressed 必须补回完整条数");
+
+    /* ★ 基准必须是**未压制**的条数，不能拿 `full.length` ★
+     *
+     * 2026-11-20 实测：L5+ore 现在产出 **9** 条诊断，而 `LIMITS.TOTAL = 8` ——
+     * 所以 `full` 自己就是压制后的结果（8 条，首条带 suppressed:1）。
+     * 原来的 `assert.equal(1 + sup, full.length)` 于是变成 `9 !== 8`，
+     * 看起来像我新加的诊断算错了，实际是**基准选错了**：两个都带压制，
+     * 一个是 PER_CODE:1 压到底，另一个是默认上限压掉 1 条。
+     *
+     * 正确基准：把上限放到足够大再跑一次，拿到真正的产出条数。
+     * 这样才能验证「一条都没静默消失」这个真正的不变量。 */
+    const unbounded = run(L5_WITH_ORE, RECIPE_L5, { level: 5, limits: { PER_CODE: 999, TOTAL: 999 } });
+    assert.ok(full.length <= 8, `默认上限下总量 ${full.length} > 8`);
+    assert.equal(1 + sup, unbounded.length,
+        `suppressed 必须补回完整条数（unbounded=${unbounded.length}, tight=1+${sup}）`);
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -528,11 +542,19 @@ test("P-a 只产出已登记的码（越界即红：别顺手加了没登记的�
      *   · DEAD_LINES      —— 用户两次指屏幕说「废弃的不删」，而 403/646 条带子到不了 hub；
      *   · ORPHAN_MACHINES —— 同上那次，57 台机器里 45 台一根带子都没接；
      *   · UPGRADE_AVAILABLE ——「AI 不会用更高级的方法提高效率」：实机 miner/painting
-     *                          两档当场买得起，而 prompt 一个字都没提。 */
+     *                          两档当场买得起，而 prompt 一个字都没提。
+     *
+     * 2026-11-20 补登 `PROCESSING_FAR_TOO_SLOW`。它又是同一类漏：新码加了、
+     * 白名单没跟。这次在**加上它的那一刻**就跑到了这条测试，算它起作用了。
+     *
+     * 依据：用户问「让机器变快的法子只有这一个吗」并指出「并联最缺少」。
+     * 数据：9272 次宏调用里 `connect` 占 71.3%、`insert_machine` 只有 4.8%；
+     * L12 是 699 条带子 / 11 台加工机器 = 63.5:1，处理 0.25/s 对供给 8/s。 */
     const OWNED = new Set([
         "PROCESSOR_REQUIRED", "WRONG_SHAPE_AT_HUB", "DISCARDED_INTERMEDIATE",
         "SHAPE_UNKNOWN", "MIXER_UNFED", "HUB_INLET_THIN",
         "DEAD_LINES", "ORPHAN_MACHINES", "UPGRADE_AVAILABLE",
+        "PROCESSING_FAR_TOO_SLOW",
     ]);
     for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {
         for (const d of run(obs, rec, { level: 5 })) {

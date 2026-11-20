@@ -106,6 +106,18 @@ export const DIAG_CODES = Object.freeze({
     WASTE_NO_SINK: "L3: a declared waste slot's run ends at {trash, empty, rejected} while the world has zero trash buildings",
     RAW_MATERIAL_MISSING: "L4: the recipe needs mine but the world has zero miners",
     ORE_UNMINED: "L4: the goal needs a shape (rect/circle/star/windmill) that NO miner is standing on — the ore exists but nothing is extracting it",
+    /* ★ 「加工能力相对供给严重不足」（2026-11-20）★
+     *
+     * 用户问「AI 能不能自主做出更高效率的机器」，然后指出「并联最缺少」。
+     * 数据证实：9272 次宏调用里 `connect` 占 71.3%，`insert_machine` 只有 4.8%，
+     * 并联几乎从未发生；而 L12 是 699 条带子 / 11 台加工机器 = 63.5:1，
+     * 处理 0.25/s 对供给 8/s。
+     *
+     * 与 `PROCESSOR_REQUIRED{scope:"factory"}` 的区别是**口径**：
+     * 那条按配方**计数**（配方要 1 台 cutter、有 3 台 ⇒ 认为够了），
+     * 这条按**吞吐**（3 台只处理 1.5/s，对 8/s 远远不够）。
+     * 两种口径会给出相反答案，而此前只有配方口径进了诊断/候选表。 */
+    PROCESSING_FAR_TOO_SLOW: "L4: the bottleneck processing stage can only handle a small fraction of what the miners supply — the machines are there but far too few (throughput basis, not recipe count)",
 
     /* ── 语义层（P-a，`loop/semantic.mjs`） ──
      * 判据写在说明里（同上：码有名字、判据没字段 = 假绿）。
@@ -477,6 +489,14 @@ export const RETRIEVAL_TABLE = Object.freeze({
     ORE_UNMINED: cand([
         ["insert_machine", 10],
         ["connect", 4],
+    ]),
+    /* 加工能力不足 ⇒ **并联**是唯一正解：再放同类机器。
+     * `connect` 给次权重是因为可能先要把新机器的口接上线，
+     * 但把它排第二而不是并列 —— 这条路 71% 的动作已经全是 connect 了，
+     * 再不把它压下去，模型会继续铺带子。 */
+    PROCESSING_FAR_TOO_SLOW: cand([
+        ["insert_machine", 10],
+        ["connect", 3],
     ]),
     RAW_MATERIAL_MISSING: cand([
         ["insert_machine", 9],        // 只有「放一台矿机」能修

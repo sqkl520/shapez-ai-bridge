@@ -61,6 +61,9 @@ import {
     formatHealth, formatDelta, formatNetEffect, formatDeadBySource, NET_EFFECT_LABEL,
 } from "./loop/health.mjs";
 import { removalRedundancy } from "./loop/redundancy.mjs";
+/* 产能：`capacityOf` 是供给/处理两个数的**唯一**真值。
+   `NO_PRODUCTION` 的 hint 里要报「加工能力只有供给的 N%」，数字从这里来，不重算。 */
+import { capacityOf } from "./assess.mjs";
 import { decideRollback, netEffectAfterRollback, ROLLBACK_KINDS } from "./loop/rollback.mjs";
 import {
     loadMemory, saveMemory, extractAttempts, mergeMemory, attemptsForGoal,
@@ -901,9 +904,25 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
      * `level` 口径与 `ctx.recipe` 一致：都取 **obs.goal.level**（solver 的解是同一个关卡的解）。
      * 两侧取自同一字段，所以「配方按 L 门控 / 语义按 L 判可修」不会分裂。 */
     let semanticDropped = 0;
-    if (cx.recipe) {
+    /* ★ 语义层**不能**被「配方解不出来」整个关掉（2026-11-20）★
+     *
+     * 原来这里是 `if (cx.recipe)` —— 配方缺席时整层跳过。
+     * 而 L12 的求解器是**搜索超限**（`recipe.ok=false`），于是从第一轮起
+     * 一条语义诊断都不产。`semanticDiagnoses` 内部其实早就处理了配方缺席
+     * （`recipeUsable` 为假时用空 model，纯拓扑分支照常跑，
+     * 见 `semantic.mjs:1140` 那段长注释）。
+     *
+     * 这个外层闸的代价在本轮实测出来：新加的 `PROCESSING_FAR_TOO_SLOW`
+     * 在 L12 上算得出（1 台 stacker 处理 0.25/s 对供给 8/s），
+     * 但真机跑起来诊断列表里**根本没有它** —— 因为它压根没被调用。
+     * 而我本地直接调 `semanticDiagnoses` 时它是有的，所以这个断层
+     * 只有真机才暴露得出来。
+     *
+     * 现在无条件调用：配方缺失由 `semanticDiagnoses` 自己按 `recipeUsable`
+     * 逐条决定（依赖配方的分支自然不产），不需要外面再拦一道。 */
+    {
         const semRes = dropInlets(semanticDiagnoses(o, it, goalShape, tbl, {
-            recipe: cx.recipe,
+            recipe: cx.recipe || null,
             level: (o.goal && Number.isFinite(o.goal.level)) ? o.goal.level : undefined,
         }));
         out.push(...semRes.kept);
@@ -1165,6 +1184,38 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
                             + `下一步：顺着一条已经通到 hub 的链，往前找它运的是什么，`
                             + `在源头把它换成 ${goalShape} 需要的原料/工序（\`replace_run\` / \`insert_machine\` / \`connect\`）。`
                             + `**别再成片拆带子了** —— 它们大多数在正常工作，拆掉是在拆自己的产能。`
+                            /* ★ 把产能缺口写在这里（2026-11-20）★
+                             *
+                             * 单独加一条 `PROCESSING_FAR_TOO_SLOW` 诊断试过，**送不到**：
+                             * 合并后总量上限 8（`loop.mjs` ⑥ 段，契约 v2 §6 的硬上限），
+                             * L12 上 8 条全是 blocker，第 9 条起一律压进
+                             * `suppressed_total`。那条诊断我在本地能算出来、真机诊断
+                             * 列表里却没有，就是被这个上限吃掉的。
+                             *
+                             * 所以改挂在这里 —— `NO_PRODUCTION` 本来就在前 8 条里，
+                             * 而「一件都没产出」与「加工能力只有供给的 3%」是同一件事的两面。
+                             * 用 `capacityOf` 的**唯一真值**，不在这里重算速率。 */
+                            + (() => {
+                                try {
+                                    const cap = capacityOf(o);
+                                    const k = cap && cap.bottleneckMachine;
+                                    const u = cap && cap.utilization;
+                                    if (!cap || cap.confidence !== "ok" || cap.bottleneck !== "process" || !k
+                                        || typeof u !== "number" || u >= 0.5) return "";
+                                    const add = cap.process && Array.isArray(cap.process.machines)
+                                        ? cap.process.machines.find(m => m.kind === k) : null;
+                                    const n = add ? add.count : null;
+                                    const needN = add && add.ratePerSec > 0
+                                        ? Math.ceil(cap.supplyPerSec / add.ratePerSec) : null;
+                                    return `\n⚠ 另外：${k} 只有 ${n} 台，能处理 ${cap.process.capacityPerSec}/s，`
+                                        + `而接通的矿机在产 ${cap.supplyPerSec}/s —— **${Math.round((1 - u) * 100)}% 过不去**。`
+                                        + `加工机器**没有并联上限**：`
+                                        + (needN !== null ? `加到约 ${needN} 台 ${k} 就吃得满，` : "")
+                                        + `比买升级便宜得多（升级要几百个指定形状）。`
+                                        + `但顺序不能反：**先把一条路接通，再并列复制那一段** —— `
+                                        + `断线上加机器不会产出任何东西。`;
+                                } catch { return ""; }
+                            })()
                         : "首轮没有 report：这是「目标形状没有产线在造」的初始诊断，不是对某条 check 的复述。"),
             }));
         }
