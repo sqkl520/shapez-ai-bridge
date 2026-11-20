@@ -745,6 +745,28 @@ function checkOf(report, name) {
     return report.checks.find(c => c && c.name === name) || null;
 }
 
+/**
+ * 带上跑了多少件货 —— 与 `health.mjs` 的 `items_on_belts` 同一口径。
+ *
+ * 数 `items.paths[].itemsOnPath`（游戏自己数的每段路上的货），不是数 `belts` 行 ——
+ * 后者是「每格上的货」，两者不等价。见 `health.mjs:155-172` 的同名逻辑。
+ *
+ * @returns {number|null} 读不到返回 null（**不是 0** —— 缺数据不等于没货）
+ */
+function itemsOnBeltsOf(items) {
+    const it = items && items.result ? items.result : items;
+    if (!it || !Array.isArray(it.paths)) return null;
+    let n = 0;
+    let seen = false;
+    for (const p of it.paths) {
+        const v = p && p.itemsOnPath;
+        if (typeof v !== "number" || !Number.isFinite(v)) continue;
+        n += v;
+        seen = true;
+    }
+    return seen ? n : null;
+}
+
 /** severity 的排序权重（blocker 先出）。与 `semantic.mjs` 的 SEVERITY_RANK 同口径。 */
 const SEVERITY_OF = Object.freeze({ blocker: 0, warn: 1, info: 2 });
 
@@ -3896,6 +3918,19 @@ export async function runLoop(opts = {}) {
                            （`ob.production`），不在 `ob.obs` 里。过去这里漏了它，于是
                            prompt 每一轮都渲染 `unavailable`，模型永远看不见产线真实速率。 */
                         production: ob.production,
+                        /* ★ 带上货量（`itemsOnBelts`）—— 与 production 同一个「第三个字段」★
+                         *
+                         * 2026-11-20 真 LLM 实测：L12 上 `produced_total`/`delivered_total`
+                         * 都是空，CAPACITY 于是说「no goods are moving at all」。
+                         * 而 `ob.items` 里明明有 376 件货在带上跑。
+                         *
+                         * 那句错话会让模型**重建一条本来好好的线**。有了这个数，
+                         * 交付闸就能分清「真的没动」与「动了但没到 hub」——
+                         * 两者要修的位置在产线的两端，完全不同。
+                         *
+                         * 口径与 `health.mjs` 的 `items_on_belts` 一致：数
+                         * `items.paths[].itemsOnPath`，那是游戏自己数的。 */
+                        itemsOnBelts: itemsOnBeltsOf(ob.items),
                         diagnoses,
                         candidates: cands,
                         lastRound: st.lastPlanSummary || null,

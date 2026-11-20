@@ -2101,15 +2101,30 @@ export function renderCapacity(capacity, options = null, opts = {}) {
             ? Object.values(o).reduce((s, v) => s + (num(v) || 0), 0) : 0;
         const produced = sumOf(prod.produced_total);
         const delivered = sumOf(prod.delivered_total);
+        /* ★ `items_on_belts` 是第三个证据，不能只看 production ★
+         *
+         * 2026-11-20 真 LLM 实测抓到我这句写错了。L12 上 `produced_total` 与
+         * `delivered_total` 都是 `{}`，于是这里输出「no goods are moving at all」——
+         * 而同一时刻 `items-last.json` 里**有 376 件货在带上跑**
+         * （blue×210、ScSc----×139、CuCuCuCu×12…）。
+         *
+         * 所以那句话是**假的**。准确的事实是：「货在动，但没有一件到 hub」。
+         * 这两件事对模型的指令完全不同 ——
+         *   · 真的没动 ⇒ 去修第一段路（现在是空的）
+         *   · 动了但不交货 ⇒ 去修**最后一段**
+         * 把第二种说成第一种，会让模型去重建一段本来好好的线。 */
+        const onBelts = num(opts && opts.itemsOnBelts);
         if (produced === 0 && delivered === 0) {
-            /* 注意措辞：不说「产能不够」，也不说「平衡」。世界的问题在别处。 */
             const iso = num(cap.miners && cap.miners.isolated);
-            return "## CAPACITY\n"
-                + "no goods are moving at all — nothing produced, nothing delivered, "
-                + "so supply/processing rates describe a line that is not running. "
-                + "Do NOT add machines for throughput; first make one complete path carry items"
-                + (iso > 0 ? ` (${iso} miner(s) have no processor connected)` : "")
-                + ".";
+            const flowing = onBelts !== null && onBelts > 0;
+            const head = flowing
+                ? `## CAPACITY\n${onBelts} items ARE riding the belts, but ZERO produced and ZERO delivered — `
+                    + "goods circulate without ever reaching the hub. Repair the LAST segment; "
+                    + "do not rebuild the whole line and do not add machines for throughput"
+                : "## CAPACITY\nnothing produced, nothing delivered and no items on the belts — "
+                    + "this line is not running at all. Do NOT add machines for throughput; "
+                    + "first make one complete path carry items";
+            return head + (iso > 0 ? ` (${iso} miner(s) have no processor connected)` : "") + ".";
         }
         if (produced > 0 && delivered === 0) {
             return "## CAPACITY\n"
@@ -2192,10 +2207,34 @@ export function renderCapacity(capacity, options = null, opts = {}) {
         if (up && canBuyUpgrade) {
             /* ★ `needs` 那半句要带上「必须专门造」，不能只报缺多少 ★
              *
-             * 2026-11-20 查实：`upgrade` 是这游戏里**唯一**能让已有产线变快的动作
-             * （全局倍率、零占格），而 556 个 run 的真实 prompt 里它**一次都没出现** ——
-             * 三条入口全关：系统提示只有宏名没语法；卡片挂在 `UPGRADE_AVAILABLE`
-             * 诊断下（判据是「已经买得起」，556 run 触发 0 次）；这一行要求 affordable。
+             * ⚠️ 先纠正一句我说错了的话。我原来在这里写的是
+             * 「`upgrade` 是这游戏里**唯一**能让已有产线变快的动作」。**那是错的。**
+             *
+             * 翻 `bundle.js` 核实过：**单位机器速率**确实只有四条升级线能改
+             * （`belt` / `miner` / `processors` / `painting`；搜 speedMultiplier /
+             * miningSpeed / processingSpeed / boost 都没有第二种机制）。但玩家提高
+             * **产出**从来不靠这个。真正的途径至少有五条：
+             *
+             *   ① 升级倍率（×1 到 ×8）        ← 只有这一条是宏能做到的
+             *   ② **并联**：同一工序复制 N 条平行线   ← L12 上这才是唯一有效的
+             *   ③ 消除瓶颈（最慢那道工序）
+             *   ④ 减少工序（先染色再切割能省 4 倍上色器 —— `LAYOUT_RULES.paintBeforeCut`）
+             *   ⑤ 缩短路径（地图无限大，远矿会拖长整条线）
+             *
+             * 把①说成「唯一」，等于告诉模型「想提效就去买倍率」。而 L12 实测：
+             * 处理能力 0.25/s、供给 8/s，买 processors T1 只把它提到 0.375/s ——
+             * 杯水车薪，并联才是答案。更麻烦的是 processors T1 要 500 个 `SuSuSuSu`
+             * （星矿在世界坐标 85,-23，距 hub 87 格），库存只有 2 个 ——
+             * **这条路对这台世界其实是走不通的。**
+             *
+             * 所以下面这句话的定位收窄了：它不是「提效的唯一办法」，
+             * 而是「**一个零占格但需要专门备料的选项**」。并列的 `add` 那条才是主线。
+             *
+             * ── 下面保留的是原判据中仍然成立的部分 ──
+             *
+             * 556 个 run 的真实 prompt 里 `upgrade` **一次都没出现** —— 三条入口全关：
+             * 系统提示只有宏名没语法；卡片挂在 `UPGRADE_AVAILABLE` 诊断下
+             * （判据是「已经买得起」，556 run 触发 0 次）；这一行要求 affordable。
              *
              * 光补「缺 498 个 SuSuSuSu」不够：模型会以为那是**顺带攒**得到的。
              * 而实际需求量是 300-600，单关最多产出 30-170 —— 差一个数量级，
@@ -3087,7 +3126,7 @@ export class PromptOverBudget extends Error {
  * @throws {PromptOverBudget} code=PROMPT_OVER_BUDGET（总字符 > in_chars_max）
  * @throws {TypeError} 缺 goal / obs / 未知候选宏
  */
-export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, lastNetEffect = null, priorAttempts = null, goalChanged = null, obsoleteLines = null, budget, production = null, recipe: injectedRecipe = null, runLog = null, stickyGoal = null } = {}) {
+export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, lastNetEffect = null, priorAttempts = null, goalChanged = null, obsoleteLines = null, budget, production = null, itemsOnBelts = null, recipe: injectedRecipe = null, runLog = null, stickyGoal = null } = {}) {
     if (!obs || typeof obs !== "object") throw new TypeError("buildPrompt: obs is required");
     const goalShape = typeof goal === "string"
         ? goal
@@ -3569,7 +3608,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
             if (room >= 120) {
                 /* 先试 full，塞不下再退 short，还塞不下就不出现 —— 每一级都**显式**挑。 */
                 for (const form of ["full", "short"]) {
-                    const text = renderCapacity(capacityInfo.capacity, capacityInfo.options, { room, form, production });
+                    const text = renderCapacity(capacityInfo.capacity, capacityInfo.options, { room, form, production, itemsOnBelts });
                     if (text) {
                         s3Capacity = text;
                         capacityDowngraded = form === "short";

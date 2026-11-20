@@ -321,16 +321,43 @@ const CAP_FOR_GATE = {
     bottleneck: "process", bottleneckMachine: "stacker", utilization: 0.02,
 };
 
-test("B4 零产出 + 零交付 ⇒ 不许报利用率/瓶颈，改说「产线根本没在跑」", () => {
+test("B4 零产出 + 零交付 + 带上也没货 ⇒ 说「产线根本没在跑」", () => {
     const seg = renderCapacity(CAP_FOR_GATE, { doNow: [{ action: "add-machines", kind: "stacker", from: 1, to: 52, add: 51 }] },
-        { production: { produced_total: {}, delivered_total: {} } });
+        { production: { produced_total: {}, delivered_total: {} }, itemsOnBelts: 0 });
     assert.ok(seg, "仍然要有一段（沉默比说错更糟）");
-    assert.match(seg, /no goods are moving/);
+    assert.match(seg, /not running at all/);
     assert.doesNotMatch(seg, /98% of supply/, "不许再说「98% 堵住」——那 98% 从未发生");
     assert.doesNotMatch(seg, /utilized/);
     assert.doesNotMatch(seg, /add 51 stacker/, "不许再建议加机器");
     assert.match(seg, /Do NOT add machines/, "必须明确劝阻加机器");
     assert.match(seg, /6 miner/, "要点名有几台矿机没有机器接住（可执行的线索）");
+});
+
+/**
+ * B4b —— 「货在带上跑、但一件没到 hub」必须与「真的没动」分开说。
+ *
+ * 2026-11-20 真 LLM 实测抓到的：L12 上 `produced_total` 与 `delivered_total` 都是 `{}`，
+ * 我原来那句直接输出「no goods are moving at all」——
+ * 而同一时刻 `items-last.json` 里**有 376 件货在带上跑**（blue×210、ScSc----×139…）。
+ *
+ * 那句话是假的，而且会让模型**重建一条本来好好的线**。
+ * 两者的指令完全不同：真的没动 ⇒ 修第一段；动了但不交货 ⇒ 修**最后一段**。
+ */
+test("B4b 零产出零交付但带上有货 ⇒ 必须说「货在跑、只是没到 hub」，不许说「什么都没动」", () => {
+    const seg = renderCapacity(CAP_FOR_GATE, null,
+        { production: { produced_total: {}, delivered_total: {} }, itemsOnBelts: 376 });
+    assert.ok(seg);
+    assert.match(seg, /376 items ARE riding the belts/, "要点名有多少货在跑");
+    assert.doesNotMatch(seg, /not running at all/, "不许说产线没在跑 —— 它明明在跑");
+    assert.doesNotMatch(seg, /no goods are moving/i);
+    assert.match(seg, /LAST segment/, "要指向最后一段，而不是让他重建整条线");
+    assert.doesNotMatch(seg, /add 51 stacker/);
+});
+
+test("B4c 读不到 itemsOnBelts（null）⇒ 退回「没在跑」的说法，不猜", () => {
+    const seg = renderCapacity(CAP_FOR_GATE, null,
+        { production: { produced_total: {}, delivered_total: {} } });
+    assert.match(seg, /not running at all/);
 });
 
 test("B5 有产出但零交付 ⇒ 指明堵在交付端，而不是处理端", () => {
@@ -612,15 +639,16 @@ test("F1 接线：runLoop 走一遍，模型收到的 prompt 里真有 CAPACITY 
     /* 这一条测的是**接线**，不是某一句措辞。
      *
      * 2026-11-20 起 CAPACITY 多了一道「先确认有货在流」的闸：夹具里
-     * `produced_total` / `delivered_total` 都是空 ⇒ 渲染的是
-     * 「no goods are moving at all …」，而不是 `bottleneck: cutter`。
+     * `produced_total` / `delivered_total` 都是空，而带上有 98 件货 ⇒ 渲染的是
+     * 「98 items ARE riding the belts … reach the hub」，而不是 `bottleneck: cutter`。
      * 那不是接线的退化 —— 恰恰是**新判据在起作用**。
      *
-     * 所以这里只钉「段出现了、而且真的来自这份 obs」，具体措辞由 A3/A6 负责。
-     * 仍然要求它提到 cutter 或明确说产线没跑 —— 不许出现一段与这份世界无关的文字。 */
-    assert.match(seg, /bottleneck: cutter|no goods are moving/, `实际：${JSON.stringify(seg)}`);
+     * 所以这里只钉「段出现了、而且真的来自这份 obs」，具体措辞由 A3/A6/B4x 负责。
+     * 仍然要求它提到 cutter 或明确说货没到 hub —— 不许出现一段与这份世界无关的文字。 */
+    assert.match(seg, /bottleneck: cutter|riding the belts|not running at all/,
+        `实际：${JSON.stringify(seg)}`);
     assert.match(seen[0].user, /## CAPACITY/, "user 里也要有（不只是 blocks）");
     /* 与「另一个 bug」对照：矿机是 3 台、供给 1.8，这数字必须来自真实 obs，不是常量。
        走交付闸时这段数字不会渲染，所以只在非降级形态下要求。 */
-    if (!/no goods are moving/.test(seg)) assert.match(seg, /supply 1\.8\/s/);
+    if (!/riding the belts|not running at all/.test(seg)) assert.match(seg, /supply 1\.8\/s/);
 });

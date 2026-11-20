@@ -165,10 +165,10 @@ test("B5 ★ 生产路径：runLoop 在大存档上把 CAPACITY 送到 prompt �
      *
      * 2026-11-20：CAPACITY 多了一道「先确认有货在流」的闸（见
      * `capacity-supply-is-fake`）。这个夹具的 `produced_total` / `delivered_total`
-     * 都是空 ⇒ 渲染的是「no goods are moving at all …」，而不再是
-     * `bottleneck: cutter`。那不是预算接线断了 —— 恰恰是新判据在起作用。
-     * 所以这里接受两种形态；措辞本身由 prompt_capacity.test.mjs 的 A/B 组负责。 */
-    assert.match(b.blocks.s3_capacity, /bottleneck: cutter|no goods are moving/,
+     * 都是空、但带上有货 ⇒ 渲染的是「N items ARE riding the belts … reach the hub」，
+     * 而不再是 `bottleneck: cutter`。那不是预算接线断了 —— 恰恰是新判据在起作用。
+     * 所以这里接受几种形态；措辞本身由 prompt_capacity.test.mjs 的 A/B 组负责。 */
+    assert.match(b.blocks.s3_capacity, /bottleneck: cutter|riding the belts|not running at all/,
         `CAPACITY 段出现了，内容必须来自这份 obs：${JSON.stringify(b.blocks.s3_capacity)}`);
     /* ★ 从 `=== STATE_BELTS_MAX` 改成 `>=` ★
      *
