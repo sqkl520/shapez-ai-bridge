@@ -1,3 +1,5 @@
+[简体中文](CONTRIBUTING.md) | English
+
 # Contributing
 
 Thanks for taking a look. This is a small project — the process below is short

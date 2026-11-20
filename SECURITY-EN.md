@@ -1,3 +1,5 @@
+[简体中文](SECURITY.md) | English
+
 # Security Policy
 
 ## Reporting a vulnerability
