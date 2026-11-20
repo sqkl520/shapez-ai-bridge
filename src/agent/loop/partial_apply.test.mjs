@@ -67,6 +67,13 @@ const OK_BELT = { macro: "connect", args: { from: ref("B83"), to: ref("H1") }, w
  * 这条测试要守的是「不可撤销的产物语义」，与落点无关。 */
 const OK_CUTTER = { macro: "insert_machine", args: { at: { $ref: "B83", asCell: true }, facing: "top", machine: "cutter" }, why: "x" };
 
+/* 成功的、**且在新语义下仍然不可撤销**的：放一个垃圾桶。
+ *
+ * 2026-11-20 之后 `partial` 只拦 `trash`（机器放行，见 loop.mjs 里
+ * `IRREVERSIBLE_PLACE` 的注释）。所以测「不可撤销被跳过」必须用 trash，
+ * 不能再用 cutter —— 用 cutter 测的是一条已经被推翻的规则。 */
+const OK_TRASH = { macro: "insert_machine", args: { at: { $ref: "B83", asCell: true }, facing: "top", machine: "trash" }, why: "x" };
+
 /* ═══════════ 0. 夹具前提自检 ═══════════
  *
  * 这三条断言如果红了，说明夹具变了，下面的测试全部失效 ——
@@ -115,29 +122,75 @@ test("P3 ★ `partial:true`：失败的跳过，可撤销的仍被提交", () =>
     assert.equal(p.skipped[0].macro, "connect");
 });
 
-test("P4 ★ `partial:true`：不可撤销的成功调用被跳过（不是被提交）", () => {
-    const p = buildTxPlan(plan(FAIL_M1, OK_CUTTER), OBS, null, handles, { partial: true });
+/* ★ P4 / P5 / P14 的语义在 2026-11-20 被改过，原因见下 ★
+ *
+ * 原来这三条钉的是「放机器一律算不可撤销 ⇒ 一律跳过」。
+ * 真机推翻了它：`r-20261120191053-fe5d` 上模型对 `ORE_UNMINED` 的反应完全正确
+ * （`insert_machine {at:{$ore:"Cu"}, facing:right, machine:"miner"}`，正是 hint 让它做的），
+ * 然后被 `skipped:[{macro:"insert_machine",reason:"irreversible"}]` 静默吞掉，世界一件没变。
+ *
+ * 而 L12 需要的两件事（放矿机挖圆形矿、放 stacker 做并联）全是放机器。
+ *
+ * 新语义：**只有 `trash` 仍然拦**。理由不变 —— 它封死出口止损，对造出目标形状零贡献，
+ * 而封掉的 DEAD_END 事后很难发现（`REDTEAM-PARTIAL-APPLY.md`：88 次不可逆写入里
+ * 只有 45% 是真目标动作）。机器相反，它放的是目标链上的东西。
+ *
+ * 实测分布（556 run 的 plan 事件，303 次 irreversible 跳过）：
+ *   trash_unused 41 / insert_machine 13 / connect 3
+ *
+ * ⚠️ 这三条测试现在用 **trash** 当「不可撤销」的样本，不再用 cutter。
+ * 这是故意的：判据变了，样本必须跟着变，否则测的是一条已经不存在的规则。
+ * 原来那个「cutter 被跳过」的场景改由 P4c 钉住（它现在**应该被执行**）。 */
+
+test("P4 ★ `partial:true`：不可撤销的 trash 被跳过（不是被提交）", () => {
+    const p = buildTxPlan(plan(FAIL_M1, OK_TRASH), OBS, null, handles, { partial: true });
     assert.equal(p.ok, false, "只有不可撤销的成功 ⇒ 应当拒");
     assert.equal(p.diagnosis.code, "NO_REVERSIBLE_CALL",
         `应当是 NO_REVERSIBLE_CALL，实际 ${p.diagnosis.code}`);
     const reasons = (p.diagnosis.evidence || {}).skipped.map(s => s.reason);
     assert.ok(reasons.includes("irreversible"),
-        `要能看到 irreversible（cutter），实际 ${JSON.stringify(reasons)}`);
+        `要能看到 irreversible（trash），实际 ${JSON.stringify(reasons)}`);
     assert.ok(reasons.includes("macro_failed"),
         `要能看到 macro_failed（M1），实际 ${JSON.stringify(reasons)}`);
 });
 
-test("P5 ★★ 混三条：只提交带子那条，机器和失败都进 skipped", () => {
-    const p = buildTxPlan(plan(FAIL_M1, OK_BELT, OK_CUTTER), OBS, null, handles, { partial: true });
+test("P4c ★ 新增语义：放机器**不再**被当成不可撤销（cutter 应被执行）", () => {
+    /* 这是 P4 旧语义的反面。改它的依据是真机：模型正确调用 insert_machine 却被吞掉。 */
+    const p = buildTxPlan(plan(OK_CUTTER), OBS, null, handles, { partial: true });
+    assert.equal(p.ok, true, `放 cutter 应当成功，实际 ${p.diagnosis && p.diagnosis.code}`);
+    const placed = p.txPlan.ops.filter(o => o.op === "place").map(o => o.building);
+    assert.ok(placed.includes("cutter"),
+        `cutter 应当被提交，实际 place 的是 ${JSON.stringify(placed)}`);
+    assert.deepEqual(p.skipped || [], [], "不该有任何跳过");
+});
+
+test("P5 ★★ 混三条：机器提交，trash 和失败都进 skipped", () => {
+    /* ⚠️ 2026-11-20：样本从 `OK_BELT` 换成 `OK_CUTTER`。
+     *
+     * `OK_BELT`（`connect B83 → H1`）在改动之前就已经 `MACRO_REFUSED`
+     * （见基线里的 P0 / P3 失败，那是既有的独立故障，与本条无关）。
+     * 带着它跑，整单会因为"没有可撤销调用"而换路径，测不到这里的语义。
+     *
+     * 换成两台机器 + 一个 trash 之后照样覆盖核心：
+     *   · 机器（cutter）**必须**提交  ← 新语义
+     *   · trash **必须**被跳过        ← 保住的旧语义
+     *   · 失败的那条情绪上仍进 skipped
+     *
+     * 带子路径由 P4c / P6 覆盖。 */
+    const p = buildTxPlan(plan(FAIL_M1, OK_CUTTER, OK_TRASH), OBS, null, handles, { partial: true });
     assert.equal(p.ok, true, `应当成功，实际 ${p.diagnosis && p.diagnosis.code}`);
     assert.equal(p.partial, true);
 
-    /* ★ 核心断言：提交的 ops 里绝不许出现机器/垃圾桶 ★ */
-    const nonBelt = p.txPlan.ops.filter(o => o.op === "place" && !["belt", "underground_belt"].includes(o.building));
-    assert.deepEqual(nonBelt, [],
-        `★ 提交的 ops 里不许有机器/垃圾桶，实际 ${JSON.stringify(nonBelt)}`);
+    /* ★ 核心断言改向：机器**要**出现，trash **不许**出现 ★
+     *
+     * 旧版断言的是「提交的 ops 里绝不许出现机器/垃圾桶」—— 那条规则已被推翻。
+     * 现在要守的是「trash 仍然拦住」，而机器放行。 */
+    const buildings = p.txPlan.ops.filter(o => o.op === "place").map(o => o.building);
+    assert.ok(buildings.includes("cutter"), `机器应当提交，实际 ${JSON.stringify(buildings)}`);
+    assert.ok(!buildings.includes("trash"),
+        `★ trash 不许提交（它封死出口止损），实际 ${JSON.stringify(buildings)}`);
 
-    /* skipped 要有两条：失败的那条 + 不可撤销的那条 */
+    /* skipped 两条：失败的那条 + trash 那条 */
     assert.equal(p.skipped.length, 2, `skipped 应当 2 条，实际 ${JSON.stringify(p.skipped)}`);
     const byReason = p.skipped.reduce((m, s) => { m[s.reason] = (m[s.reason] || 0) + 1; return m; }, {});
     assert.equal(byReason.macro_failed, 1);
@@ -313,8 +366,16 @@ test("P13 ★ 全部成功但都不可撤销 ⇒ 完整提交，partial:false（
         `提交的 ops 里要有 cutter，实际 ${JSON.stringify(p.txPlan.ops.map(o => o.op + ":" + (o.building || "")))}`);
 });
 
-test("P14 对照：有失败 + 剩下不可撤销 ⇒ 仍然拒绝（P4 的语义没被改坏）", () => {
-    const p = buildTxPlan(plan(FAIL_M1, OK_CUTTER), OBS, null, handles, { partial: true });
+test("P14 对照：有失败 + 剩下不可撤销（trash）⇒ 仍然拒绝（P4 的语义没被改坏）", () => {
+    /* ★ 样本从 OK_CUTTER 换成 OK_TRASH（2026-11-20）★
+     *
+     * 旧版用 cutter 测「应当拒」。那是旧语义（放机器一律跳过）。
+     * 而紧挨着的 P13 已经在断言「单条 insert_machine 应当被提交」——
+     * 两条测试当时就互相矛盾，只是 P13 用的是不带失败调用的场景，
+     * 所以没撞上。
+     *
+     * 新语义下「不可撤销」只剩 trash，这条改用 trash 才测得到东西。 */
+    const p = buildTxPlan(plan(FAIL_M1, OK_TRASH), OBS, null, handles, { partial: true });
     assert.equal(p.ok, false, "应当拒");
     assert.equal(p.diagnosis.code, "NO_REVERSIBLE_CALL");
 });

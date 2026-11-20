@@ -299,7 +299,27 @@ export const BUDGET = Object.freeze({
      * 而且 `NO_REVERSIBLE_CALL` 被拒之后，模型**换了修法**
      *（`replace_run` → `connect`）。
      *
-     * 想关掉就传 `budget: { PARTIAL_APPLY: false }`。 */
+     * 想关掉就传 `budget: { PARTIAL_APPLY: false }`。
+     *
+     * ★ 2026-11-20：判据从「只允许带子」放宽到「只拦 trash」★
+     *
+     * 上面那些实测都还成立，但原判据有一处没被覆盖到的代价：
+     * **放机器一律算不可撤销 ⇒ 一律跳过**，于是「加矿机」「加 stacker」
+     * 这两个 L12 唯一能推进的动作被永久封死。
+     *
+     * 真机 `r-20261120191053-fe5d`：模型对 `ORE_UNMINED` 的反应完全正确
+     * （`insert_machine {at:{$ore:"Cu"}, facing:right, machine:"miner"}`，
+     * 正是 hint 让它做的），结果 `skipped:[{macro:"insert_machine",
+     * reason:"irreversible"}]`，世界一件没变。
+     *
+     * 303 次 `irreversible` 跳过的分布：`trash_unused` 41 / `insert_machine` 13 /
+     * `connect` 3。所以按宏区分而不是按 op 类型一刀切：
+     * **`trash` 继续拦**（它封死出口止损，对造目标零贡献，且封掉的出口事后难发现），
+     * 机器放行（它们放的是目标链上的东西）。
+     *
+     * 代价：放弃「这一轮保证可回滚」这条性质。后验路径仍在 ——
+     * `classifyNetEffect` 判 `regressive` 时带子部分照旧回滚，
+     * 留下的机器会被下一轮的 `ORPHAN_MACHINES` 点出来。 */
     PARTIAL_APPLY: true,
     LLM_IN_CHARS_MAX: 12000,
     /* ★ 删除冗余度的抽样阈值（P18）★

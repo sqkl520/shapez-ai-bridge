@@ -2089,8 +2089,38 @@ export function buildTxPlan(llmPlan, obs, items, handles, opts = {}) {
             const soloObs = ex.worldBefore || o;
             const solo = planToTxOps([ex], { obs: soloObs, items, namedUids: collectNamedUids([ex], soloObs, handles) });
             const ops = (solo && solo.ok === true) ? solo.ops : null;
+            /* 「可撤销」= 产物能靠 `remove_run` 删回去。
+             *
+             * ★ 机器也放行，`trash` 除外（2026-11-20）★
+             *
+             * 按 `REVERSIBLE_BUILDINGS` 的原判据，放机器一律算不可撤销 ⇒ 一律跳过。
+             * 真机 `r-20261120191053-fe5d` 证明那是错的：模型对 `ORE_UNMINED` 的反应
+             * 完全正确 —— `insert_machine {at:{$ore:"Cu"}, facing:right, machine:"miner"}`，
+             * 正是诊断 hint 让它做的。然后 `skipped: [{macro:"insert_machine",
+             * reason:"irreversible"}]`，**静默跳过，世界一件没变**。
+             *
+             * 而 L12 需要的两件事（放矿机挖圆形矿、放 stacker 做并联）全是放机器。
+             *
+             * ## 为什么 `trash` 仍然要拦
+             *
+             * 556 个 run 的 plan 事件里 `irreversible` 跳过 303 次，分布：
+             * `trash_unused` **41** / `insert_machine` 13 / `connect` 3。
+             *
+             * `trash` 被拦是对的：它封死出口止损，对造出目标形状零贡献，
+             * 而封掉的 DEAD_END 出口事后很难发现（`REDTEAM-PARTIAL-APPLY.md`：
+             * 88 次不可逆写入里只有 45% 是真目标动作）。
+             *
+             * ## 「放行」不等于「回滚得了」
+             *
+             * 机器仍然撤销不了（`remove_run` 不收非带子）。这里放弃的是
+             * **「这一轮保证可回滚」这条性质**，换来的是「必需的动作能执行」。
+             * 代价由既有的后验路径兜：`classifyNetEffect` 判 `regressive` 时
+             * 仍会触发回滚（带子部分），机器留在原地但会被 `ORPHAN_MACHINES`
+             * 在下一轮点出来。 */
+            const IRREVERSIBLE_PLACE = new Set(["trash"]);
             const rev = Array.isArray(ops) && ops.length > 0 && ops.every(op =>
-                (op.op === "delete") || (op.op === "place" && isBeltBuilding(op.building)));
+                (op.op === "delete")
+                || (op.op === "place" && !IRREVERSIBLE_PLACE.has(String(op.building))));
             if (rev) reversible.push(ex);
             else {
                 skippedLocal.push({
