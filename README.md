@@ -1,11 +1,11 @@
-[English](README.md) | [简体中文](README.zh-CN.md)
+[English](README-EN.md) | 简体中文
 
 <div align="center">
 
 # shapez-ai-bridge
 
-**Turn a running shapez.io factory into something a program can drive**
-A single-file official mod + a zero-dependency local bridge + an MCP server
+**把一个正在运行的 shapez.io 工厂变成可以被程序驱动的东西**
+单文件官方 mod + 零依赖本地桥 + MCP 服务器
 
 ![Version](https://img.shields.io/badge/version-0.1.0--SNAPSHOT-orange?style=flat-square)
 ![Game](https://img.shields.io/badge/shapez.io-1.5.6-blue?style=flat-square)
@@ -14,324 +14,301 @@ A single-file official mod + a zero-dependency local bridge + an MCP server
 ![Tests](https://img.shields.io/badge/tests-677%20passing-brightgreen?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-**Zero npm dependencies** · **Binds to 127.0.0.1 only** · **No game code included**
+**零 npm 依赖** · **只监听 127.0.0.1** · **不含任何游戏代码**
 
-**[⬇️ Download the latest build](https://github.com/sqkl520/shapez-ai-bridge/releases)** ·
-[Protocol contract](docs/PROTOCOL.md) ·
-[Report a problem](https://github.com/sqkl520/shapez-ai-bridge/issues)
+**[⬇️ 下载最新版](https://github.com/sqkl520/shapez-ai-bridge/releases)** ·
+[协议契约](docs/PROTOCOL.md) ·
+[问题反馈](https://github.com/sqkl520/shapez-ai-bridge/issues)
 
 </div>
 
-> ⚠️ **This is an early snapshot, not a stable release**
-> The bridge, the mod and the MCP server all work end to end. **The closed-loop agent
-> cannot yet build a production line on its own.** What works and what does not is laid
-> out in "Current status" below — that section does not round anything up.
+> ⚠️ **这是一个早期快照，不是稳定发布**
+> 桥接层、mod、MCP 服务器都已跑通；**闭环 agent 还没能自己在关卡里建成一条产线**。
+> 具体哪里能用、哪里不能用，见下面「当前进度」—— 这一节不修饰。
 >
-> **The version lives on the [Releases page](https://github.com/sqkl520/shapez-ai-bridge/releases)**,
-> not in this README.
+> **版本以 [Releases 页](https://github.com/sqkl520/shapez-ai-bridge/releases) 为准**，
+> 本 README 不单独维护版本号。
 
 ---
 
-## ✨ What it can do
+## ✨ 它能做什么
 
-Observe the factory, place and delete buildings, fast-forward deterministically,
-export and paste blueprints, and snapshot savegames — all over local HTTP and
-WebSocket, so any script or MCP client can drive it.
+观察工厂、放置和删除建筑、确定性地快进、导出与粘贴蓝图、存取存档快照 ——
+全部通过本地 HTTP / WebSocket，任何脚本或 MCP 客户端都能驱动。
 
-**Observe**
+**观测**
 ```bash
 curl -s http://127.0.0.1:7777/rpc -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"obs","params":{"max_entities":5,"include_hub":true}}'
 ```
-You get entities with stable uids, hub stock, the current goal, the camera and stats.
-Clip big factories with `region` and `max_entities`; over the limit it returns
-`truncated: true` **with the full `stats` still included** — it never silently cuts.
+拿到实体（带稳定 uid）、hub 库存、当前目标、相机、统计。大工厂用 `region` 和
+`max_entities` 裁剪；超限时返回 `truncated: true` 并始终带上全量 `stats` ——
+**不会静默截断**。
 
-**Act** — place, delete, lay paths, set speed, move the camera:
+**动作** —— 放置、删除、铺路径、设速度、移相机：
 ```bash
 curl -s http://127.0.0.1:7777/rpc -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"act","params":{"op":"place","building":"belt","x":5,"y":5}}'
 ```
 
-**Deterministic fast-forward** — advance N logic ticks synchronously, using the same
-loop the game's own puzzle validator runs:
+**确定性快进** —— 同步推进 N 个逻辑 tick，走的是游戏自己的 puzzle 校验循环：
 ```bash
 curl -s http://127.0.0.1:7777/rpc -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"act","params":{"op":"step","ticks":600,"collect":true}}'
 ```
 
-**Blueprints** — export any region as a portable `SZBP1.*` string and paste it back
-anywhere:
+**蓝图** —— 任意区域导出成可移植的 `SZBP1.*` 字符串，再贴回任何地方：
 ```bash
 curl -s http://127.0.0.1:7777/rpc -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"act","params":{"op":"export_blueprint","region":[0,0,10,10]}}'
 ```
 
-**Savegame snapshots** — save, keep a named copy on the bridge side, roll back any time:
+**存档快照** —— 存档并在桥接侧保留一份命名副本，随时回滚：
 ```bash
 curl -s http://127.0.0.1:7777/rpc -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"snapshot_save","params":{"name":"before-big-build"}}'
 ```
 
-**MCP** — everything above exposed as **12 MCP tools**
-(`shapez_status`, `shapez_observe`, `shapez_action`, `shapez_batch`,
-`shapez_screenshot`, `shapez_blueprint`, `shapez_save`, `shapez_load`,
-`shapez_world`, `shapez_resources`, `shapez_items`, `shapez_production`):
+**MCP** —— 以上全部封装成 **12 个 MCP 工具**
+（`shapez_status` / `shapez_observe` / `shapez_action` / `shapez_batch` /
+`shapez_screenshot` / `shapez_blueprint` / `shapez_save` / `shapez_load` /
+`shapez_world` / `shapez_resources` / `shapez_items` / `shapez_production`）：
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node src/mcp/server.mjs
 ```
 
-The full protocol contract — methods, error codes, observation schema — is in
-[`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+完整协议契约（方法、错误码、观测 schema）见 [`docs/PROTOCOL.md`](docs/PROTOCOL.md)。
 
-## 🚀 Quick start
+## 🚀 快速开始
 
-**Prerequisites**: Node.js ≥ 20, shapez.io desktop 1.5.6 (Steam), and a checkout of
-this repository.
+**环境**：Node.js ≥ 20、shapez.io 桌面版 1.5.6（Steam）、本仓库的一份 checkout。
 
-**1. Install the mod (one command)**
+**1. 装 mod（一条命令）**
 
-Windows (PowerShell):
+Windows（PowerShell）：
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
-macOS / Linux:
+macOS / Linux：
 ```bash
 bash install.sh
 ```
 
-**2. Start the bridge**
+**2. 起桥**
 ```bash
 node src/bridge/bridge.mjs
 ```
 
-**3. Open the game, load any savegame, then check it**
+**3. 开游戏、载入任意存档，然后自检**
 ```bash
 node scripts/smoke_test.mjs
 ```
-Expected: `SMOKE TEST PASSED (5/5)`. The test briefly places and deletes one belt near
-the hub to prove writes work — your world is left unchanged.
+期望输出 `SMOKE TEST PASSED (5/5)`。这个自检会在 hub 附近临时放一条带子再删掉，
+证明写入可用 —— 你的世界不会被改动。
 
-### Prefer a GUI?
+### 想要图形界面？
 
-No commands at all: double-click `gui/start.cmd` (Windows) and a wizard checks the
-environment, installs the mod, writes the config, starts the bridge and verifies it —
-with live logs, and an explicit fix when something is missing. You never edit a config
-file by hand.
+不用敲任何命令：双击 `gui/start.cmd`（Windows），向导会检查环境、装 mod、
+写配置、起桥、验证，全程有实时日志，缺什么就直接告诉你。配置文件一次都不用手改。
 
 ![Setup wizard, first screen](docs/gui/01-first-run.png)
 
 ```bash
-node gui/server.mjs          # or double-click gui/start.cmd on Windows
+node gui/server.mjs          # 或者 Windows 下双击 gui/start.cmd
 ```
 
-It opens a chromeless window on `http://127.0.0.1:7801/`. Same zero-dependency rules as
-the rest of the project — it needs only Node and a browser. Walkthrough in
-[gui/README.md](gui/README.md).
+它会在 `http://127.0.0.1:7801/` 打开一个无边框窗口。和项目其余部分同一套
+零依赖规则 —— 只需要 Node 和一个浏览器。走查见 [gui/README.md](gui/README.md)。
 
-Everything below is the command-line path — the GUI drives exactly the same scripts, so
-the two are interchangeable.
+下面都是命令行路径 —— GUI 驱动的完全是同一批脚本，两者等价。
 
-## ❓ FAQ
+## ❓ 常见问题
 
-| Question | Answer |
+| 问题 | 解法 |
 |---|---|
-| I can't connect | ① Is the bridge up? `curl -s http://127.0.0.1:7777/health` should return `{"ok":true,...}`; `Connection refused` means it is not. ② Is the game open? `mod_connected:true` appears only once the game is running **with the mod loaded**. ③ Is the mod in the right place? It must be a **single `.js` file directly in that folder**, not a subfolder; the game logs `Loaded N mods` on startup and N must be ≥ 1. ④ A firewall or proxy that blocks localhost breaks both the bridge listener and the mod's WebSocket — allow `127.0.0.1:7777`, and exclude `127.0.0.1` from any forced system proxy |
-| Version mismatch (error `1002`) | The bridge refused the handshake because the game version is not in `compat.json`. This is a **hard fail by design** — building codes and internal APIs are version-specific. Switch to a mod/bridge version that lists your game build, or move the game back to a supported build via Steam betas. **There is no override flag** |
-| Observation is empty or errors | `1003 not_in_game` means you are in the main menu or still loading — load a savegame and `status` reports `in_game:true`. `region:[x0,y0,x1,y1]` is an **inclusive** bounding box; anything outside is filtered out, and omitting it observes the bounding box of all entities. Entities live on `regular` or `wires`; the default is `regular` |
-| My MCP client does not list the tools | The path in the client config must be **absolute** and point at `src/mcp/server.mjs`; in JSON on Windows use forward slashes (`C:/...`) or escaped backslashes (`C:\\...`). Restart the client after editing. Test it standalone: `echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \| node src/mcp/server.mjs` should print one JSON line listing **12** tools. The server logs to stderr, not stdout — check your client's MCP logs |
-| Did I lose Steam achievements? | Yes, if any mod is installed. The game only enables its Steam layer with zero mods loaded. Official behaviour, not something this project adds |
-| Can I undo a build? | Yes — `snapshot_save` keeps a named copy on the bridge side and `snapshot_load` restores it. Note that a save the mod has touched is marked as modified, which **disables the DLC for that save** |
+| 连不上 | ① 桥起了吗？`curl -s http://127.0.0.1:7777/health` 应返回 `{"ok":true,...}`，`Connection refused` 就是没起。② 游戏开了吗？`mod_connected:true` 只在游戏开着**且 mod 已加载**时出现。③ mod 位置对不对？必须是该目录下**单个 `.js` 文件**（不能是子文件夹），游戏启动时日志会打 `Loaded N mods`，N 必须 ≥ 1。④ 防火墙/代理拦截了 localhost 的话，给 `127.0.0.1:7777` 放行，或把 `127.0.0.1` 排除出系统代理 |
+| 版本不匹配（error `1002`） | 桥拒掉握手，因为游戏版本不在 `compat.json` 的兼容表里。这是**设计上的硬失败** —— 建筑编码和内部 API 是版本相关的。换一个列出了你这版游戏的 mod/桥版本，或用 Steam beta 把游戏切回受支持的构建。**没有 override 开关** |
+| 观测是空的 / 报错 | `1003 not_in_game` 说明还在主菜单或仍在加载，载入存档即可，`status` 会变成 `in_game:true`。`region:[x0,y0,x1,y1]` 是**含边界**的包围盒，外面的一律滤掉；不传就用全部实体的包围盒。实体分 `regular` 和 `wires` 两层，默认看 `regular` |
+| MCP 客户端里看不到工具 | 客户端配置里的路径必须是**绝对路径**且指向 `src/mcp/server.mjs`；Windows 上 JSON 里用正斜杠（`C:/...`）或转义反斜杠（`C:\\...`）。改完要重启客户端。单独测：`echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \| node src/mcp/server.mjs` 应输出一行列出 **12** 个工具的 JSON。服务器日志走 stderr 不走 stdout，去客户端的 MCP 日志里看 |
+| Steam 成就是不是没了 | 只要你装了**任何** mod，成就就关。游戏只在零 mod 时启用 Steam 层。这是官方行为，不是本项目加的 |
+| 存档能反悔吗 | 能。`snapshot_save` 在桥接侧留命名副本，`snapshot_load` 还原。但注意：载入过 mod 的存档会被游戏标记为已修改，**该存档的 DLC 会关闭** |
 
-## 🔧 How it works
+## 🔧 它是怎么工作的
 
 ```
 ┌─ shapez.io (Electron) ───────────────────┐
-│  shapez-ai-bridge.js                     │   the mod is a WebSocket *client*
-│  (official single-file mod, no Node)  ───┼──▶ ws://127.0.0.1:7777/mod
+│  shapez-ai-bridge.js                     │   mod 是 WebSocket *客户端*
+│  (官方单文件 mod，不需要 Node)      ─────┼──▶ ws://127.0.0.1:7777/mod
 └──────────────────────────────────────────┘
               │
 ┌─────────────┴────────────────────────────┐
-│  bridge.mjs  (Node, zero dependencies)   │
-│  ├─ WS   /mod     ← game mod             │
-│  ├─ WS   /client  ← tools / event stream │
-│  └─ HTTP /health  /status  /rpc  ← curl  │
+│  bridge.mjs  (Node，零依赖)               │
+│  ├─ WS   /mod     ← 游戏 mod              │
+│  ├─ WS   /client  ← 工具 / 事件流         │
+│  └─ HTTP /health  /status  /rpc  ← curl   │
 └─────────────┬────────────────────────────┘
-              │ HTTP or stdio
+              │ HTTP 或 stdio
 ┌─────────────┴──────────┬─────────────────┐
 │  mcp/server.mjs        │  agent/play.mjs │
-│  12 MCP tools          │  reference agent│
+│  12 个 MCP 工具         │  参考 agent      │
 └────────────────────────┴─────────────────┘
 ```
 
-**Why a separate bridge process?** shapez.io's renderer is sandboxed
-(`nodeIntegration:false`, `sandbox:true`), so an in-game mod has no file or socket APIs —
-but the browser's native `WebSocket` client is always available. The mod dials out to a
-small Node process on your machine; that process owns the HTTP API, the MCP server and
-the snapshot files.
+**为什么要单独一个桥进程？** shapez.io 的渲染进程是沙箱化的
+（`nodeIntegration:false`、`sandbox:true`），所以游戏内 mod 拿不到文件和 socket API ——
+但浏览器的原生 `WebSocket` 客户端永远可用。mod 主动外拨到本机一个小 Node 进程，
+由那个进程持有 HTTP API、MCP 服务器和快照文件。
 
-### Tech stack
+### 技术栈
 
-| Layer | What it uses |
+| 层 | 用了什么 |
 |---|---|
-| mod | Single-file JS through the game's own `METADATA` / `Mod` / `ModInterface` / `window.shapez` |
-| bridge | Node ≥ 20, **zero npm dependencies**, hand-written WebSocket |
-| transport | JSON-RPC 2.0 over HTTP, plus a bidirectional WS event stream |
-| blueprints | Own `SZBP1.*` format, reusing the game's own LZ-string compression |
-| GUI | Plain Node HTTP server + framework-free frontend, palette taken from the game |
-| tests | `node --test` (677 passing) + bridge selftest 19 + MCP selftest 97 |
+| mod | 单文件 JS，走游戏官方的 `METADATA` / `Mod` / `ModInterface` / `window.shapez` |
+| 桥 | Node ≥ 20，**零 npm 依赖**，WebSocket 手写实现 |
+| 通信 | JSON-RPC 2.0 over HTTP，以及 WS 双向事件流 |
+| 蓝图 | 自建 `SZBP1.*` 格式，复用游戏自己的 LZ-string 压缩 |
+| GUI | 原生 Node HTTP 服务器 + 无框架前端，配色取自游戏本身 |
+| 测试 | `node --test`（677 通过）+ 桥自检 19 项 + MCP 自检 97 项 |
 
-## 📌 Current status
+## 📌 当前进度
 
-> No rounding up. What works and what does not, item by item.
+> 这一节不修饰。哪些能用、哪些不能用，逐条列清楚。
 
-| Module | Status |
+| 模块 | 状态 |
 |---|---|
-| mod ↔ bridge ↔ MCP end to end | ✅ Working on real shapez.io 1.5.6 |
-| Observe / act / fast-forward / blueprints / snapshots | ✅ All usable, including `dry_run` preflight |
-| Offline layout compiler (target shape → line blueprint) | ✅ Works, see below |
-| GUI setup wizard | ✅ Works, screenshot above |
-| **Closed-loop agent (observe → decide → build → verify)** | ⬜ **Cannot yet build a production line from scratch.** Measured output at level 12 is persistently 0 |
-| `1.0.0` | ⬜ Waiting on "builds a line from scratch and delivers it into the hub" |
+| mod ↔ 桥 ↔ MCP 端到端 | ✅ 在 shapez.io 1.5.6 真机上跑通 |
+| 观测 / 动作 / 快进 / 蓝图 / 快照 | ✅ 全部可用，含 `dry_run` 预检 |
+| 离线布局编译器（给定目标形状 → 产线蓝图） | ✅ 可用，见下节 |
+| GUI 安装向导 | ✅ 可用，截图见上 |
+| **闭环 agent（自己观察 → 决策 → 施工 → 验证）** | ⬜ **尚不能从零建成一条产线**。第 12 关实测产出恒为 0 |
+| `1.0.0` | ⬜ 待「能自动从零建成一条产线并交付进 hub」 |
 
-**Quality baseline**: 677 unit tests passing · bridge selftest 19/19 · MCP selftest 97/97.
+**质量基线**：677 单测全过 · 桥自检 19/19 · MCP 自检 97/97。
 
-### Build a production line from a target shape
+### 从目标形状建一条产线
 
-`src/ai/` contains a layout compiler: give it a goal shape and it plans a working
-production line offline, then hands you a blueprint that pastes and delivers.
+`src/ai/` 里有一个布局编译器：给它一个目标形状，它离线规划出一条能用的产线，
+交给你一张贴上去就能产出的蓝图。
 
 ```bash
 node src/ai/compiler/cli.mjs --goal "CuCuCuCu" --seed 43391 --hub -2,-2 --json
 ```
 
-It runs the whole chain with no game running: recipe solver → offline resource map (the
-world is a pure function of `map.seed`) → row layout → belt routing with explicit
-`(rotation, rotationVariant)` → ten-check validator → SZBP1 blueprint.
+全程不需要游戏在跑：配方求解 → 离线资源图（世界是 `map.seed` 的纯函数）→
+行布局 → 显式 `(rotation, rotationVariant)` 的带子路由 → 十项校验 → SZBP1 蓝图。
 
-**`--hub` is required.** Without it the compiler can only invent a hub location, so the
-collection belt feeds empty ground. A compile whose hub is not pinned is reported as a
-failure (`class: "hub:unpinned"`), not a success. Pass the hub's real top-left corner as
-observed from the game (`obs`), not a guessed coordinate.
+**`--hub` 是必填的。** 不给的话编译器只能自己编一个 hub 位置，收集带就会喂到空地上。
+hub 没钉住的编译按失败上报（`class: "hub:unpinned"`），不会假装成功。hub 坐标要从
+游戏里真实观测（`obs`）拿左上角，别猜。
 
-`ok: true` means the plan is internally consistent and reaches the real hub **when pasted
-onto empty ground**. It does not mean the target area is empty: the compiler is offline
-and does not read your save, so it cannot see what is already built there. Always
-`dry_run` the paste first — that is the check that sees the world.
+`ok: true` 的含义是「计划自洽，且在**贴着空地贴上去时**能到真实 hub」，
+**不**代表那块地是空的 —— 编译器离线运行，不读你的存档，看不到那里已经有什么。
+所以贴之前一定要先 `dry_run`，那才是看得见世界的检查。
 
 | | |
 |---|---|
-| Goals that build | `CuCuCuCu`, `RuRuRuRu`, `SuSuSuSu`, `----CuCu`, `RuRu----`, `Cu----Cu`, `Cu------`, `--CuCu--`, `Ru----Ru`, `--SuSu--`; painted goals when the map allows it: `CrCrCrCr` (119 entities), `RbRb----` (262 entities, needs `--range 200`) |
-| Not yet | `CpCpCpCp` and `CgScScCg` — these need three or more miners on one row at fixed spacing, and no such resource pattern exists near the hub on seed 43391 (honestly reported as `no-resource-in-range`). Multilayer goals are out of scope by design (`scope.layers: 1`) |
+| 能建的目标 | `CuCuCuCu`、`RuRuRuRu`、`SuSuSuSu`、`----CuCu`、`RuRu----`、`Cu----Cu`、`Cu------`、`--CuCu--`、`Ru----Ru`、`--SuSu--`；地图允许时的上色目标：`CrCrCrCr`（119 实体）、`RbRb----`（262 实体，需要 `--range 200`） |
+| 还不能 | `CpCpCpCp` 和 `CgScScCg` —— 这些需要同一行上按固定间距排三个以上矿机，而 seed 43391 的 hub 附近没有这种资源图案（如实报 `no-resource-in-range`）。多层目标按设计不在范围内（`scope.layers: 1`） |
 
-**Painted goals are map-permitting, not unconditional.** The row layout puts every miner
-on one row at a fixed pitch, so a painted goal needs the world to offer its ore in exactly
-that pattern. `CrCrCrCr` needs `Cu` with `red` four cells west; on seed 43391 that pattern
-occurs twice in a 512×512 window. Other seeds may have none — the compiler says
-`no-resource-in-range` rather than producing a line that starves.
+**上色目标是「地图允许才行」，不是无条件的。** 行布局把所有矿机排在同一行、固定间距，
+所以上色目标要求世界恰好按这个图案提供矿石。`CrCrCrCr` 需要 `Cu` 且 `red` 在其西侧
+四格；seed 43391 上这个图案在 512×512 窗口内出现两次。别的种子可能一次都没有 ——
+编译器会说 `no-resource-in-range`，而不是吐一条会饿死的产线。
 
-**Safety rules the compiler enforces:**
+**编译器强制的安全规则：**
 
-- **Refuses a plan that would land on existing buildings.** Only belts and wires are
-  replaceable in shapez; pasting over one silently destroys it, and pasting over a machine
-  half-builds the line while still reporting success. `paste_blueprint` therefore has a
-  `dry_run` that reports `would_apply` / `would_delete` / `blocked` before anything happens.
-- **Refuses corners that would flip.** A belt's turn is recomputed from its neighbours, so
-  a corner must be a fixed point of that recomputation; when no original rotation makes it
-  one, the plan fails instead of producing a line that breaks later.
-- **Never pastes into a dirty region.** v1 builds on fresh ground only; it refuses a world
-  containing non-hub entities. But it only sees a world if you hand it one, so `dry_run`
-  remains the authoritative check.
-- **Refuses a plan whose hub is unknown.** Without `--hub` the collector belt terminates at
-  an invented coordinate; such a compile returns `ok: false` and `class: "hub:unpinned"`
-  instead of a blueprint.
+- **拒绝落到已有建筑上的计划。** shapez 里只有带子和电线是可替换的；贴到带子上会**静默销毁**它，
+  贴到机器上则是逐条目拒绝但其余照放（建出半条线）。`paste_blueprint` 因此有 `dry_run`，
+  在动手前报 `would_apply` / `would_delete` / `blocked`。
+- **拒绝会翻转的拐角。** 带子的转向由邻居重算，所以拐角必须是这个重算的**不动点**；
+  没有任何原始转向能成为不动点时，计划失败，而不是产出一条过一会儿才坏的线。
+- **不往脏区域贴。** v1 只在空地上建。只要世界里存在非 hub 实体就拒绝 ——
+  但它只有在有人递给它世界快照时才看得见，所以 `dry_run` 仍然是权威检查。
+- **hub 不明就拒绝出图。** 没有 `--hub` 时收集带会终止在一个编出来的坐标上，
+  这种编译返回 `ok: false` 和 `class: "hub:unpinned"`，不返回蓝图。
 
-The build ledger is [`research/ai-plan/BATCH.md`](research/ai-plan/BATCH.md); the research
-behind it is [`research/ai-player/SYNTHESIS.md`](research/ai-player/SYNTHESIS.md).
+构建台账见 [`research/ai-plan/BATCH.md`](research/ai-plan/BATCH.md)，
+背后的研究见 [`research/ai-player/SYNTHESIS.md`](research/ai-player/SYNTHESIS.md)。
 
-`research/` holds the working notes from building this — measurement scripts, live-run
-transcripts, design arguments, and the record of what was tried and rejected. It is **not**
-user documentation and you do not need it to use the tool; it is public so the claims in
-this README are checkable rather than taken on trust.
+`research/` 是搭建这个项目过程里的工作笔记 —— 测量脚本、真机运行记录、设计论证，
+以及「试过什么、为什么否掉」。它**不是**用户文档，用这个工具不需要看它；
+之所以公开，是因为 README 里的结论应该可核查，而不是让你只能选择相信。
 
-## ⚠️ Known limitations
+## ⚠️ 已知限制
 
-An honest list. Why each one follows from how the game works is in
-[`PHASE0-RECON.md`](PHASE0-RECON.md).
+一条一条列清楚。每一条**为什么**成立，见 [`PHASE0-RECON.md`](docs/PHASE0-RECON.md)。
 
-- **Steam achievements are disabled while ANY mod is installed.** The game only enables its Steam layer when zero mods are loaded. Official behaviour, not a bug of this project.
-- **The game clears its session storage on every launch**, so the mod has no cross-session local storage. Anything persistent must go through mod settings files or the savegame.
-- **shapez.io 1.5.6 has no native blueprint string format.** This project defines its own `SZBP1.*` (built on the game's own LZ-string), so blueprints are only exchangeable between the same game version — the embedded `gv` field is checked on paste and a mismatch fails with `2006`.
-- **Pasting a blueprint charges "blueprint shape" material** (`CbCbCbRb:CwCwCwCw` in regular mode) per the game's own cost formula. `charge:false` pastes for free.
-- **`step` / `await` fast-forward runs synchronously on the render thread** — large tick counts briefly freeze the screen. A single step is capped at 20,000 ticks.
-- **Observations of big factories must be clipped** with `region` and/or `max_entities`. Over-limit observations report `truncated: true` and always include full `stats` — never a silent cut.
-- **Desktop only** (Windows / macOS / Linux Electron builds). The mobile and browser versions of shapez.io do not support mods.
-- **`new_game` needs a fresh game process.** After a very long uptime the game can wedge in the menu: the save is created but the state machine never enters the world. Restart the game and it works.
-- **The layout compiler's output is god-mode.** It uses `charge:false` and does not check building unlock levels, so it can place a stacker at level 2. The acceptance target (`CuCuCuCu`) needs only the level-1 cutter, so it holds under either reading, but any "cleared level N" claim from the compiler is a god-mode claim.
-- **The compiler builds on fresh ground only.** It refuses to place over existing buildings (v1), so extending a running factory is not supported yet.
-- **The closed-loop agent does not work yet.** It can observe, call macros and verify its own results, but it cannot yet complete the full mine → mix → stack → deliver-to-hub chain within a single run. Measured output at level 12 is persistently 0.
+- **装了任何 mod，Steam 成就就会关。** 游戏只在零 mod 时启用 Steam 层。这是官方行为，不是本项目的 bug。
+- **游戏每次启动都会清掉 session storage**，所以 mod 没有跨会话的本地存储。要持久化只能走 mod 设置文件或存档。
+- **shapez.io 1.5.6 没有原生蓝图字符串格式。** 本项目自建 `SZBP1.*`（建立在游戏自己的 LZ-string 上），所以蓝图只能在同一游戏版本间交换 —— 内嵌的 `gv` 字段在粘贴时会校验，不匹配报错 `2006`。
+- **贴蓝图要扣「蓝图形状」材料**（regular 模式下是 `CbCbCbRb:CwCwCwCw`），按游戏自己的费用公式。`charge:false` 可以免费贴。
+- **`step` / `await` 快进同步跑在渲染线程上** —— tick 数大时会短暂卡屏。单次上限 20,000 tick。
+- **大工厂的观测必须裁剪**，用 `region` 和/或 `max_entities`。超限返回 `truncated: true`，且始终带全量 `stats` —— 绝不静默截断。
+- **只支持桌面版**（Windows / macOS / Linux Electron 构建）。手机版和网页版 shapez.io 不支持 mod。
+- **`new_game` 需要一个新起的游戏进程。** 开机很久之后游戏可能卡在菜单里：存档建出来了但状态机没进世界。重启游戏即可。
+- **布局编译器的产出是 god-mode。** 它用 `charge:false` 且不检查建筑解锁等级，所以能在第 2 关放一个 stacker。验收目标（`CuCuCuCu`）只需要 1 级切割机，两种读法下都成立，但编译器给出的任何「通了第 N 关」都是 god-mode 意义上的。
+- **编译器只在空地上建。** 它拒绝在已有建筑上放置（v1），所以还不支持扩建正在运行的工厂。
+- **闭环 agent 还不行。** 它已经能观察、能调用宏、能自己验证结果，但还无法在一个 run 内把 挖矿 → 混合 → 堆叠 → 送 hub 这条完整链路接通。第 12 关产出恒为 0。
 
-## 📦 Build and verify
+## 📦 构建与验证
 
 ```bash
-npm test                  # 677 unit tests
-npm run selftest:bridge   # bridge layer selftest (19 checks)
-npm run selftest:mcp      # MCP layer selftest (97 checks)
-npm run smoke             # end to end (needs the game and bridge running)
+npm test                  # 677 单测
+npm run selftest:bridge   # 桥接层自检（19 项）
+npm run selftest:mcp      # MCP 层自检（97 项）
+npm run smoke             # 端到端（需要游戏 + 桥在跑）
 ```
 
-The smoke test is fully non-interactive by default. Exit codes: `0` pass, `1` bridge not
-running, `2` game not in a world, `3` another check failed. `SHAPEZ_SMOKE_AUTOPLAY=1`
-suppresses the notice about the temporary belt. Override the bridge address with `--url` /
-`SHAPEZ_BRIDGE_URL`, and authenticate with `--token` / `SHAPEZ_BRIDGE_TOKEN`.
+冒烟测试默认完全非交互，退出码 `0` 通过 / `1` 桥没起 / `2` 游戏不在世界里 / `3` 其它检查失败。
+`SHAPEZ_SMOKE_AUTOPLAY=1` 会压掉「临时放了一条带子」的提示。
+用 `--url` / `SHAPEZ_BRIDGE_URL` 改桥地址，用 `--token` / `SHAPEZ_BRIDGE_TOKEN` 认证。
 
-### Directory layout
+### 目录结构
 
-| Path | What it is |
+| 路径 | 是什么 |
 |---|---|
-| `src/mod/shapez-ai-bridge.js` | The in-game mod — a single file loaded by the official mod loader |
-| `src/bridge/bridge.mjs` | Zero-dependency Node bridge: WS `/mod` + `/client`, HTTP `/health` `/status` `/rpc`, snapshot management |
-| `src/mcp/server.mjs` | MCP stdio server (12 tools), forwarding to the bridge's HTTP API |
-| `src/agent/play.mjs` | Reference agent driving the bridge over HTTP |
-| `src/ai/compiler/` | The offline layout compiler |
-| `src/shared/` | Vendored lz-string + the `SZBP1` blueprint codec |
-| `scripts/smoke_test.mjs` | Zero-dependency end-to-end smoke test |
-| `docs/PROTOCOL.md` | The frozen protocol contract — the single source of truth |
-| `compat.json` | Machine-readable compatibility matrix |
-| `test/` | Layer selftests (mod RPC in a Node sandbox, lz-string interop, blueprint round-trips) |
-| `gui/` | Setup wizard and configuration UI |
+| `src/mod/shapez-ai-bridge.js` | 游戏内 mod —— 单文件，由官方 mod 加载器读取 |
+| `src/bridge/bridge.mjs` | 零依赖 Node 桥：WS `/mod` + `/client`，HTTP `/health` `/status` `/rpc`，快照文件管理 |
+| `src/mcp/server.mjs` | MCP stdio 服务器（12 个工具），转发到桥的 HTTP API |
+| `src/agent/play.mjs` | 参考 agent，通过 HTTP 驱动桥 |
+| `src/ai/compiler/` | 离线布局编译器 |
+| `src/shared/` | 内置的 lz-string + `SZBP1` 蓝图编解码 |
+| `scripts/smoke_test.mjs` | 零依赖端到端冒烟测试 |
+| `docs/PROTOCOL.md` | 冻结的协议契约 —— 唯一真源 |
+| `compat.json` | 机器可读的兼容矩阵 |
+| `test/` | 各层自检（Node 沙箱里的 mod RPC、lz-string 互操作、蓝图往返） |
+| `gui/` | 安装向导与配置界面 |
 
-## 🤝 Development and contributing
+## 🤝 开发与贡献
 
-An early project. The code is not beautiful, but every fix is pinned by a test.
+早期项目，代码不算漂亮，但每一处修复都有测试钉着。
 
-- **Contributing**: [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to report a problem, how to send a PR, build and test rules.
-- **Security**: [`SECURITY.md`](SECURITY.md) — use the **private channel** (GitHub Security Advisories), not a public issue.
-- **Reporting a bug**: include the version, your Node version, your OS, reproduction steps, and expected vs actual behaviour. The template asks for each.
+- **贡献指南**：[`CONTRIBUTING.md`](CONTRIBUTING.md) —— 怎么报问题、怎么提 PR、构建与测试要求。
+- **安全问题**：[`SECURITY.md`](SECURITY.md) —— **走私密渠道**（GitHub Security Advisories），不要开公开 issue。
+- **报 bug 请带上**：版本、Node 版本、操作系统、复现步骤、期望行为与实际行为。模板会逐项要求。
 
-## ⚖️ License and credits
+## ⚖️ 许可与致谢
 
-This project's code is **MIT** — see [`LICENSE`](LICENSE); third-party notices are in
-[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+本项目代码以 **MIT** 发布，见 [`LICENSE`](LICENSE)；第三方组件声明见
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)。
 
-- Vendored [lz-string](https://github.com/pieroxy/lz-string) 1.4.5: © 2013 Pieroxy,
-  **MIT / WTFPL** dual-licensed. It compresses blueprints and mirrors the game's own
-  savegame compression.
-- **This repository contains no shapez.io game code or assets.** All integration goes through the
-  game's official mod API. shapez.io is © [tobspr Games](https://shapez.io).
-  One qualification worth stating plainly: [`test/fixtures/`](test/fixtures/) holds a copy of
-  **lz-string**, which the game vendors unmodified — it is © Pieroxy under MIT/WTFPL, not
-  tobspr Games' code, and it exists only so the interop test can check our codec against the
-  implementation the game actually uses. See [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
-- This is an **unofficial community project**, not affiliated with, endorsed by, or
-  supported by tobspr Games. Please do not report problems with this mod to them.
+- 内置 [lz-string](https://github.com/pieroxy/lz-string) 1.4.5：© 2013 Pieroxy，
+  **MIT / WTFPL** 双许可。用来压缩蓝图，并镜像游戏自己的存档压缩。
+- **本仓库不含任何 shapez.io 游戏代码或素材。** 所有集成都走游戏官方 mod API。
+  shapez.io 版权归 [tobspr Games](https://shapez.io)。
+  有一点值得说明白：[`test/fixtures/`](test/fixtures/) 里有一份 **lz-string** 的副本，
+  游戏是原样 vendor 它的 —— 该文件版权属 Pieroxy，MIT/WTFPL 双许可，不是 tobspr Games 的代码，
+  放在那里只是为了让互操作测试能拿我们的编解码器和游戏实际用的那份实现对拍，
+  见 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)。
+- 这是一个**非官方社区项目**，与 tobspr Games 无隶属、背书或支持关系。
+  请不要把这个 mod 的问题反馈给他们。
 
 ## ⭐ Star History
 
 <a href="https://www.star-history.com/?repos=sqkl520%2Fshapez-ai-bridge&type=date&legend=top-left">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sqkl520%2Fshapez-ai-bridge&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sqkl520%2Fshapez-ai-bridge&type=date&theme=light&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sqkl520%2Fshapez-ai-bridge&type=date&legend=top-left" />
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sqkl520%2Fshapez-ai-bridge&type=date&legend=top-left" />
  </picture>
 </a>

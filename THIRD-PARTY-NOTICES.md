@@ -36,7 +36,7 @@ shapez.io is © tobspr Games (<https://shapez.io>).
 
 **This repository contains no shapez.io game code.** All integration happens
 through the game's official mod API and the runtime introspection documented in
-[PHASE0-RECON.md](PHASE0-RECON.md). Nothing here patches, redistributes or
+[PHASE0-RECON.md](docs/PHASE0-RECON.md). Nothing here patches, redistributes or
 re-implements the game.
 
 Two consequences of the game's own behaviour, not limitations added by this

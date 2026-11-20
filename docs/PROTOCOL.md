@@ -2,7 +2,7 @@
 
 > 本文件是 Mod / 桥接 / MCP / Agent / 测试 五个组件的**共同接口契约**。
 > 任何不一致以本文件为准；改协议 = 改本文件 + 升 `protocol` 号 + 三处同步。
-> 证据来源见 [`PHASE0-RECON.md`](../PHASE0-RECON.md)；本文件引用的游戏侧能力都建立在游戏官方的 mod API 之上。
+> 证据来源见 [`PHASE0-RECON.md`](PHASE0-RECON.md)；本文件引用的游戏侧能力都建立在游戏官方的 mod API 之上。
 
 ## 0. 架构一图
 

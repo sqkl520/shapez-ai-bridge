@@ -122,3 +122,42 @@ research/ai-player/facts/live/
 .agent-verify.log
 .v-*.json
 research/ai-plan/runs/*.json
+
+# ── 2026-11-20 按 D:\Projects\docs\PROJECT-RULES.md 整改 ────────────────
+# 该次整改把一批**历史已提交**的产物移出了仓库（git rm --cached，文件仍在本地）。
+# 下面把这几类固化下来，防止它们再被 `git add` 拖回来。
+
+# ① 调研期间的一次性 RPC 抓取（`.s3.json` ~ `.s8.json` 里是游戏截图的 base64，
+#    单个 100-340KB，共约 1.6MB）。规则 §2.1：未清理的真实数据不得进公开仓。
+#    复现方式应是重跑装置，而不是提交抓取结果。
+research/ai-plan/.*.json
+
+# ② GUI 验证的构建日志。规则 §1.4：根目录/文档目录不放构建产物。
+#    ⚠️ 只忽略 `docs/gui/*.log`（本层），`docs/gui/logs/` 已在上面单独忽略。
+docs/gui/*.log
+
+# ③ 根目录的 RPC dump（早先 `curl ... > .o.json` 的残留，89KB）
+/.o.json
+
+# ④ 后台队列的本地状态目录（空目录也算残留）
+.bgqueue/
+
+# ⑤ 调研过程中随手截的游戏画面。只保留**被文档实际引用**的那几张
+#    （VISUAL-VS-NUMERIC / SCREENSHOT-REDESIGN 里引用的 5 张）。
+#    其余 15 张无人引用，2026-11-20 已 git rm --cached 移出仓库。
+#    新截图默认不进仓：真实存档画面属于「未清理的真实数据」，且单张常有数百 KB。
+research/ai-plan/shot*.png
+research/ai-plan/new-shot*.png
+# 被文档引用的这 5 张必须留在仓里（文档里的图片链接指着它们）。
+# ⚠️ 显式放行是有代价的：以后想替换它们时 `git add` 不会被拦 —— 那是预期行为，
+#    因为它们已经在 index 里，ignore 规则对已跟踪文件本来就不生效。
+!research/ai-plan/shot-copper-close.png
+!research/ai-plan/shot-copper-miners.png
+!research/ai-plan/shot-hidehub.png
+!research/ai-plan/shot-rutile-cutter-close.png
+!research/ai-plan/shot-withhub.png
+
+# ⑥ 调研目录里的运行时日志（bridge 启动横幅、轮询记录）。
+#    research/ 下允许放**分析结论**，不放**运行产物**。
+research/**/*.log
+

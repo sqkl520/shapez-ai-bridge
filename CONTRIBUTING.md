@@ -1,137 +1,118 @@
-# Contributing
+[English](CONTRIBUTING-EN.md) | 简体中文
 
-Thanks for taking a look. This is a small project — the process below is short
-because it is the actual process, not a template.
+# 参与贡献
 
-## Before you start
+谢谢你看这个项目。流程很短，因为这里写的是**实际在用的流程**，不是模板。
 
-- **Node.js ≥ 20** (`node --version`).
-- A **shapez.io 1.5.6 desktop (Steam) build** if your change touches anything
-  that talks to the game. Much of the codebase — the bridge protocol, the MCP
-  server, the agent loop's planning layer — can be worked on and tested without
-  a running game.
-- No other dependencies. The project deliberately ships with zero runtime
-  dependencies, and a PR that adds one needs a strong reason in its description.
+## 开始之前
 
-## Get it running
+- **Node.js ≥ 20**（`node --version`）。
+- 如果你的改动会碰到与游戏交互的部分，需要一个 **shapez.io 1.5.6 桌面版（Steam）**。
+  代码库的很大一部分 —— bridge 协议、MCP server、agent 的规划层 ——
+  无需运行游戏即可开发和测试。
+- 没有其它依赖。本项目刻意保持**零运行时依赖**，引入依赖的 PR 需要在描述里给出充分理由。
 
-Most of the codebase can be checked out and tested with nothing but Node — no
-game, no bridge:
+## 跑起来
+
+大部分代码只需要 Node，不需要游戏、不需要 bridge：
 
 ```bash
 git clone https://github.com/sqkl520/shapez-ai-bridge.git
 cd shapez-ai-bridge
-npm test                  # 677 unit tests, no game needed
-node src/bridge/selftest.mjs   # bridge layer, no game needed
-node src/mcp/selftest.mjs      # MCP layer, no game needed
+npm test                       # 单元测试，不需要游戏
+node src/bridge/selftest.mjs   # bridge 层，不需要游戏
+node src/mcp/selftest.mjs      # MCP 层，不需要游戏
 ```
 
-Those three are the ones to run before opening a PR.
+提 PR 之前跑这三个。
 
-The **smoke test** is different: it is genuinely end-to-end and needs the real
-thing. Start the bridge, open shapez.io with the mod installed, and load a
-savegame first:
+**冒烟测试**不一样：它是真正的端到端，需要真东西。先启动 bridge、装好 mod 打开 shapez.io、载入一个存档：
 
 ```bash
-node src/bridge/bridge.mjs      # terminal 1
-node scripts/smoke_test.mjs     # terminal 2, after the game is in a world
+node src/bridge/bridge.mjs      # 终端 1
+node scripts/smoke_test.mjs     # 终端 2，等游戏进入世界后
 ```
 
-If it prints `SMOKE TEST PASSED (5/5)`, all five layers are wired up. Its exit
-codes tell you which layer is missing: `1` the bridge is not running, `2` the
-bridge is up but no game is connected or it is still in the menu, `3` another
-check failed. It briefly places and deletes one belt near the hub to prove
-writes work, and leaves your world unchanged.
+如果打印 `SMOKE TEST PASSED (5/5)`，说明五层都通了。退出码会告诉你是哪一层缺：
+`1` bridge 没在跑，`2` bridge 在跑但没有游戏连上、或游戏还停在菜单，`3` 其它检查失败。
+它会在 hub 附近放一条带子再删掉，以证明写入可用，跑完世界保持原样。
 
-There is no way to fake this one — the whole point is that it exercises the
-real game. For a test that runs without a game, use `npm test` above.
+这个测试没法造假 —— 它的全部意义就是真跑一遍游戏。
+需要不依赖游戏的测试，用上面的 `npm test`。
 
-## Running the tests
+## 运行测试
 
 ```bash
-# Everything under src/agent (the largest test surface)
+# src/agent 下的全部（最大的测试面）
 node --test src/agent/
 
-# A single file while you iterate
+# 迭代时只跑一个文件
 node --test src/agent/loop/handles.test.mjs
 
-# The bridge and MCP servers each ship a self-test
+# bridge 和 MCP server 各有自测
 node src/bridge/selftest.mjs
 node src/mcp/selftest.mjs
 ```
 
-Some tests need a live game connection and are skipped when the bridge has no
-mod attached. A skipped test is not a passing test — do not delete a skip to
-make a suite look green.
+有些测试需要真机连接，bridge 上没有 mod 时会跳过。**跳过的测试不等于通过的测试** ——
+不要为了让套件变绿而删掉 skip。
 
-## Making a change
+## 做一次改动
 
-1. **Branch.** Even as the only maintainer, work on a branch and open a PR.
-   `type/short-description`, e.g. `fix/belt-handoff-direction`.
-2. **Keep the diff focused.** One concern per PR. If you notice an unrelated
-   problem, open an issue instead of fixing it in passing.
-3. **Tests come with the change, not after it.** If you fix a defect, add a
-   regression test that fails without your fix. Tests that were written against
-   a wrong assumption should be rewritten with a comment explaining what the old
-   assumption was — not deleted.
-4. **Commit messages** use `type(scope): summary`, and explain *why* the change
-   is needed. Types in use: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`,
-   `chore`.
-5. **Update docs in the same commit** when you change behaviour, configuration
-   or a public interface. See the checklist below.
+1. **开分支。** 即使你是唯一维护者，也在分支上工作并开 PR。
+   `type/short-description`，例如 `fix/belt-handoff-direction`。
+2. **保持 diff 聚焦。** 一个 PR 一件事。发现无关的问题就开 issue，不要顺手改掉。
+3. **测试跟着改动走，不是之后补。** 修缺陷就补一条**没有这次修复就会红**的回归测试。
+   如果某条测试是建立在错误假设上的，改写它，并在注释里写清旧的假设是什么 —— 而不是删掉。
+4. **commit message** 用 `type(scope): summary`，说清**为什么**要这么改。
+   使用中的 type：`feat`、`fix`、`docs`、`test`、`refactor`、`perf`、`chore`。
+5. **同一次提交里更新文档** —— 改了行为、配置或公开接口就要同步。见下面的清单。
 
-## What reviewers look at
+## 评审会看什么
 
-- Does the change say why it is needed, not just what it does?
-- If behaviour changed, is there a test that would catch a regression?
-- If the change came from observing a real failure, does a comment record the
-  observable symptom (what the log said, what the world looked like) so the next
-  person does not have to rediscover it?
-- Does any new output that reaches the model actually reach it? A value computed
-  and then dropped before rendering is the single most common defect class in
-  this repository.
+- 这次改动说清了「为什么需要」吗，还是只说了「做了什么」？
+- 行为变了的话，有测试能在它退化时抓住吗？
+- 如果改动来自一次真实的失败观察，注释里记录了可观察到的症状吗
+  （日志说了什么、世界长什么样），好让下一个人不必重新发现一遍？
+- **新算出来的输出，真的送到模型眼前了吗？** 一个值算完在渲染前被丢掉，
+  是这个仓库里最高频的缺陷类型。
 
-## Privacy and repository hygiene
+## 隐私与仓库卫生
 
-This repository is public. Before you commit:
+这是公开仓库。提交之前：
 
-- **No secrets, tokens or keys.** Use environment variables. `.gitignore` blocks
-  `.env` and friends; do not force-add them.
-- **No real user data.** Example saves, paths and hostnames must be fabricated
-  (`example.com`, `*.test`, `<repo>`, `<user-home>`).
-- **No absolute paths from your machine** in code, tests or docs.
-- **No runtime artifacts.** Logs, `.pid` files, run transcripts and build output
-  are ignored; keep them out of the index.
+- **不要提交密钥、token。** 用环境变量。`.gitignore` 已经拦了 `.env` 一类文件，不要 `-f` 强推。
+- **不要提交真实用户数据。** 示例存档、路径、主机名一律编造
+  （`example.com`、`*.test`、`<repo>`、`<user-home>`）。
+- **不要出现你本机的绝对路径**，代码、测试、文档都一样。
+- **不要提交运行产物。** 日志、`.pid`、run transcript、构建输出都已被忽略，别把它们加进索引。
 
-## Code layout
+## 代码布局
 
-| Path | What lives there |
+| 路径 | 里面是什么 |
 | --- | --- |
-| `src/mod/` | The single-file game mod (runs inside shapez.io's renderer) |
-| `src/bridge/` | The local Node bridge: WebSocket + HTTP + RPC |
-| `src/mcp/` | MCP server exposing the bridge as tools |
-| `src/agent/` | The reference agent: planning loop, macros, verification |
-| `gui/` | Local setup wizard and dashboard |
-| `docs/` | Design notes and GUI walkthrough |
-| `research/` | Research notes; not part of the shipped tool |
+| `src/mod/` | 单文件游戏 mod（运行在 shapez.io 的渲染进程里） |
+| `src/bridge/` | 本机 Node bridge：WebSocket + HTTP + RPC |
+| `src/mcp/` | 把 bridge 暴露成工具的 MCP server |
+| `src/agent/` | 参考 agent：规划循环、宏、验证 |
+| `gui/` | 本机安装向导与面板 |
+| `docs/` | 设计笔记与 GUI 走查 |
+| `research/` | 调研笔记；不属于发布的工具本体 |
 
-`src/agent/` is the largest and most delicate part. Its `loop/` directory holds
-the planning loop, the diagnostic layer and the verifier; `macros/` holds the
-world-editing primitives. Read `src/agent/loop.mjs`'s file header before
-changing anything there — it records why several non-obvious decisions are the
-way they are.
+`src/agent/` 是最大也最精细的一块。`loop/` 目录下是规划循环、诊断层和验证器；
+`macros/` 下是改世界的原语。动那里之前先读 `src/agent/loop.mjs` 的文件头注释 ——
+它记录了若干个「为什么不那么做」的决定。
 
-## Reporting a bug
+## 报告缺陷
 
-Use the bug report template. The details that actually help:
+用 bug report 模板。真正有帮助的信息：
 
-- shapez.io version and OS,
-- Node version,
-- the exact command you ran,
-- what you expected, what happened,
-- if the agent was involved: the `transcript.jsonl` from the run directory,
-  with any personal paths scrubbed.
+- shapez.io 版本与操作系统，
+- Node 版本，
+- 你实际跑的命令，
+- 期望发生什么、实际发生了什么，
+- 如果涉及 agent：run 目录里的 `transcript.jsonl`，请先抹掉个人信息路径。
 
-## Security issues
+## 安全问题
 
-Do not open a public issue. See [SECURITY.md](SECURITY.md).
+不要开公开 issue。见 [SECURITY.md](SECURITY.md)。

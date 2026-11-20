@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/sqkl520/shapez-ai-bridge/security/advisories/new
     about: Report security problems privately, not as a public issue.
   - name: Question or setup help
-    url: https://github.com/sqkl520/shapez-ai-bridge/blob/main/README.md#troubleshooting
+    url: https://github.com/sqkl520/shapez-ai-bridge/blob/main/README-EN.md#-faq
     about: Check the troubleshooting section first — it covers the common setup failures.

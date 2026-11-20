@@ -1,69 +1,57 @@
-# Security Policy
+[English](SECURITY-EN.md) | 简体中文
 
-## Reporting a vulnerability
+# 安全策略
 
-**Do not open a public issue for a security problem.**
+## 报告漏洞
 
-Report it privately through GitHub's [private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability):
+**安全问题的报告千万不要开公开 issue。**
 
-1. Open the **Security** tab of this repository.
-2. Click **Report a vulnerability**.
-3. Describe the issue and how to reproduce it.
+请通过 GitHub 的[私密漏洞报告](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)渠道私下提交：
 
-If that channel is unavailable to you, open a public issue containing only
-"Security issue — requesting a private channel", with no technical detail, and a
-maintainer will follow up.
+1. 打开本仓库的 **Security** 标签页。
+2. 点击 **Report a vulnerability**。
+3. 描述问题，并说明如何复现。
 
-Please include, as applicable:
+如果这个渠道对你不可用，请开一个公开 issue，**只**写「Security issue — requesting a private channel」，不要带任何技术细节，维护者会主动联系你。
 
-- the affected component (mod / bridge / MCP server / agent / GUI),
-- the version or commit,
-- reproduction steps, or a proof of concept,
-- the impact you believe it has.
+请尽量提供：
 
-## What to expect
+- 受影响的组件（mod / bridge / MCP server / agent / GUI），
+- 版本号或 commit，
+- 复现步骤，或一个 PoC，
+- 你判断的影响范围。
 
-| Stage | Target |
+## 响应时间
+
+| 阶段 | 目标 |
 | --- | --- |
-| Acknowledgement that the report was received | within 3 business days |
-| Initial assessment (severity, whether it is in scope) | within 7 business days |
-| Fix or mitigation plan for confirmed issues | within 30 days, faster for high severity |
+| 确认收到报告 | 3 个工作日内 |
+| 初步评估（严重程度、是否在范围内） | 7 个工作日内 |
+| 已确认问题的修复或缓解方案 | 30 天内，高危更快 |
 
-These are targets from a single-maintainer project, not a contractual SLA. If a
-target is going to slip, you will be told rather than left waiting.
+这些目标来自单人维护的项目，不构成合约性质的 SLA。如果某个目标要延期，会主动告诉你，而不是让你干等。
 
-You will be credited in the advisory unless you ask otherwise.
+除非你要求匿名，否则会在安全公告里署名致谢。
 
-## Scope
+## 范围
 
-In scope — the security-relevant surface of this project:
+在范围内 —— 本项目与安全相关的部分：
 
-- **The mod** (`src/mod/`): it runs inside the game's renderer and opens a
-  WebSocket to the local bridge.
-- **The bridge** (`src/bridge/`): binds to `127.0.0.1` and exposes an RPC
-  endpoint that can read and write a savegame, and read/write files on disk
-  (snapshots, blueprints).
-- **The MCP server** (`src/mcp/`): exposes the bridge as tools to an MCP client.
-- **The GUI** (`gui/`): a local web server that can run install scripts.
-- **Path handling anywhere**: snapshot names, blueprint names and savegame paths
-  are user-supplied and must not escape their intended directory.
+- **mod**（`src/mod/`）：它运行在游戏的渲染进程里，向本机 bridge 开 WebSocket。
+- **bridge**（`src/bridge/`）：只绑定 `127.0.0.1`，暴露的 RPC 可以读写存档，也能读写磁盘文件（快照、蓝图）。
+- **MCP server**（`src/mcp/`）：把 bridge 暴露成 MCP 客户端可用的工具。
+- **GUI**（`gui/`）：一个能执行安装脚本的本机 web server。
+- **任何地方的路径处理**：快照名、蓝图名、存档路径都是用户输入，不得逃出各自的目标目录。
 
-Out of scope:
+不在范围内：
 
-- Vulnerabilities in shapez.io itself, or in Node.js — report those upstream.
-- Anything that requires an attacker to already have code execution or
-  filesystem access on the machine running the bridge.
-- Denial of service against your own local process.
+- shapez.io 本体或 Node.js 自身的漏洞 —— 请报给上游。
+- 需要攻击者已经能在本机执行代码或访问文件系统才能利用的问题。
+- 针对你自己本机进程的拒绝服务。
 
-## Design notes relevant to security
+## 与安全相关的设计说明
 
-- The bridge **binds to `127.0.0.1` only** and rejects non-local browser origins.
-  Binding it to a public interface is not a supported configuration.
-- Snapshot and blueprint names are validated against directory traversal; see the
-  self-tests in `src/bridge/selftest.mjs` (`SECURITY:` prefixed checks).
-- The mod, the bridge and the MCP server are all intended to run as the local
-  user, with that user's privileges. There is no privilege boundary between them
-  and your shell — do not run them against a savegame you are not willing to
-  have modified.
-- No credentials are stored by this project. API keys for an LLM provider are
-  read from environment variables and never written to disk.
+- bridge **只绑定 `127.0.0.1`**，并拒绝非本机的浏览器来源。把它绑到公网接口是不受支持的配置。
+- 快照名与蓝图名做了目录穿越校验；见 `src/bridge/selftest.mjs` 里以 `SECURITY:` 开头的检查。
+- mod、bridge、MCP server 都以本机当前用户的权限运行，与你的 shell 之间没有权限边界 —— 不要拿一个你不愿意被修改的存档去跑它们。
+- 本项目不存储任何凭据。LLM 服务商的 API key 从环境变量读取，绝不写盘。
