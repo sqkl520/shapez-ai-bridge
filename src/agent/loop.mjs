@@ -1174,48 +1174,47 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
                         + `腾出空间之后，正解往往只要几十格。继续铺新线只会撞上自己。`
                     : (needsCascade
                         /* 这条 hint 说的是「工序建了但没接通」—— 与「缺工序」是两回事，
-                         * 因为实测里模型已经把 mixer 补到 4 台了，缺的是接线。 */
-                        ? `世界有 ${machineCount} 台机器（其中 mixer ${mixerCount} 台）、${beltCount} 条带子，`
-                            + (reachRatio !== null
-                                ? `其中**${reachableBelts} 条（${Math.round(reachRatio * 100)}%）已经通到 hub**，`
-                                : "")
-                            + `但 hub 一件 ${goalShape} 都没收到。`
-                            + `所以问题不是「太脏」也不是「缺机器」，是**这些通着的带子运的不是目标形状**。`
-                            + `下一步：顺着一条已经通到 hub 的链，往前找它运的是什么，`
-                            + `在源头把它换成 ${goalShape} 需要的原料/工序（\`replace_run\` / \`insert_machine\` / \`connect\`）。`
-                            + `**别再成片拆带子了** —— 它们大多数在正常工作，拆掉是在拆自己的产能。`
-                            /* ★ 把产能缺口写在这里（2026-11-20）★
-                             *
-                             * 单独加一条 `PROCESSING_FAR_TOO_SLOW` 诊断试过，**送不到**：
-                             * 合并后总量上限 8（`loop.mjs` ⑥ 段，契约 v2 §6 的硬上限），
-                             * L12 上 8 条全是 blocker，第 9 条起一律压进
-                             * `suppressed_total`。那条诊断我在本地能算出来、真机诊断
-                             * 列表里却没有，就是被这个上限吃掉的。
-                             *
-                             * 所以改挂在这里 —— `NO_PRODUCTION` 本来就在前 8 条里，
-                             * 而「一件都没产出」与「加工能力只有供给的 3%」是同一件事的两面。
-                             * 用 `capacityOf` 的**唯一真值**，不在这里重算速率。 */
-                            + (() => {
-                                try {
-                                    const cap = capacityOf(o);
-                                    const k = cap && cap.bottleneckMachine;
-                                    const u = cap && cap.utilization;
-                                    if (!cap || cap.confidence !== "ok" || cap.bottleneck !== "process" || !k
-                                        || typeof u !== "number" || u >= 0.5) return "";
+                         * 因为实测里模型已经把 mixer 补到 4 台了，缺的是接线。
+                         *
+                         * ★ 措辞顺序由**截断位置**决定，不是由行文习惯决定（2026-11-20）★
+                         *
+                         * 这里原来先铺垫三句（「世界有 N 台机器…」「所以问题不是…」「下一步：顺着…」），
+                         * 把产能缺口放在第 280 字符。而 `prompt.mjs:2469` 对非白名单诊断的
+                         * hint 截到 **180 字符** —— 那段产能提示**从来没有到达过模型**。
+                         *
+                         * 我上一轮"验证"它时只确认了 hint 被放进 prompt，没确认它**活过了截断**。
+                         * 这正是本项目反复出错的那一类：算出来 ≠ 送到 ≠ 送达时还完整。
+                         *
+                         * 现在把最能改变动作的那句放在最前面。前 180 字符必须自带
+                         * 「缺什么、加多少、为什么」三件事，后面的句子只做补充。 */
+                        ? (() => {
+                            /* 先算产能，因为它决定这句话的**开头**写什么。 */
+                            let capLine = "";
+                            try {
+                                const cap = capacityOf(o);
+                                const k = cap && cap.bottleneckMachine;
+                                const u = cap && cap.utilization;
+                                if (cap && cap.confidence === "ok" && cap.bottleneck === "process" && k
+                                    && typeof u === "number" && u < 0.5) {
                                     const add = cap.process && Array.isArray(cap.process.machines)
                                         ? cap.process.machines.find(m => m.kind === k) : null;
                                     const n = add ? add.count : null;
                                     const needN = add && add.ratePerSec > 0
                                         ? Math.ceil(cap.supplyPerSec / add.ratePerSec) : null;
-                                    return `\n⚠ 另外：${k} 只有 ${n} 台，能处理 ${cap.process.capacityPerSec}/s，`
-                                        + `而接通的矿机在产 ${cap.supplyPerSec}/s —— **${Math.round((1 - u) * 100)}% 过不去**。`
-                                        + `加工机器**没有并联上限**：`
-                                        + (needN !== null ? `加到约 ${needN} 台 ${k} 就吃得满，` : "")
-                                        + `比买升级便宜得多（升级要几百个指定形状）。`
-                                        + `但顺序不能反：**先把一条路接通，再并列复制那一段** —— `
-                                        + `断线上加机器不会产出任何东西。`;
-                                } catch { return ""; }
-                            })()
+                                    capLine = `**${k} 只有 ${n} 台，产能 ${cap.process.capacityPerSec}/s，`
+                                        + `而矿机在产 ${cap.supplyPerSec}/s —— ${Math.round((1 - u) * 100)}% 过不去。**`
+                                        + `加工机器没有并联上限，`
+                                        + (needN !== null ? `加到 ${needN} 台就吃得满。` : "")
+                                        + `\`insert_machine {machine:"${k}", at:<空地>, facing:<朝外>}\` 一台一台加。\n`;
+                                }
+                            } catch { /* 产能算炸了不许影响诊断 */ }
+                            return capLine
+                                + `世界 ${beltCount} 条带子里 ${reachableBelts} 条（${Math.round((reachRatio || 0) * 100)}%）已通到 hub，`
+                                + `但 hub 一件 ${goalShape} 都没收到 —— 通着的带子运的不是目标形状。`
+                                + `顺序不能反：**先接通一条路，再并列复制那一段**；断线上加机器不产出任何东西。`
+                                + `\`insert_machine\` / \`replace_run\` / \`connect\` 三个宏够用。`
+                                + `**别再成片拆带子** —— 它们在正常工作。`;
+                        })()
                         : "首轮没有 report：这是「目标形状没有产线在造」的初始诊断，不是对某条 check 的复述。"),
             }));
         }
