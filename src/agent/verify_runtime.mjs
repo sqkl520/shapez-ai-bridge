@@ -878,6 +878,24 @@ export async function checkBehavior(plan, reader, opts = {}) {
     if (!shape) return { name: "L4-behavior", ok: false, reason: "行为检查缺目标形状（opts.behavior.shape）", evidence: {} };
     const ticks = b.ticks === undefined ? 2400 : b.ticks;      // 20 游戏秒 @120Hz
     const minPerSec = b.minPerSec === undefined ? 0 : b.minPerSec;
+    /* ★ 首次产出要等，最多再等到 `extendTicks` ★
+     *
+     * 2026-11-21 真机 `r-20261121190439-6190`：模型第一次把线接对了，
+     * tx 35/35 落盘，链条 `painter → stacker → rotater` 真的开始淌 ——
+     * 而 2400 tick 的窗口在它刚淌出 4 件**中间产物**时关掉了。
+     *
+     * L4 因此判「跑完 2400 tick 后目标形状一件都没产出 —— 这条线在游戏里没跑起来」。
+     * **那条判词是错的**：线是跑起来的，只是三层链的流动延迟大于窗口。
+     * 更糟的是后续读 verify 记录的人会据此认定「修法无效」，从而放弃一条真能出货的路。
+     *
+     * 所以：首轮没看到产出时**再等一轮**（默认 2400 tick），最多到 `extendTicks`。
+     * 只在「还没见到任何产出」时延长 —— 已经产了就不必等，
+     * 那时「产了但没交付」是真实的失败形态，不该被等待掩盖。
+     *
+     * 上限受 mod 的 `MAX_STEP_TICKS = 20000` 约束；这里一次最多再走 2400，
+     * 由 `maxExtend` 控制总共能延长几轮。 */
+    const extendTicks = b.extendTicks === undefined ? 2400 : b.extendTicks;
+    const maxExtend = b.maxExtend === undefined ? 2 : b.maxExtend;
 
     /* 前置：交付量的**同口径**基线。goal 的 delivered 是累计计数（hub 权威），
        slices 的 delivered 是窗口求和 —— 两者分开记，不混。 */
@@ -889,7 +907,30 @@ export async function checkBehavior(plan, reader, opts = {}) {
 
     await reader.step(ticks);
 
-    const prodAfter = await reader.production({ slices: 6 });
+    /* ★ 首轮没产出 ⇒ 再等，最多 `maxExtend` 轮 ★
+     *
+     * 见上面 `extendTicks` 的注释。判据只看「**任何形状**有没有产出」——
+     * 因为目标形状可能一层都还没走通，而中间产物已经在淌了，
+     * 那种情况下「线在跑」这个事实本身就该让等待继续。
+     *
+     * ⚠️ 不能用「目标形状产出」当判据：`produced_total[shape]` 在整条链
+     * 走完之前恒为 0，等它等于「等到链条完全跑通」，而不延长又要误判。
+     * 用 `produced_total` 的**总和**。 */
+    let extendedTicks = 0;
+    let prodAfter = await reader.production({ slices: 6 });
+    {
+        const anyProduced = (p) => {
+            const t = p && p.produced_total;
+            return t && typeof t === "object"
+                ? Object.values(t).some(v => Number(v) > 0)
+                : false;
+        };
+        for (let i = 0; i < maxExtend && extendTicks > 0 && !anyProduced(prodAfter); i++) {
+            await reader.step(extendTicks);
+            extendedTicks += extendTicks;
+            prodAfter = await reader.production({ slices: 6 });
+        }
+    }
     const goalAfter = await readGoalDelivered(reader);
     const storedAfter = await readStoredShape(reader, shape);
     const levelAfter = await readGoalLevel(reader);
@@ -935,6 +976,10 @@ export async function checkBehavior(plan, reader, opts = {}) {
 
     const evidence = {
         shape, ticks,
+        /* 首轮没产出时额外等了多少 tick。读 evidence 的人必须知道：
+           「窗口没货」可能是因为多等了之后才有货，也可能真的没有。 */
+        extended_ticks: extendedTicks,
+        effective_ticks: ticks + extendedTicks,
         /* 升级窗口：这是判「为什么 delta 是 null」的依据，必须露出来 */
         level_before: levelBefore, level_after: levelAfter,
         level_changed: crossedLevel,
