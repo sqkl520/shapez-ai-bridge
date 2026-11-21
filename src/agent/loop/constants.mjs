@@ -125,6 +125,18 @@ export const DIAG_CODES = Object.freeze({
      *
      * 这与 `ORPHAN_MACHINES` 分工：那条管「删」，这条管「接」。 */
     MINER_UNWIRED: "L2: a miner stands on ore but its output cell is empty — it digs and nothing carries the ore away",
+    /* ★ 「多输入机器只吃到一半的料」（2026-11-21）★
+     *
+     * L12 交付恒为 0 的真正根因：`painter#13552` 的 color 槽 approach 是空格
+     * → painter 不喷漆 → `stacker#14684` 两路进料只来一路（`inputsPerCharge: 2`）
+     * → 攒不满 2 件不吐货 → 通往 hub 的那条通路永远空着
+     * → 上游 259 件货塞满 165 格带（98.9%）→ 19/19 ejector progress=1
+     * → `itemProduced` 不触发 → 整图零产出。
+     *
+     * 与邻居的分工：`NO_PRODUCTION` 是结果，`CHAIN_UNFED` 看带子层，
+     * `MIXER_COLOR_AIMED` 只管 mixer 的 color 槽朝向，`PROCESSOR_REQUIRED` 按配方计数。
+     * 这条看**所有多输入机器当前吃不吃得到料**。 */
+    MACHINE_STARVED: "L4: a multi-input machine (stacker/painter) receives only some of its inputs — it never fires, and everything upstream backs up and freezes",
     PROCESSING_FAR_TOO_SLOW: "L4: the bottleneck processing stage can only handle a small fraction of what the miners supply — the machines are there but far too few (throughput basis, not recipe count)",
 
     /* ── 语义层（P-a，`loop/semantic.mjs`） ──
@@ -517,6 +529,12 @@ export const RETRIEVAL_TABLE = Object.freeze({
     ORE_UNMINED: cand([
         ["insert_machine", 10],
         ["connect", 4],
+    ]),
+    /* 多输入机器缺料 ⇒ 把缺的那路接上。`insert_machine` 次之：源头不存在时要补机器。
+       `connect` 给满分 10 是因为绝大多数情况下缺的是「从已有源头接一条线过来」。 */
+    MACHINE_STARVED: cand([
+        ["connect", 10],
+        ["insert_machine", 5],
     ]),
     /* 矿机就位但没接线 ⇒ **接**，不是拆。
        `insert_machine` 作为次选：有时它需要先有下游机器才接得上。 */

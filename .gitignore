@@ -161,3 +161,10 @@ research/ai-plan/new-shot*.png
 #    research/ 下允许放**分析结论**，不放**运行产物**。
 research/**/*.log
 
+
+# 2026-11-21：6-Agent 并行调查的产物
+# `.findings/*.md` 是结论（有长期价值，进仓）；
+# `.findings/` 下的原始采样 json 是机器相关的，不进。
+.findings/*.json
+.findings/*.jsonl
+.tmp-v/

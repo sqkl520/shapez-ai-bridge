@@ -3381,6 +3381,108 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             }
         }
 
+        /* ★ ③c-ter MACHINE_STARVED —— 加工机器缺一路进料，整条链冻住 ★
+         *
+         * 2026-11-21。6 个 Agent 并行调查（`.findings/CONCLUSION.md`）挖出的
+         * **L12 交付恒为 0 的真正根因**。这条诊断比任何症状码都更接近成因。
+         *
+         * ## 死锁链
+         *
+         *     painter#13552 的 color 槽 approach (-4,15) 是空格   ← 唯一断点
+         *       → painter 不喷漆 → 16 格进料竖列全空
+         *       → stacker#14684 两路进料只来一路（inputsPerCharge: 2）
+         *       → 攒不满 2 件 → 不吐货
+         *       → rotater → belt#15000 → hub 入口 #2 这条拓扑完美的通路永远空着
+         *       → 上游 259 件货塞满 165 格带（98.9%）
+         *       → miner 出料口堵死，19/19 ejector progress=1.0
+         *       → itemProduced 不触发 → 整图 1000 秒零产出
+         *
+         * **一个空格，冻住整座工厂。**
+         *
+         * ## 为什么现有诊断都看不见它
+         *
+         *   · `NO_PRODUCTION` 只说「没有产出」——那是**结果**，不是原因；
+         *   · `CHAIN_UNFED` / `BELT_HANDOFF_REJECTED` 说的是**带子**层面
+         *     （某条带的入口没上游），而这里带子都接好了，断在**机器的槽**；
+         *   · `MIXER_COLOR_AIMED` 只管 mixer 的 color 槽，不管 painter/stacker/cutter；
+         *   · `PROCESSOR_REQUIRED` 按**配方计数**（配方要 1 台 painter、有 2 台 ⇒ 够），
+         *     不看**这台机器当前吃不吃得到料**。
+         *
+         * ## 判据
+         *
+         * 对每台多输入机器（stacker / mixer / painter / painterDouble / cutter 的双输入）：
+         *   某个输入槽的 approach 格上**没有货**，且该格**本来就没有可用的来料**
+         *   （空格，或者有带子但那条带上没货）。
+         *
+         * 与 `MIXER_COLOR_AIMED` 的分工：那条专门看 mixer 的 color 槽**朝向对不对**；
+         * 这条看**所有**多输入机器的**料够不够**。mixer 两条都报时以 `MIXER_COLOR_AIMED`
+         * 为准（它有更具体的修法），所以这里跳过 mixer。
+         *
+         * ⚠️ 只在「至少有一路有料、至少一路没料」时报 —— 两路全空是**上游没建好**，
+         *    那属于 `CHAIN_UNFED` 的地盘，报这条会误导模型去修错的地方。 */
+        {
+            const MULTI_IN = new Set(["stacker", "painter", "painterDouble"]);
+            const starved = [];
+            /* 「这格有没有料」：先看格上有没有实体，再看那条带子上有没有货。
+               `itemsDoc` 可能为 null（离线/没读 debug_items），那时只判「格上有东西」。 */
+            const cellHasCargo = (cell) => {
+                const rec = at(idx, cell);
+                if (!rec) return false;
+                if (!isBelt(rec) && rec.type !== "underground_belt") return true;  // 机对机直贴
+                if (!itemsDoc) return true;      // 没有 items 数据时，有带子就算有料（不猜）
+                const list = Array.isArray(itemsDoc.belts) ? itemsDoc.belts : [];
+                const k = cell[0] + "," + cell[1];
+                return list.some(r => r && Array.isArray(r.cell) && (r.cell[0] + "," + r.cell[1]) === k);
+            };
+            for (const m of idx.ent) {
+                if (!MULTI_IN.has(m.type)) continue;
+                let sl = null;
+                try { sl = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m)); } catch { continue; }
+                const ins = (sl && Array.isArray(sl.inputs)) ? sl.inputs : [];
+                if (ins.length < 2) continue;
+                const fed = ins.map(i => ({ cell: i.cell, ok: cellHasCargo(i.cell) }));
+                const nFed = fed.filter(f => f.ok).length;
+                /* 只报「部分缺料」：全空交给 CHAIN_UNFED，全满不该报 */
+                if (nFed > 0 && nFed < fed.length) {
+                    starved.push({ m, fed, nFed, total: fed.length });
+                }
+            }
+            if (starved.length) {
+                const worst = starved[0];
+                const hs = starved.map(s => handleOf(handles, s.m.uid)).filter(Boolean);
+                const detail = starved.map(s => {
+                    const empty = s.fed.filter(f => !f.ok).map(f => JSON.stringify(f.cell)).join("/");
+                    return `${s.m.type}#${s.m.uid}(${s.nFed}/${s.total}，缺 ${empty})`;
+                }).join("；");
+                out.push({
+                    code: "MACHINE_STARVED",
+                    layer: "L4",
+                    severity: "blocker",
+                    subject: subjectOf(handles, worst.m.uid, worst.m.type),
+                    expected: `每台多输入机器（${[...MULTI_IN].join("/")}）的每个输入槽都有货`,
+                    observed: `${starved.length} 台机器缺进料：${detail}`,
+                    evidence: {
+                        handles: hs,
+                        uids: starved.map(s => s.m.uid),
+                        starved: starved.slice(0, 6).map(s => ({
+                            type: s.m.type, uid: s.m.uid, at: [s.m.x, s.m.y],
+                            fed: s.nFed, need: s.total,
+                            missing_cells: s.fed.filter(f => !f.ok).map(f => f.cell),
+                        })),
+                        note: "a multi-input machine that gets only some of its inputs never fires; "
+                            + "everything upstream of it backs up and freezes",
+                    },
+                    candidates: ["connect", "insert_machine"],
+                    hint: `**${starved.length} 台机器只吃到一半的料，它们永远不会产出。**`
+                        + `最典型的是 ${worst.m.type}#${worst.m.uid}：${worst.nFed}/${worst.total} 路有料。`
+                        + `多输入机器（stacker 要两路、painter 要形状+色）**少一路就一件不出**，`
+                        + `而它不出货，上游所有带子会一路堵死 —— 那才是「一件都交付不了」的根源。`
+                        + `修法：把缺的那一路接上（\`connect\`），源头没有就 \`insert_machine\` 补一台。`
+                        + `⚠️ 先修**最下游**那一台：它通了，上游的堵塞会自己解开。`,
+                });
+            }
+        }
+
         /* ★ ③c-bis TRASH_OVERGROWN —— 垃圾桶太多（2026-11-15 夜，L12 真机）★
          *
          * 实测：最近 5 次 run 的 59 个调用里 `trash_unused` 占 **12 个（20%）**，

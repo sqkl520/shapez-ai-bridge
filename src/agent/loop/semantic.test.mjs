@@ -565,6 +565,15 @@ test("P-a 只产出已登记的码（越界即红：别顺手加了没登记的�
          * （`(-10,9)` 的圆形铜矿），四周却全是空地。`ORE_UNMINED` 因它消失、
          * `ORPHAN_MACHINES` 因「站在矿上永不算孤儿」豁免它 —— 两条都不管。 */
         "MINER_UNWIRED",
+        /* 2026-11-21 补登 `MACHINE_STARVED`。
+         *
+         * 触发它需要「多输入机器至少一路有料、至少一路没料」的中间态，
+         * L4/L5 夹具都不覆盖 —— 与前面那几个码同一种漏法。
+         *
+         * 依据：L12 交付恒为 0 的真正根因（`.findings/CONCLUSION.md`）：
+         * `painter#13552` 的 color 槽是空格 → `stacker#14684` 两路只来一路 →
+         * 攒不满 2 件不吐货 → 整座工厂冻结。一个空格冻住整条链。 */
+        "MACHINE_STARVED",
     ]);
     for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {
         for (const d of run(obs, rec, { level: 5 })) {
@@ -1882,4 +1891,88 @@ test("MINER_UNWIRED 负例：矿机不在矿上 ⇒ 不报（那是 ORE_UNMINED 
     const ds = semanticDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null),
         { recipe: { ok: false }, level: 12 });
     assert.ok(!ds.some(x => x.code === "MINER_UNWIRED"), "不在矿上的矿机不算这条");
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MACHINE_STARVED —— 多输入机器缺一路料，整条链冻住
+ *
+ * 2026-11-21，6 个 Agent 并行调查挖出的 L12 交付恒为 0 的**真正根因**
+ * （见 `.findings/CONCLUSION.md`）：
+ *
+ *     painter#13552 的 color 槽 approach (-4,15) 是空格
+ *       → painter 不喷漆 → stacker#14684 两路进料只来一路（inputsPerCharge: 2）
+ *       → 攒不满 2 件不吐货 → 通往 hub 的通路永远空着
+ *       → 上游 259 件货塞满 165 格带 → 19/19 ejector progress=1 → 整图零产出
+ *
+ * 一个空格，冻住整座工厂。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("MACHINE_STARVED：stacker 两路只来一路 ⇒ 要报", () => {
+    /* stacker 2×1：输入在 (-2,6) 和 (-1,6)，输出在 (-2,4)。
+       只给上路接一条**有货**的带子，下路空着。 */
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            { uid: 2, type: "stacker", x: -2, y: 5, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            /* 上路 (-1,6) 有带子 */
+            { uid: 3, type: "belt", x: -1, y: 6, r: 0, rv: 0, code: 2, layer: "regular" },
+        ],
+        resources: [[5, 5, "CuCuCuCu"]],
+    };
+    /* items: 上路那条带子上有货 */
+    const items = {
+        belts: [{ cell: [-1, 6], path: 0, idx: 0, pos: 1.0, spacing_to_next: 0, item: "CuCuCuCu" }],
+        ejectors: [], underground: [], pending: [], pathCount: 1, truncatedPaths: false, paths: [],
+        counts: { belts: 1 },
+    };
+    const ds = semanticDiagnoses(w, items, "CbCbCbRb:CwCwCwCw", buildHandles(w, items),
+        { recipe: { ok: false }, level: 12 });
+    const d = ds.find(x => x.code === "MACHINE_STARVED");
+    assert.ok(d, `应当报 MACHINE_STARVED，实际 ${ds.map(x => x.code).join(",")}`);
+    assert.equal(d.evidence.starved[0].type, "stacker");
+    assert.equal(d.evidence.starved[0].fed, 1);
+    assert.equal(d.evidence.starved[0].need, 2);
+    assert.match(d.hint, /先修\*\*最下游\*\*/,
+        `必须告诉模型修的顺序 —— 先通最下游，上游的堵塞会自己解开。实际：${d.hint}`);
+});
+
+test("MACHINE_STARVED 负例：两路都有货 ⇒ 不报", () => {
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            { uid: 2, type: "stacker", x: -2, y: 5, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            { uid: 3, type: "belt", x: -1, y: 6, r: 0, rv: 0, code: 2, layer: "regular" },
+            { uid: 4, type: "belt", x: -2, y: 6, r: 0, rv: 0, code: 2, layer: "regular" },
+        ],
+        resources: [[5, 5, "CuCuCuCu"]],
+    };
+    const items = {
+        belts: [
+            { cell: [-1, 6], path: 0, idx: 0, pos: 1.0, spacing_to_next: 0, item: "CuCuCuCu" },
+            { cell: [-2, 6], path: 1, idx: 0, pos: 1.0, spacing_to_next: 0, item: "CuCuCuCu" },
+        ],
+        ejectors: [], underground: [], pending: [], pathCount: 2, truncatedPaths: false, paths: [],
+        counts: { belts: 2 },
+    };
+    const ds = semanticDiagnoses(w, items, "CbCbCbRb:CwCwCwCw", buildHandles(w, items),
+        { recipe: { ok: false }, level: 12 });
+    assert.ok(!ds.some(x => x.code === "MACHINE_STARVED"), "两路都有料不该报");
+});
+
+test("MACHINE_STARVED 负例：两路全空 ⇒ 不报（那是 CHAIN_UNFED 的地盘）", () => {
+    /* 全空 = 上游根本没建好。报这条会让模型去修错的地方。 */
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            { uid: 2, type: "stacker", x: -2, y: 5, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+        ],
+        resources: [[5, 5, "CuCuCuCu"]],
+    };
+    const ds = semanticDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null),
+        { recipe: { ok: false }, level: 12 });
+    assert.ok(!ds.some(x => x.code === "MACHINE_STARVED"),
+        "两路全空是「上游没建好」，不该报成「缺一路料」");
 });
