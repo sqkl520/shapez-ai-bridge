@@ -646,6 +646,40 @@ export function planToTxOps(calls, ctx = {}) {
     /* ── R3 / R4：收集 destroys 与 places ── */
     const destroys = new Set();
     const derived = [];
+    /* ★ `allowedByReplace` 必须收**全部** connect 覆盖格，不只是「补算出来的那些」 ★
+     *
+     * 2026-11-21 真机+离线重放（`tools/replay-plan.mjs`）挖到的缺陷：
+     *
+     *   `connect M13 → C8:color` 是一条**正确且便宜**的修法（19 格，接绿色矿
+     *   到 mixer 的空 color 槽 —— 那是 L12 死锁链的根部之一）。
+     *   宏返回 `ok:true` 且 **如实自报**了 `changed.removed_uids = [6 个被覆盖的带子]`
+     *   （connect.mjs 现在会报，不再是红队 #6 时的「恒为 []」）。
+     *
+     *   而原来的写法是：
+     *       for (const x of d) { if (!destroys.has(x.uid)) derived.push(x); destroys.add(x.uid); }
+     *       ...
+     *       const allowedByReplace = new Set(derived.map(d => d.uid));
+     *
+     *   `selfReportedDestroys()` 抢先把这 6 个 uid 放进了 `destroys`，
+     *   于是 `derived` **一条都收不到** ⇒ `allowedByReplace` 为空 ⇒ R13 认为
+     *   「这 6 个既没点名也没被 allow_replace 授权」⇒ **拒绝**。
+     *
+     *   也就是说：**宏越诚实，越拿不到豁免。**
+     *   红队 #6 那个年代宏不自报，反而能走通；修好自报之后这条路径就死了。
+     *
+     * 测试没抓到是因为 `planToTxOps.test.mjs` 的合成夹具明显写着
+     * `changed: { placed: [], removed_uids: [] }   // ← 宏不自报销毁（红队 #6 的真实形态）` ——
+     * 它**刻意**构造了那个已经不再存在的形态。这正是
+     * `never-write-code-against-imagined-schema` 的同族：夹具照旧假设写，真路径就没人测。
+     *
+     * 现在两个集合分开记：
+     *   · `derived` —— 「宏没自报、由翻译器补算」的，只用于 `DESTROYS_DERIVED` 审计警告
+     *     （那个警告的语义是「这里我替你算了一份，看着点」，不该把宏自己报的也算进去）；
+     *   · `allowedByReplace` —— connect 覆盖的全部格子（自报 + 补算），用于 R13 豁免。
+     *
+     * 安全边界不变：只有 `connect` 且 `allow_replace` 为真才进这个集合，
+     * 范围由 `cells[] ∩ obs`（或宏的 removed_uids）唯一决定，不是矩形猜的。 */
+    const allowedByReplace = new Set();
     const warnings = [];
     const placeList = [];
     /* ★ 同一格被多条 connect 复用时，只保留**最后**那条的版本 ★
@@ -675,6 +709,23 @@ export function planToTxOps(calls, ctx = {}) {
             for (const x of d) {
                 if (!destroys.has(x.uid)) derived.push(x);
                 destroys.add(x.uid);
+                /* 覆盖格**一律**进豁免集 —— 无论宏有没有自报（见上面 allowedByReplace 的注释）。
+                   只有开了 allow_replace 的 connect 才会走到这里：这条调用覆盖的格子
+                   由 `cells[]` 唯一决定，是模型明确授权的范围。 */
+                allowedByReplace.add(x.uid);
+            }
+            /* ★ 宏自报的 removed_uids **不能**整包当豁免 ★
+             *
+             * 第一版把 `selfReportedDestroys(result)` 全部塞进 `allowedByReplace`，
+             * 于是「宏只要返回 ok 并顺手报几个 uid」就能让任意删除过关 ——
+             * 实测当场打红两条 R13 用例（`夹带了「既没点名、也不是覆盖」的删除 ⇒ 必须拒`）。
+             *
+             * 正确的口径是**交集**：只有「宏自报的」∩「`cells[]` 覆盖到的既有带子」
+             * 才算 allow_replace 授权掉的。自报里多出来的（别的来源的删除）
+             * 照旧受 R13 管。 */
+            const covered = new Set(d.map(x => x.uid));
+            for (const uid of selfReportedDestroys(c.result)) {
+                if (covered.has(uid)) allowedByReplace.add(uid);
             }
         }
         const col = collectPlaces(c, tplFor);
@@ -897,8 +948,10 @@ export function planToTxOps(calls, ctx = {}) {
          * 其余来源（自报销毁、$bbox_of 的 replace_run）照旧受 R13 管。
          *
          * 注意：这不放宽安全边界 —— 覆盖格在 `derived` 里逐格列明并进 warnings
-         * （`DESTROYS_DERIVED`），审计仍然看得见「这次到底覆盖了哪些带子」。 */
-        const allowedByReplace = new Set(derived.map(d => d.uid));
+         * （`DESTROYS_DERIVED`），审计仍然看得见「这次到底覆盖了哪些带子」。
+         * `allowedByReplace` 在 R3 收集阶段就填好了（见那里的长注释），
+         * 它同时收「宏自报的 removed_uids」和「翻译器补算的」——
+         * 只收后者会让**诚实自报的宏**反而被拒（2026-11-21 实测的真缺陷）。 */
         const extra = deleteUids.filter(u => !named.has(u) && !allowedByReplace.has(u));
         if (extra.length) {
             const who = extra.map(u => {

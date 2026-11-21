@@ -905,15 +905,35 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null, opts = {})
      *
      * ⚠️ 踩过：直接写 `e.x`/`e.y` 会全是 undefined，于是**每一台矿机都被标成「没矿」**
      *    —— 包括脚下明明有钌的那三台。这种"全错"比不标更糟：它会让模型去拆掉
-     *    本来正常的矿机。 */
+     *    本来正常的矿机。
+     *
+     * 2026-11-21：不再只在 `oreAt` 存在时才建 —— 「离最近的可接机器多远」
+     * 与矿格数据无关，缺了它整条标注就静默消失。 */
     const posByUid = new Map();
-    if (oreAt) {
-        for (const e of (obs && obs.entities) || []) {
-            if (e && Number.isInteger(e.uid) && Number.isInteger(e.x) && Number.isInteger(e.y)) {
-                posByUid.set(e.uid, e);
-            }
+    for (const e of (obs && obs.entities) || []) {
+        if (e && Number.isInteger(e.uid) && Number.isInteger(e.x) && Number.isInteger(e.y)) {
+            posByUid.set(e.uid, e);
         }
     }
+    /* 给 `shown` 挂上位置，供 `nearMachineLabel` 用。
+     *
+     * 为什么不直接改 `normalizeHandles` 让它带上 x/y：那张表的职责是
+     * 「句柄 → 身份」，位置不属于身份；把坐标塞进去会让「句柄表里没有坐标」
+     * 这条被测试钉住的性质失效（见 handles.mjs 的 bearingOf 注释）。
+     * 这里只是给渲染期的一次性视图补一个字段，用 `__` 前缀标明它不是契约的一部分。 */
+    if (obs) {
+        for (const m of shown) {
+            if (m && m.__pos === undefined) m.__pos = posByUid.get(m.uid) || null;
+        }
+    }
+    /* 预算档位：机器多时一律走紧凑式。提到循环前是因为矿机行尾的
+       「到最近机器多远」也要跟着降级 —— 8 台矿机 × 一条距离就是 100+ 字符，
+       而那正好是把 CAPACITY 挤掉的那个量级（见下面 renderGoalResource 的注释）。 */
+    const resCompact = opts.resourceCompact === true || shown.length > 6;
+    /* 矿机行尾的「到诊断主语多远」单独一个开关：它比「采什么」贵得多
+       （每台 ~11 字符，9 台就是 +200），而「采什么」只要 5 字符且价值明确。
+       默认**开**，由 `buildPrompt` 在量完预算后按余量关掉（见那里的 `oreDistance`）。 */
+    const oreDistanceOn = opts.oreDistance !== false;
     for (const e of shown) {
         let line = `${e.handle} ${e.type}${e.variant && e.variant !== "default" ? `(${e.variant})` : ""}`
             + (e.desc ? renderDesc(e.handle, e.type, e.desc) : "");
@@ -924,7 +944,7 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null, opts = {})
          * `M1 miner 输出=top:out(→C2)` —— 模型完全看不出这是一台**永久零产出**的机器。
          * 于是它反复去「修通」那条永远跑不起来的线。
          *
-         * ## 为什么**不**标「在采什么」
+         * ## 为什么第一版**不**标「在采什么」，以及为什么后来改了
          *
          * 第一版对有矿的也写 `[mining RuRuRuRu]`。代价立刻显形：
          * L4 冷启动夹具有 8 台矿机，8 条标注把 prompt 从 4400 涨到 5098，
@@ -932,16 +952,50 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null, opts = {})
          * 而 CAPACITY 是实测 p≈5e-7 的信息源（见 `AB-PROMPT-RESULT.md`），
          * 优先级远高于「这台矿机在采什么」。
          *
-         * 信息价值也不对等：
-         *   · 「在采 Ru」是**正常状态**，模型不需要被提醒；
-         *   · 「没矿」是**故障状态**，而且它会让下游整条线永远零产出 —— 必须说。
+         * 所以当时只标异常的一侧。
          *
-         * 所以只标异常的一侧。正常的一台都不加，省下的字符全留给 CAPACITY。
-         * 「整体有哪些矿、目标矿在哪」由下面那行 `target ore …` 统一交代。 */
+         * ## 2026-11-21 改回来（这一次带证据）
+         *
+         * 离线重放 `tools/replay-plan.mjs` 把实验里采集的 30 个计划原样喂回
+         * `buildTxPlan`：**「选中根因」9/10，「真能落地」只有 1/10。**
+         *
+         * 5/10 死在预演闸门（「可交付带子 -49%~-74%」），而闸门**没有算错** ——
+         * 亲手算过 `connect M7→C3.color`：Z 形 70 格，覆盖 288 条正在工作的带子。
+         *
+         * 根子在选矿机。这份世界里 17 台矿机的分布是：
+         *   最近的（`M17`，10 格）踩的是 **Cu 形状矿** —— 给 painter 的 color 槽供不了料；
+         *   所有**蓝色**矿机都在 60 格开外；模型挑了 66 格外的 `M7`。
+         *
+         * 而 prompt 里矿机那行只有 `M7 miner · hub 东北 47 格 输出=right:out(→无)` ——
+         * **既没写它在挖什么，也没写它离哪台机器近。** 模型只能瞎挑，
+         * 挑完才发现要横穿整个工厂（它看不到，因为那条代价要宏算完才知道）。
+         *
+         * 「采什么」+「到最近的需要它的机器多远」这两条就是缺的那一环。
+         * 预算上只对**显示出来的**矿机加（最多 12 台），且机器多时退化成只报矿种
+         * （与 `renderGoalResource` 的 `compact` 同一条降级纪律）。 */
         if (e.type === "miner" && oreAt) {
             const ent = posByUid.get(e.uid);
             if (ent && !oreAt.get(`${ent.x},${ent.y}`)) {
                 line += "  [⚠ NO ORE under this miner — it will never produce anything]";
+            } else if (ent) {
+                const ore = oreAt.get(`${ent.x},${ent.y}`);
+                /* 「到诊断主语多远」只在预算宽裕时出现（`oreDistanceOn`）。
+                 *
+                 * 实测代价：这个真实世界有 9 台矿机，9 条距离标注 = +200 字符
+                 * （` · 到C8 52格` ≈ 11 字符 × 9，还有更长的）。
+                 * 而在 L4 冷启动夹具（12 条带子名额用满）上，它当场把 prompt 顶过
+                 * 实测上限 4520 → 4582，`tohub_machine.test.mjs` 的 E 档打红。
+                 *
+                 * 那条上限不是「调到通过为止」的产物 —— 它的注释逐笔记着每次上调
+                 * 换来了什么（`target ore` 一行 +60、`NO ORE` 标记 +60）。
+                 * 距离标注也走同一条纪律：**加新信息不许挤掉既有信息**。
+                 *
+                 * 但也不能像 `resCompact` 那样按机器数一刀切 —— 真实世界几乎总是
+                 * >6 台机器，那样这个功能等于永远不出现。所以判据用**预算余量**：
+                 * 调用方在 `buildPrompt` 里量完带子/产能之后才知道还剩多少，
+                 * 由它决定要不要开（见下面的 `oreDistance` 选项）。 */
+                const near = oreDistanceOn ? nearMachineLabel(ent, shown, e.handle, ref) : "";
+                line += ` 采${ore}${near}`;
             }
         }
         lines.push(line);
@@ -982,8 +1036,8 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null, opts = {})
      * CAPACITY 只剩 115 字符余量）。真要彻底解决得让 CAPACITY 先占位、
      * 资源行让位，而那是另一件事（要改 `compose` 的顺序契约，
      * 牵动 `prompt_capacity.test.mjs` 的一整套断言）。这里先做无争议的一半。 */
-    /* 调用方可以强制紧凑（预算降级时用）：见 buildPrompt 里那段降级逻辑。 */
-    const resCompact = opts.resourceCompact === true || shown.length > 6;
+    /* 调用方可以强制紧凑（预算降级时用）：见 buildPrompt 里那段降级逻辑。
+       （定义已提到矿机循环之前，见那里的注释。） */
     if (opts.includeResource !== false) {
         const resLine = renderGoalResource(obs, goalShape, { compact: resCompact });
         if (resLine) {
@@ -1032,6 +1086,63 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null, opts = {})
  * 而两者的**缺失语义必须一致**：拿不到就返回 null，让调用方整段跳过，
  * 绝不返回空 Map 假装「哪里都没矿」。
  */
+/**
+ * 矿机行尾的「挖什么、离要修的那台多远」标注，形如 `采blue · 到C3 66格`。
+ *
+ * ## 为什么需要它
+ *
+ * 2026-11-21 离线重放（`tools/replay-plan.mjs`）：30 个实验样本里
+ * 「选中根因」9/10，「真能落地」只有 1/10，5/10 死在预演闸门。
+ * 查下去发现模型挑了一台 66 格外的蓝色矿机去接 `painter C3` 的 color 槽，
+ * 那条路要铺 70 格并覆盖 288 条在跑的带子 —— **闸门拦得对，代价是真的**。
+ *
+ * 而这份世界里有 17 台矿机：最近的（10 格）踩的是形状矿，供不了色料；
+ * 所有蓝色矿机都在 60 格开外。模型在 prompt 里看到的只有
+ * `M7 miner · hub 东北 47 格 输出=right:out(→无)` ——
+ * **「挖什么」和「离目标多远」两条都没有**，于是只能瞎挑。
+ *
+ * ## 为什么距离只标到「诊断点名的那几台」，不标到「最近的任意机器」
+ *
+ * 第一版标「最近的其它机器」，结果在真实世界里 12 台显示机器中有 6 台是矿机、
+ * 剩下最近的往往是个 trash 或另一台矿机 —— 那个数字对决策没有用。
+ * 模型要回答的是「哪台矿机能便宜地喂到 C3」，所以距离必须是**到 C3 的**。
+ *
+ * 而 `resCompact`（>6 台机器时开）会在几乎所有真实世界上生效 ——
+ * 如果距离跟着它一起降级，这个功能**永远不会出现**，等于没做。
+ * 所以距离锚定在诊断主语上：那是模型这一轮唯一被要求动的东西，
+ * 每台矿机多 12 个字符，9 台就是 108 —— 与它换掉的那次「70 格大工程」不成比例。
+ *
+ * 没有诊断主语时才退回「最近的已显示机器」；再没有就不说（绝不猜）。
+ *
+ * @param {object} minerEnt  obs 里的原始实体（要有 x/y）
+ * @param {Array}  shown     MACHINES 段已显示的实体（含 handle/type/__pos）
+ * @param {string} selfHandle 自己，用来跳过
+ * @param {Array<string>} focus 诊断主语句柄（优先用作锚点）
+ * @returns {string} ` · 到C3 66格` 或空串
+ */
+function nearMachineLabel(minerEnt, shown, selfHandle, focus) {
+    /* ★ 没有诊断主语 ⇒ 不标距离 ★
+     *
+     * 第一版在没有诊断时退回「最近的任意机器」，于是在 L4 冷启动夹具上，
+     * 4 台铜矿机全标着 `· 到L1 9格` —— L1 是个 balancer，不是模型这一轮
+     * 被要求动的任何东西。那个数字对决策没有价值，还让 prompt 顶过上限制。
+     *
+     * 模型要回答的问题是「哪台矿机能便宜地喂到**诊断点名的那台**」，
+     * 主语不存在时这个问题不成立，就不该占字符。 */
+    if (!Array.isArray(focus) || !focus.length) return "";
+    if (!minerEnt || !Array.isArray(shown) || !shown.length) return "";
+    const dist = p => Math.abs(p.x - minerEnt.x) + Math.abs(p.y - minerEnt.y);
+    const usable = shown.filter(m => m && m.handle !== selfHandle && m.type !== "miner" && m.__pos);
+    if (!usable.length) return "";
+    let best = null;
+    for (const m of usable) {
+        if (!focus.includes(m.handle)) continue;
+        const d = dist(m.__pos);
+        if (!best || d < best.d) best = { h: m.handle, d };
+    }
+    return best ? ` · 到${best.h} ${best.d}格` : "";
+}
+
 function oreMapOf(obs) {
     const list = obs && Array.isArray(obs.resources) ? obs.resources : null;
     if (!list || !list.length) return null;

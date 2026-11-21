@@ -267,6 +267,46 @@ function l4Replace(game) {
     const covered = [10206, 10208].filter(u => p2.destroys.includes(u));
     eq(covered.length, 2, "两格既有带子（10206/10208）都被补算进 destroys", p2.destroys);
     ok(p2.warnings.some(w => w.code === "DESTROYS_DERIVED"), "补算有独立警告");
+
+    /* ★ 宏**自报** removed_uids 时同样要拿到 allow_replace 豁免 ★
+     *
+     * 2026-11-21 真机 + 离线重放挖到的缺陷：`connect` 现在会如实自报
+     * `changed.removed_uids`（不再是红队 #6 时代的空数组）。而旧代码是
+     *   for (const x of d) { if (!destroys.has(x.uid)) derived.push(x); … }
+     *   allowedByReplace = new Set(derived.map(…))
+     * —— 自报的 uid 先被 `selfReportedDestroys` 塞进 `destroys`，
+     * 于是 `derived` 一条都收不到 ⇒ 豁免集为空 ⇒ R13 拒绝。
+     *
+     * 后果：**宏越诚实越走不通**。实测 `connect M13 → C8:color`（19 格，
+     * 接绿色矿到 mixer 的空 color 槽，正是 L12 死锁链的根部之一）被 R13 拒掉。
+     *
+     * 上面的合成夹具全都写着 `changed: { removed_uids: [] }`，正好绕开了真形态 ——
+     * 这就是它一直没被发现的原因。这条用例补上真形态。 */
+    const selfReported = {
+        ok: true, macro: "connect",
+        cells_planned: 2, cells_placed: 2, first_mismatch: null,
+        /* ← 关键：宏**如实自报**它覆盖了哪两条带子 */
+        changed: { added_uids: [], removed_uids: [10206, 10208] },
+        warnings: [{ code: "replacing-belts", detail: "allow_replace=true：路径上有 2 格是既有带子" }],
+        error: null, dry_run: true,
+        cells: [
+            { x: 4, y: -11, building: "belt", rotation: 0, rotationVariant: 0, code: 1 },
+            { x: 4, y: -12, building: "belt", rotation: 0, rotationVariant: 0, code: 1 },
+        ],
+    };
+    {
+        const fromUid = 10139;
+        const p3 = planToTxOps(
+            [{ macro: "connect", args: { from: { uid: fromUid }, opts: { allow_replace: true } }, result: selfReported }],
+            { obs: g.obs, namedUids: [fromUid] },
+        );
+        ok(p3.ok, "★ 宏自报 removed_uids 时也必须拿到 allow_replace 豁免（旧代码在这里拒绝）",
+            p3.ok ? "" : (p3.error && (p3.error.message || p3.error.kind)));
+        /* 自报的那部分不该再进 DESTROYS_DERIVED —— 那个警告的语义是
+           「宏没报、翻译器替你算了一份」，宏报过就不适用。 */
+        ok(!p3.warnings.some(w => w.code === "DESTROYS_DERIVED"),
+            "宏已自报 ⇒ 不重复打「翻译器替你算了一份」的警告", (p3.warnings || []).map(w => w.code));
+    }
 }
 
 /* ═══════════ 7. R9：同轮依赖排序（A 的 pending 被 B 引用 ⇒ A 先落） ═══════════ */
