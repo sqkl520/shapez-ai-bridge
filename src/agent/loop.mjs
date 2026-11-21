@@ -143,20 +143,20 @@ export const HALT_REASONS = Object.freeze([
     "DRY_RUN",
 ]);
 
-/** 阶段 2 第一版里 diagnose 会产出的码（每个都有真实数据来源，见 `diagnose()`）。 */
-export const DIAGNOSE_CODES = Object.freeze([
-    "OBS_TRUNCATED", "PATHS_TRUNCATED", "PRODUCTION_UNAVAILABLE", "ITEMS_UNAVAILABLE",
-    "LLM_TRANSPORT", "LLM_PARSE", "LLM_EMPTY_PLAN", "LLM_COORD", "LLM_UNKNOWN_MACRO",
-    "LLM_ARGS", "LLM_LINT", "MACRO_REFUSED", "MACRO_HALF_DONE", "PLAN_REJECTED",
-    "COORD_PROVENANCE", "PATH_NOT_RECT", "OBS_STALE",
-    "TX_ROLLED_BACK", "NO_WORLD_CHANGE",
-    "LANDING_MISSING", "LANDING_MISMATCH", "DELETE_NOT_REPLAYED",
-    "SLOT_STARVED", "OUTPUT_UNROUTED", "OUTPUT_STRANDED", "FLOW_UNREACHABLE", "FLOW_UNVERIFIED", "DEAD_END",
-    "NO_PRODUCTION", "PRODUCED_NOT_DELIVERED", "WRONG_SHAPE_PRODUCED",
-    "NO_DIAGNOSIS", "NO_PROGRESS", "NO_PROGRESS_3X",
-    "BUDGET_ROUNDS", "BUDGET_LLM_CALLS", "BUDGET_TX", "BUDGET_TICKS", "BUDGET_WALL",
-    "MOCK_EXHAUSTED", "INTERNAL",
-]);
+/* ★ 这里曾经有一个 `DIAGNOSE_CODES` 白名单，2026-11-21 删掉 ★
+ *
+ * 它导出、有注释、看着像「diagnose() 能产出的码」，但 `grep -rn DIAGNOSE_CODES src/`
+ * 只有它自己那一行 —— **从来没被任何地方读过**。
+ *
+ * 留着它比删掉危险：
+ *   · 加新诊断码时，人会以为要在这里登记（我这次就加了），然后以为登记完就完事；
+ *   · 真正生效的登记点是 `constants.mjs` 的 `DIAG_CODES` 闭集
+ *     （`mkDiag` 的 `owns()` 校验）和 `loop.mjs` 里的跨层 `RANK`；
+ *   · 一份不生效的「真值」会让人做出错误判断，而它的存在本身就是证据。
+ *
+ * 这个仓库已经有过「同一个事实存两份、其中一份错」的事故
+ * （`mustMix` 在 `MIXER_MISSING` 和 `feed_sources` 里各算一遍，后者还写错了）。
+ * 不生效的那份必须删掉，不能留着当参考。 */
 
 /* ══════════════════════════════════════════════════════════════════════════
  * 1. 小工具
@@ -1391,6 +1391,29 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
         HUB_FED_BY_COLOR: 3, HUB_INLET_THIN: 4,
         DEAD_END: 9, BELT_HANDOFF_REJECTED: 9,
         CHAIN_UNFED: 10, WASTE_NO_SINK: 10, RAW_MATERIAL_MISSING: 10,
+        /* ★ 以下 5 个码补登记（2026-11-21）★
+         *
+         * `diag_registry.test.mjs` 扫出来的：它们由 `semantic.mjs` 产出、
+         * 会进 `diagnose()` 的输出、会和别的诊断竞争 `LIMITS.TOTAL = 8`，
+         * 但**从来没登记 RANK** ⇒ 落到默认 50，排在所有已登记码后面。
+         *
+         * `MINER_UNWIRED` 今天还在真机上出现过（排第 7）—— 它一直在靠运气，
+         * 语义层刚好只产 7 条时才勉强塞进去。再加一条诊断就会被挤掉，
+         * 而它的症状是「**写了诊断、测试全绿、真机一条都不报**」，极难查。
+         *
+         * 排位依据「修它的紧迫性」：
+         *   · `MIXER_MISSING` / `MIXER_UNFED` 同级 2 —— 没有 mixer 时目标色永远不存在，
+         *     在这之前修任何带子都是白费
+         *   · `MINER_UNWIRED` / `ORE_UNMINED` 11 —— 「矿机就位只差接线」，
+         *     是唯一可行施工顺序的中间态
+         *   · `MIXER_COLOR_AIMED` 12 —— 朝向错，比「没接线」轻一档
+         *   · `TRASH_OVERGROWN` 14 —— 清理类，最不紧迫 */
+        MINER_UNWIRED: 11, ORE_UNMINED: 11,
+        MIXER_COLOR_AIMED: 12,
+        TRASH_OVERGROWN: 14,
+        /* `MIXER_MISSING` 补在这里：与 `MIXER_UNFED` 同为 2，
+           两者都描述「这台 mixer 现在什么也合不出来」。 */
+        MIXER_MISSING: 2,
         LANDING_MISSING: 11, LANDING_MISMATCH: 11, DELETE_NOT_REPLAYED: 11,
         TX_ROLLED_BACK: 12, NO_WORLD_CHANGE: 12,
         /* info 级：排在所有可行动诊断之后，让总量上限先压掉它（v2 §6：info 不占显眼位置） */
