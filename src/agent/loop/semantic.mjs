@@ -3624,6 +3624,57 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             rows.push({ handle: handleOf(handles, e.uid), type: e.type, d });
                         }
                         rows.sort((a, b) => a.d - b.d);
+                        /* ★ 对前几名补算「接过去会切断多少东西」★
+                         *
+                         * 距离和矿种都不足以预测「这条接法能不能过预演闸门」。
+                         * 实测（L12，到 `C3.color`）：
+                         *
+                         *   M13 绿 29格/拆1 → 落地   M11 绿 120格/拆1 → **拒**
+                         *   M15 绿 30格/拆1 → 落地
+                         *   M14 蓝 68格/拆3 → 拒      M7  蓝 70格/拆3 → 拒
+                         *
+                         * 「拆几条」也不准 —— M11 只拆 1 条却被拒（loss=24）。
+                         *
+                         * 真正准的是 `connect` 自己已经算好的 `consequences.would_disconnect`
+                         * （覆盖这条路径会让多少下游断供）：
+                         *
+                         *   M13 0 → 落地    M15 0 → 落地
+                         *   M14 3 / M16 3 / M7 3 / M9 3 / M11 1 → 全拒
+                         *
+                         * **0 与非 0 完美分开。**
+                         *
+                         * 只对**按距离排出的前 4 名**跑（不是全部 17 台）：
+                         * 全量跑要约 3 秒，而诊断是每轮都跑的；前 4 名约 0.7 秒，
+                         * 且真正会被推荐的那些本来就在最前面。 */
+                        const topN = rows.slice(0, 4);
+                        for (const r of topN) {
+                            try {
+                                const ent = (o.entities || []).find(e => handleOf(handles, e.uid) === r.handle);
+                                if (!ent) continue;
+                                const res = planConnect(
+                                    { from: { uid: ent.uid }, to: { uid: target.m.uid, port: { role: target.fed[missSlotIdx].role, index: 0 } },
+                                      opts: { allow_replace: true, prefer: "cheapest" } },
+                                    { entities: o.entities },
+                                );
+                                if (res && res.ok) {
+                                    r.cells = res.cells ? res.cells.length : null;
+                                    r.cut = Array.isArray(res.changed && res.changed.removed_uids)
+                                        ? res.changed.removed_uids.length : 0;
+                                    const c = res.consequences;
+                                    r.disconnect = c && Array.isArray(c.would_disconnect) ? c.would_disconnect.length : null;
+                                }
+                            } catch { /* 单台算不出来不影响其它 */ }
+                        }
+                        /* 排序：**不会切断任何下游**的排前面，然后才比距离。
+                         *
+                         * 这一条比距离重要得多 —— 一条 27 格但会切断 3 处下游的路，
+                         * 预演闸门必拒；而 60 格但什么都不切的路能直接落地。 */
+                        rows.sort((a, b) => {
+                            const da = a.disconnect === 0 ? 0 : (a.disconnect === null ? 1 : 2);
+                            const db = b.disconnect === 0 ? 0 : (b.disconnect === null ? 1 : 2);
+                            if (da !== db) return da - db;
+                            return a.d - b.d;
+                        });
                         return rows.filter(r => r.handle).slice(0, 3);
                     } catch { return []; }
                 })();

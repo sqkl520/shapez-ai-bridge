@@ -2666,8 +2666,21 @@ function renderDiagnoses(diagnoses) {
          * ⚠️ 这段必须放在 `PROCESSOR_REQUIRED` 的 `if` **外面** ——
          * 第一版插在里面，`code === "MACHINE_STARVED"` 永远为假，静默不生效。 */
         if (code === "MACHINE_STARVED" && Array.isArray(ev.feed_sources) && ev.feed_sources.length) {
+            /* `disconnect` 是 `connect` 自己算出的「覆盖这条路径会让多少下游断供」。
+             *
+             * 实测它是**唯一**能预测「能否过预演闸门」的量（L12 到 C3.color）：
+             *   M13 0 / M15 0 → 落地；M14 3 / M16 3 / M7 3 / M9 3 / M11 1 → 全拒
+             * 距离不准（M11 只 120 格却被拒），「拆几条」也不准（M11 只拆 1 条）。
+             *
+             * 所以必须把它印出来：模型看到 `会切断 3 处` 就知道别选，
+             * 看到 `不会切断` 就知道这条路是安全的。 */
             line += `; nearest sources with a free output: `
-                + ev.feed_sources.map(s => `${s.handle}(${s.type}, ${s.d}格)`).join(", ");
+                + ev.feed_sources.map(s => {
+                    const cost = typeof s.disconnect === "number"
+                        ? (s.disconnect === 0 ? ", 安全" : `, 会切断${s.disconnect}处`)
+                        : "";
+                    return `${s.handle}(${s.type}, ${s.d}格${cost})`;
+                }).join(", ");
         }
         /* WRONG_SHAPE_AT_HUB：病在上游，不在入口（v2 §4 的那句必须出现） */
         if (code === "WRONG_SHAPE_AT_HUB") {
