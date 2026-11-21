@@ -1058,7 +1058,22 @@ function renderMachines(tbl, diagnoses, obs = null, goalShape = null, opts = {})
      * 放在 MACHINES 段头而不是 S1：紧挨着它解释的数据，且 S1 是 prompt cache 的
      * 前缀（改它会让所有缓存失效）。代价只有 1 行。 */
     if (all.length) {
-        lines.push("(`(→X)` = TAKEN; `(→无)` = free = USE THIS ONE for connect)");
+        /* ★ 图例里必须点明 `port=` 的含义（2026-11-21）★
+         *
+         * 历史 54 个被拒计划里 `ambiguous_port` **33 次**，第二高频。
+         * 实测（`r-20261118211936-b96d` r1-r4）：模型连续四轮写
+         * `connect C4 → B114` / `connect C1 → B41` —— 两台都是多输出机器，
+         * 而它一次都没写 `port`，全靠缺省的 `auto`。
+         *
+         * 信息就在每行末尾的 `port=left|right` 里，但**没有任何一句说那是干什么用的**。
+         * 模型把它当成又一段描述，而不是「有多个槽时必须从这里挑一个」。
+         *
+         * ⚠️ 长度：这张图例原来 58 字符，新版 61（+3）。
+         * 预算已经贴着上限（L12 实测余量 -72），所以措辞是逐字压过的：
+         * 删掉 ` = ` 的空格、把 `USE THIS ONE for connect` 缩成 `(use it)`。
+         * 一个独立段落（~60 字符）会让 `belts_shown` 从 12 掉到 11（D1 打红），
+         * 而带子是模型唯一能就地改造的对象，不值得为一句规则牺牲。 */
+        lines.push("(`(→X)`=taken, `(→无)`=free(use it), `port=a|b`⇒must name one)");
     }
     if (!all.length) lines.push("(none)");
     /* 矿格表：`obs.resources` 是 [x,y,kind] 三元组。只在有数据时建 ——
