@@ -58,7 +58,17 @@ function replay(plan, obs, items, handles) {
        不是解析后的。所以原样传进去。 */
     const r = buildTxPlan(plan, obs, items, handles, { partial: true });
     const ok = r && r.ok === true;
-    const applied = ok ? (Array.isArray(r.ops) ? r.ops.length : 0) : 0;
+    /* ⚠️ 成功时 ops 在 `r.txPlan.ops`，不在 `r.ops`。
+     *
+     * 第一版读 `r.ops`（undefined）⇒ 每个成功样本都显示 `✅ 落地 0 ops`，
+     * 看上去像「一条 op 都没产生却报告成功」。实际上 op 全在 txPlan 里。
+     *
+     * 这个工具自己就是用来判「能不能落地」的，读错字段等于把**所有**结论
+     * 反过来 —— 幸好我用真机那两个计划交叉核对过（重放出的拒绝码与真机
+     * 逐字一致），才没有把「10/10 落不了地」当成结论发出去。
+     * 与 `never-write-code-against-imagined-schema` 同族，这是第二次。 */
+    const ops = ok && r.txPlan && Array.isArray(r.txPlan.ops) ? r.txPlan.ops : [];
+    const applied = ok ? ops.length : 0;
     /* ⚠️ 返回形状有两套：成功是 `{ok:true, ops:[…]}`，失败是
        `{ok:false, code, diagnosis:{code,layer,observed,evidence}}` ——
        不是 `{rejected:{…}}`。第一版按 `rejected` 读，于是每个失败样本都被报成
@@ -81,7 +91,7 @@ function replay(plan, obs, items, handles) {
 }
 
 function fmt(r) {
-    if (r.ok) return `✅ 落地 ${r.ops} ops / ${r.calls} call(s)`;
+    if (r.ok) return `✅ 落地 ${r.ops} ops / ${r.calls} call(s)${r.ops === 0 ? "  ⚠️ 零 op —— 这个「成功」是空的" : ""}`;
     const codes = r.macroCodes.length ? ` [${r.macroCodes.join(" ")}]` : "";
     return `❌ ${r.rejected}${codes}: ${String(r.observed || "").slice(0, 140)}`;
 }
