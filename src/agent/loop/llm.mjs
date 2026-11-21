@@ -137,6 +137,7 @@ export class AnthropicClient extends LLMClient {
         timeoutMs = 60000,
         recordDir = null,
         fetchImpl = null,
+        protocol = null,
     } = {}) {
         super();
         if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
@@ -159,10 +160,34 @@ export class AnthropicClient extends LLMClient {
         }
         /* 代理地址：去掉尾部斜杠，拼上 /v1/messages。
            注意不要盲目拼 —— 有的网关已经带 /v1，所以只在末尾不是 /v1/messages 时才拼。 */
+        /* ★ 地址拼接：已经是完整端点就**原样用** ★
+         *
+         * 旧逻辑只认「末尾是 /v1/messages」，于是 `…/responses` 会被拼成
+         * `…/responses/v1/messages` —— 404。实测踩到。
+         * 现在：末尾是 `/v1/messages` 或 `/responses` 都当作完整端点。 */
         const base = typeof baseUrl === "string" && baseUrl.trim() ? baseUrl.trim().replace(/\/+$/, "") : null;
         this.endpoint = base
-            ? (base.endsWith("/v1/messages") ? base : (base.endsWith("/v1") ? base + "/messages" : base + "/v1/messages"))
+            ? (/\/v1\/messages$/.test(base) || /\/responses$/.test(base)
+                ? base
+                : (base.endsWith("/v1") ? base + "/messages" : base + "/v1/messages"))
             : LLM_ENDPOINT;
+        /* ★ 协议自动识别（2026-11-21）★
+         *
+         * 本机那个 gateway（`127.0.0.1:15721`）**只提供 Codex 的 `/responses`**，
+         * 而 `/v1/messages` 直接 503。实测：
+         *
+         *   POST /v1/messages    → 503
+         *   POST /responses      → 200，返回 `{output:[{content:[{type:"output_text",text:"OK"}]}]}`
+         *
+         * 以前所有真 LLM 实验都跑在 Anthropic Messages 协议上，所以这里只有一条路径。
+         * 加一个按 endpoint 自动切换的适配，A/B 才跑得起来；
+         * 不改变任何既有行为 —— 默认仍然走 `/v1/messages`。
+         *
+         * 显式传 `protocol: "codex"` 可以强制；不然只看 URL 以 `/responses` 结尾。
+         * 这比「探测」可靠：探测要多发一次请求，而它本身就会花钱。 */
+        this.protocol = protocol === "codex" || /\/responses$/.test(this.endpoint)
+            ? "codex"
+            : "anthropic";
         this._calls = 0;
     }
 
@@ -172,29 +197,62 @@ export class AnthropicClient extends LLMClient {
         if (!promptBundle || typeof promptBundle.system !== "string" || typeof promptBundle.user !== "string") {
             throw new LLMError("LLM_TRANSPORT", "AnthropicClient.propose: promptBundle must be {system:string, user:string}");
         }
-        const body = {
-            model: this.model,
-            max_tokens: this.maxTokens,
-            system: promptBundle.system,
-            /* ★ 不用 assistant prefill ★
-               messages 里恒有且只有一条 user。prefill（末尾放一条 assistant 续写）在本模型族被拒，
-               实测会得到 400。约束输出格式靠 system 里的「只输出 JSON」+ parse 层校验。 */
-            messages: [{ role: "user", content: promptBundle.user }],
-        };
+        const codex = this.protocol === "codex";
+        /* Codex 的 `/responses` 没有独立的 system 字段 —— 把 system 拼到 input 前面，
+         * 用分隔线隔开。语义不变（模型读到的仍是一段 system 指令 + 一段 user 内容），
+         * 只是协议层没有那个位置。 */
+        const body = codex
+            ? {
+                model: this.model,
+                max_output_tokens: this.maxTokens,
+                input: `${promptBundle.system}\n\n----\n\n${promptBundle.user}`,
+            }
+            : {
+                model: this.model,
+                max_tokens: this.maxTokens,
+                system: promptBundle.system,
+                /* ★ 不用 assistant prefill ★
+                   messages 里恒有且只有一条 user。prefill（末尾放一条 assistant 续写）在本模型族被拒，
+                   实测会得到 400。约束输出格式靠 system 里的「只输出 JSON」+ parse 层校验。 */
+                messages: [{ role: "user", content: promptBundle.user }],
+            };
 
         let res;
+        /* 超时用 AbortController + setTimeout。
+         *
+         * ⚠️ 这里**不要**写「`AbortSignal.timeout()` 更慢」—— 我一度这么以为。
+         * 实测四轮受控对比（同 gateway、同请求体）：
+         *
+         *   无 signal   31.1 s / 30.0 s / 30.0 s
+         *   controller  30.0 s
+         *
+         * 四者**完全一致**。之前那次「裸 fetch 3.2 秒」是一次孤立采样，
+         * 很可能是网关侧的缓存命中，不能当成基准。
+         *
+         * 结论：这台 gateway 的稳定延迟就是 **30 秒/次**，与 signal 无关。
+         * 用它跑 n=20 的 A/B 约 10 分钟，可以接受，但要按这个量级做预算。
+         *
+         * 手写 controller 而不是 `AbortSignal.timeout()`，是为了能在 catch 里
+         * `clearTimeout` —— `AbortSignal.timeout` 的定时器无法取消，超时后会让
+         * 进程多挂一会儿。语义两者等价。 */
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
         try {
             res = await this._fetch(this.endpoint, {
                 method: "POST",
-                headers: {
-                    "x-api-key": this.apiKey,
-                    "anthropic-version": ANTHROPIC_VERSION,
-                    "content-type": "application/json",
-                },
+                headers: codex
+                    ? { "x-api-key": this.apiKey, "content-type": "application/json" }
+                    : {
+                        "x-api-key": this.apiKey,
+                        "anthropic-version": ANTHROPIC_VERSION,
+                        "content-type": "application/json",
+                    },
                 body: JSON.stringify(body),
-                signal: AbortSignal.timeout(this.timeoutMs),
+                signal: ctrl.signal,
             });
+            clearTimeout(timer);
         } catch (e) {
+            clearTimeout(timer);          // 超时/网络错误都要清，否则定时器让进程挂着不退
             const timedOut = e && (e.name === "TimeoutError" || e.name === "AbortError");
             throw new LLMError(
                 "LLM_TRANSPORT",
@@ -225,10 +283,27 @@ export class AnthropicClient extends LLMClient {
             throw new LLMError("LLM_TRANSPORT", "AnthropicClient: response body is not JSON", { status: res.status });
         }
 
-        const text = (Array.isArray(payload.content) ? payload.content : [])
-            .filter(b => b && b.type === "text" && typeof b.text === "string")
-            .map(b => b.text)
-            .join("");
+        /* ★ 两种协议的响应形状不同，解析必须分开 ★
+         *
+         * Anthropic Messages: `{content:[{type:"text", text}], usage:{input_tokens, output_tokens}}`
+         * Codex /responses:   `{output:[{content:[{type:"output_text", text}]}],
+         *                       usage:{input_tokens, output_tokens}}`
+         *
+         * 注意 Codex 的 content 块里 `type` 是 `"output_text"` 不是 `"text"` ——
+         * 只按 `"text"` 过滤会得到空字符串，而那会被下游当成「模型返回了空」，
+         * 报成 LLM_NOT_JSON 之类，看上去像模型的问题。这是本仓库
+         * `never-write-code-against-imagined-schema` 记过的形态，所以这里两种都收。 */
+        const text = codex
+            ? (Array.isArray(payload.output) ? payload.output : [])
+                .filter(o => o && Array.isArray(o.content))
+                .flatMap(o => o.content)
+                .filter(b => b && (b.type === "output_text" || b.type === "text") && typeof b.text === "string")
+                .map(b => b.text)
+                .join("")
+            : (Array.isArray(payload.content) ? payload.content : [])
+                .filter(b => b && b.type === "text" && typeof b.text === "string")
+                .map(b => b.text)
+                .join("");
         const usage = payload.usage
             ? { in: payload.usage.input_tokens ?? 0, out: payload.usage.output_tokens ?? 0 }
             : null;
