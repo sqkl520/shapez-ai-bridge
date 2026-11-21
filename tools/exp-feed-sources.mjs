@@ -258,18 +258,30 @@ function parsePlan(text) {
 /* ══════════════════════════ 4. 调用 LLM ══════════════════════════ */
 
 const useProxy = argv.includes("--proxy") || process.env.PROXY === "1";
+/* ⚠️ **不要读 `ANTHROPIC_BASE_URL`** —— 本机这个变量被 Claude Desktop 占用，
+ * 值是 `http://127.0.0.1:15721/claude-desktop`，拼上 `/v1/messages`
+ * 或 `/responses` 都不是可用端点（实测 401/404）。
+ *
+ * 这个坑 `research/ai-plan/LIVE-VERIFY-BRIEF.md:76` 早就记过：
+ * 「**刻意不读 `ANTHROPIC_BASE_URL`**（本机该变量被 Claude Code 占用）」——
+ * 我明知还写了 `process.env.ANTHROPIC_BASE_URL`，第一轮 A/B 全 401，
+ * 20 次调用一个有效样本都没有。判据没错，是地址错了。
+ *
+ * 所以：代理模式用**显式常量**，要换就传 `--base-url`。 */
+const PROXY_BASE = argVal("--base-url") || "http://127.0.0.1:15721/responses";
+const PROXY_TOKEN = process.env.PROXY_TOKEN || "PROXY_MANAGED";
 const client = new AnthropicClient(
     useProxy
         ? {
-            apiKey: process.env.ANTHROPIC_AUTH_TOKEN || "PROXY_MANAGED",
-            baseUrl: process.env.ANTHROPIC_BASE_URL || "http://127.0.0.1:15721/responses",
+            apiKey: PROXY_TOKEN,
+            baseUrl: PROXY_BASE,
             model: process.env.AGENT_MODEL || "gpt-5.6-luna",
             maxTokens: 8000,
             timeoutMs: 180000,
         }
         : {
             apiKey: process.env.ANTHROPIC_API_KEY,
-            baseUrl: process.env.ANTHROPIC_BASE_URL,
+            baseUrl: argVal("--base-url") || null,
             model: process.env.AGENT_MODEL || "claude-sonnet-5",
             maxTokens: 8000,
             timeoutMs: 240000,
