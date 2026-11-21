@@ -303,11 +303,20 @@ ok(l4.goal.requirement.shape === "RuRu----" && l5.goal.requirement.shape === "Cu
      * 一直缺失的共同指代物（见 `handles.mjs` 的 `bearingOf`）。
      * 所以锚点从 `^C\d+ cutter 输入=` 放开成「句柄 + 类型 + 可选方位」，
      * 但**仍然钉住**后半段（角色与 in.port），那才是这条测试真正守的东西。 */
-    ok(/^C\d+ cutter( · hub [^ ]+ \d+ 格)? 输入=bottom:primary\(←/.test(cs),
+    /* ★ 格式在 2026-11-21 从 `dir:role` 改成 `role@dir` ★
+     *
+     * 旧格式 `输出=top:left(→B41)` 里方位在前。实测（`tools/exp-feed-sources.mjs`，
+     * n=10/组）：**20 个样本里 9 个**把 `to.port` 写成方位名（`"right"`）而不是
+     * 角色名（`"color"`）—— 模型取的是冒号**前**那个词。
+     * 而 `right` 对 cutter 恰好是合法角色，所以这不是一眼可见的错值，是格式歧义。
+     *
+     * 新格式把角色放最前、用 `@` 标方位：`left@top(→B41)`。
+     * 这条测试仍然钉住「角色与方位都在」，只是顺序反了。 */
+    ok(/^C\d+ cutter( · hub [^ ]+ \d+ 格)? 输入=primary@bottom\(←/.test(cs),
         `cutter 短语含 input 方位与角色（模型要照着填 port），实得：${cs}`, cs);
     ok(/in\.port=primary/.test(cs),
         `cutter 输入端口角色单独标出（与输出的 left|right 不同名），实得：${cs}`, cs);
-    ok(/输出=top:left\(→/.test(cs) && /top:right\(→/.test(cs), `cutter 两个输出都列出，实得：${cs}`, cs);
+    ok(/输出=left@top\(→/.test(cs) && /right@top\(→/.test(cs), `cutter 两个输出都列出，实得：${cs}`, cs);
 
     /* hub：压缩成入口数 + 已接，不能把 16 个入口全列出来（会吃光 S3 预算） */
     const hub = describeEntity(l5.entities.find(e => e.type === "hub"), l5, l5items);

@@ -558,11 +558,25 @@ export function describeEntity(e, obs, items = null, table = null) {
          *
          * 注意 cutter 的**输入** role 是 `primary`、**输出** role 才是 `left|right` ——
          * 两边同名不同义，所以必须分开标，不能只标一边。 */
-        return `${sl.dir}:${sl.role}(${other ? "←" + other : "←无"})`;
+        /* ★ 格式从 `dir:role` 改成 `role@dir`（2026-11-21，A/B 实测）★
+         *
+         * 旧格式是 `right:color(←无)` —— 方位在前、角色在后，冒号分隔。
+         * 而 `port` 参数要的是**角色**。模型读到这串，取了冒号**前**的那个词。
+         *
+         * 实测（`tools/exp-feed-sources.mjs`，n=10/组）：**20 个样本里 9 个**
+         * 把 `to.port` 写成 `"right"`（方位）而不是 `"color"`（角色）。
+         * 它们全都指向同一个槽 —— painter 的 color 槽，那个槽恰好长在右侧。
+         *
+         * 更糟的是 `right` 对**别的**机器是合法角色（cutter 的输出就是
+         * `left|right`），所以这不是一眼可见的错值，而是**格式歧义**。
+         *
+         * `role@dir` 让角色落在最前面、且用 `@` 明确「这是方位标注不是取值」。
+         * 输出槽同理。 */
+        return `${sl.role}@${sl.dir}(${other ? "←" + other : "←无"})`;
     });
     const outParts = s.outputs.map(sl => {
         const other = handleAt(tbl, sl.cell);
-        return `${sl.dir}:${sl.role}(→${other || "无"})`;
+        return `${sl.role}@${sl.dir}(→${other || "无"})`;
     });
     const bits = [bear ? `${h} ${type} · ${bear}` : `${h} ${type}`];
     if (inParts.length) bits.push(`输入=${inParts.join("/")}`);
