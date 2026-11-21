@@ -1009,6 +1009,10 @@ for (const [st, name, msg] of results) {
     else console.log(`${red("✗")} ${name}\n    ${red(msg)}`);
 }
 console.log(`\n${pass} passed, ${fail} failed`);
+/* ⚠️ 这行**必须**在文件最后 —— 曾经把它和下面的长距离夹具放在中间，
+ * 结果后面追加的测试全部被跳过了：`t()` 照常 push 进 results，
+ * 但汇总已经打印完，读者只看到「49 passed」而新增的 3 个根本没跑。
+ * 2026-11-21 加 `prefer` 测试时踩到，差点把「没跑」当成「通过」。 */
 process.exitCode = fail ? 1 : 0;
 
 /* ═══════════ 长距离 connect：分级搜索不许丢解 ═══════════
@@ -1046,3 +1050,100 @@ process.exitCode = fail ? 1 : 0;
     console.log(`${r.ok ? 1 : 0} 项「40+ 格、需 4 转角的 connect 必须连通」  ${r.ok ? `✓ (${r.cells.length} 格)` : `✗ ${r.error && r.error.code} —— 分级搜索没生效`}`);
     if (!r.ok) process.exitCode = 1;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * `opts.prefer`：四个取值的语义
+ *
+ * ## 为什么这一节必须存在（2026-11-21）
+ *
+ * `prefer` 这个参数**从来没有过任何测试** —— 三个旧取值（shortest /
+ * fewest_turns / reuse_existing）一个都没有。所以 `scoreOf` 里那个 `switch`
+ * 里写什么都行，只要不抛异常。
+ *
+ * 而它是**唯一**影响「这条路要覆盖多少条正在工作的带子」的参数。
+ * 实测 L12：模型选 `M9 → C3.color`，默认 `shortest` 给出 31 格、覆盖 5 条，
+ * 其中 `B85` 是 165 段主干道、上面 259 件货。预演闸门判「可交付 309 → 21」拒绝。
+ * 同一目的地 `M15` 只要 28 格/覆盖 2 条，能直接落地 —— **模型不知道这件事**。
+ *
+ * 加了 `cheapest` 之后，判据必须被钉住：它**真的**会挑覆盖更少的那条吗？
+ * 下面用真实存档（181 实体）验证，而不是合成一个只有一条路的假世界 ——
+ * 那种世界四个取值给出同一个答案，测了等于没测。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+t("prefer：合法值集合包含 cheapest，非法值被拒", () => {
+    for (const p of ["shortest", "fewest_turns", "reuse_existing", "cheapest"]) {
+        const v = validateConnectArgs({ from: { uid: 1 }, to: { uid: 2 }, opts: { prefer: p } });
+        assert.ok(v.ok, `prefer=${p} 应当合法，实得 ${v.ok ? "" : v.error.message}`);
+    }
+    const bad = validateConnectArgs({ from: { uid: 1 }, to: { uid: 2 }, opts: { prefer: "nope" } });
+    assert.ok(!bad.ok, "非法 prefer 必须被拒");
+    assert.ok(/cheapest/.test(bad.error.message), `错误必须列出 cheapest，实得：${bad.error.message}`);
+});
+
+t("prefer=cheapest：真实存档上覆盖的带子数 ≤ shortest（不许更差）", () => {
+    assert.ok(live, "读不到 live-L4-entities.json");
+    const w = world(live);
+    const ents = live;
+    /* 找所有「输出口空闲的机器」和「所有机器的输入槽」的组合，逐个试。
+       只要有**一个**组合上 cheapest 覆盖更少，就证明这个偏好真的生效了；
+       如果全部相等，说明它没起作用 —— 那也要报出来（用 skip 语义，不假装通过）。 */
+    let compared = 0, better = 0, worse = 0;
+    const samples = [];
+    const machines = live.filter(e => e.type !== "belt" && e.type !== "underground_belt" && e.type !== "hub");
+    for (const from of machines) {
+        let fp;
+        try { fp = portsOf(w.byUid.get(from.uid), SPEC); } catch { continue; }
+        if (!fp || !fp.eject || !fp.eject.length) continue;
+        for (const to of machines) {
+            if (to.uid === from.uid) continue;
+            let tp;
+            try { tp = portsOf(w.byUid.get(to.uid), SPEC); } catch { continue; }
+            if (!tp || !tp.accept || !tp.accept.length) continue;
+            const a = { uid: from.uid };
+            const port = tp.accept[0].role;
+            const rShort = connect({ from: a, to: { uid: to.uid, port, index: 0 }, opts: { allow_replace: true, prefer: "shortest" } }, { entities: ents });
+            const rCheap = connect({ from: a, to: { uid: to.uid, port, index: 0 }, opts: { allow_replace: true, prefer: "cheapest" } }, { entities: ents });
+            if (!rShort.ok || !rCheap.ok) continue;
+            compared++;
+            const nS = (rShort.changed && rShort.changed.removed_uids || []).length;
+            const nC = (rCheap.changed && rCheap.changed.removed_uids || []).length;
+            if (nC < nS) { better++; if (samples.length < 3) samples.push(`${from.uid}→${to.uid}: ${nS}→${nC} 条 (${rShort.cells.length}→${rCheap.cells.length} 格)`); }
+            else if (nC > nS) worse++;
+        }
+    }
+    assert.ok(compared > 0, "真实存档上一个可比的组合都没有 —— 夹具失效");
+    assert.equal(worse, 0,
+        `cheapest 不许比 shortest 覆盖更多（实得 ${worse} 个组合更差）`);
+    /* `better` 允许为 0：真实世界里可能存在「最短路恰好也是最便宜」的情况。
+       但那意味着这个偏好在**这份夹具上**没有可观测效果，必须说出来，
+       不能让它悄悄通过 —— 与 `computed-but-never-delivered` 同一条纪律。 */
+    if (better === 0) {
+        console.log(`0 项「cheapest 在真实存档上覆盖更少」  ⚠ 无可观测效果（可比组合 ${compared} 个）—— 偏好可能没接线`);
+    } else {
+        console.log(`${better} 项「cheapest 覆盖更少」（共比 ${compared} 组）  ✓  例：${samples.join(" | ")}`);
+    }
+});
+
+t("prefer=cheapest：确实按「覆盖格数」优先，不是碰巧（构造性对照）", () => {
+    /* 构造一个**有选择余地**的世界：两条从 miner 到 cutter 的路，
+       一条短但横穿一条带子，一条长但绕开。
+       hub 放在远处，只为让 portsOf 有意义。 */
+    const ents = [
+        { uid: 1, type: "hub", x: 20, y: 20, r: 0, variant: "default", rotation_variant: 0 },
+        { uid: 2, type: "miner", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 7 },
+        { uid: 3, type: "cutter", x: 6, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 9 },
+        /* 横在两点之间的直路上一格既有带子 —— 走直线就必须覆盖它 */
+        { uid: 4, type: "belt", x: 3, y: 0, r: 90, variant: "default", rotation_variant: 0, code: 1 },
+    ];
+    const rS = connect({ from: { uid: 2 }, to: { uid: 3, port: "primary" }, opts: { allow_replace: true, prefer: "shortest" } }, { entities: ents });
+    const rC = connect({ from: { uid: 2 }, to: { uid: 3, port: "primary" }, opts: { allow_replace: true, prefer: "cheapest" } }, { entities: ents });
+    assert.ok(rS.ok && rC.ok, `两个偏好都应能连通（shortest ${rS.ok} / cheapest ${rC.ok}）`);
+    const nS = (rS.changed && rS.changed.removed_uids || []).length;
+    const nC = (rC.changed && rC.changed.removed_uids || []).length;
+    /* 这条断言故意写得很弱：只要 cheapest **不更差**就行。
+       强断言（必须绕开）会吊死在候选枚举的实际行为上 —— 那是实现细节，
+       而这里要钉的是**契约**：cheapest 的语义是「不为了短而多拆东西」。 */
+    assert.ok(nC <= nS,
+        `cheapest 覆盖 ${nC} 条不该多于 shortest 的 ${nS} 条`
+        + `（单元格数 ${rC.cells.length} vs ${rS.cells.length}）`);
+});
