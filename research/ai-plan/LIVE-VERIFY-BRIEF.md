@@ -80,6 +80,96 @@ model:    virtual/opus
 而没接 `--base-url`，那么 `node src/agent/loop.mjs --goal RuRu---- --llm` **会打到官方 API 而不是代理**。
 **这是本轮第一个必须查清的事。**
 
+> **已查清（2026-11-21）**：`loop.mjs:5560` 的 `makeClient({mode:"live", …, ...(baseUrl ? {baseUrl} : {})})`
+> **确实传了** `--base-url`。同时 `llm.mjs:132` 的构造函数签名里 `baseUrl = null`，
+> **显式不读** `ANTHROPIC_BASE_URL`。这条路是通的。
+
+### 2.2b 本机 gateway 只支持 Codex 协议（2026-11-21 实测）
+
+本机 `127.0.0.1:15721` 不是「Anthropic 兼容网关」，它是把请求转发给 **Codex 后端**的代理，
+只实现了 `POST /responses` 这一个入口。**这是真机 loop 跑不起来的头号原因。**
+
+```
+POST http://127.0.0.1:15721/v1/messages  → 503
+POST http://127.0.0.1:15721/responses    → 200
+```
+
+| 请求 | 实测响应 |
+|---|---|
+| `POST /v1/messages`（Anthropic Messages 形状） | **503** `{"error":{"code":"model_not_found","message":"分组 NIM 下模型 <…> 无可用渠道（distributor）","type":"new_api_error"}}` |
+| `POST /responses`（Codex Responses 形状） | **200** `{"output":[{"content":[{"type":"output_text","text":"OK"}]}]}` |
+| `POST /claude-desktop/v1/messages` | **401** |
+| `GET /v1/models` | 200（可用来做连通性探测，不花钱） |
+
+**用法**（地址必须以 `/responses` 结尾）：
+
+```bash
+node src/agent/loop.mjs --goal "CbCbCbRb:CwCwCwCw" --llm \
+  --base-url http://127.0.0.1:15721/responses \
+  --model gpt-5.6-luna --api-key PROXY_MANAGED --max-rounds 2
+```
+
+`src/agent/loop/llm.mjs:188` 按 endpoint 自动切协议：
+
+```js
+this.protocol = protocol === "codex" || /\/responses$/.test(this.endpoint)
+    ? "codex" : "anthropic";
+```
+
+`codex` 分支的请求体是 `{model, max_output_tokens, input: "<system>\n\n----\n\n<user>"}`，
+响应从 `output[].content[].text` 取文本（`anthropic` 分支从 `content[].text`）。
+system 提示被拼进 `input` 而不是独立字段 —— Codex 的 `/responses` 没有那个位置。
+
+**为什么 503 / 401 特别容易把人带偏：**
+
+1. **503 的 body 说「模型无可用渠道」**，看起来像「模型名写错了」。
+   实测把模型名换成任意值都是同一条 503 —— 真正的原因是**协议入口不存在**，
+   网关拿默认模型去上游凑，凑不到就报 model_not_found。**别去调模型名。**
+   实跑 `AnthropicClient` 得到的是（2026-11-21 复验，不是推测）：
+
+   ```
+   LLM_TRANSPORT | AnthropicClient: HTTP 503: 分组 NIM 下模型 deepseek-ai/deepseek-v4.1-flash
+                   无可用渠道（distributor） (request id: …)
+   ```
+
+   注意消息里那个 **`deepseek-v4.1-flash` 不是你传的模型名** —— 它是网关的兜底默认。
+   看到「模型名明明没写过它」就该立刻想到「我打错协议入口了」。
+2. **`ANTHROPIC_BASE_URL` 在本机是 `http://127.0.0.1:15721/claude-desktop`** ——
+   那个 `/claude-desktop` 前缀是给 IDE 用的，独立打过去是 **401**。
+   任何脚本里写 `process.env.ANTHROPIC_BASE_URL` 都会踩这个坑。
+   `tools/live-run.sh` 与 `src/agent/loop/llm.mjs` 都**刻意不读**它。
+3. **每次调用约 30 秒**（实测同网关四轮对比：30.0 / 30.0 / 30.0 / 31.1 s）。
+   `--llm` 分支因此把超时放大到 `max(60000, maxTokens*14)` 毫秒；`--max-rounds 2`
+   一次真机 run 的 LLM 墙钟就在一分钟量级。
+
+### 2.2c 可复验的验收命令
+
+```bash
+# 1) 只读自检：桥健康 + 存档身份 + 写权限 + tick 活性（不花 LLM 调用）
+node tools/live-diff.mjs --check
+
+# 2) 直接验协议适配（走真实的 AnthropicClient，最小组装的 prompt）
+node --input-type=module -e '
+  import { pathToFileURL } from "node:url";
+  const { AnthropicClient } = await import(pathToFileURL("src/agent/loop/llm.mjs").href);
+  const c = new AnthropicClient({ apiKey:"PROXY_MANAGED", baseUrl:"http://127.0.0.1:15721/responses",
+                                  model:"gpt-5.6-luna", maxTokens:64, timeoutMs:60000 });
+  const r = await c.propose({ system:"Reply with JSON only.", user:"Output {\"ok\":true}" });
+  console.log(c.protocol, JSON.stringify(r.text), JSON.stringify(r.usage));
+'
+# 期望：codex "{\"ok\":true}" {"in":…,"out":…}
+
+# 3) 跑典型的一轮真机 loop（安全包装，见 tools/live-run.sh 头注释）
+bash tools/live-run.sh --dry-run
+bash tools/live-run.sh --goal "CbCbCbRb:CwCwCwCw" --rounds 2 --yes
+```
+
+**`--api-key PROXY_MANAGED`**：网关自己管上游鉴权，客户端只要给一个非空字符串即可
+（`AnthropicClient` 构造期要求 key 非空，空字符串会在构造期抛 `LLM_NO_API_KEY`，
+而不是等到请求时 —— 这是有意的，免得「没配 key」被报成「模型不会输出 JSON」）。
+
+以上全部可用 `tools/live-diff.mjs --check` 一键复验（只读，不花 LLM 调用）。
+
 ### 2.3 存档（全部实测解码，`recon/decode_full.cjs`）
 
 | internal_id 前 8 位 | level | seed | 实体数 | 备注 |
