@@ -1163,6 +1163,40 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
     const model = recipeModel(recipeUsable ? recipe : { steps: [] }, opts.level);
 
     const engine = makeShapeEngine(o, idx);
+    /* ★ 目标需要哪些颜色、地图上有哪些颜料矿、哪些只能靠合成（2026-11-21）★
+     *
+     * 这三件事**原来各算一遍**：`MIXER_MISSING` 那一段（约 1560 行）内部算了
+     * `goalColorCodes` / `COLOR_NAMES` / `mustMix`，而 `MACHINE_STARVED` 的
+     * `feed_sources` 又从头写了一遍 —— 而且写错了（TDZ：引用了后声明的变量，
+     * 异常被外层 catch 吞掉，`feed_sources` 静默变空）。
+     *
+     * 真机代价：`feed_sources` 推荐了**绿矿**去喂 painter 的 color 槽，
+     * 而目标 `CbCbCbRb:CwCwCwCw` 需要 **blue + white**（白无矿，必须合成）。
+     * 模型照接，tx 成功、货真的流了、hub 真入库 9 件 —— **产出的是 L11 的形状**。
+     * 修好了机制，产出了错的东西。
+     *
+     * 提到函数级共用一份，两处不再各算各的。 */
+    const GOAL_COLOR_NAMES = { r: "red", g: "green", b: "blue", y: "yellow", p: "purple", c: "cyan", w: "white" };
+    const goalColorCodesShared = (() => {
+        const s = new Set();
+        for (const layer of String(goalShape).split(":")) {
+            for (let q = 0; q + 1 < layer.length; q += 2) {
+                const cc = layer[q + 1];
+                if (/[a-z]/.test(cc) && cc !== "u") s.add(cc);
+            }
+        }
+        return s;
+    })();
+    const wantColorsShared = new Set([...goalColorCodesShared].map(c => GOAL_COLOR_NAMES[c]).filter(Boolean));
+    const mapPigmentsShared = (() => {
+        const ore = engine && engine.ore ? engine.ore : null;
+        if (!ore) return null;
+        const s = new Set([...ore.values()].filter(v => /^[a-z]+$/.test(String(v))));
+        return s.size ? s : null;
+    })();
+    const mustMixShared = mapPigmentsShared
+        ? [...wantColorsShared].filter(c => !mapPigmentsShared.has(c))
+        : [];
     const hull = orbitOf(goalShape);
     const streams = buildStreams(idx);
     const hub = idx.ent.find(e => e.type === "hub") || null;
@@ -3557,6 +3591,10 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                  * 这里越权会给错方向，而错方向比没方向更贵。
                  *
                  * 最多 3 台，按距离排。 */
+                /* 颜色上下文要带出 IIFE，供 evidence 与渲染使用。
+                   用外层变量而不是改 IIFE 返回类型 —— 那个返回值已经被
+                   `slice(0,3)` 定形，动它会牵动渲染侧。 */
+                let feedColor = null;
                 const feedSources = (() => {
                     try {
                         const target = starved[0];
@@ -3574,6 +3612,30 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                          * 一个错误的指路比没有指路贵得多。 */
                         const missRole = (target.fed[missSlotIdx] || {}).role || "";
                         const wantsColor = /color/i.test(missRole);
+                        /* ★ 目标需要哪些**颜色**，以及地图上有没有那种颜料矿 ★
+                         *
+                         * 2026-11-21 真机端到端（`r-20261121190439-6190`）挖到的
+                         * 最深一层缺陷：`feed_sources` 推荐 M13（**绿**矿），
+                         * 模型照接、货真的流起来了、hub 真的入库了 ——
+                         * **但产出的是 `CgScScCg`（上一关 L11 的目标形状）**。
+                         *
+                         * 目标是 `CbCbCbRb:CwCwCwCw`，需要 **blue + white**；
+                         * 而这份地图的颜料矿只有 blue / green / red，**没有 white**
+                         * （white 必须靠 mixer 级联合成）。
+                         *
+                         * 也就是说：我的判据是「能不能产**某种**颜料」，
+                         * 而需要的是「能不能产**需要的那种**颜料」。
+                         * 这两件事差着一整个关卡。
+                         *
+                         * 现在：从目标形状解出色码，只推荐产这些颜色的源头；
+                         * 若某个颜色**地图上根本没有矿**，那它只能靠 mixer ——
+                         * 这时 mixer 才是最该推荐的（哪怕它更远）。 */
+                        /* 复用函数级那一份 —— 这两处原来各算一遍，其中一份还写错了
+                           （TDZ 引用后声明变量，异常被外层 catch 吞掉，feed_sources 静默变空）。
+                           见 `semanticDiagnoses` 开头 `mustMixShared` 的注释。 */
+                        const WANT = wantColorsShared;
+                        const mapPigments = mapPigmentsShared;
+                        const mustMix = mustMixShared;
                         /* ⚠️ `o` 必须先声明：下面的 `oreAtCell` 读 `o.resources`。
                            第一版把这两行放在 `const o = unwrapObs(obs)` 之前，
                            触发 TDZ（`Cannot access 'o' before initialization`），
@@ -3640,20 +3702,29 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                 return !(entry === OPP[sl.dir]);
                             });
                             if (!free) continue;
-                            /* 喂 `color` 槽只能用「产颜料」的机器：mixer / painter 的
-                               产物带颜色，矿机在**颜料矿**上时产颜料。
-                               cutter / rotater / stacker / balancer 产的是形状 —— 接上去
-                               什么也变不了色。这一层筛掉它们。 */
+                            /* 喂 `color` 槽只能用「产**目标需要的**颜料」的机器。
+                             *
+                             * 判据从「能不能产某种颜料」收紧成「能不能产需要的那种」
+                             * —— 真机实测这两者差着一整个关卡：旧判据推荐了绿矿，
+                             * 产出 `CgScScCg`（L11 的目标），而这一关要 blue+white。 */
                             if (wantsColor) {
-                                const producesPigment = (e.type === "mixer" || e.type === "painter"
-                                    || e.type === "painterDouble" || e.type === "painterQuad")
-                                    /* 矿机只有在**颜料矿**上才产颜料。形状矿上产的是形状，
-                                       喂 color 槽什么也变不了 —— 而它往往离得最近。 */
-                                    || (e.type === "miner" && isPigmentOre(minerOre(e)));
-                                if (!producesPigment) continue;
+                                let ok = false;
+                                if (e.type === "mixer" || e.type === "painter"
+                                    || e.type === "painterDouble" || e.type === "painterQuad") {
+                                    /* mixer/painter 的产物颜色取决于它的**输入**，这里判不出来，
+                                       但它至少是「能合成颜色」的机器 —— 留着，交给模型判断。
+                                       若目标里有颜色必须靠合成（`mustMix` 非空），它更重要。 */
+                                    ok = true;
+                                } else if (e.type === "miner" && isPigmentOre(minerOre(e))) {
+                                    /* 矿机：**采的颜色必须是目标要的**。
+                                       地图上没有目标颜色时不推荐任何矿机 —— 它们产的都不对。 */
+                                    const oreName = minerOre(e);
+                                    ok = WANT.size ? WANT.has(oreName) : true;
+                                }
+                                if (!ok) continue;
                             }
                             const d = Math.abs(e.x - missCell[0]) + Math.abs(e.y - missCell[1]);
-                            rows.push({ handle: handleOf(handles, e.uid), type: e.type, d });
+                            rows.push({ handle: handleOf(handles, e.uid), type: e.type, d, mustMix: e.type === "mixer" });
                         }
                         rows.sort((a, b) => a.d - b.d);
                         /* ★ 对前几名补算「接过去会切断多少东西」★
@@ -3739,8 +3810,23 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                          * 非 0 只说明「要小心」，不能拿来排序谁更差。
                          *
                          * 最终排序：**`disconnect === 0` 优先，然后按 `cut` 再按距离**。
-                         * `disc=0` 是唯一能保证「能落地」的信号，必须排最前。 */
+                         * `disc=0` 是唯一能保证「能落地」的信号，必须排最前。
+                         *
+                         * ★ 但「能落地」不等于「有用」★
+                         * 真机 `r-20261121190439-6190`：推荐 M13（绿矿），
+                         * 模型照着接，**tx 成功、货真的流了、hub 真的入库 9 件** ——
+                         * 而产出的是 `CgScScCg`（L11 的目标），这一关要的是
+                         * `CbCbCbRb:CwCwCwCw`（blue + white）。
+                         * 修好了机制，产出了错的东西。
+                         *
+                         * 所以当目标里有颜色**必须靠 mixer 合成**时（`mustMix` 非空），
+                         * mixer 要排到矿机前面 —— 它才是唯一能造出那个颜色的机器。
+                         * 这一条排在 `disconnect` 之前：一条能落地但产出错误形状的路，
+                         * 比一条会切断几处下游但方向正确的路更糟。 */
                         rows.sort((a, b) => {
+                            const ma = mustMix.length && a.mustMix ? 0 : 1;
+                            const mb = mustMix.length && b.mustMix ? 0 : 1;
+                            if (ma !== mb) return ma - mb;
                             const za = a.disconnect === 0 ? 0 : 1;
                             const zb = b.disconnect === 0 ? 0 : 1;
                             if (za !== zb) return za - zb;
@@ -3749,6 +3835,14 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             if (ca !== cb) return ca - cb;
                             return a.d - b.d;
                         });
+                        /* 把颜色上下文带出去（见 `feedColor` 的声明处）。 */
+                        if (wantsColor) {
+                            feedColor = {
+                                want: [...WANT],
+                                on_map: mapPigments ? [...mapPigments] : null,
+                                must_mix: mustMix,
+                            };
+                        }
                         return rows.filter(r => r.handle).slice(0, 3);
                     } catch { return []; }
                 })();
@@ -3770,6 +3864,9 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                         /* 可行源头：最近、且输出口空闲的 3 台。
                            渲染在 `renderDiagnoses` 里，带 `from:` 前缀。 */
                         feed_sources: feedSources,
+                        /* 目标要哪些颜色、地图上有哪些、哪些必须靠合成。
+                         * 真机实测：缺这一条时模型拉了绿矿，产出上一关的形状。 */
+                        feed_color: feedColor,
                         note: "a multi-input machine that gets only some of its inputs never fires; "
                             + "everything upstream of it backs up and freezes",
                     },

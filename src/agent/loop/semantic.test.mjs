@@ -1996,7 +1996,7 @@ test("MACHINE_STARVED：feed_sources 要给「能产颜料且输出口空闲」�
         ],
         resources: [
             [-10, 9, "CuCuCuCu"],   // 形状矿
-            [-10, 12, "green"],     // 颜料矿
+            [-10, 12, "blue"],      // 颜料矿（目标要 blue，不是 green）
         ],
     };
     const items = {
@@ -2030,7 +2030,7 @@ test("MACHINE_STARVED：feed_sources 要给「能产颜料且输出口空闲」�
     assert.equal(typeof greenHandle, "string", "byUid 的值应当是句柄字符串");
     const idxGreen = src.findIndex(s => s.handle === greenHandle);
     assert.ok(idxGreen >= 0,
-        `踩 green 矿的矿机（uid=6 → ${greenHandle}）必须被推荐。实际：${JSON.stringify(src)}`);
+        `踩 **blue** 矿的矿机（uid=6 → ${greenHandle}）必须被推荐 —— 目标要 blue，旧夹具放的 green 现在被正确排除了。实际：${JSON.stringify(src)}`);
     const idxShape = src.findIndex(s => s.handle === shapeHandle);
     assert.ok(idxShape < 0 || idxGreen < idxShape,
         `颜料矿机必须排在形状矿机前面。实际：${JSON.stringify(src)}`);
@@ -2219,4 +2219,63 @@ test("★ feed_sources：disconnect=null 不许排在 disconnect=0 前面", () =
             `disc=0（确认安全）必须排在 disc=null（算不出）之前。实际：${JSON.stringify(src)}`);
     }
     console.log(`  feed_sources: ${src.map(s => `${s.handle}(disc=${s.disconnect})`).join(", ")}`);
+});
+
+test("★ feed_color：目标色无矿时，必须推荐 mixer 而不是任意颜色的矿机", () => {
+    /* 2026-11-21 真机 `r-20261121190439-6190` 的直接教训。
+     *
+     * 那次 `feed_sources` 推荐了**绿矿**去喂 painter 的 color 槽。
+     * 模型照接，tx 成功、货真的流了、hub 真入库 9 件 ——
+     * **但产出的是 `CgScScCg`（上一关 L11 的目标形状）**，
+     * 而这一关要的是 `CbCbCbRb:CwCwCwCw`。
+     *
+     * 根因：判据是「能不能产**某种**颜料」，而需要的是「能不能产**需要的那种**」。
+     * 这份地图的颜料矿只有 blue/green/red，目标要 blue+**white** ——
+     * white 没有矿，只能靠 mixer 级联合成。
+     *
+     * 这条测试钉住三件事：
+     *   ① `feed_color` 必须说出「需要哪些 / 地图有哪些 / 哪些必须混」
+     *   ② 地图上没有目标颜色的矿时，**矿机一台都不该被推荐**
+     *   ③ mixer 必须排第一（唯一能造出那个颜色的机器） */
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            { uid: 2, type: "painter", x: -5, y: 14, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            { uid: 3, type: "belt", x: -6, y: 14, r: 0, rv: 0, code: 2, layer: "regular" },
+            /* mixer：唯一能造 white 的机器，输出口空闲 */
+            { uid: 4, type: "mixer", x: -12, y: 20, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            /* 绿矿机：很近，但 green 不是目标要的颜色 —— 必须被排除 */
+            { uid: 5, type: "miner", x: -8, y: 12, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+        ],
+        resources: [
+            [-8, 12, "green"],
+            [-20, 30, "red"],
+        ],
+    };
+    const items = {
+        belts: [{ cell: [-6, 14], path: 0, idx: 0, pos: 1.0, spacing_to_next: 0, item: "CuCuCuCu" }],
+        ejectors: [], underground: [], pending: [], pathCount: 1, truncatedPaths: false, paths: [],
+        counts: { belts: 1 },
+    };
+    const hs = buildHandles(w, items);
+    const ds = semanticDiagnoses(w, items, "CbCbCbRb:CwCwCwCw", hs, { recipe: null, level: 12 });
+    const d = ds.find(x => x.code === "MACHINE_STARVED");
+    assert.ok(d, `应当报 MACHINE_STARVED，实际 ${ds.map(x => x.code).join(",")}`);
+
+    const fc = d.evidence.feed_color;
+    assert.ok(fc, "feed_color 必须存在 —— 否则模型不知道该拉什么颜色");
+    assert.deepEqual([...fc.want].sort(), ["blue", "white"], `目标需要 blue+white，实得 ${JSON.stringify(fc.want)}`);
+    assert.ok(fc.must_mix.includes("white"),
+        `white 无矿、必须靠合成，必须出现在 must_mix 里。实得 ${JSON.stringify(fc.must_mix)}`);
+
+    const src = d.evidence.feed_sources || [];
+    /* ② 绿矿机不许出现 */
+    const greenHandle = hs.byUid.get(5);
+    assert.ok(!src.some(s => s.handle === greenHandle),
+        `green 矿机不该被推荐（目标不要 green）。实得：${JSON.stringify(src)}`);
+    /* ③ mixer 排第一 */
+    assert.ok(src.length > 0, "至少要有 mixer 这个候选");
+    assert.equal(src[0].type, "mixer",
+        `must_mix 非空时 mixer 必须排第一。实得：${JSON.stringify(src)}`);
 });

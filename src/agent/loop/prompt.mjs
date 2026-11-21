@@ -2674,12 +2674,37 @@ function renderDiagnoses(diagnoses) {
              *
              * 所以必须把它印出来：模型看到 `会切断 3 处` 就知道别选，
              * 看到 `不会切断` 就知道这条路是安全的。 */
+            /* ★ 缺的是哪种颜色 —— 必须说出来 ★
+             *
+             * 真机 `r-20261121190439-6190`：诊断推荐了**绿矿**，模型照接，
+             * tx 成功、货真的流了、hub 真入库 9 件 —— 产出的是 `CgScScCg`
+             * （上一关 L11 的目标），而这一关要 `CbCbCbRb:CwCwCwCw`。
+             *
+             * 原文案里「white」「color」「green」这些词出现 **0 次** ——
+             * 模型没有任何依据知道该拉什么颜色。
+             *
+             * 现在把三件事摊开：目标要哪几种、地图上有哪几种、哪几种只能靠合成。
+             * 最后那句是关键：**白颜料没有矿，拉任何一条矿线都是在造错的东西**。 */
+            const fc = ev.feed_color;
+            if (fc && Array.isArray(fc.want) && fc.want.length) {
+                line += `; this slot needs a PIGMENT — the goal needs ${fc.want.join("+")}`;
+                if (Array.isArray(fc.on_map) && fc.on_map.length) {
+                    line += `; ore on this map: ${fc.on_map.join("/")}`;
+                }
+                if (Array.isArray(fc.must_mix) && fc.must_mix.length) {
+                    line += `. ⚠️ ${fc.must_mix.join("/")} has NO ore — it can only come from a mixer cascade,`
+                        + ` so a miner of any other colour feeds the WRONG colour`;
+                } else if (fc.want.length) {
+                    line += "";
+                }
+            }
             line += `; nearest sources with a free output: `
                 + ev.feed_sources.map(s => {
                     const cost = typeof s.disconnect === "number"
                         ? (s.disconnect === 0 ? ", 安全" : `, 会切断${s.disconnect}处`)
                         : "";
-                    return `${s.handle}(${s.type}, ${s.d}格${cost})`;
+                    const mix = s.mustMix ? ", 造缺失色" : "";
+                    return `${s.handle}(${s.type}, ${s.d}格${cost}${mix})`;
                 }).join(", ");
         }
         /* WRONG_SHAPE_AT_HUB：病在上游，不在入口（v2 §4 的那句必须出现） */
