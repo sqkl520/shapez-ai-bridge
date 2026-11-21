@@ -409,7 +409,25 @@ export const RETRIEVAL_TABLE = Object.freeze({
     /* 并集权重（误差码级 refinement 见文件头第 1 条）：能修「被占/无路/抢口/没落点」的只有这几个 */
     MACRO_REFUSED: cand([
         ["connect", 5],
+        /* ★ `remove_run` 与 `remove_machine` 并列 4（2026-11-21 实测）★
+         *
+         * 真机 `r-2026112107`：模型的 `connect B692 → B699` 被
+         * **一个垃圾桶**挡住（`trash#17285 @ (35,-42)`）：
+         *
+         *     occupied: 所有候选路径都被挡住；第一处冲突在 35,-42（trash uid=17285）
+         *     hint: …先 `remove_run` 清掉那些到不了 hub 的旧线，再重试
+         *
+         * **而 `remove_run` 只删带子，删不掉垃圾桶。** hint 指的那条路走不通 ——
+         * 清掉一个 trash 只能用 `remove_machine`，而它原来排最后（权重 2）。
+         *
+         * 于是模型手里有「清理」的指令，却没有对应的牌。这一轮三个调用全失败
+         * （occupied / occupied / port_already_bound）⇒ `NO_REVERSIBLE_CALL` ⇒ 整轮 0 op。
+         *
+         * 并列 4 而不是更高：「撞了」的成因有两种 —— 旧带子（remove_run 对）
+         * 和挡路的机器/垃圾桶（只剩 remove_machine 对）。两者都得在前三才有机会被选中，
+         * 但不能让测不出区别的权重假装分得出先后。 */
         ["remove_run", 4],
+        ["remove_machine", 4],
         ["insert_machine", 4],
         ["trash_unused", 3],
         ["replace_run", 2],
