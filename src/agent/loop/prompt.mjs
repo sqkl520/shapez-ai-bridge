@@ -1997,10 +1997,17 @@ function resolveLimits(budget) {
      * **实际有没有渲染**，不是这个开关的值。两者不一致时（比如预算 2800 却
      * 显式打开）以实际渲染为准，因为那才是模型看到的东西。 */
     const includeWhen = (typeof b.include_when === "boolean") ? b.include_when : null;
+    /* `forceOneCall`：**实验开关**，默认 false。
+     *
+     * 打开后 `s6` 用 `INSTRUCTION_SINGLE`（「这一轮只能做一个动作」），
+     * 用于检验「强制单动作会不会让模型更看重成因诊断」。
+     * 它不改变任何常态行为 —— 关闭时与改动前逐字节相同。 */
+    const forceOneCall = b.forceOneCall === true;
     return {
         inCharsMax: pick("in_chars_max", "LLM_IN_CHARS_MAX", "inCharsMax") || PROMPT_RULES.LLM_IN_CHARS_MAX,
         tokensMax: pick("prompt_tokens_max", "PROMPT_TOKENS_MAX", "promptTokensMax") || PROMPT_RULES.PROMPT_TOKENS_MAX,
         includeWhen,
+        forceOneCall,
     };
 }
 
@@ -3090,8 +3097,37 @@ const INSTRUCTION_ONE = [    "## YOUR TURN",
     "Handles from this prompt only. No coordinates. JSON only.",
 ].join("\n");
 
-/* ══════════════════════════ 8. PromptOverBudget ══════════════════════════ */
+/**
+ * 实验用：「这一轮只能做一个动作」。
+ *
+ * 与 `INSTRUCTION_ONE` 的区别：那一版是为「上一轮因多调用被拒」写的，
+ * 文案里提到 rejection；这一版是**主动施加的约束**，不提拒绝。
+ *
+ * 只由 `budget.forceOneCall === true` 触发，默认永不出现。
+ *
+ * ## 要检验的假设
+ *
+ * 真机 `r-20261121072433-521e`：`MACHINE_STARVED`（成因，排第 5）在诊断列表里，
+ * 模型选了 `MINER_UNWIRED`（症状，排第 6）和 `HUB_INLET_THIN`（排第 1）——
+ * 一轮抛 3 个局部小修，没有一个是「先修最下游那台机器，让上游自己解开」。
+ *
+ * 假设：**只能做一个动作时，模型被迫权衡「哪个最值得做」**，
+ * 而不是靠「多抛几个总有一个能中」。
+ *
+ * ## 反面风险（要靠数据检验，不能靠推理排除）
+ *
+ * `INSTRUCTION` 上方的注释记着：有些修法确实需要两步（先 `remove_run`
+ * 再 `replace_run`），硬限会逼模型写错。这是这个实验最可能的失败模式。
+ */
+const INSTRUCTION_SINGLE = ["## YOUR TURN",
+    "Output the calls for THIS round as one raw JSON object:",
+    '{"say":"...","calls":[{"macro":"...","args":{...},"why":"..."}]}',
+    "**Exactly 1 call this round.** You cannot batch several small fixes together — "
+        + "choose the ONE action that most advances the goal, and say in `why` why it beats the alternatives.",
+    "Handles from this prompt only. No coordinates. JSON only.",
+].join("\n");
 
+/* ══════════════════════════ 8. PromptOverBudget ══════════════════════════ */
 export class PromptOverBudget extends Error {
     constructor(message, detail) {
         super(message);
@@ -3254,7 +3290,23 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     ];
     const lastFailedMulti = lastCodes.includes("NO_REVERSIBLE_CALL")
         || lastCodes.includes("PARTIAL_APPLY");
-    const s6 = lastFailedMulti ? INSTRUCTION_ONE : INSTRUCTION;
+    /* ★ 实验开关：无条件强制「一轮一个」（2026-11-21）★
+     *
+     * `budget.forceOneCall === true` 时无视 `lastFailedMulti`，直接用收窄版指令。
+     * 默认 false，不改变任何既有行为。
+     *
+     * **为什么值得测**：真机 `r-20261121072433-521e` 上，`MACHINE_STARVED`
+     * （成因，排第 5）就在诊断列表里，模型却选了 `MINER_UNWIRED`（症状，排第 6）
+     * 和 `HUB_INLET_THIN`（排第 1）—— 一轮抛 3 个局部小修。
+     *
+     * 假设：**一次只能做一个动作时，模型被迫权衡「哪个最值得做」**，
+     * 而不是靠「多抛几个总有一个能中」。
+     *
+     * 现有 `INSTRUCTION_ONE` 的文字是为「上一轮被拒」写的（提到 rejection），
+     * 直接复用会给出错误的上下文。所以实验模式用独立文案。 */
+    const forceOne = limits.forceOneCall === true;
+    const s6 = forceOne ? INSTRUCTION_SINGLE
+        : (lastFailedMulti ? INSTRUCTION_ONE : INSTRUCTION);
 
     const selection = pickBelts(tbl, diagList, goalShape, obs);
     /* 配方紧跟在 GOAL 之后：它是「这个目标怎么造」的一部分，不是独立信息 */

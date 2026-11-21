@@ -2919,6 +2919,8 @@ export async function runLoop(opts = {}) {
     const ctx = {
         reader, llmClient, goal, mode, budget, apply: opts.apply || null, game: opts.game || null,
         dryRun: opts.dryRun === true,
+        /* 实验开关：强制一轮只做一个宏。默认 false，不改变常态行为。 */
+        forceOneCall: opts.forceOneCall === true || (budget && budget.FORCE_ONE_CALL === true),
     };
 
     /* ── 运行状态（全部随 run_end 落盘） ── */
@@ -4121,6 +4123,10 @@ export async function runLoop(opts = {}) {
                              * 24000 字符 ≈ 7000 token，远在模型窗口之内。 */
                             in_chars_max: 24000,
                             prompt_tokens_max: 4600,
+                            /* 实验开关（默认 false）：强制「一轮一个动作」。
+                               由 `--force-one-call` 或 `budget.FORCE_ONE_CALL` 打开。
+                               见 prompt.mjs 里 INSTRUCTION_SINGLE 的注释。 */
+                            forceOneCall: opts && opts.forceOneCall === true,
                         },
                     });
                 } catch (e) {
@@ -5421,6 +5427,8 @@ export async function runLoopCli(argv = process.argv.slice(2)) {
         reader, goal, llmClient, mode,
         runDir: runDir ? path.resolve(runDir) : undefined,
         budget, dryRun, game,
+        /* 实验开关：`--force-one-call` ⇒ 每轮只允许一个宏。默认关。 */
+        forceOneCall: argv.includes("--force-one-call"),
     });
 
     if (asJson) {

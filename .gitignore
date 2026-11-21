@@ -168,3 +168,7 @@ research/**/*.log
 .findings/*.json
 .findings/*.jsonl
 .tmp-v/
+
+# A/B 实验的原始采样（每个 json 是一次 LLM 输出，机器相关）
+# 复现应重跑装置，而不是提交数据 —— 与 research/ai-plan/runs/ 同一条纪律
+research/ai-plan/experiments/*/
