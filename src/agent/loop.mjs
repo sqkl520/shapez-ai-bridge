@@ -151,8 +151,8 @@ export const DIAGNOSE_CODES = Object.freeze([
     "COORD_PROVENANCE", "PATH_NOT_RECT", "OBS_STALE",
     "TX_ROLLED_BACK", "NO_WORLD_CHANGE",
     "LANDING_MISSING", "LANDING_MISMATCH", "DELETE_NOT_REPLAYED",
-    "SLOT_STARVED", "OUTPUT_UNROUTED", "FLOW_UNREACHABLE", "FLOW_UNVERIFIED", "DEAD_END",
-    "NO_PRODUCTION", "PRODUCED_NOT_DELIVERED",
+    "SLOT_STARVED", "OUTPUT_UNROUTED", "OUTPUT_STRANDED", "FLOW_UNREACHABLE", "FLOW_UNVERIFIED", "DEAD_END",
+    "NO_PRODUCTION", "PRODUCED_NOT_DELIVERED", "WRONG_SHAPE_PRODUCED",
     "NO_DIAGNOSIS", "NO_PROGRESS", "NO_PROGRESS_3X",
     "BUDGET_ROUNDS", "BUDGET_LLM_CALLS", "BUDGET_TX", "BUDGET_TICKS", "BUDGET_WALL",
     "MOCK_EXHAUSTED", "INTERNAL",
@@ -1309,6 +1309,20 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
         WRONG_SHAPE_PRODUCED: 4,
         NO_PRODUCTION: 5, PRODUCED_NOT_DELIVERED: 6, FLOW_UNREACHABLE: 7, FLOW_UNVERIFIED: 8,
         SLOT_STARVED: 9, OUTPUT_UNROUTED: 9,
+        /* ★ `OUTPUT_STRANDED` 必须登记，否则落到默认 rank=50 被挤掉 ★
+         *
+         * 合并后有 `LIMITS = {PER_CODE:3, TOTAL:8}` —— 总量只留 8 条。
+         * 语义层自己就能产 7 条，再加上结构层，排在后面的**整条消失**。
+         * 我加了这个诊断但忘了登记 RANK，实测 `diagnose()` 的输出里根本没有它
+         * （`semanticDiagnoses` 里有，合并时被挤掉）—— 症状是「写了诊断但一条都不报」。
+         *
+         * 这是本仓库第三次踩「新码没登记跨层 RANK」：`MACHINE_STARVED` 和
+         * `WRONG_SHAPE_PRODUCED` 都栽过同一个坑。
+         *
+         * 排在 `OUTPUT_UNROUTED` 旁边：两者都是「输出口没去处」，同一档。
+         * 它比 `MACHINE_STARVED` 低——缺进料更致命（整条链冻死），
+         * 而悬空输出口只是「一半产物堵住」，机器至少还在转。 */
+        OUTPUT_STRANDED: 9,
         /* ★ `DEAD_LINES` / `ORPHAN_MACHINES` 必须排在这些**症状码之前** ★
          *
          * 这两个码是 2026-11-13 才加的，当时只登记了 `semantic.mjs` 自己的 `CODE_RANK`
@@ -1425,6 +1439,9 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
      *   · 每码被压掉的 → 该码第一条的 `evidence.suppressed`（「这个码还有 N 条没显示」）；
      *   · 总量被压掉的 → 首条诊断的 `evidence.suppressed_total`（「还有 N 条别的诊断没显示」）。
      *     两者混成一句会让模型以为「还有 2 条 PROCESSOR_REQUIRED」，而实际上它一条都不少。 */
+    /* 上限是**契约级**的（`p_b_wiring.test.mjs` T3 钉死「合并后总量 ≤8、每码 ≤3」）。
+     * 不要因为「新加了一条诊断装不下」就抬这个数 —— 那等于改契约来迁就实现。
+     * 正确的做法是让新诊断**排到该在的位置**，让不重要的让位。 */
     const LIMITS = { PER_CODE: 3, TOTAL: 8 };
     const kept = [];
     const perCode = new Map();

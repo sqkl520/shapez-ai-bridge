@@ -3415,6 +3415,99 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             }
         }
 
+        /* ★ ③c-quater OUTPUT_STRANDED —— 机器在跑，但某个输出口悬空 ★
+         *
+         * 2026-11-21 真机：`C2 cutter` 堵了**十个 run**，而 `diagnose()` 的 8 条诊断
+         * 里一条都没提它。它的 `left` 口接着 `B104` 通向 painter，`right` 口在
+         * `(-6,10)` 悬空 —— 它一直在切，一半产物没有去处。
+         *
+         * ## 为什么现有诊断都照不到
+         *
+         *   · `ORPHAN_MACHINES` 只认「**两端全空**」，通了一端就不算孤儿。
+         *     那个豁免是有理由的（mixer 常见两槽已接、输出还没铺），
+         *     但它把「一端通、一端堵」这一类**整体**漏掉了。
+         *   · `DISCARDED_INTERMEDIATE` 要求被丢的那口形状 ∈ orbit(goal) ∪ 闭包。
+         *     而 C2 是上一关遗留线，切出来的形状不在 L12 的闭包里 ⇒ 不报。
+         *   · `OUTPUT_UNROUTED` 只检查**计划里**的机器，不看世界现状。
+         *
+         * ## 判据
+         *
+         * 机器满足全部三条才算：
+         *   ① **至少有一个输入口接着东西** —— 它在跑，不是空壳
+         *   ② **至少有一个输出口是空的** —— 有产物没去处
+         *   ③ 不是矿机 —— 矿机那条已由 `MINER_UNWIRED` 专门管
+         *
+         * ①② 合起来的语义是「它在生产，而产品堵在里面」。
+         * 这正是会造成「上游越堆越满、下游永远空着」的那种堵塞。
+         *
+         * ⚠️ 不算「全空」的机器：那是 `ORPHAN_MACHINES` 的地盘，
+         *    两边都报会让模型在同一台机器上收到两条互相矛盾的指令
+         *    （一条说「删掉」，一条说「接上」）。 */
+        if (!o.truncated) {
+            const stranded = [];
+            for (const m of idx.ent) {
+                if (isBelt(m) || m.type === "hub" || m.type === "miner" || m.type === "trash") continue;
+                /* ★ `balancer` 不算 ★
+                 *
+                 * 分流器**天然**会有一半输出空着 —— 那是它的设计（把一路货分到两路），
+                 * 不是故障。L4 夹具上第一版报了 5 台，全是 balancer，
+                 * 而它们一条问题都没有。
+                 *
+                 * 报告一堆不是问题的问题，比不报更糟：模型会去「修」正常的机器，
+                 * 而真正堵住的那台排在后面。 */
+                if (m.type === "balancer") continue;
+                let sl = null;
+                try { sl = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m)); } catch { continue; }
+                if (!sl) continue;
+                const ins = Array.isArray(sl.inputs) ? sl.inputs : [];
+                const outs = Array.isArray(sl.outputs) ? sl.outputs : [];
+                if (!ins.length || !outs.length) continue;
+                const fedIns = ins.filter(i => !!at(idx, i.cell)).length;
+                const deadOuts = outs.filter(x => !at(idx, x.cell));
+                if (fedIns === 0) continue;                 // 空壳 ⇒ ORPHAN_MACHINES
+                if (deadOuts.length === 0) continue;        // 全接好了
+                if (deadOuts.length === outs.length && fedIns === 0) continue;
+                stranded.push({ m, fedIns, totalIn: ins.length, deadOuts, totalOut: outs.length });
+            }
+            if (stranded.length) {
+                /* 优先报「完全堵死」的（所有输出口都悬空），其次按输入接通比例 */
+                stranded.sort((a, b) => (b.deadOuts.length / b.totalOut) - (a.deadOuts.length / a.totalOut));
+                const hs = stranded.map(s => handleOf(handles, s.m.uid)).filter(Boolean);
+                const worst = stranded[0];
+                const detail = stranded.slice(0, 4).map(s =>
+                    `${s.m.type}#${s.m.uid}(${s.deadOuts.length}/${s.totalOut} 口悬空)`).join("；");
+                const wHandle = handleOf(handles, worst.m.uid) || "?";
+                out.push({
+                    code: "OUTPUT_STRANDED",
+                    layer: "L2",
+                    severity: "warn",
+                    subject: subjectOf(handles, worst.m.uid, worst.m.type),
+                    expected: `机器在产出时，每个输出口都有去处`,
+                    observed: `${stranded.length} 台机器在跑、但有输出口悬空：${detail}`,
+                    handles: hs,
+                    uids: stranded.map(s => s.m.uid),
+                    evidence: {
+                        handles: hs,
+                        uids: stranded.map(s => s.m.uid),
+                        stranded: stranded.slice(0, 6).map(s => ({
+                            type: s.m.type, uid: s.m.uid,
+                            fed_inputs: s.fedIns, total_inputs: s.totalIn,
+                            dead_outputs: s.deadOuts.length, total_outputs: s.totalOut,
+                        })),
+                        note: "a machine whose input is wired but whose output has nowhere to go "
+                            + "runs forever and piles its product up inside — upstream backs up, downstream starves",
+                    },
+                    candidates: ["connect", "trash_unused", "remove_machine"],
+                    hint: `**${worst.m.type}#${worst.m.uid}（句柄 ${wHandle}）在跑，但 ${worst.deadOuts.length} 个输出口悬空**`
+                        + ` —— 它切/加工出来的东西有一半没有去处，会一直堆在机器里，`
+                        + `上游跟着堵死。三选一：`
+                        + `\`connect\` 接到下游；\`trash_unused\` 把不要的那一路吃掉；`
+                        + `或者这条线本来就该拆，\`remove_machine\` 整台移走。`
+                        + (stranded.length > 1 ? `这台处理完再看另外 ${stranded.length - 1} 台。` : ""),
+                });
+            }
+        }
+
         /* ★ ③c-ter MACHINE_STARVED —— 加工机器缺一路进料，整条链冻住 ★
          *
          * 2026-11-21。6 个 Agent 并行调查（`.findings/CONCLUSION.md`）挖出的

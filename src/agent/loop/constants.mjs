@@ -91,6 +91,21 @@ export const DIAG_CODES = Object.freeze({
     UNDECLARED_DESTRUCTION: "an entity vanished that was not in destroys[]",
     SLOT_STARVED: "L2: an input slot has no upstream",
     OUTPUT_UNROUTED: "L2: an output slot has no downstream",
+    /* ★ 世界里**已存在**的机器有悬空输出口（2026-11-21）★
+     *
+     * 与 `OUTPUT_UNROUTED` 的区别：那条只检查**计划里**的机器（`planToTxOps` 内部），
+     * 管的是「你这一笔要在没下游的地方铺带子」。这条管的是**世界现状**：
+     * 一台早就在跑的机器，某个输出口是空的。
+     *
+     * 真机实证（L12，堵了 10 个 run）：`C2 cutter` 的 `left` 口接着 `B104` 通向
+     * painter，`right` 口在 `(-6,10)` **悬空**。它一直在切，一半产物没有去处 ——
+     * 而 `diagnose()` 的 8 条诊断里**一条都没提它**：
+     *   · `ORPHAN_MACHINES` 只认「两端全空」，通了一端就不算；
+     *   · `DISCARDED_INTERMEDIATE` 要求被丢的那口形状 ∈ orbit(goal) ∪ 闭包，
+     *     而 C2 是上一关遗留线，切出来的形状不在 L12 的闭包里。
+     *
+     * 于是「机器在跑、但一半产物被堵死」这个状态完全没被覆盖。 */
+    OUTPUT_STRANDED: "L2: a machine that is running has an output slot with nothing on it",
     FLOW_UNREACHABLE: "L3: a declared flow does not reach its target",
     FLOW_UNVERIFIED: "L3 was degraded (no flows supplied) — not a pass",
 
@@ -507,6 +522,12 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["trash_unused", 8],
         ["connect", 6],
         ["extend_line", 4],
+    ]),
+    /* 悬空输出口：要么接出去，要么用垃圾桶吃掉，要么把整台机器拆了重建。 */
+    OUTPUT_STRANDED: cand([
+        ["connect", 8],
+        ["trash_unused", 6],
+        ["remove_machine", 3],
     ]),
 
     /* ── L3 ── */

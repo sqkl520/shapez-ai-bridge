@@ -574,6 +574,17 @@ test("P-a 只产出已登记的码（越界即红：别顺手加了没登记的�
          * `painter#13552` 的 color 槽是空格 → `stacker#14684` 两路只来一路 →
          * 攒不满 2 件不吐货 → 整座工厂冻结。一个空格冻住整条链。 */
         "MACHINE_STARVED",
+        /* 2026-11-21 补登 `OUTPUT_STRANDED`。
+         *
+         * 触发它需要「机器一端接通、另一端输出口空着」的中间态，
+         * L4/L5 夹具都不覆盖 —— 与前几个码同一种漏法。
+         *
+         * 依据：真机 `C2 cutter` 堵了**十个 run**，而 `diagnose()` 的 8 条诊断里
+         * 一条都没提它。它的 `left` 口接着 `B104` 通向 painter，`right` 口悬空。
+         * `ORPHAN_MACHINES` 只认两端全空，`DISCARDED_INTERMEDIATE` 要求形状在
+         * 目标闭包里（而它是上一关遗留线），`OUTPUT_UNROUTED` 只看计划里的机器 ——
+         * 三条都不管世界现状里「在跑但一半产物没去处」这件事。 */
+        "OUTPUT_STRANDED",
     ]);
     for (const [name, obs, rec] of [["L4", L4, RECIPE_L4], ["L5+ore", L5_WITH_ORE, RECIPE_L5]]) {
         for (const d of run(obs, rec, { level: 5 })) {
