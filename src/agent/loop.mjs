@@ -1051,14 +1051,71 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
                     candidates: ["connect", "trash_unused"],
                 }));
             } else if (produced <= 0 && (delta === null || delta <= 0)) {
-                out.push(mkDiag("NO_PRODUCTION", {
-                    layer: "L4", subject,
-                    expected: `${goalShape} 有产出`,
-                    observed: l4.reason || "窗口内目标形状零产出",
-                    handles: [subject.handle], uids: hub ? [hub.uid] : [],
-                    evidence: { check: "L4-behavior" },
-                    candidates: ["connect", "insert_machine", "trash_unused"],
-                }));
+                /* ★ 「没产出」和「产出了别的东西」是两件完全不同的事 ★
+                 *
+                 * 2026-11-21 真机 `r-20261121190439-6190`：模型第一次把线接对了
+                 * （`feed_sources` 推荐 + `role@dir` 格式），tx 35/35 落盘，
+                 * `produced_total` 从 `{}` 变成 `{----CgCg:4, ScScCgCg:9, CgScScCg:9}`，
+                 * hub 库存 `CgScScCg` 2071 → 2080 —— **真的产、真的交付了**。
+                 *
+                 * 而产的是 `CgScScCg`，**上一关（L11）的目标形状**。
+                 *
+                 * 旧代码在这里报的是「窗口内目标形状零产出」，然后 hint 让模型
+                 * 去「接上一条路」。于是它会继续修、继续产 L11 的形状 ——
+                 * 因为**没有任何一条诊断告诉它「你在造错的东西」**。
+                 *
+                 * `WRONG_SHAPE_PRODUCED` 这个码从第一次提交就登记在
+                 * `DIAG_CODES` 里，**但从来没有任何地方 emit 过它**
+                 * （`grep -rn WRONG_SHAPE_PRODUCED src/` 只有 constants.mjs 三处）。
+                 * 一条登记了三年的死码。
+                 *
+                 * 现在补上：产了东西但都不是目标形状 ⇒ 单独报，并说清产的是什么。 */
+                /* ⚠️ 这里是 `diagnose()` 内部，参数名是 `production`，不是 `ob.production`
+                 * —— `ob` 是 `runLoop` 里的变量，这里根本不存在。第一版写成
+                 * `ob.production` 会抛 ReferenceError，而外层有 try/catch ⇒
+                 * 整段静默不生效，症状是「加了诊断但一条都不报」。
+                 * 本仓库在 `computed-but-never-delivered` 里记过同族形态。 */
+                const producedAll = (production && production.produced_total
+                    && typeof production.produced_total === "object")
+                    ? production.produced_total : null;
+                const otherShapes = producedAll
+                    ? Object.entries(producedAll)
+                        .filter(([k, v]) => k !== goalShape && Number(v) > 0)
+                        .sort((a, b) => Number(b[1]) - Number(a[1]))
+                        .slice(0, 3)
+                    : [];
+                if (otherShapes.length) {
+                    const what = otherShapes.map(([k, v]) => `${k}×${v}`).join(", ");
+                    out.push(mkDiag("WRONG_SHAPE_PRODUCED", {
+                        layer: "L4", subject,
+                        expected: `产出窗口里出现 ${goalShape}`,
+                        observed: `窗口内在产 ${what} —— 一件 ${goalShape} 都没有`,
+                        handles: [subject.handle], uids: hub ? [hub.uid] : [],
+                        evidence: {
+                            check: "L4-behavior",
+                            produced: Object.fromEntries(otherShapes),
+                            goal: goalShape,
+                        },
+                        candidates: ["connect", "insert_machine", "replace_run"],
+                        hint: `**这条线是通的 —— 货真的产出来、也真的进了 hub。问题只是颜色/形状不对。**`
+                            + ` 产的是 ${what}，有 3 个常见原因：`
+                            + ` ① 喂进 painter 的**颜料颜色**不对（一个 painter 只吃一种颜料，`
+                            + `喂错色出来的就是另一个形状）；`
+                            + ` ② 缺一道工序（比如目标要两层却没接 stacker）；`
+                            + ` ③ 这条线本来就是**上一关遗留**的，产的是上一关的目标形状。`
+                            + ` 先看产出的颜色/齿形对不对，再决定是改颜料、补工序、还是拆掉重建 ——`
+                            + `**继续在这条线上修堵塞不会有任何用**。`,
+                    }));
+                } else {
+                    out.push(mkDiag("NO_PRODUCTION", {
+                        layer: "L4", subject,
+                        expected: `${goalShape} 有产出`,
+                        observed: l4.reason || "窗口内目标形状零产出",
+                        handles: [subject.handle], uids: hub ? [hub.uid] : [],
+                        evidence: { check: "L4-behavior" },
+                        candidates: ["connect", "insert_machine", "trash_unused"],
+                    }));
+                }
             }
         }
 
@@ -1242,8 +1299,16 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
          * 排在 `< PROCESSOR_REQUIRED` 之前：机器已经在世界上、只是喂不进去，
          * 这种情形比「还没有机器」更具体，也更该先处理。 */
         MIXER_UNFED: 2, PROCESSOR_REQUIRED: 3,
-        NO_PRODUCTION: 4, PRODUCED_NOT_DELIVERED: 5, FLOW_UNREACHABLE: 6, FLOW_UNVERIFIED: 7,
-        SLOT_STARVED: 8, OUTPUT_UNROUTED: 8,
+        /* ★ `WRONG_SHAPE_PRODUCED` 必须排在 `NO_PRODUCTION` **之前** ★
+         *
+         * 两者都描述「窗口里没有目标形状」，但前者多一句关键信息：
+         * **线是通的，只是造错了东西**。2026-11-21 真机实测，模型看到的是
+         * 「零产出」，于是继续去修堵塞，而它其实已经产出了 9 件 L11 的形状。
+         *
+         * 排在 `NO_PRODUCTION` 前面，这份信息才不会被「零产出」那句盖掉。 */
+        WRONG_SHAPE_PRODUCED: 4,
+        NO_PRODUCTION: 5, PRODUCED_NOT_DELIVERED: 6, FLOW_UNREACHABLE: 7, FLOW_UNVERIFIED: 8,
+        SLOT_STARVED: 9, OUTPUT_UNROUTED: 9,
         /* ★ `DEAD_LINES` / `ORPHAN_MACHINES` 必须排在这些**症状码之前** ★
          *
          * 这两个码是 2026-11-13 才加的，当时只登记了 `semantic.mjs` 自己的 `CODE_RANK`

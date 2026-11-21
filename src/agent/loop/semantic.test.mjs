@@ -2279,3 +2279,71 @@ test("★ feed_color：目标色无矿时，必须推荐 mixer 而不是任意�
     assert.equal(src[0].type, "mixer",
         `must_mix 非空时 mixer 必须排第一。实得：${JSON.stringify(src)}`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * WRONG_SHAPE_PRODUCED —— 「没产出」与「产出了别的东西」必须分开
+ *
+ * 2026-11-21 真机 `r-20261121190439-6190`：模型第一次把线接对了，
+ * tx 35/35 落盘，`produced_total` 从 `{}` 变成
+ * `{----CgCg:4, ScScCgCg:9, CgScScCg:9}`，hub 库存 `CgScScCg` 2071 → 2080。
+ * **真的产、真的交付了** —— 而产的是 `CgScScCg`，上一关（L11）的目标形状。
+ *
+ * 旧代码报的是 `NO_PRODUCTION`（「窗口内目标形状零产出」），hint 让模型
+ * 去「接上一条路」。于是它会继续修、继续产 L11 的形状 ——
+ * 因为没有任何一条诊断告诉它「你在造错的东西」。
+ *
+ * `WRONG_SHAPE_PRODUCED` 这个码从第一次提交就登记在 `DIAG_CODES` 里，
+ * 但**从来没有任何地方 emit 过它**（`grep -rn` 只有 constants.mjs 三处）。
+ * 一条登记了很久的死码，现在接上。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("WRONG_SHAPE_PRODUCED：产了非目标形状 ⇒ 报这条，不报 NO_PRODUCTION", async () => {
+    const { diagnose } = await import("../loop.mjs");
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 1000, delivered: 0, progress: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+        ],
+    };
+    /* 一份「L4 失败」的 report —— 目标形状零产出，但窗口里在产 L11 的形状 */
+    const report = {
+        checks: [{
+            name: "L4-behavior", ok: false,
+            reason: "跑完 2400 tick 后 CbCbCbRb:CwCwCwCw 一件都没产出",
+            evidence: { produced_window_after: 0, delivered_in_window_after: 0, goal_delivered_delta: 0 },
+        }],
+    };
+    const production = {
+        produced_total: { "CgScScCg": 9, "ScScCgCg": 9, "----CgCg": 4 },
+        delivered_total: { "CgScScCg": 9 },
+    };
+    const ds = diagnose(w, null, production, report, "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    const wrong = ds.find(d => d.code === "WRONG_SHAPE_PRODUCED");
+    const none = ds.find(d => d.code === "NO_PRODUCTION");
+    assert.ok(wrong, `应当报 WRONG_SHAPE_PRODUCED，实际 ${ds.map(d => d.code).join(",")}`);
+    assert.ok(!none, "已经报了「产了错形状」就不该再报「零产出」—— 那会把关键信息盖掉");
+    assert.match(wrong.observed, /CgScScCg/,
+        `observed 必须说出实际产的是什么形状，实得：${wrong.observed}`);
+    assert.match(wrong.hint, /颜色/, `hint 要点出常见原因是颜料/颜色不对：${wrong.hint}`);
+});
+
+test("WRONG_SHAPE_PRODUCED 负例：真的什么都没产 ⇒ 仍报 NO_PRODUCTION", async () => {
+    const { diagnose } = await import("../loop.mjs");
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 1000, delivered: 0, progress: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+        ],
+    };
+    const report = {
+        checks: [{
+            name: "L4-behavior", ok: false,
+            reason: "跑完 2400 tick 后一件都没产出",
+            evidence: { produced_window_after: 0, delivered_in_window_after: 0, goal_delivered_delta: 0 },
+        }],
+    };
+    const ds = diagnose(w, null, { produced_total: {}, delivered_total: {} }, report,
+        "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    assert.ok(ds.find(d => d.code === "NO_PRODUCTION"), `应当报 NO_PRODUCTION，实际 ${ds.map(d => d.code).join(",")}`);
+    assert.ok(!ds.find(d => d.code === "WRONG_SHAPE_PRODUCED"),
+        "什么都没产时不该报「产了错形状」");
+});
