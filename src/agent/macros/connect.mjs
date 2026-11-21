@@ -1866,6 +1866,38 @@ function scoreOf(cd, opts, world) {
             if (world) for (const c of cd.cells) { const r = world.cells.get(key(c[0], c[1])); if (r && r.type === "belt") reuse++; }
             return (len - reuse) * 1000 + turns;
         }
+        /* ★ `cheapest`：按「要拆掉多少东西」排序 ★
+         *
+         * 另外三个偏好全是**几何**的（短、少拐、多复用），没有一个在乎
+         * 「这条路会切掉什么」。于是 `prefer:"shortest"` 会挑一条横穿工厂中心、
+         * 覆盖掉 165 段主干道（上面有 259 件货）的直线 —— 几何上最短，代价最大。
+         *
+         * 实测（2026-11-21，L12 `r-20261121072433-521e`，F-03）：
+         * 模型选 `M9 → C3.color`，`prefer:"shortest"` 给出 31 格、覆盖 5 条带子，
+         * 其中 `B85` 上有 **259 件货**。预演闸门判「可交付带子 309 → 21」拒绝 ——
+         * 闸门拦得对，但模型根本不知道有更便宜的路。
+         *
+         * 同一份世界里到 `C3.color` 的真实成本表：
+         *
+         *   M15(绿)  28 格 / 拆 2 条  ← 又便宜、矿种又对
+         *   M13(绿)  29 格 / 拆 6 条
+         *   M17(铜)  14 格 / 拆 1 条  ← 最便宜，但矿种不对
+         *   M9(钌)   31 格 / 拆 5 条  ← 模型选的这条
+         *   M7(蓝)   70 格 / 拆 3 条
+         *
+         * 排序口径：**先按拆掉的带子条数，再按它们的总格数，最后才按路径长度**。
+         * 用条数打头而不是格数：一条 165 段的带子和一条 1 段的带子，
+         * 「切了几处」比「切了几格」更接近「弄坏了几个东西」。
+         *
+         * 注意这不改变 `allow_replace` 的语义 —— 它仍然需要显式开启或由
+         * `auto_relax` 代为开启；`cheapest` 只影响**在已允许覆盖时挑哪一条**。 */
+        case "cheapest": {
+            /* `occ.replaceable` = 这条路径上**既有带子的格数**（`checkOccupancy` 的口径）。
+             * 它只在 `allow_replace` 打开时才被累加，而 `cheapest` 本来就是
+             * 「已经允许覆盖时挑哪一条」，所以口径对得上。 */
+            const cellsReplaced = cd.occ && Number.isFinite(cd.occ.replaceable) ? cd.occ.replaceable : 0;
+            return cellsReplaced * 1e6 + len * 1e3 + turns;
+        }
         case "shortest":
         default: return len * 1000 + turns;
     }

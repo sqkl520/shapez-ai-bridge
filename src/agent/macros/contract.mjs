@@ -735,6 +735,18 @@ function validatePort(port, field) {
  * @param {{from:Endpoint, to:Endpoint, opts?:object}} args
  * @returns {Validation} value = 归一后的 {from, to, opts}
  */
+/* `connect` 的路径偏好。前三个是**几何**偏好，第四个是**代价**偏好 ——
+ *
+ * 前三者回答「怎么走最省事」，没有一个人在乎「这条路会切掉什么」。
+ * 于是 `shortest` 会挑一条横穿工厂中心、覆盖 165 段主干道（上面 259 件货）的直线。
+ * 实测 L12：模型选 M9→C3.color，shortest 给出 31 格/覆盖 5 条（其中 B85 有 259 件），
+ * 预演闸门判「可交付 309→21」拒绝 —— 闸门对，但模型不知道有更便宜的路
+ * （同一目的地 M15 只要 28 格/覆盖 2 条）。
+ *
+ * `cheapest` = 先按「覆盖的既有带子格数」，再按路径长度。
+ * 它不改变 `allow_replace` 的语义（仍要显式开启），只影响**已允许覆盖时挑哪一条**。 */
+const PREFER_VALUES = ["shortest", "fewest_turns", "reuse_existing", "cheapest"];
+
 export function validateConnectArgs(args) {
     const A = "connect";
     if (!isObj(args)) return fail("bad_type", null, `${A} 的入参必须是对象`);
@@ -751,8 +763,7 @@ export function validateConnectArgs(args) {
     const opts = args.opts === undefined ? {} : args.opts;
     if (!isObj(opts)) return fail("bad_type", "opts", `${A}.opts 必须是对象`);
     const allowed = ["rebind", "allow_replace", "auto_relax", "max_cells", "prefer", "dry_run",
-        "tunnels", "tunnel_variant", "tunnel_range"];
-    for (const k of Object.keys(opts)) {
+        "tunnels", "tunnel_variant", "tunnel_range"];    for (const k of Object.keys(opts)) {
         if (!allowed.includes(k)) return fail("unknown_field", `opts.${k}`, `${A}.opts 不认识 '${k}'`);
     }
     if (opts.rebind !== undefined && typeof opts.rebind !== "boolean") {
@@ -771,9 +782,9 @@ export function validateConnectArgs(args) {
         return fail("bad_type", "opts.max_cells", "max_cells 必须是 1..5000 的整数",
             "默认 2000。超过这个量级说明不是「连一条线」，是该用 build_line。");
     }
-    if (opts.prefer !== undefined && !["shortest", "fewest_turns", "reuse_existing"].includes(opts.prefer)) {
+    if (opts.prefer !== undefined && !PREFER_VALUES.includes(opts.prefer)) {
         return fail("bad_type", "opts.prefer",
-            `prefer 必须是 shortest | fewest_turns | reuse_existing`, `实得 ${JSON.stringify(opts.prefer)}`);
+            `prefer 必须是 ${PREFER_VALUES.join(" | ")}`, `实得 ${JSON.stringify(opts.prefer)}`);
     }
     /* 隧道兜底（`tunnel.mjs`）：覆盖也不行时，从既有带子底下穿过去。
        `tunnels:false` 是显式关闭 —— 只在调用方明确不希望引入隧道时用。 */
@@ -1437,7 +1448,24 @@ export const MACRO_SPECS = Object.freeze({
             { name: "opts.rebind", type: "boolean", required: false, description: "**口上**的开关：from.port 已被别的接收方占着时，是否允许改接（会让旧那条断流）。默认 false。" },
             { name: "opts.allow_replace", type: "boolean", required: false, description: "**路上**的开关：是否允许覆盖路径上的既有带子（只覆盖带子，永不覆盖机器）。默认 false。" },
             { name: "opts.max_cells", type: "int 1..5000", required: false, description: "路径格数上限，默认 2000。超了说明不是「连一条线」。" },
-            { name: "opts.prefer", type: "shortest|fewest_turns|reuse_existing", required: false, description: "路径偏好，默认 shortest（带子恒速，拐角不掉速 ⇒ 短就是好）。想要少拐弯就显式传 fewest_turns。" },
+            {
+                name: "opts.prefer", type: "shortest|fewest_turns|reuse_existing|cheapest", required: false,
+                /* ★ 这段描述必须说清 `cheapest`，因为它是**唯一**在乎「会拆掉什么」的选项 ★
+                 *
+                 * 前三者全是几何偏好：短、少拐、多复用。没有一个人在问
+                 * 「这条路要覆盖多少条正在工作的带子」。而 `connect` 在
+                 * `allow_replace` 打开时会真的覆盖 —— 覆盖哪些、代价多大，
+                 * 只有预演闸门事后能看到，模型事前看不到。
+                 *
+                 * 实测 L12：`M9→C3.color` 用默认 shortest 给出 31 格/覆盖 5 条
+                 * （其中 B85 上是 165 段主干道、259 件货），闸门拒绝；
+                 * 而同一个目的地 `M15` 只要 28 格/覆盖 2 条，能直接落地。
+                 *
+                 * 所以这条卡片必须点明：**允许覆盖时，用 cheapest**。 */
+                /* ⚠️ `firstClause` 只取到**第一个**中文句号/分号/逗号（上限 30 字符），
+                   所以最关键的那句必须在第一个标点之前 —— 否则整段被截掉。 */
+                description: "cheapest=少拆东西，shortest 会横穿主干道。其余三个是几何偏好。",
+            },
             { name: "opts.dry_run", type: "boolean", required: false, description: "只算不写，返回计划。" },
         ],
         /**

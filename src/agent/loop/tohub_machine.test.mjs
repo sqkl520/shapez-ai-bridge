@@ -450,8 +450,24 @@ test("E. 回归：belt 名额用满、prompt 字符数没有变差", () => {
      * 数据拿不到时整段消失（half 夹具没有 stored，一字不涨，仍是 3266/3400）。
      *
      * 上调后如果哪天又变长，仍然会红。 */
+    /* ⚠️ 2026-11-21：`L4` 的上限 4620 → 4640（+20）。
+     *
+     * `connect` 的 `opts.prefer` 多了一个取值 `cheapest`（少拆东西）。
+     * 卡片 params 行渲染的是 `name:type` 加 description 的**第一个分句**，
+     * 所以净成本 = 那个词 + 它的说明（`cheapest=少拆东西`）。
+     * 名字用 `least_loss` 会再贵 10 个字符，`cheapest` 已经是最短的合理命名。
+     *
+     * 为什么值得这 20 个字符（实测）：
+     *   L12 上模型选 `M9 → C3.color`，默认 `shortest` 给出 31 格、覆盖 5 条带子，
+     *   其中 `B85` 是一条 165 段主干道、上面有 **259 件货**。预演闸门判
+     *   「可交付 309 → 21」拒绝 —— 闸门拦得对，但模型根本不知道有更便宜的路。
+     *   同一目的地的真实成本表：`M15` 28 格/覆盖 2 条（能落地）、`M13` 29 格/6 条、
+     *   `M17` 14 格/1 条。三个几何偏好（shortest / fewest_turns / reuse_existing）
+     *   里**没有一个**在乎「会拆掉什么」，这是缺的那一维。
+     *
+     * 上调后如果哪天又变长，仍然会红。 */
     const cases = [
-        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4620 },
+        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4640 },
         { name: "half", obs: HALF_OBS, tbl: HALF_TABLE, maxChars: 3400 },
         /* 缺 SCENARIO 夹具时跳过这一档（见文件头对那份未跟踪夹具的说明）。
            不静默改数值 —— 缺就是缺。 */
