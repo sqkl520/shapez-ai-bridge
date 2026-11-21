@@ -3448,6 +3448,75 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 }
             }
             if (starved.length) {
+                /* ★ 排序：**上游的那台排第一**，不是下游的（2026-11-21 实测修正）★
+                 *
+                 * 第一版按「离 hub 近」排（用 `hubReachable` 当代理），结果把
+                 * `stacker#14684` 排到了第一。**那是错的**，实测追出来的链条是：
+                 *
+                 *     painter#13552 输出 (-5,16)
+                 *       → belt#14977@(-5,16) → 14978..14992（16 格竖列）
+                 *       → stacker#14684 的进料格 (-2,6)     ← stacker 缺的正是这一路
+                 *
+                 * 也就是说 **painter 才是根**，stacker 只是它下游的第一个受害者。
+                 * 修 stacker 是治不了根的 —— 它缺的那路料，源头就是 painter。
+                 *
+                 * 正确的判据：**在「缺料机器」这张图里，谁的输出通向谁**。
+                 * 谁没有「缺料机器」给它供料，谁就是根。
+                 *
+                 * 具体做法（不建整图，只建这 N 台之间的关系，N 通常 ≤ 6）：
+                 *   从每台机器缺料的那些格子出发，向上游走带子，
+                 *   看能不能走到另一台「缺料机器」的输出。能，说明它在上游。
+                 *
+                 * 排序：**上游的排前面**（根先修）。同档按 uid 保证确定性。
+                 *
+                 * ⚠️ 没有 items 数据或走不通时，退回扫描顺序 —— 不假装知道更多。 */
+                const starvedUids = new Set(starved.map(s => s.m.uid));
+                const outCellsOf = (m) => {
+                    try {
+                        const sl = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m));
+                        return (sl && Array.isArray(sl.outputs)) ? sl.outputs.map(o => o.cell) : [];
+                    } catch { return []; }
+                };
+                /* 从某格向上游走，看能否遇到一台「缺料机器」的输出格 */
+                const upstreamStarved = (startCell) => {
+                    const seen = new Set();
+                    let cell = startCell;
+                    for (let hop = 0; hop < 40; hop++) {
+                        const rec = at(idx, cell);
+                        if (!rec || !isBelt(rec)) break;
+                        if (seen.has(rec.uid)) break;          // 环
+                        seen.add(rec.uid);
+                        const up = entryCellOf(rec);
+                        const upRec = at(idx, up);
+                        if (!upRec) break;                     // 走到空地 = 断口
+                        if (!isBelt(upRec)) {
+                            /* 走到一台机器：它是不是「缺料机器」之一？ */
+                            return starvedUids.has(upRec.uid) ? upRec : null;
+                        }
+                        cell = up;
+                    }
+                    return null;
+                };
+                /* 「我是谁的上游」—— 我的输出格能被谁向上追到 */
+                const feedsAnotherStarved = (s) => {
+                    const mine = new Set(outCellsOf(s.m).map(c => c[0] + "," + c[1]));
+                    if (!mine.size) return false;
+                    for (const other of starved) {
+                        if (other.m.uid === s.m.uid) continue;
+                        for (const f of other.fed) {
+                            if (f.ok) continue;                // 只看它缺的那几路
+                            const src = upstreamStarved(f.cell);
+                            if (src && src.uid === s.m.uid) return true;
+                        }
+                    }
+                    return false;
+                };
+                starved.sort((a, b) => {
+                    const fa = feedsAnotherStarved(a) ? 0 : 1;   // 供给别的缺料机器 ⇒ 它在更上游
+                    const fb = feedsAnotherStarved(b) ? 0 : 1;
+                    if (fa !== fb) return fa - fb;               // 上游的排前面（根先修）
+                    return a.m.uid - b.m.uid;
+                });
                 const worst = starved[0];
                 const hs = starved.map(s => handleOf(handles, s.m.uid)).filter(Boolean);
                 const detail = starved.map(s => {
@@ -3473,12 +3542,21 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             + "everything upstream of it backs up and freezes",
                     },
                     candidates: ["connect", "insert_machine"],
+                    /* ★ 文案去掉自相矛盾，并给出「从哪一端开始」（2026-11-21）★
+                     *
+                     * 旧版同时说「最典型的是 painter（扫描顺序第一个）」
+                     * 和「先修最下游那一台」—— 而这两句在这台世界上指的不是同一台。
+                     *
+                     * 新版：`worst` 已按拓扑排过序，文案不再自称「最典型」，
+                     * 直接说「从这台开始，因为它在最下游」。 */
                     hint: `**${starved.length} 台机器只吃到一半的料，它们永远不会产出。**`
-                        + `最典型的是 ${worst.m.type}#${worst.m.uid}：${worst.nFed}/${worst.total} 路有料。`
-                        + `多输入机器（stacker 要两路、painter 要形状+色）**少一路就一件不出**，`
-                        + `而它不出货，上游所有带子会一路堵死 —— 那才是「一件都交付不了」的根源。`
-                        + `修法：把缺的那一路接上（\`connect\`），源头没有就 \`insert_machine\` 补一台。`
-                        + `⚠️ 先修**最下游**那一台：它通了，上游的堵塞会自己解开。`,
+                        + `这会让整条链一起冻住：机器不出货 → 上游带子堵满 → 再往上的矿机也停下。`
+                        + `\n**从 ${worst.m.type}#${worst.m.uid} 开始**（${worst.nFed}/${worst.total} 路有料）`
+                        + `—— 它在这些缺料机器里最靠**上游**，是这条链的根；它不修，下游修多少台都没用。`
+                        + `\n修法：把缺的那一路接上（\`connect\`），源头没有就 \`insert_machine\` 补一台。`
+                        + (starved.length > 1
+                            ? `这一台通了之后，再看另外 ${starved.length - 1} 台是否恢复。`
+                            : ""),
                 });
             }
         }

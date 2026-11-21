@@ -1933,8 +1933,19 @@ test("MACHINE_STARVED：stacker 两路只来一路 ⇒ 要报", () => {
     assert.equal(d.evidence.starved[0].type, "stacker");
     assert.equal(d.evidence.starved[0].fed, 1);
     assert.equal(d.evidence.starved[0].need, 2);
-    assert.match(d.hint, /先修\*\*最下游\*\*/,
-        `必须告诉模型修的顺序 —— 先通最下游，上游的堵塞会自己解开。实际：${d.hint}`);
+    /* ★ 2026-11-21 改：从「先修最下游」改成「先修最上游」★
+     *
+     * 第一版说「最下游」，实测追链条发现那是**反的**：
+     *
+     *     painter#13552 输出 (-5,16) → 16 格竖列 → stacker#14684 的进料 (-2,6)
+     *
+     * painter 是根，stacker 只是它下游的第一个受害者。修 stacker 治不了根
+     * —— 它缺的那路料，源头就是 painter。
+     *
+     * 现在 hint 必须说「最靠上游、是这条链的根」。 */
+    assert.match(d.hint, /最靠\*\*上游\*\*/,
+        `必须告诉模型先修根（最上游），不是先修最下游。实际：${d.hint}`);
+    assert.match(d.hint, /是这条链的根/, `要说清为什么先修它。实际：${d.hint}`);
 });
 
 test("MACHINE_STARVED 负例：两路都有货 ⇒ 不报", () => {
@@ -1975,4 +1986,60 @@ test("MACHINE_STARVED 负例：两路全空 ⇒ 不报（那是 CHAIN_UNFED 的�
         { recipe: { ok: false }, level: 12 });
     assert.ok(!ds.some(x => x.code === "MACHINE_STARVED"),
         "两路全空是「上游没建好」，不该报成「缺一路料」");
+});
+
+test("MACHINE_STARVED：多台缺料时，subject 必须指向**上游的根**，不是下游受害者", () => {
+    /* 这条钉的是 2026-11-21 实测修正的排序逻辑。
+     *
+     * 真机链条（`.findings/A-hub-delivery.md` §4.1 逐跳追出来的）：
+     *
+     *     painter#13552 输出 (-5,16) → belt#14977..14992（16 格竖列）
+     *       → stacker#14684 的进料 (-2,6)
+     *
+     * 两台都缺料。第一版按「离 hub 近」排序，把 stacker 排到第一 —— **错的**。
+     * 修 stacker 治不了根：它缺的那路料，源头就是 painter。
+     *
+     * 判据：谁的输出通向另一台缺料机器，谁就在上游、谁先修。
+     *
+     * 夹具：造一台 painter 和一台 stacker，painter 的输出经 2 格带子
+     * 流进 stacker 的一个输入口；两台各自都还缺一路。 */
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            /* 真实几何（slotsOf 实测）：
+               painter@(10,10): IN shape=(9,10) color=(11,9)  OUT=(12,10)
+               stacker@(10,14): IN lower=(10,15) upper=(11,15) OUT=(10,13) */
+            { uid: 100, type: "painter", x: 10, y: 10, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            /* painter 的 shape 槽上有带子；color 槽 (11,9) 空着 */
+            { uid: 150, type: "belt", x: 9, y: 10, r: 0, rv: 0, code: 2, layer: "regular" },
+            /* painter 输出 (12,10) 往下的竖列，最后落在 stacker 的 upper (11,15) */
+            { uid: 200, type: "belt", x: 12, y: 10, r: 90, rv: 0, code: 2, layer: "regular" },
+            { uid: 201, type: "belt", x: 12, y: 11, r: 90, rv: 0, code: 2, layer: "regular" },
+            { uid: 202, type: "belt", x: 12, y: 12, r: 90, rv: 0, code: 2, layer: "regular" },
+            { uid: 203, type: "belt", x: 12, y: 13, r: 90, rv: 0, code: 2, layer: "regular" },
+            { uid: 204, type: "belt", x: 12, y: 14, r: 90, rv: 0, code: 2, layer: "regular" },
+            { uid: 205, type: "belt", x: 11, y: 15, r: 0, rv: 0, code: 2, layer: "regular" },
+            { uid: 300, type: "stacker", x: 10, y: 14, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+        ],
+        resources: [[20, 20, "CuCuCuCu"]],
+    };
+    /* painter: shape(9,10) 有货、color(11,9) 空 —— 缺一路
+       stacker: upper(11,15) 有货、lower(10,15) 空 —— 缺一路 */
+    const items = {
+        belts: [
+            { cell: [9, 10], path: 0, idx: 0, pos: 1.0, spacing_to_next: 0, item: "CuCuCuCu" },
+            { cell: [11, 15], path: 1, idx: 0, pos: 1.0, spacing_to_next: 0, item: "CbCbCbCb" },
+        ],
+        ejectors: [], underground: [], pending: [], pathCount: 2, truncatedPaths: false, paths: [],
+        counts: { belts: 2 },
+    };
+    const ds = semanticDiagnoses(w, items, "CbCbCbRb:CwCwCwCw", buildHandles(w, items),
+        { recipe: { ok: false }, level: 12 });
+    const d = ds.find(x => x.code === "MACHINE_STARVED");
+    assert.ok(d, `应当报 MACHINE_STARVED，实际 ${ds.map(x => x.code).join(",")}`);
+    assert.ok(d.evidence.starved.length >= 2, `应当报出至少 2 台，实际 ${JSON.stringify(d.evidence.starved)}`);
+    assert.equal(d.subject.type, "painter",
+        `subject 必须指向**上游的根**（painter），不是下游受害者（stacker）。`
+        + `实际：${JSON.stringify(d.subject)}；顺序：${d.evidence.starved.map(x => x.type).join("→")}`);
 });
