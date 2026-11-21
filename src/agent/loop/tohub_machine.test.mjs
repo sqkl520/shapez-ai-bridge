@@ -466,8 +466,26 @@ test("E. 回归：belt 名额用满、prompt 字符数没有变差", () => {
      *   里**没有一个**在乎「会拆掉什么」，这是缺的那一维。
      *
      * 上调后如果哪天又变长，仍然会红。 */
+    /* ⚠️ 2026-11-21：`L4` 的上限 4640 → 4710（+70）。
+     *
+     * `## HUB` 段新增一行图例：
+     * `(`←X` = inlet already fed; connect to it ⇒ port_already_bound)`
+     *
+     * 为什么值得这 60 个字符（实测）：
+     *   历史 54 个被拒计划里，`connect:port_already_bound` **37 次**，
+     *   是最高频的失败码。而真机上就有一例是 `connect B599 → H1` ——
+     *   `B599` **本来就在 hub 的已接列表里**：
+     *   `H1 hub 入口=16 已接=10(←B135/←B599/←B300/...)`。
+     *
+     *   信息一直在 prompt 里，但格式是 `←B599` 这种「反箭头 + 句柄」，
+     *   没有一句话说「这些是已经接好的」。模型把它当成
+     *   「hub 附近有哪些带子」的清单，而不是「已占用的口」。
+     *
+     *   一行图例换掉 37 次失败，这是最便宜的一类修复。
+     *
+     * 上调后如果哪天又变长，仍然会红。 */
     const cases = [
-        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4640 },
+        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4710 },
         { name: "half", obs: HALF_OBS, tbl: HALF_TABLE, maxChars: 3400 },
         /* 缺 SCENARIO 夹具时跳过这一档（见文件头对那份未跟踪夹具的说明）。
            不静默改数值 —— 缺就是缺。 */

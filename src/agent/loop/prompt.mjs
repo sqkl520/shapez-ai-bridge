@@ -876,7 +876,26 @@ function renderDesc(handle, type, desc) {
 function renderHub(tbl) {
     const hub = tbl.hubHandle ? tbl.byHandle.get(String(tbl.hubHandle)) : null;
     if (!hub) return "## HUB\n(no hub handle in this table — do not reference a hub)";
-    return `## HUB\n${hub.handle} ${hub.type}${renderDesc(hub.handle, hub.type, hub.desc)}`;
+    const lines = [`## HUB`, `${hub.handle} ${hub.type}${renderDesc(hub.handle, hub.type, hub.desc)}`];
+    /* ★ 必须明说「已接的入口不能再接」★
+     *
+     * 2026-11-21 实测：`port_already_bound` 是历史最高频的失败码（37 次），
+     * 而真机上就有一次是 `connect B599 → H1` —— 而 `B599` **本来就在已接列表里**：
+     *
+     *   H1 hub 入口=16 已接=10(←B135/←B599/←B300/...)
+     *
+     * 信息一直就在 prompt 里，但格式是 `←B599` 这种「反箭头 + 句柄」，
+     * 没有任何一句话说「这些是已经接好的、再接就是抢别人的线」。
+     * 模型于是把它当成「hub 附近有哪些带子」的清单，而不是「已占用的口」。
+     *
+     * 一行字换掉 37 次失败，这是最便宜的一类修复。 */
+    if (/已接=\d+\(/.test(hub.desc || "")) {
+        lines.push("(`←X` = inlet already fed; connect to it ⇒ port_already_bound)");
+    }
+    /* ⚠️ HUB 存量段**不在这里**：它走 `buildPrompt` 里那条独立的预算路径
+       （带子和 CAPACITY 都定完之后才塞），否则会抢带子名额。
+       见 `renderHubStored` 上方的注释。 */
+    return lines.join("\n");
 }
 
 /** 件数低于它就当噪声不列（碎片化的半成品会有很多 1、2 件的小额）。 */
