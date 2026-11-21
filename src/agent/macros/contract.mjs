@@ -539,6 +539,32 @@ function rejectUnknownKeys(args, allowed, macro) {
                     `${macro} 的参数 '${k}' 在 opts 下面，不是顶层 —— 正确写法是 opts:{${k}: ...}`,
                     `改成 \`{... , opts:{${k}: <值>}}\`。顶层只认：${allowed.join(", ")}。`);
             }
+            /* ★ 端点内部的字段被写到了顶层（2026-11-21 实测）★
+             *
+             * `connect` 的两个端点 `from` / `to` 各自可以带 `port`，
+             * 合法形态是 `to: {ref:"C3", port:{role:"color",index:0}}`。
+             * 而模型写成了 `to:{ref:"C3"}, port:"color"` —— port 放到了**顶层**。
+             *
+             * 真机实测（`research/ai-plan/experiments/force-one/off-04.json`）：
+             * 模型的推理是**完全正确**的 ——「painter C3 缺 color 进料，矿机输出口空着，
+             * 直接把颜料送进去」，正是 `MACHINE_STARVED` 让它做的事。但这一条
+             * 因为 `unknown_field` 被拒，整轮的三个修法一个都没落地。
+             *
+             * 而它收到的错误是「connect 不认识参数 'port'；允许的参数：from, to, opts」——
+             * 这句话没说「port 是存在的，只是在端点里面」。模型下一轮很可能换个写法再猜。
+             *
+             * 这类「名字对、层级错」与上面 `opts.*` 是同一族，只是层级更深一层。 */
+            const ENDPOINT_ARG_KEYS = ["port"];
+            if (spec && Array.isArray(spec.params)
+                && spec.params.some(x => ["from", "to"].includes(x.name))
+                && ENDPOINT_ARG_KEYS.includes(k)) {
+                return fail("unknown_field", k,
+                    `${macro} 的 '${k}' 属于**端点内部**，不是顶层参数 —— `
+                        + `正确写法是把它放进 from 或 to 里面：\`{to:{ref:"C3", ${k}:...}}\``,
+                    `顶层只认：${allowed.join(", ")}。`
+                        + `端点可以带 ${k}，例如 \`{"to":{"$ref":"C3","${k}":{"role":"color","index":0}}}\` `
+                        + `或 \`{"to":{"$ref":"C3","${k}":"color"}}\`（角色唯一时才可省略 index）。`);
+            }
             return fail("unknown_field", k,
                 `${macro} 不认识参数 '${k}'`,
                 `允许的参数：${allowed.join(", ")}`);

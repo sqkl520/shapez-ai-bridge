@@ -409,6 +409,31 @@ t("每个校验器都拒绝未知参数（含裸坐标键），且错误码是 u
     }
 });
 
+t("connect：`port` 写错层级时，错误必须给出正确写法（2026-11-21 实测）", () => {
+    /* 模型写 `{from:{uid}, to:{uid}, port:"color"}` —— port 放到了顶层，
+       而合法形态是塞进 `to` 里面。
+
+       真机 `research/ai-plan/experiments/force-one/off-04.json`：
+     * 模型的推理**完全正确**（「painter C3 缺 color 进料，矿机输出口空着，
+       直接把颜料送进去」—— 正是 MACHINE_STARVED 让它做的事），
+     * 但这一条被 `unknown_field` 拒掉，整轮三个修法一个都没落地。
+     *
+     * 旧错误只说「不认识参数 'port'；允许的参数：from, to, opts」——
+     * 没说「port 是存在的，只是在端点里面」，模型只能换个写法再猜。 */
+    const v = MACRO_VALIDATORS.connect({ from: { uid: 1 }, to: { uid: 2 }, port: "color" });
+    eq(v.ok, false, "顶层 port 应被拒");
+    eq(v.error.code, "unknown_field");
+    ok(/端点内部/.test(v.error.message),
+        `错误信息必须说清 port 属于端点内部，实际：${v.error.message}`);
+    ok(/to:\{|\{"to"/.test(v.error.hint),
+        `hint 必须给出正确写法，实际：${v.error.hint}`);
+    ok(/"port"|port:"/.test(v.error.hint), "hint 里要出现 port 的正确位置");
+
+    /* 正确写法必须放行（证明错误信息指向的形态真的可用） */
+    const good = MACRO_VALIDATORS.connect({ from: { uid: 1 }, to: { uid: 2, port: "color" } });
+    eq(good.ok, true, "把 port 放进 to 里面应当通过校验");
+});
+
 t("connect：opts.rebind / allow_replace 是两个独立开关，契约与实现一致", () => {
     const spec = MACRO_SPECS.connect;
     eq(spec.optsRelation.independent, ["opts.rebind", "opts.allow_replace"]);
