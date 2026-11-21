@@ -1262,6 +1262,33 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
          * 不排更高（不进 1–4）是因为「配方前提没满足」比「地形脏」更该先处理 ——
          * 世界再脏，只要 mixer 喂不进去就永远没有产出。 */
         DEAD_LINES: 8, ORPHAN_MACHINES: 8,
+        /* ★ `MACHINE_STARVED` 排 3：**这是第三次踩同一个坑**（2026-11-21）★
+         *
+         * 跨层 RANK 是本表说了算的，`semantic.mjs` 的 `CODE_RANK` 只管层内。
+         * 没登记在这里 ⇒ 落到默认 **50** ⇒ 排在所有症状码之后。
+         *
+         * 实测（`r-20261121072433-521e`，8 条诊断）：
+         *
+         *     1.HUB_INLET_THIN(4)  2.NO_PRODUCTION(4)  3.BELT_HANDOFF_REJECTED(9)
+         *     4.CHAIN_UNFED(10)    5.CHAIN_UNFED(10)
+         *     6.MACHINE_STARVED(50) ← 成因，排在第 6
+         *     7.MINER_UNWIRED(50)  8.MIXER_COLOR_AIMED(50)
+         *
+         * 而同一条链路里，`CHAIN_UNFED` 是**症状**（某条带的入口没上游），
+         * `MACHINE_STARVED` 是**成因**（机器缺料 → 不产出 → 上游才堵）。
+         * 症状排在成因前面，模型当然去修症状。
+         *
+         * 前两次同样的坑：
+         *   · `DEAD_LINES` / `ORPHAN_MACHINES`（见上面那段）
+         *   · `HUB_FED_BY_COLOR` / `HUB_INLET_THIN`（见下面那段）
+         * 都是「码加了，跨层表忘了登记」⇒ 整批消失或排到最后。
+         *
+         * 排 3（`MIXER_UNFED`=2 之后、`NO_PRODUCTION`=4 之前）的依据是因果深度：
+         * 「配方前提没满足」最该先修，其次是「机器缺料、整条链冻住」，
+         * 再往后才是「没有产出」这种结果码。
+         *
+         * 零字符预算 —— 只是换个排序位置。 */
+        MACHINE_STARVED: 3,
         /* ★ `UPGRADE_AVAILABLE` 与它们同级 ★
          *
          * 同一类：不是「坏了」，是「有一件零成本的好事没做」。但它比地形脏更值得说 ——
