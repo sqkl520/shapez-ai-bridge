@@ -41,6 +41,7 @@ import crypto from "node:crypto";
 
 import {
     indexOf, flowReachable, isBelt, isTunnel, sourceEntityOf,
+    accepts, exitCellOf, exitDirOf, runEnd,
 } from "./topology.mjs";
 
 /** 非带子、非 hub 的实体就算「机器」。用于区分「加机器」与「铺带子」。 */
@@ -78,6 +79,130 @@ export function shapeHash(obs) {
 }
 
 /**
+ * 一条「死带子」的形态：它是**接在东西上**的，还是**悬空**的。
+ *
+ * ## 为什么需要这一项（2026-11-21 真机，`r-20261121190439-6190`）
+ *
+ * 模型执行 `connect M13 → C3.color` —— 正确的动作（离线与真机都证实它能产、能交付）。
+ * 世界指标：
+ *
+ *     reach: 309 → 309   （原有可达集一条没动，lost 0 / gained 0）
+ *     dead : 390 → 413   （+23）
+ *
+ * 逐 uid 归因：+23 **全部是新增的 29 条喂机器的带子**（接在机器上，按定义到不了 hub），
+ * 减掉删掉的 6 条原本被判 `cycle` 的。**没有一条原有活带子变死。**
+ *
+ * 而 `classifyNetEffect` 据 `dead.delta` 判 `regressive` → `decideRollback` 回滚了它 →
+ * 跨 run 记忆写入「connect → rolled back, judged harmful」→ 下一轮模型读到
+ * 「别用 connect」，而 connect 是**唯一**能往 mixer 喂料的宏。
+ *
+ * 旧豁免 `dead.delta < belts.delta && dead.delta < 10` 在这里必然失效：
+ * +23 既 ≥ 10，也不小于 belts.delta（23 vs 23 —— 因为它同时删了 6 条）。
+ *
+ * ## 判据：新带子**接没接在东西上**
+ *
+ * `belts_dead` 是个**混装**的桶，里面有两种完全不同的东西：
+ *
+ *   · **接在机器上**（喂某台机器的输入槽）—— 货有去处，只是到不了 hub。
+ *     这是配方连线的**正常产物**（`mixer→painter.color` 这类必需边全都到不了 hub）。
+ *   · **悬空**（两头都不接东西）—— 白铺。
+ *
+ * 所以这里把死带子按**下游终点**分类，只数「悬空」那一半。判据与
+ * `loop.mjs` 预演闸门里的 `landsOnMachine` 同源（那边判「新铺的线的末端是不是机器」），
+ * 这里是它的全量版。
+ *
+ * 一个坑：`runEnd` 从 ctx 取实体，而 `at()` 是 **footprint 级**的，2×1 机器旋转
+ * 90°/270° 后部分格会被机器遮住 —— 带子明明在那儿，`runEnd` 却说 empty。
+ * 真机那 29 条里就有一条（`17664 @(-3,1)`，压在 mixer 的 footprint 上）。
+ * 所以这里用一份**带子优先**的索引（同格冲突时带子赢），与 `indexOf` 的「先出现者赢」
+ * 不冲突：只在这一个函数里用，且只服务「这条死带子往哪走」这个问题。
+ */
+
+/** 跑链终点里，「接在东西上」的类型集合。
+ *
+ * `trash` **不算** —— 那是丢货，不是喂料（一条把货倒进垃圾桶的带子对产线没有贡献）。
+ * `hub` **算** —— 它显然是货的去处；能进 `beached` 又跑到 hub 的，是被
+ * `flowReachable` 按「源头成环 / 末端是颜料」摘掉的那些，它们仍然接在东西上。 */
+const FLOW_SINK = new Set([
+    "hub", "miner", "cutter", "rotater", "stacker", "mixer", "painter",
+    "balancer", "constant_signal", "switch",
+]);
+
+/**
+ * 带子优先的索引。同一格既有带子又有机器 footprint 时，带子赢。
+ *
+ * `indexOf` 是「先出现者赢」，而 footprint 展开之后机器的占格会把带子遮住
+ * （2×1 机器旋转 90°/270° 时尤其明显 —— slot 本体格会落到 footprint 之外）。
+ */
+function beltFirstIndex(o) {
+    const ents = (o && Array.isArray(o.entities) ? o.entities : []).filter(e => e && Number.isInteger(e.uid));
+    const belts = ents.filter(e => isBelt(e) || isTunnel(e));
+    const rest = ents.filter(e => !isBelt(e) && !isTunnel(e));
+    return indexOf({ ...o, entities: [...belts, ...rest] });
+}
+
+/**
+ * 死带子里**悬空**（下游不接任何东西）的条数。
+ *
+ * 一条死带子的下游终点有三种结局：
+ *   · 接上某台机器/hub ⇒ **有去处**，只是到不了 hub。配方连线（`mixer→painter.color`）
+ *     全是这一类，它们是正常施工产物，不该算「白铺」。
+ *   · 断在空格上 / 成环 / 截断 ⇒ **悬空**，货没地方去。
+ *   · 接上 trash ⇒ 按「悬空」算。丢货不是喂料 —— 一条把货倒进垃圾桶的带子
+ *     对产线没有贡献，判它「接上了」会变成新的假绿。
+ *
+ * 用「一次跑链、沿途全部标记」的做法：一条 29 格的长链只跑一次，不是每格跑一次
+ * （L12 级别 589 条死带子也只要 20ms 量级）。
+ *
+ * memo 按 **uid** 记：链上每一格都得到「同一结论」，所以一条长链只走一次。
+ * 代价是 O(死带子数 × 链长) 的最坏情况 —— 多条死带子汇进同一条下游长链时，
+ * 每条仍要走一遍共享的那段尾巴。实测在真实世界上（699 条带子）这一项约占
+ * `worldHealth()` 的 20%，可以接受；在上万条带子的合成世界上会明显更贵，
+ * 那时应该改成「从终点反向标记整条上游」，但那是另一个量级的改动，
+ * 等真有那样大的存档再说 —— 现在没有证据支持提前付那笔复杂度。
+ */
+function danglingDeadCount(bidx, beached) {
+    if (!beached.length) return 0;
+    const byBelt = new Map();
+
+    /** 一次跑链的结局。**不重复跑**：`runEnd` 已经走完整条链，终点就在返回值里。 */
+    const anchoredOfRun = (b) => {
+        let r;
+        try { r = runEnd(bidx, exitCellOf(b), exitDirOf(b)); } catch { return { anchored: false, belts: [] }; }
+        let anchored;
+        if (r.kind !== "empty") {
+            /* 终点是一个实体：只有它真的收这批货、且是「货的去处」才算接上。 */
+            anchored = r.accepted === true && FLOW_SINK.has(r.kind);
+        } else {
+            /* 跑链停在空格上：可能真的悬空，也可能「出口格是某台机器的槽位本体格」——
+               那一格没有实体，`at()` 找不到（见 `topology.mjs` 里 `accepts` 的 viaSlotBody 分支）。
+               再问一次 `accepts` 才能区分。用**链末那条带子**的位置问，不是起点。 */
+            anchored = false;
+            const lastUid = r.belts.length ? r.belts[r.belts.length - 1] : b.uid;
+            const last = bidx.byUid.get(lastUid) || b;
+            const cell = exitCellOf(last), dir = exitDirOf(last);
+            if (cell && dir) {
+                try {
+                    const a = accepts(bidx, cell, dir);
+                    anchored = !!(a && a.ok && FLOW_SINK.has(a.kind));
+                } catch { anchored = false; }
+            }
+        }
+        return { anchored, belts: r.belts };
+    };
+
+    let dangling = 0;
+    for (const b of beached) {
+        if (byBelt.has(b.uid)) { if (!byBelt.get(b.uid)) dangling++; continue; }
+        const { anchored, belts } = anchoredOfRun(b);
+        for (const u of belts) if (!byBelt.has(u)) byBelt.set(u, anchored);
+        if (!byBelt.has(b.uid)) byBelt.set(b.uid, anchored);
+        if (!anchored) dangling++;
+    }
+    return dangling;
+}
+
+/**
  * 一份世界体检快照。**所有字段要么是数，要么是 null**（读不到就是 null）。
  *
  * @param {object} p
@@ -102,6 +227,7 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
     let reach = null;
     let reachBelts = null;
     let deadBelts = null;
+    let deadDanglingBelts = null;
     let deadBySource = null;
     /* 类型口径（hub 只收形状）—— 与上面那份几何口径并列，互不覆盖 */
     let reachBeltsDeliverable = null;
@@ -114,6 +240,15 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
             const beached = belts.filter(b => !set.has(b.uid));
             reachBelts = belts.length - beached.length;
             deadBelts = beached.length;
+            /* ★ 「死带子」里有一半是**接在机器上**的，那不是白铺 ★
+             *
+             * 见 `danglingDeadCount` 的注释（2026-11-21 真机 `r-20261121190439-6190`：
+             * 一次正确的 `connect` 让 dead +23，判 regressive 后被回滚）。
+             * 这里只数「下游什么都不接」的那部分 —— 它才是「白铺」的信号。
+             * 算不出来就留 null，**不复制 deadBelts 冒充**（0 与 null 结论不同）。 */
+            try {
+                deadDanglingBelts = danglingDeadCount(beltFirstIndex(o), beached);
+            } catch { deadDanglingBelts = null; }
             /* ★ 再算一份**类型感知**的可达数 ★
              *
              * 上面那份是纯几何的（每跳验 accepts），看不见「货的类型」。
@@ -148,7 +283,7 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
         } catch {
             /* 索引失败（未知建筑/坏 obs）⇒ 可达性整片为 null。**不报 0**：
                0 与 null 在 diff 里必须是不同的结论。 */
-            reach = null; reachBelts = null; deadBelts = null; deadBySource = null;
+            reach = null; reachBelts = null; deadBelts = null; deadDanglingBelts = null; deadBySource = null;
         }
     }
 
@@ -215,6 +350,13 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
         /* 连通性 */
         belts_reaching_hub: reachBelts,
         belts_dead: deadBelts,
+        /* 「死带子」里**下游什么都不接**的那部分。
+         *
+         * `belts_dead` 是个混装桶：喂机器的新带子按定义到不了 hub，它们与
+         * 「铺完没人管」的带子在 `belts_dead` 里长得一模一样。
+         * 净效果判定用**这一项**的增量来判断「是不是白铺」——
+         * 接在机器上的新线不该被回滚（真机依据见 `danglingDeadCount` 的注释）。 */
+        belts_dead_dangling: deadDanglingBelts,
         /* 类型口径：扣掉那些「几何上通到 hub、但末端货物是颜料」的路径。
            与 `belts_reaching_hub` 并列而非替换 —— 后者有其它依赖方。 */
         belts_deliverable: reachBeltsDeliverable,
@@ -240,7 +382,7 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
  * 没列进来的字段一律按「不判方向」处理，所以新增字段不会意外变成红项。
  */
 const GOOD_UP = new Set(["delivered", "stored_goal", "belts_reaching_hub", "items_on_belts", "reach_pct"]);
-const GOOD_DOWN = new Set(["belts_dead"]);
+const GOOD_DOWN = new Set(["belts_dead", "belts_dead_dangling"]);
 
 /**
  * 两份快照的差。**只报真的变了的项** —— 一条静默的 diff 比一条噪音 diff 好用。
@@ -398,9 +540,19 @@ export function classifyNetEffect(before, after, delta = null) {
      *
      * 原来的条件 `dead.delta < beltsN.delta` 太宽：涨 59 条死带子、
      * 铺 60 条带子，照样被豁免成「施工中」—— 而 59 条死带子是真退化。
-     * 加一条上限：死带子绝对涨幅 <10 条才谈得上「中间态」。 */
-    const deadRoseFromWork = beltsGrew && dead && dead.delta > 0
-        && dead.delta < beltsN.delta && dead.delta < 10;
+     * 加一条上限：死带子绝对涨幅 <10 条才谈得上「中间态」。
+     *
+     * ★ 但这条「<10」是**绝对上限**，在正确的大动作上必然失效 ★
+     *
+     * 真机 `r-20261121190439-6190`（2026-11-21）：`connect M13 → C3.color` 铺了
+     * 29 条喂机器的带子，`reach` 309→309（原有可达集一条没动），`dead` 390→413。
+     * +23 全部来自新带子，且它们**接在机器上**（货有去处，只是到不了 hub）。
+     * 而 `dead.delta` = 23 ≥ 10、且 23 不小于 `belts.delta`（同批删了 6 条）⇒
+     * 两条豁免都不成立 ⇒ 判 regressive ⇒ 回滚了正确动作。
+     *
+     * 根因不是阈值调小一号能解决的：`belts_dead` 是个**混装桶**。
+     * 「喂机器」和「悬空」在它里面长得一样。真正的判据在下面 ——
+     * 用 `belts_dead_dangling`（下游什么都不接的那部分）判断「是不是白铺」。 */
     /* ★ 「到 hub 的带子」掉 1 条不等于改坏了（2026-11-15 夜，L12 真机）★
      *
      * 实测：`remove_run` 在记忆里被记成 `regressive` **57 次**，
@@ -455,12 +607,60 @@ export function classifyNetEffect(before, after, delta = null) {
      * 判据：涨幅 ≥5% **或** 绝对涨 ≥10 条才算退化。
      * 211 → 215 涨 4 条（1.9%）⇒ 放过；
      * 320 → 323 涨 3 条（0.9%）⇒ 放过（那次也是被误判的）；
-     * 133 → 192 涨 59 条（44%）⇒ 照旧判红。 */
-    if (dead && dead.delta > 0 && !deadRoseFromWork) {
-        const base = dead.before;
-        const ratio = base > 0 ? dead.delta / base : 1;
-        if (ratio >= 0.05 || dead.delta >= 10) {
-            regress.push(`死带子 ${dead.before}→${dead.after}（+${Math.round(ratio * 100)}%）`);
+     * 133 → 192 涨 59 条（44%）⇒ 照旧判红。
+     *
+     * ★ 但这三条判据全都建立在「死带子变多 = 世界变差」这个前提上 ★
+     *
+     * 而这个前提在**接线**这种正确动作上不成立：喂机器的带子按定义到不了 hub，
+     * 每铺一格就多一条「死带子」。真机 `r-20261121190439-6190` 的 +23 全是这种。
+     *
+     * 所以真正的判据换成 `belts_dead_dangling`：**下游什么都不接**的死带子。
+     *   · 接在机器上 ⇒ 货有去处，只是到不了 hub（配方连线的正常产物）⇒ 不算坏；
+     *   · 悬空 ⇒ 白铺 ⇒ 照旧按原来的双阈值判红。
+     *
+     * 两项都拿得到时以 `dangling` 为准 —— 它是 `belts_dead` 的**语义修正**，
+     * 而不是额外的一层宽容。拿不到（老夹具 / 索引失败）时才退回旧口径，
+     * 保持向后兼容。
+     *
+     * 注意这**不是**放宽：H11/H11b 那类「全孤立的新带子」悬空数照样涨满，
+     * 双阈值照样判红（`health.test.mjs` 钉住这一条）。 */
+    /* ★ 必须从**快照**取，不能从 `delta` 取 ★
+     *
+     * `healthDelta` 只报**变了的**项。而「悬空数没变」恰恰是要判的那种情况
+     * （真机那次 dangling 是**下降**的，`delta` 里它甚至是负数）——
+     * 用 `get()` 取会在它没变时返回 null，静默退回旧口径，
+     * 于是豁免在真机上根本不生效。这个坑 `paths_with_items` 已经踩过一次
+     * （见下面 `pwBefore/pwAfter` 那段注释），这里是第二次，所以照同样的写法从
+     * 前后两份快照直接取。 */
+    const danglingBefore = Number.isFinite(before && before.belts_dead_dangling) ? before.belts_dead_dangling : null;
+    const danglingAfter = Number.isFinite(after && after.belts_dead_dangling) ? after.belts_dead_dangling : null;
+    const dangling = (danglingBefore !== null && danglingAfter !== null) ? {
+        before: danglingBefore,
+        after: danglingAfter,
+        delta: danglingAfter - danglingBefore,
+    } : null;
+    const deadSignal = dangling || dead;
+    /* ★ 「新带子还没接完」的豁免要**跟着当前口径走**，不能只在旧口径下才算 ★
+     *
+     * 它的语义是「带子涨了，而新增的（不良）带子少于新增的带子 ⇒ 有一部分已经接上了」。
+     * 这跟用哪个指标无关 —— 换成 `dangling` 之后，同一个逻辑仍然成立：
+     * 一条 4 格的新线里有 2 格悬空（`dangling.delta = 2 < belts.delta = 4`），
+     * 那是施工中间态，不该判红（`health.test.mjs` 的 H28 钉住这个语义）。
+     *
+     * 第一版把这条豁免限定在「`dangling` 不可用时」才启用，结果：
+     * 一个只有 20 条悬空带子的小世界里，`+2` 就是 `+10%` ≥ 5% ⇒ 判红 ——
+     * 而那正是 H28 要保护的那种正确施工。所以这里对两个口径一视同仁。 */
+    const exemptByWork = beltsGrew && deadSignal && deadSignal.delta > 0
+        && deadSignal.delta < beltsN.delta && deadSignal.delta < 10;
+    if (deadSignal && deadSignal.delta > 0 && !exemptByWork) {
+        const base = deadSignal.before;
+        const ratio = base > 0 ? deadSignal.delta / base : 1;
+        if (ratio >= 0.05 || deadSignal.delta >= 10) {
+            const label = deadSignal === dangling ? "悬空死带子" : "死带子";
+            const behind = (deadSignal === dangling && dead)
+                ? `（死带子总数 ${dead.before}→${dead.after}，其中接在机器上的不算）`
+                : "";
+            regress.push(`${label} ${deadSignal.before}→${deadSignal.after}（+${Math.round(ratio * 100)}%）${behind}`);
         }
     }
     if (regress.length) {
@@ -507,6 +707,12 @@ export function classifyNetEffect(before, after, delta = null) {
     if (reach && reach.delta > 0) better.push(`到 hub 的带子 ${reach.before}→${reach.after}`);
     if (dead && dead.delta < 0) better.push(`死带子 ${dead.before}→${dead.after}`);
     if (items && items.delta > 0) better.push(`带上的货 ${items.before}→${items.after}`);
+    /* 悬空带子变少是**真改善** —— 它意味着原本两头不靠的线接上了东西。
+       KEEP `belts_dead` 那条（它是既有语义），两条可能同时触发，所以用 Set 去重不必要：
+       `dead` 与 `dangling` 描述的是同一个桶的不同切面，文案会并列出现，读日志时互补。 */
+    if (dangling && dangling.delta < 0) {
+        better.push(`悬空带子 ${dangling.before}→${dangling.after}`);
+    }
     if (better.length && !grewN) {
         why.push(...better);
         return { kind: "cleanup", why, delta: d };
@@ -548,7 +754,7 @@ export function classifyNetEffect(before, after, delta = null) {
          * ⚠️ 这里的「有没有改善」**不能**用 `better` —— 它把
          * `items.delta > 0`（货量微涨）算作改善，而货量微涨恰恰是
          * 「铺了新线带几个存货」的典型症状。真正的改善只有
-         * 「到 hub 的带子变多」或「死带子变少」。 */
+         * 「到 hub 的带子变多」或「（悬空）死带子变少」。 */
         const itemsMoved = !!(items && items.delta > 0);
         /* ★ 不能从 `delta` 里找 `paths_with_items` ★
          *
@@ -566,7 +772,8 @@ export function classifyNetEffect(before, after, delta = null) {
            最直接的证据。总货量涨几件完全可能是新线上的存货，不代表货在流。
            拿得到路径数就以它为准；拿不到才退回只看货量。 */
         const noFlowProgress = havePw ? !pathsMoved : !itemsMoved;
-        const realGain = !!((reach && reach.delta > 0) || (dead && dead.delta < 0));
+        const realGain = !!((reach && reach.delta > 0) || (dead && dead.delta < 0)
+            || (dangling && dangling.delta < 0));
         if (noFlowProgress && !realGain) {
             why.push(`结构变了（${bits.join(" ") || `实体 ${entities ? entities.delta : "?"}`}），`
                 + `但**世界完全没动**：带上的货没有增加，也没有任何产出。`

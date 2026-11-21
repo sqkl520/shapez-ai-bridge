@@ -739,3 +739,119 @@ test("H31c ★ 对照：绝对涨 10 条即使占比低也判红", () => {
     assert.equal(e.kind, "regressive",
         `占比只有 2.5% 但绝对涨 10 条，双阈值里绝对那条该兜住（why=${e.why.join("/")}）`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 「死带子」是个混装桶：喂机器的 vs 悬空的（2026-11-21 真机）
+ *
+ * 真机 `r-20261121190439-6190`：模型执行 `connect M13 → C3.color` —— **正确的动作**
+ * （离线与真机都证实它能产、能交付）。世界指标：
+ *
+ *     reach 309 → 309   （原可达集 lost 0 / gained 0）
+ *     dead  390 → 413   （+23）
+ *
+ * 逐 uid 归因：+23 **全部是新增的 29 条喂机器的带子**（接在机器上，按定义到不了 hub），
+ * 减去删掉的 6 条原本被判 cycle 的。**没有一条原有活带子变死。**
+ *
+ * 而 `classifyNetEffect` 判了 `regressive`（+23 > 上限 10）→ `decideRollback` 回滚了它 →
+ * 跨 run 记忆写入 `connect → rolled back, judged harmful` → 下一轮模型读到
+ * 「别用 connect」，而 connect 是**唯一**能往 mixer 喂料的宏。
+ *
+ * 所以判据必须能分开两种「死」：
+ *   ✅ 新带子接在机器上（喂某个输入槽）⇒ 施工中间态 / 配方连线，不是破坏；
+ *   ❌ 新带子悬空（下游什么都不接）⇒ 白铺，该判红。
+ * 这一组钉的就是这条分界。
+ *
+ * L5 上造得出两组**形状完全一样**的对照：都是 +29 条带子、reach 不变、dead +29
+ * —— 唯一差别是终点接不接机器。而判据能把它们分开。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 在 L5 的空白区竖着铺一条链，终点正好落进 balancer#10186 的输入槽。 */
+const l5ChainToMachine = (n = 29) => {
+    const o = clone(L5);
+    let uid = 960001;
+    /* x=8 从 y=-8（balancer 的取料格）一路向上，全是空格（夹具已核实） */
+    for (let i = 0; i < n; i++) {
+        o.entities.push({ uid: uid++, type: "belt", x: 8, y: -8 + i, r: 0, rotation_variant: 0, code: 1, layer: "regular" });
+    }
+    return o;
+};
+/** 同样 29 条，铺在远处空地上，两头都不接东西。 */
+const l5Floating = (n = 29) => {
+    const o = clone(L5);
+    let uid = 970001;
+    for (let i = 0; i < n; i++) {
+        o.entities.push({ uid: uid++, type: "belt", x: 70 + i, y: 70, r: 0, rotation_variant: 0, code: 1, layer: "regular" });
+    }
+    return o;
+};
+
+test("H32 ★ 快照：`belts_dead_dangling` 只数「下游什么都不接」的死带子", () => {
+    const h = base();
+    assert.ok(Number.isInteger(h.belts_dead_dangling),
+        "必须算得出来（不算出来就没法区分两种死）");
+    assert.ok(h.belts_dead_dangling <= h.belts_dead,
+        `悬空数不可能多于死带子总数（${h.belts_dead_dangling} vs ${h.belts_dead}）`);
+    assert.ok(h.belts_dead - h.belts_dead_dangling > 0,
+        "L5 里有接在东西上的死带子 —— 少了这一项这个夹具就测不出分界");
+});
+
+test("H33 ★ 真机形态：新带子全接在机器上（reach 不变、dead +29）⇒ 不判 regressive", () => {
+    const before = base();
+    const after = withObs(l5ChainToMachine());
+    const d = healthDelta(before, after);
+    /* 前置：这就是真机那次的形态 —— 带子 +29、reach 一条没变、dead 跟着 +29 */
+    assert.equal((d.find(x => x.metric === "belts") || {}).delta, 29, "前置：带子 +29");
+    assert.equal((d.find(x => x.metric === "belts_reaching_hub") || null), null,
+        "前置：到 hub 的带子一条都没变");
+    assert.equal((d.find(x => x.metric === "belts_dead") || {}).delta, 29, "前置：死带子 +29");
+    assert.equal(after.belts_dead_dangling, before.belts_dead_dangling,
+        "前置：悬空数没涨（新带子接在机器上）");
+    const e = classifyNetEffect(before, after, d);
+    assert.notEqual(e.kind, "regressive",
+        `接在机器上的新线不是「白铺」，不该判 regressive（why=${e.why.join("/")}）`);
+});
+
+test("H34 ★ 对照：同样 +29 条、同样 dead +29，但全是悬空的 ⇒ 照旧判 regressive", () => {
+    const before = base();
+    const after = withObs(l5Floating());
+    const d = healthDelta(before, after);
+    assert.equal((d.find(x => x.metric === "belts") || {}).delta, 29, "前置：带子 +29");
+    assert.equal((d.find(x => x.metric === "belts_reaching_hub") || null), null, "前置：reach 没变");
+    assert.equal((d.find(x => x.metric === "belts_dead") || {}).delta, 29, "前置：死带子 +29");
+    assert.ok(after.belts_dead_dangling > before.belts_dead_dangling,
+        "前置：悬空数涨了（这才是「白铺」）");
+    const e = classifyNetEffect(before, after, d);
+    assert.equal(e.kind, "regressive",
+        `两条线的形状指标一模一样，唯一差别是终点接不接机器 —— 悬空的必须判红（why=${e.why.join("/")}）`);
+    assert.ok(e.why.some(w => /死带子/.test(w)), `理由必须说清是死带子变多，实际：${e.why.join("/")}`);
+});
+
+test("H35 ★ `belts_dead_dangling` 没变时也必须判得出来（不能靠 delta 找它）", () => {
+    /* `healthDelta` 只报**变了的**项 —— 而本判据恰恰常用在「悬空数没变」的场合
+       （真机那次它甚至是**下降**的）。写成 `get("belts_dead_dangling")` 会返回 null，
+       静默退回旧口径，豁免在真机上根本不生效。`paths_with_items` 已经踩过同一个坑。 */
+    const before = base();
+    const after = withObs(l5ChainToMachine());
+    const d = healthDelta(before, after);
+    assert.equal(d.find(x => x.metric === "belts_dead_dangling"), undefined,
+        "前置：这一项的 delta **不在** delta 里（没变）—— 所以判据必须从快照取");
+    assert.equal(classifyNetEffect(before, after, d).kind === "regressive", false);
+});
+
+test("H36 ★ 只传一份没有 `belts_dead_dangling` 的快照 ⇒ 退回旧口径，不崩", () => {
+    /* 向后兼容：老夹具（H28/H31 那一批手搓快照）里没有这个字段。
+       判据必须照旧用 `belts_dead`，而不是把「读不到」当成「没有悬空带子」。 */
+    const snap = (o) => ({
+        belts: 200, machines: 10, entities: 220,
+        belts_reaching_hub: 133, belts_dead: 133,
+        items_on_belts: 50, reach_pct: 0.8,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        shape: "a",
+        ...o,
+    });
+    const before = snap({});
+    const after = snap({ belts: 260, entities: 280, belts_dead: 192, shape: "b" });
+    const e = classifyNetEffect(before, after, healthDelta(before, after));
+    assert.equal(e.kind, "regressive",
+        `没有新字段时按 belts_dead 照旧判红（why=${e.why.join("/")}）`);
+});
