@@ -15,6 +15,81 @@
 
 ## [Unreleased]
 
+### Fixed — 2026-11-21：从「模型选得对」修到「动作能落地」
+
+一整天围绕一个数字展开：`replay-plan.mjs` 把 prompt 实验里采集的计划喂回
+`buildTxPlan` 后发现 **「命中根因 9/10，真能落地 1/10」**。此前所有 prompt
+实验的判据都只到「选中端点」，看不到这一层。
+
+**诊断层**
+
+- `MACHINE_STARVED` 加 `evidence.feed_sources`：推荐「最近的、输出口空闲的、
+  产物类型对得上、且标了会切断几处下游」的源头。判据做两层筛选 ——
+  只按距离会推荐 cutter（产形状）或形状矿机（挖出来不是颜料）。
+  A/B：`from` 命中推荐 0/10 → 10/10（p=0.000）。
+- 同诊断加 `evidence.feed_color`：说出目标要哪些颜色、地图上有哪些矿、
+  哪几种必须靠 mixer 合成。真机上曾推荐**绿矿**，模型照接、货真的流了、
+  hub 真入库 9 件 —— 产出的是上一关（L11）的形状。`white` 无矿，
+  只能靠级联合成，而旧文案里「white」「color」出现 0 次。
+- 新 `OUTPUT_STRANDED`：机器有输入接着、但有输出口悬空。`C2 cutter` 因此
+  堵了十个 run，而原有三条诊断（`ORPHAN_MACHINES` 只认两端全空、
+  `DISCARDED_INTERMEDIATE` 要求形状在目标闭包、`OUTPUT_UNROUTED` 只看计划）
+  一条都不报。排除 `balancer`（分流器天然一半输出空着）。
+- 接上 `WRONG_SHAPE_PRODUCED` —— 从第一次提交就登记在 `DIAG_CODES` 里，
+  **从来没有任何地方 emit 过它**。产了东西但都不是目标形状时单独报，
+  observed 列出实际在产什么。
+
+**prompt 层**
+
+- 槽位格式 `right:color(←无)` → `color@right(←无)`。旧格式方位在前，
+  20 个样本里 9 个把 `to.port` 写成 `"right"`（方位）而不是 `"color"`（角色）——
+  而 `right` 对 cutter 恰好是合法角色，所以这是格式歧义不是明显错值。
+- `## HUB` 段加图例：已接的入口不能再接。`port_already_bound` 是历史最高频
+  失败码（37 次），而 `B599` 本来就在 hub 的已接列表里。
+- `MACHINES` 图例点明 `port=a|b` 的含义（`ambiguous_port` 33 次，第二高频）。
+  长度逐字抠过（58 → 61），因为 prompt 预算余量已经是 **-72**。
+
+**宏层**
+
+- `connect` 新增 `prefer:"cheapest"`：先按覆盖的既有带子格数、再按路径长度。
+  原有三个偏好全是几何的，没有一个在乎「会拆掉什么」。
+- 关闭 `cheapest` 模式下的早收敛（`sh.turns <= floor` 就 break）——
+  它让候选池太浅，17 台矿机里只有 1 台受影响。
+
+**判据修正**
+
+- `flowReachable` 不再把**纯闭环**的带子算成可交付（390 → 309）。
+  81 条挂在没有外部输入的环上，撑高了预演闸门的分母 21%。
+  只摘 `cycle` 不摘 `none` —— 后者可能只是「上游还没建」。
+- `planToTxOps` 的 `allow_replace` 豁免改为「自报 ∩ 覆盖格」的交集。
+  旧写法让**宏越诚实越走不通**：自报 `removed_uids` 反而进不了 `derived`。
+- `actionSetHash` 去重：`["connect"]` 与 `["connect","connect"]` 算同一个动作。
+  不去重时模型用「多写一个 connect」就能绕过「同一指纹第 2 次必须换动作」。
+- `checkBehavior` 首轮没产出时**再等一轮**（默认再 2400 tick，最多 2 轮）。
+  三层链的流动延迟大于窗口，真机上 9 件产出全在窗口关闭之后。
+- L4 的 `NO_PRODUCTION` 与 `WRONG_SHAPE_PRODUCED` 分开 ——
+  「没产出」和「产出了别的东西」是两件完全不同的事。
+
+**工具**
+
+- `tools/probe-live-prompt.mjs`：用真机那一轮的完整参数重建 prompt
+  （`exp-chain-hint` 只传 8 个参数，`loop.mjs` 实际传 16 个）。
+- `tools/replay-plan.mjs`：把 run/实验里采集的计划喂回 `buildTxPlan`，
+  离线得到与真机逐字相同的拒绝原因。
+- `tools/exp-feed-sources.mjs`：A/B 装置，判据跑到 `buildTxPlan`，
+  三重等价性控制。
+- `tools/live-run.sh` / `tools/live-diff.mjs`：真机运行范式 + 世界对比，
+  后者含**死带子 uid 级归因**（区分「原有活线变死」与「新铺的死带子」）。
+- `src/agent/loop/diag_registry.test.mjs`：诊断码三处登记的自动守卫。
+  新码要登记 `DIAG_CODES` / `RETRIEVAL_TABLE` / `RANK`，缺一处静默失效 ——
+  当天栽了四次，症状永远是「加了诊断、测试全绿、真机一条都不报」。
+
+**LLM 传输**
+
+- `llm.mjs` 支持 Codex `/responses` 协议：本机 gateway 只有这一条路
+  （`/v1/messages` 503、`/responses` 200）。
+- 修 URL 拼接：`…/responses` 曾被拼成 `…/responses/v1/messages` → 404。
+
 ### Changed — 按 D:\Projects\docs\PROJECT-RULES.md 整改；Release 说明按实测格式重写
 
 两件事，起因不同。
