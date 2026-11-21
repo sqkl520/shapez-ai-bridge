@@ -1383,8 +1383,25 @@ export function connect(a, b, c, d) {
                 const occ = checkOccupancy(cells, world, opts);
                 candidates.push({ sh, cells, chain: chain.cells, occ, pf, pt });
                 if (occ.ok && sh.turns < bestTurns) bestTurns = sh.turns;
-                // 本端口对已拿到"无冲突 + 下界转角"的解 ⇒ 这一对不必再找
-                if (occ.ok && sh.turns <= floor) break;
+                /* ★ 早收敛：拿到「无冲突 + 下界转角」就停 —— **但 `cheapest` 除外** ★
+                 *
+                 * 这个 break 是性能优化：`floor` 是这对端口理论上最少的转角，
+                 * 既然已经拿到一个无冲突的下界解，更差的候选没有意义。
+                 *
+                 * 但它把 `cheapest` 架空了。2026-11-21 真机验证（L12）：
+                 * 17 台矿机里**只有 1 台**（M15）的 cheapest 与 shortest 不同，
+                 * 其余 `alternatives=0` —— 不是因为便宜的候选不存在，
+                 * 而是它们**根本进不了排序**就被 break 掉了。
+                 *
+                 * 独立全枚举对照（agent 做的）确认：M13 存在一条 29 格但只拆
+                 * **1 条**的候选（默认路径拆 6 条），M9 也有拆 4 条的候选 ——
+                 * 两者都因这个 break 永远不出现在 `ranked` 里。
+                 *
+                 * 所以 `cheapest` 必须关掉早收敛：它的排序依据**不是**转角或长度，
+                 * 「转角更多但拆得更少」正是它要找的东西。
+                 * 代价是枚举更久 —— 但它本来就是「允许覆盖时」才用的，
+                 * 而那种场景下挑错路线的代价（拆掉 165 段主干道）远大于多算几百毫秒。 */
+                if (occ.ok && sh.turns <= floor && opts.prefer !== "cheapest") break;
             }
         }
         // 源端有多个口时，只需第一个能连通的（其余口是冗余的，不该再花时间）

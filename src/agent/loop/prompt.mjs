@@ -1532,14 +1532,22 @@ function renderGoalResource(obs, goalShape, opts = {}) {
             })
             : [];
         const digLine = digState && digState.notDug.length
-            ? `⇒ ⚠️ NO miner is digging ${digState.notDug.join("/")} — `
-                + `you have ${digState.miners} miner(s) on `
-                + `${[...digState.dugKinds].map(([k, n]) => `${k}×${n}`).join(", ")}. `
-                + `Every color above is needed; the ones nobody digs can never appear.`
-                + (diggable.length
-                    ? ` Put a miner on the missing PIGMENT with `
-                        + `\`insert_machine {at:{"$ore":"${COLOR_LETTER_TO_NAME[diggable[0].toLowerCase()]}"}, machine:"miner", facing:<dir>}\`.`
-                    : ` (The missing ones have no **pigment** ore on this map — they must be mixed, not mined.)`)
+            ? (() => {
+                /* ★ 256 → 约 150 字符 ★
+                 *
+                 * 原文把「17 台矿机分别挖什么」全列了一遍（`red×4, blue×7, green×4, …`，
+                 * 100+ 字符）。而 MACHINES 段已经把**每一台矿机**的矿种逐行写出来了
+                 * （2026-11-21 加的 `采blue` 标注）—— 这里是纯重复。
+                 *
+                 * 实测代价：4800 token 档下 `resource_dropped_for_capacity=true`，
+                 * 这整行被 CAPACITY 挤掉，而它说的正是「白颜料没有矿、只能靠混合」，
+                 * 直接关系到 `CwCwCwCw` 这一层的可行性。压短它比丢掉它划算。 */
+
+                return `⇒ ⚠️ 没有矿机在挖 ${digState.notDug.join("/")}（共 ${digState.miners} 台，见上表）。`
+                    + (diggable.length
+                        ? ` 用 \`insert_machine {at:{"$ore":"${COLOR_LETTER_TO_NAME[diggable[0].toLowerCase()]}"}, machine:"miner", facing:<dir>}\` 补一台。`
+                        : ` 这两种颜色在地图上**没有颜料矿**（RuRuWuWu 那种是形状矿，挖出来的是形状不是颜料）—— 只能靠 mixer 混，不能挖。`);
+            })()
             : null;
 
         return [head, ...lines, digLine].filter(Boolean).join("\n");

@@ -139,6 +139,49 @@ t("四个 prefer 取值都能正常返回（没有一个是写了但没接的）
     }
 });
 
+/* ── 5. ★ 早收敛不许把 cheaper 的候选吃掉 ★ ──
+ *
+ * 2026-11-21 真机验证发现的**结构性架空**：`connect` 枚举里有
+ *
+ *     if (occ.ok && sh.turns <= floor) break;   // 拿到下界转角就停
+ *
+ * 这个优化让 `cheapest` 基本等于 `shortest` —— 17 台矿机里只有 1 台出现差异。
+ * 不是因为没有更便宜的候选，而是它们**进不了排序**。
+ *
+ * M13 是那次的代表案例：默认路径 29 格/**拆 6 条**，
+ * 而全枚举里存在一条 29 格但**只拆 1 条**的候选。
+ *
+ * 修法是 `cheapest` 模式下关掉早收敛。这条测试钉住它：
+ * 只要这个 break 又对 cheapest 生效，这里就会红。 */
+t("★ cheapest 关掉早收敛：M13 必须能找到「拆得更少」那条", () => {
+    const P = path.resolve(HERE, "../../../research/ai-plan/runs/r-20261121072433-521e/obs-last.json");
+    let obs = null;
+    try { obs = JSON.parse(fs.readFileSync(P, "utf8")); } catch { obs = null; }
+    if (!obs || !Array.isArray(obs.entities)) {
+        console.log("（说明）读不到 L12 快照，跳过 —— 不静默通过");
+        return;
+    }
+    const ents = obs.entities;
+    const m13 = ents.find(e => e.x === -10 && e.y === -6 && e.type === "miner");
+    const c3 = ents.find(e => e.x === -5 && e.y === 14 && e.type === "painter");
+    if (!m13 || !c3) {
+        console.log("（说明）快照里找不到 M13/C3，跳过 —— 世界可能已变");
+        return;
+    }
+    const ep = { uid: c3.uid, port: { role: "color", index: 0 } };
+    const rS = connect({ from: { uid: m13.uid }, to: ep, opts: { allow_replace: true, prefer: "shortest" } }, { entities: ents });
+    const rC = connect({ from: { uid: m13.uid }, to: ep, opts: { allow_replace: true, prefer: "cheapest" } }, { entities: ents });
+    assert.ok(rS.ok && rC.ok, `两个偏好都应连通（S ${rS.ok} / C ${rC.ok}）`);
+    const nS = (rS.changed.removed_uids || []).length;
+    const nC = (rC.changed.removed_uids || []).length;
+    /* 实测：shortest 拆 6，cheapest 拆 1。允许世界变化带来的浮动，
+       但**必须严格更少** —— 相等就说明早收敛又把它吃掉了。 */
+    assert.ok(nC < nS,
+        `cheapest 必须比 shortest 拆得少（实得 ${nS} → ${nC} 条）。`
+        + ` 若两者相等，说明 connect.mjs 里的 early-break 又对 cheapest 生效了。`);
+    console.log(`✓ M13→C3.color：拆 ${nS} → ${nC} 条（${rS.cells.length} → ${rC.cells.length} 格）`);
+});
+
 /* ══════════════════ 报告 ══════════════════ */
 for (const [st, name, msg] of results) {
     console.log(`${st === "ok" ? "✓" : "✗"} ${name}${msg ? "\n    " + msg : ""}`);
