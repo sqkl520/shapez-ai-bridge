@@ -198,6 +198,25 @@ console.log("\n── 0. 纯函数 ──");
     eq(actionSetHash(["connect", "remove_run"]), actionSetHash(["remove_run", "connect"]), "动作集指纹与顺序无关");
     ok(actionSetHash(["connect"]) !== actionSetHash(["insert_machine"]), "不同动作集 ⇒ 不同指纹");
 
+    /* ★ 去重：同一宏写多次 = 同一个动作（2026-11-21）★
+     *
+     * 实测 4 个 run 里的 3 个都是这个形态：
+     *   r-20261121190439-6190   r1 ["connect"] → r2 ["connect","connect"]
+     *   r-20261121100232-d10f   r1 ["connect","connect"] → r2 ["connect"]
+     *
+     * 不去重时这两个 hash 不同 ⇒ `countFingerprint` 认为「换过动作了」⇒
+     * 不触发 `mustChange` ⇒ 模型可以用 connect 的不同写法无限绕过
+     * 「同一失败指纹下第 2 次必须换动作」。
+     *
+     * 而 `countFingerprint` 问的是「动作**种类**换了没有」，
+     * 不是「调用条数变了没有」。同一条失败再来一次 connect，几次都是重试。 */
+    eq(actionSetHash(["connect"]), actionSetHash(["connect", "connect"]),
+        "同一宏重复多次应当算同一个动作集（去重后比较种类，不比条数）");
+    eq(actionSetHash(["connect"]), actionSetHash(["connect", "connect", "connect"]),
+        "三连 connect 也一样");
+    ok(actionSetHash(["connect", "connect"]) !== actionSetHash(["connect", "insert_machine"]),
+        "★ 去重不许把**真的换了动作**也判成相同");
+
     /* 闭集：loop 声明的每个 reason 都必须落在 DIAG_CODES ∪ {OFFLINE_ONLY, DRY_RUN} */
     const allowed = new Set([...Object.keys(DIAG_CODES), "OFFLINE_ONLY", "DRY_RUN"]);
     eq(HALT_REASONS.length, allowed.size, "HALT_REASONS = DIAG_CODES + 两个 run 级状态（不重不漏）");

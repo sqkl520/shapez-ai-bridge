@@ -336,7 +336,24 @@ const isBeltBuilding = b => REVERSIBLE_BUILDINGS.has(String(b));
 
 /** 动作集指纹：同一 fp 下「换了动作没有」的机器判据（v1 §1.6 的 actionSetHash）。 */
 export function actionSetHash(macros) {
-    const list = (Array.isArray(macros) ? macros : []).map(String).sort();
+    /* ★ 去重：`["connect"]` 与 `["connect","connect"]` 是**同一个动作** ★
+     *
+     * 2026-11-21 实测（4 个 run 里的 3 个）：
+     *
+     *   r-20261121190439-6190   r1 ["connect"] → r2 ["connect","connect"]
+     *   r-20261121100232-d10f   r1 ["connect","connect"] → r2 ["connect"]
+     *
+     * 两轮都只是在 `connect`，只是**条数不同**。而 `actionSetHash` 只排序不去重，
+     * 于是 `"connect"` 与 `"connect,connect"` 算出两个不同的 hash ⇒
+     * `countFingerprint` 认为「换过动作了」⇒ 不触发 `mustChange` ⇒
+     * 模型可以无限次用 connect 的不同写法绕过「同一指纹第 2 次必须换动作」。
+     *
+     * 这正是「12 个 run 全是 2 轮就停、goal_delta 恒 0」的机制之一：
+     * 判据以为有进展，实际上在原地打转。
+     *
+     * 语义上也该去重：`countFingerprint` 问的是「动作**种类**换了没有」，
+     * 不是「调用条数变了没有」。同一条失败再来一次 connect，无论几次都是重试。 */
+    const list = [...new Set((Array.isArray(macros) ? macros : []).map(String))].sort();
     return sha256(list.join(","));
 }
 
