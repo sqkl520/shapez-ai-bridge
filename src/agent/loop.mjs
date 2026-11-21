@@ -4149,7 +4149,22 @@ export async function runLoop(opts = {}) {
                              * 「这个 prompt 真的装不下」，而不是「我们自己把预算定小了」。
                              * 24000 字符 ≈ 7000 token，远在模型窗口之内。 */
                             in_chars_max: 24000,
-                            prompt_tokens_max: 4600,
+                            /* ★ 4600 → 4800（2026-11-21）★
+                             *
+                             * 4600 是「`when:` 行不出现 + 带子名额基本用满」调出来的
+                             * 平衡点。实测这一关在 4600 上：不可截断段
+                             * （S2 候选宏 2841 + S3 5765 + S4 诊断 2540）已经把
+                             * `targetChars`(16100) 吃掉，**CAPACITY 被丢弃、带子只剩 5 条**、
+                             * 余量 29 字符。
+                             *
+                             * 而新增的 `HUB stored` 那一行要 60 字符 —— 它说的是
+                             * 「hub 里躺着 2071 件 `CgScScCg`」，而那正是上一关的目标形状。
+                             * 实测代价：看不到它，模型（和我）会用一整轮去修一条
+                             * **注定产出上一关形状**的 L11 遗留产线。
+                             *
+                             * 4800(+200 字符 ≈ 57 token) 让 CAPACITY 回来、带子仍是 5 条、
+                             * 且这一行塞得进去。多花 57 token 换掉一整轮错误排查。 */
+                            prompt_tokens_max: 4800,
                             /* 实验开关（默认 false）：强制「一轮一个动作」。
                                由 `--force-one-call` 或 `budget.FORCE_ONE_CALL` 打开。
                                见 prompt.mjs 里 INSTRUCTION_SINGLE 的注释。 */

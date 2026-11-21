@@ -428,8 +428,30 @@ test("E. 回归：belt 名额用满、prompt 字符数没有变差", () => {
      * L4 夹具是 17 台机器 ⇒ 走紧凑式，实测总共 +6 字符。
      *
      * 上调后如果哪天又变长，仍然会红。 */
+    /* ⚠️ 2026-11-21：`L4` 的上限 4520 → 4620（+100）。
+     *
+     * MACHINES 之后新增了一行 `HUB stored`（`renderHubStored`），
+     * 列出 hub 里件数够多的形状。L4 夹具自带两格：
+     * `RuRuRuRu×112866` 与 `----CuCu×47376`，full 版渲染约 100 字符。
+     *
+     * 为什么这根信息线值得这 100 字符（代价是**实测过的**）：
+     *   L12 真机上 `hub.stored_shapes['CgScScCg'] = 2071`，而 `CgScScCg`
+     *   正是**上一关的目标形状**（`levels.js:242`，1000 件通关）。
+     *   模型看不到它，就连续两轮在修一条 `painter` → `stacker` → `rotater`
+     *   的链 —— 那条链接绿色吐出 `CgScScCg`（L11 目标），接蓝色吐出
+     *   `CbScScCb`（废品），七种颜色全试过，**没有一种能产出 L12 要的
+     *   `CbCbCbRb:CwCwCwCw`**。它的另一路进料是 `ScSc----`（星形半片），
+     *   而目标里一个星形都没有。
+     *
+     *   也就是说：看不见这一行，模型（和排查的人）会把一整轮花在
+     *   **把上一关的产线修回去**。而 `stored_shapes` 一直在 obs 里。
+     *
+     * 与之前几次上调同一条纪律：这是 MACHINES/HUB 段的一部分，不是独立段；
+     * 数据拿不到时整段消失（half 夹具没有 stored，一字不涨，仍是 3266/3400）。
+     *
+     * 上调后如果哪天又变长，仍然会红。 */
     const cases = [
-        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4520 },
+        { name: "L4", obs: L4_OBS, tbl: L4_TABLE, maxChars: 4620 },
         { name: "half", obs: HALF_OBS, tbl: HALF_TABLE, maxChars: 3400 },
         /* 缺 SCENARIO 夹具时跳过这一档（见文件头对那份未跟踪夹具的说明）。
            不静默改数值 —— 缺就是缺。 */

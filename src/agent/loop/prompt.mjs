@@ -842,11 +842,157 @@ function renderDesc(handle, type, desc) {
     return d ? " " + d : "";
 }
 
+/**
+ * `## HUB` 段：入口占用情况 + **存着哪些形状**。
+ *
+ * ## 为什么必须给 `stored_shapes`（2026-11-21，代价很大的一条教训）
+ *
+ * 这份世界里 `hub.stored_shapes['CgScScCg'] = 2071`。
+ * 而 `CgScScCg` 正是**上一关（L11）的目标形状**（`levels.js:242`），
+ * 1000 件就通关了 —— 那 2071 件是上一关的遗留库存，不是废品。
+ *
+ * 同一份世界里，模型连续两轮都在修 `painter#13552` 的 color 槽。
+ * 我和几个 agent 也花了大半天查那条死锁链。查完才发现：
+ * **那条链是 L11 的产线** —— 接绿色它吐出 `CgScScCg`（L11 目标），
+ * 接蓝色它吐出 `CbScScCb`（废品）。七种颜色全试过，没有一种能产出 L12 要的
+ * `CbCbCbRb:CwCwCwCw`。它的另一路进料是 `ScSc----`（星形半片），
+ * 而目标里一个星形都没有。
+ *
+ * 也就是说：**修通它等于把上一关的线修回去，与这一关完全无关。**
+ * 而模型看不到 hub 里存着什么，就永远推不出这件事 —— 它只知道"这台 painter 缺色"。
+ *
+ * `hub.stored_shapes` 从 obs 里一直都有，只是从来没进过 prompt。
+ * 这是 `computed-but-never-delivered` 的第三次重演，代价这次是**一整轮排查方向错误**。
+ *
+ * ## 口径
+ *
+ * 只列**件数够多**的（≥ `HUB_STORED_MIN`），按件数降序取前 `HUB_STORED_MAX` 个。
+ * 目标形状自己标 `← goal`，其余标 `← not the goal`。
+ * 形状串本身**不解释**（不去猜它属于哪一关）—— 模型有 SHAPE CODE CHEAT SHEET，
+ * 让它自己对照目标读。这里只负责把事实送到它眼前。
+ *
+ * 没有 `stored_shapes` 数据时整段不出现（不猜）。
+ */
 function renderHub(tbl) {
     const hub = tbl.hubHandle ? tbl.byHandle.get(String(tbl.hubHandle)) : null;
     if (!hub) return "## HUB\n(no hub handle in this table — do not reference a hub)";
     return `## HUB\n${hub.handle} ${hub.type}${renderDesc(hub.handle, hub.type, hub.desc)}`;
 }
+
+/** 件数低于它就当噪声不列（碎片化的半成品会有很多 1、2 件的小额）。 */
+const HUB_STORED_MIN = 50;
+const HUB_STORED_MAX = 6;
+
+/**
+ * `hub.stored_shapes` 里值得说的那几条。
+ *
+ * ⚠️ 这里**不做残线判定** —— 判定逻辑在 `obsolete.mjs`，那条路要 `levelChanged` 才开，
+ * 而这里只是陈述「云里存着什么」。两件事分开：陈述事实不需要授权，
+ * 判定"该拆"需要。混在一起会让 prompt 开始替模型下结论。
+ *
+ * ## 为什么不能只按件数取前 N
+ *
+ * 第一版按件数降序取前 6，这份世界的结果是
+ * `CrCrCrCr×41662 Cu------×33532 Cu----Cu×27823 RuRuRuRu×14843 …`
+ * —— 全是**原料形状**（L4/L5 时代的矿产物，进 hub 是常态，没有信息量），
+ * 而真正有用的那条 `CgScScCg×2071`（上一关的目标形状，1000 件就通关）
+ * 被挤到了第 8 位，一个字都进不了 prompt。
+ *
+ * 判据改成「**离目标有多远**」，不是「有多少件」：
+ *   ① 目标形状自己（← goal，模型要知道现在存了多少）
+ *   ② **看起来像成品**的形状 —— 4 个象限全满、颜色一致的那种
+ *      （`CrCrCrCr` / `CgScScCg` / `SbSbSbSb`…）。它们要么是别的关卡的目标，
+ *      要么是别的关卡的中间产物。**原料（含 `-`）和小碎片明确排除。**
+ *   ③ 剩下仍有余量才按件数补几条原始形状，让模型知道库存规模。
+ *
+ * 仍然**不解释**形状属于哪一关 —— 模型有 SHAPE CODE CHEAT SHEET，让它自己对照。
+ * 这里只负责把最能改变判断的那几条送到它眼前。
+ *
+ * @returns {string|null} 空/没数据 ⇒ null（整段消失）
+ */
+function renderHubStored(obs, goalShape, opts = {}) {
+    const ss = obs && obs.hub && obs.hub.stored_shapes;
+    if (!ss || typeof ss !== "object") return null;
+    const goal = typeof goalShape === "string" ? goalShape.trim() : "";
+    const goalLower = goal.includes(":") ? goal.split(":")[0] : goal;
+
+    /** 满 4 象限、且每两字符的「形状码+色码」都合法 ⇒ 像一个成品。 */
+    const looksFinished = (s) => {
+        const body = s.includes(":") ? s.split(":")[0] : s;
+        if (body.length !== 8 || body.includes("-")) return false;
+        for (let i = 0; i < 8; i += 2) {
+            if (!/[RCSW]/.test(body[i])) return false;
+            if (!/[rgbypcw]/.test(body[i + 1])) return false;
+        }
+        return true;
+    };
+    /** 四个象限**完全一样** ⇒ 这是矿石或单色喷涂的产物，不是"造出来的复合形状"。
+     *
+     * 判据来自这一关的实测：`CrCrCrCr`(41662) / `CuCuCuCu`(1680) / `ScScScSc`(1680)
+     * 全是四格同色同形 —— 它们直接来自矿机，进 hub 是常态，**没有信息量**。
+     * 而真正改变判断的 `CgScScCg`(2071) 是 `Cg Sc Sc Cg`（圆绿 + 星青混排），
+     * 它只可能是某条产线**加工出来**的，也就意味着"有一条线在造别的东西"。
+     *
+     * 第一版没有这条判据，short 版挑中的正是 `CrCrCrCr×41662` —— 一个字的有用信息都没有。 */
+    const isUniform = (s) => {
+        const body = s.includes(":") ? s.split(":")[0] : s;
+        if (body.length !== 8) return false;
+        const q0 = body.slice(0, 2);
+        return body.slice(2, 4) === q0 && body.slice(4, 6) === q0 && body.slice(6, 8) === q0;
+    };
+    /* 目标本身的两层都要算「成品」，否则 `CwCwCwCw` 会被当成陌生形状再列一遍。 */
+    const goalParts = new Set(goal.includes(":") ? goal.split(":") : [goal]);
+    void goalLower;
+
+    const finished = [];      // 加工出来的复合形状（最有信息量）
+    const uniform = [];       // 四格同色同形（矿石 / 单色喷涂）
+    const rest = [];          // 含空格子的中间态
+    for (const [k, v] of Object.entries(ss)) {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < HUB_STORED_MIN) continue;
+        const shape = String(k);
+        const rec = { shape, n };
+        if (shape === goal) { rec.tag = " ← goal"; finished.unshift(rec); continue; }
+        if (goalParts.has(shape)) { rec.tag = " ← part of goal"; finished.push(rec); continue; }
+        if (!looksFinished(shape)) { rest.push(rec); continue; }
+        (isUniform(shape) ? uniform : finished).push(rec);
+    }
+    const byCount = (a, b) => b.n - a.n;
+    finished.sort(byCount); uniform.sort(byCount); rest.sort(byCount);
+    if (!finished.length && !uniform.length && !rest.length) return null;
+
+    /* ★ 排序：加工出来的复合形状 > 空白中间态 > 四格同形（矿石）★
+     *
+     * 矿石排最后不是因为它不重要，而是**它是唯一不携带「这条线在造什么」信息的**
+     * —— 矿机直接挖出来就进 hub，任何世界都有。而一条在造 `CgScScCg` 的产线
+     * 意味着有一整套 cutter/stacker/rotater 在服务上一关的目标。 */
+    const ordered = [...finished, ...rest, ...uniform];
+
+    /* ★ 两档：`short` 只给**最能改变判断的那一条** ★
+     *
+     * 真机实测（L12，`prompt_tokens_max: 4600`）：不可截断的那几段
+     * （S2 候选宏 2841 + S3 5765）已经吃掉 `targetChars` 的绝大部分，
+     * 连 CAPACITY 都被丢掉，带子只剩 5 条。full 版（~250 字符）必然装不下。
+     *
+     * 而这条信息里**真正改变判断的只有一个事实**：「hub 里躺着 2071 件
+     * 一个陌生形状」。剩下的库存数字是背景，没有它也能做出正确决定。
+     * 所以退化成一条，成本约 60 字符 —— 那是能塞进残量里的量级。 */
+    const short = opts.form === "short";
+    const shown = short ? ordered.slice(0, 1) : ordered.slice(0, HUB_STORED_MAX + 2);
+    if (!shown.length) return null;
+    const total = ordered.length;
+    const parts = shown.map(r => `${r.shape}×${r.n}${r.tag || ""}`);
+    const omitted = total - shown.length;
+    /* short 版的引导语也压到最短 —— 它必须在 60 字符量级里说清「这不是废品」。 */
+    if (short) {
+        return `HUB stored: ${parts.join("  ")}${omitted > 0 ? ` (+${omitted})` : ""}`
+            + " — past levels' output; only the goal's own count advances";
+    }
+    return "stored (past levels stay here; only the goal's own count advances): "
+        + parts.join("  ")
+        + (omitted > 0 ? `  (+${omitted} more)` : "");
+}
+
 
 /**
  * 诊断里点名过的 handle（按出现顺序去重）。带子列表与机器表共用这一份口径 ——
@@ -3360,6 +3506,17 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     const recipeHint = (r && r.capped === true && typeof r.hint === "string") ? r.hint : null;
     const recipeStats = (r && r.capped === true && r.stats) ? r.stats : null;
     const s3Hub = renderHub(tbl);
+    /* ★ HUB 存量独立一段，**带子定完之后**才拼进去 ★
+     *
+     * 第一版把 `stored` 塞进 `## HUB` 里，它是 `compose` 的固定项 ——
+     * 于是这 100+ 字符直接参与「先定带子」的截断循环，
+     * 把 `belts_shown` 从 12 挤到 11（`prompt_capacity.test.mjs` D1 当场打红）。
+     *
+     * 而带子的优先级在本仓库是钉死的：它是模型**唯一能就地改造**的东西。
+     * 所以这段走 CAPACITY 那条路 —— 带子和产能都定完之后，用剩余空间塞。
+     * 塞不下就不出现（并留 `hub_stored_dropped` 痕迹），绝不抢带子的名额。 */
+    let s3HubStored = null;
+    let hubStoredDropped = null;
     let s3Machines = renderMachines(tbl, diagList, obs, goalShape);
     const s3Production = renderProduction(production, goalShape);
     const s3Budget = renderBudget(budget);
@@ -3792,6 +3949,32 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         }
     }
 
+    /* ── HUB 存量：带子与 CAPACITY 都定完之后，用剩下的空间塞 ──
+     *
+     * 优先级排在 CAPACITY **之后**：CAPACITY 是实测 p≈5e-7 的信息源，
+     * 而 hub 存量是「这几条线在造什么」的背景事实 —— 它极大（能一次性
+     * 排除整条 L11 遗留产线），但不是每轮都改变决策。
+     *
+     * 所以：塞得下就出现，塞不下就整段消失并留 `hub_stored_dropped` 痕迹。
+     * **绝不让它抢带子或 CAPACITY 的名额** —— 这条是本轮踩出来的：
+     * 第一版把它写进 `## HUB`（`compose` 的固定项），`belts_shown` 12 → 11。 */
+    {
+        /* 两档尝试：full 塞不下就退 short（只给最能改变判断的那一条），
+           还塞不下才整段消失并留痕迹。与 CAPACITY 的降级纪律一致。 */
+        let placed = false;
+        for (const form of ["full", "short"]) {
+            const text = renderHubStored(obs, goalShape, { form });
+            if (!text) { hubStoredDropped = "nothing-to-say"; break; }
+            if (s1.length + user.length + 2 + text.length <= targetChars) {
+                user = user + "\n\n" + text;
+                s3HubStored = text;
+                placed = true;
+                break;
+            }
+        }
+        if (!placed && !hubStoredDropped) hubStoredDropped = "dropped-for-budget";
+    }
+
     /* ── 余量富余时补一条「宏选择优先级」提示 ──
      *
      * ## 为什么**不能**直接写进 S1
@@ -3906,6 +4089,11 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     const blocks = {
         S1: s1, S2: s2, S3: s3, S4: s4, S5: s5, S6: s6,
         s3_goal: s3Goal, s3_hub: s3Hub, s3_machines: s3Machines, s3_belts: s3Belts,
+        /* hub 存量行：`null` = 这段没出现；**为什么没出现**记在 `hub_stored_dropped`
+           （「没数据」/「没有值得说的形状」/「预算不够被丢掉」是三种不同情况，
+           合并成一个 null 会让排查时分不清「功能没触发」和「功能坏了」）。 */
+        s3_hub_stored: s3HubStored,
+        hub_stored_dropped: hubStoredDropped,
         s3_production: s3Production, s3_budget: s3Budget,
         /* 配方段（可能为 null —— solver 不可用）。单独暴露，便于测试与排查 */
         s3_recipe: s3Recipe,
