@@ -55,7 +55,7 @@
  *   坐标只出现在 `evidence.site_cells`（独立字段，prompt 不渲染）。
  */
 import { templateByBuildingVariant, UNLOCK_LEVEL_FALLBACK } from "../../ai/op-templates.mjs";
-import { DIRV, OPP } from "../../ai/belt-rules.mjs";
+import { DIRV, OPP, beltEntry } from "../../ai/belt-rules.mjs";
 /* 只在「给模型挑一对矿机」时用（见 chooseMinerPair）——
    connect.mjs 不 import 本文件，所以不成环（已实测）。 */
 import { connect as planConnect } from "../macros/connect.mjs";
@@ -3606,7 +3606,39 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             try { slots = slotsOf(e.type, e.variant || "default", e.x, e.y, e.r || 0, beltRvOf(e)); }
                             catch { slots = null; }
                             if (!slots || !slots.outputs || !slots.outputs.length) continue;
-                            const free = slots.outputs.some(sl => !at(ixd, sl.cell));
+                            /* ★ 「输出口空闲」必须按 `connect` 的口径判，不是「格子上有没有东西」★
+                             *
+                             * 2026-11-21 验证 agent 抓到的真缺陷：原来的判据是
+                             * `slots.outputs.some(sl => !at(ixd, sl.cell))` —— 输出格上
+                             * **有任何实体**就算「被占」。
+                             *
+                             * 而 `connect` 判的是另一件事：`portBoundKind` 检查
+                             * **那条带子是不是流进这台机器**（`beltEntry === OPP[port.face]`）。
+                             * 一条从输出格**往外流**的带子完全不挡连接 —— 那正是这台机器
+                             * 已经在用的出料带，`connect` 会沿着它继续铺。
+                             *
+                             * 实测（L12）：`C8`（mixer）的输出格上有一条 `belt#14827`
+                             * 正往外流，旧判据把它判成「已占用」排除了。
+                             * 而 `connect C8→C3.color` 实际 16 格/切 2 条，
+                             * 连 `allow_replace:false` 都能过，闸门 18 ops 直接落地 ——
+                             * **它是这份世界上第二便宜的可行源头，却从来没进过推荐列表。**
+                             *
+                             * 更糟的是我给它写了条测试断言「输出口被占的机器不该被推荐」，
+                             * 把 bug 锁进了测试。判据错了，测试跟着错，两边互相印证。
+                             * （`check-own-metric-before-concluding` 的又一形态。） */
+                            const free = slots.outputs.some(sl => {
+                                const occupied = at(ixd, sl.cell);
+                                if (!occupied) return true;                 // 空格 ⇒ 空闲
+                                if (occupied.type !== "belt" && occupied.type !== "underground_belt") return false;
+                                /* 格上有带子：只有它**流向本机**才算占。
+                                   带子的 entry 面朝向本机 ⇒ 货在往机器里灌 ⇒ 这个输出口已经被接走了。 */
+                                const rv = typeof occupied.rotation_variant === "number"
+                                    ? occupied.rotation_variant
+                                    : Math.max(0, ((occupied.code | 0) - 1));
+                                const entry = beltEntry(rv, occupied.r | 0);
+                                /* `sl.dir` 是「机器 → 外侧」；带子从外面看进来方向相反 */
+                                return !(entry === OPP[sl.dir]);
+                            });
                             if (!free) continue;
                             /* 喂 `color` 槽只能用「产颜料」的机器：mixer / painter 的
                                产物带颜色，矿机在**颜料矿**上时产颜料。
@@ -3643,11 +3675,28 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                          *
                          * **0 与非 0 完美分开。**
                          *
-                         * 只对**按距离排出的前 4 名**跑（不是全部 17 台）：
-                         * 全量跑要约 3 秒，而诊断是每轮都跑的；前 4 名约 0.7 秒，
-                         * 且真正会被推荐的那些本来就在最前面。 */
-                        const topN = rows.slice(0, 4);
-                        for (const r of topN) {
+                         * ⚠️ 但「按距离取前 N 名再算」是**错的**（2026-11-21 验证 agent 抓到的）：
+                         *
+                         * 这份世界上完整的合格候选（颜料类型对 + 输出口空闲）按距离排是
+                         *
+                         *   C8(14) M4(19) M3(20) M2(21) **M13(27) M15(28)** M14(64) …
+                         *
+                         * 而能落地的只有 **M13/M15** —— 它们排第 5、6 位，
+                         * 按距离取前 4 名**永远看不到它们**。排序依据的数据
+                         * 本身是从距离预筛出来的，这是个先有鸡还是先有蛋的问题。
+                         *
+                         * 解法：**先对全部合格候选算 `cut`（拆几条），按 `cut` 升序取前 6 名
+                         * 再算 `disconnect`**。实测 `cut` 与能否落地相关性虽不完美
+                         * （M11 只拆 1 条却被拒），但它能把「拆 3 条的远路」整批排到后面，
+                         * 而 M13/M15（cut=1）自然浮上来。
+                         *
+                         * 代价：全量 connect 约 2.6 秒，genuine diagnose 会到 5 秒级。
+                         * 权衡：诊断每轮跑一次，而**推荐错源头要浪费一整轮 + 一次模型调用**。
+                         * 5 秒远小于一轮的模型延迟。
+                         */
+                        /* 对**全部**合格候选跑一次 connect，同时拿到 `cut` 与 `disconnect`。
+                         * 不做两轮 —— `consequences` 本来就在同一次返回值里。 */
+                        for (const r of rows) {
                             try {
                                 const ent = (o.entities || []).find(e => handleOf(handles, e.uid) === r.handle);
                                 if (!ent) continue;
@@ -3665,14 +3714,39 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                 }
                             } catch { /* 单台算不出来不影响其它 */ }
                         }
-                        /* 排序：**不会切断任何下游**的排前面，然后才比距离。
+                        const ranked = rows.slice().sort((a, b) => {
+                            const ca = typeof a.cut === "number" ? a.cut : 99;
+                            const cb = typeof b.cut === "number" ? b.cut : 99;
+                            if (ca !== cb) return ca - cb;
+                            return a.d - b.d;
+                        });
+                        const topN = ranked.slice(0, 3);
+                        /* ★ 排序：`disconnect === 0` 排最前，同档里按距离 ★
                          *
-                         * 这一条比距离重要得多 —— 一条 27 格但会切断 3 处下游的路，
-                         * 预演闸门必拒；而 60 格但什么都不切的路能直接落地。 */
+                         * ⚠️ `disconnect` **只有「等于 0」这一层信息**，不能按数值大小分档。
+                         *
+                         * 第一版分成 0 / null / >0 三档，结果把 `C8`（disc=1，14 格）
+                         * 排到了 `M13`（disc=0，27 格）前面 —— 而实测 C8 和 M13 都能落地，
+                         * 真正的问题是那样排序会把**能落地的那两台挤出前 3 名**。
+                         *
+                         * 验证 agent 的数据说得更清楚：
+                         *
+                         *   `disc=0 ⇒ 落地`   2/2  ✅ 成立
+                         *   `disc>0 ⇒ 被拒`   2/6  ❌ **不成立**
+                         *     —— C8 和 M17 都是 disc=1，两个都落地
+                         *
+                         * 所以它是**充分不必要**信号：0 说明「安全」，
+                         * 非 0 只说明「要小心」，不能拿来排序谁更差。
+                         *
+                         * 最终排序：**`disconnect === 0` 优先，然后按 `cut` 再按距离**。
+                         * `disc=0` 是唯一能保证「能落地」的信号，必须排最前。 */
                         rows.sort((a, b) => {
-                            const da = a.disconnect === 0 ? 0 : (a.disconnect === null ? 1 : 2);
-                            const db = b.disconnect === 0 ? 0 : (b.disconnect === null ? 1 : 2);
-                            if (da !== db) return da - db;
+                            const za = a.disconnect === 0 ? 0 : 1;
+                            const zb = b.disconnect === 0 ? 0 : 1;
+                            if (za !== zb) return za - zb;
+                            const ca = typeof a.cut === "number" ? a.cut : 99;
+                            const cb = typeof b.cut === "number" ? b.cut : 99;
+                            if (ca !== cb) return ca - cb;
                             return a.d - b.d;
                         });
                         return rows.filter(r => r.handle).slice(0, 3);

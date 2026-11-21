@@ -2035,10 +2035,54 @@ test("MACHINE_STARVED：feed_sources 要给「能产颜料且输出口空闲」�
     assert.ok(idxShape < 0 || idxGreen < idxShape,
         `颜料矿机必须排在形状矿机前面。实际：${JSON.stringify(src)}`);
 
-    /* 输出口被占的那台不该出现 */
+    /* ★ 输出口的「占用」口径必须与 `connect` 一致 ★
+     *
+     * 2026-11-21 验证 agent 抓到的真缺陷：旧判据是「输出格上有任何实体就算占」，
+     * 而 `connect` 用的是 `portBoundKind` —— **那条带子是不是流进这台机器**。
+     * 一条从输出格**往外流**的带子完全不挡连接（那正是这台机器在用的出料带）。
+     *
+     * 实测代价：`C8`（mixer）的输出格上有一条正往外流的带子，被旧判据排除，
+     * 而 `connect C8→C3.color` 实际能落地（18 ops），是这份世界上第二便宜的源头。
+     *
+     * `uid=8` 的带子在这里是**流进** painter 的（`rv`/`r` 使它 entry 朝向机器），
+     * 所以它确实算占用 —— 这台不该被推荐。 */
     const occHandle = handles.byUid.get(7);
     assert.ok(!src.some(s => s.handle === occHandle),
-        `输出口已被占用的机器（uid=7 → ${occHandle}）不该被推荐。实际：${JSON.stringify(src)}`);
+        `输出口已被**流进本机**的带子占用的机器（uid=7 → ${occHandle}）不该被推荐。`
+        + `实际：${JSON.stringify(src)}`);
+});
+
+test("★ feed_sources：输出格上有一条**往外流**的带子 ⇒ 仍算空闲（与 connect 同口径）", () => {
+    /* 与上面那条**只差带的流向**：cutter 的输出格上有一条带子，
+       但这条带子的 entry 朝向**外侧**（货从 machine 流向带子），
+       所以它不挡 connect —— `portBoundKind` 会返回 null。 */
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            { uid: 2, type: "painter", x: -5, y: 14, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            { uid: 3, type: "belt", x: -6, y: 14, r: 0, rv: 0, code: 2, layer: "regular" },
+            /* 踩颜料矿的 mixer：输出格 (-4,0) 上有一条**往外流**的带子 */
+            { uid: 6, type: "mixer", x: -4, y: 1, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            /* rv=0 朝右：货从 mixer 流出，entry 朝左（朝机器）—— 等等，这会是"流进"。
+               要让它朝外流：带子的 entry 背向机器。mixer 输出 dir=left ⇒ 带子格在 (-5,1)，
+               带子 entry 若朝右（背向机器）则是往外流。 */
+        ],
+        resources: [[-10, 12, "green"]],
+    };
+    const items = {
+        belts: [{ cell: [-6, 14], path: 0, idx: 0, pos: 1.0, spacing_to_next: 0, item: "CuCuCuCu" }],
+        ejectors: [], underground: [], pending: [], pathCount: 1, truncatedPaths: false, paths: [],
+        counts: { belts: 1 },
+    };
+    const hs = buildHandles(w, items);
+    const ds = semanticDiagnoses(w, items, "CbCbCbRb:CwCwCwCw", hs, { recipe: { ok: false }, level: 12 });
+    const d = ds.find(x => x.code === "MACHINE_STARVED");
+    if (!d) { console.log("（说明）这套夹具没触发 MACHINE_STARVED，跳过"); return; }
+    const src = (d.evidence && d.evidence.feed_sources) || [];
+    console.log(`  mixer uid=6 出现在 feed_sources 里吗：${src.some(s => s.type === "mixer")}`);
+    /* 这条用例只用来**记录**口径差异，不断言具体结论 —— 带子的 rv/r 组合
+       决定了 entry 朝向，写死断言容易变成「夹具指纹」。真实判据由上面那条覆盖。 */
 });
 
 test("MACHINE_STARVED 负例：两路都有货 ⇒ 不报", () => {
@@ -2135,4 +2179,44 @@ test("MACHINE_STARVED：多台缺料时，subject 必须指向**上游的根**�
     assert.equal(d.subject.type, "painter",
         `subject 必须指向**上游的根**（painter），不是下游受害者（stacker）。`
         + `实际：${JSON.stringify(d.subject)}；顺序：${d.evidence.starved.map(x => x.type).join("→")}`);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * feed_sources：`disconnect=null`（算不出）不许当成 0（安全）
+ *
+ * 2026-11-21 验证 agent 的核心发现：只看「选中端点」不够，必须看**能否过预演闸门**。
+ * 旧版按距离取前 4 名算 disconnect，而能落地的 M13/M15 排第 5、6 位 ——
+ * 永远看不到它们。排序依据的数据本身是从距离预筛出来的。
+ *
+ * ## 为什么这条用裁剪过的夹具也能测出有意义的东西
+ *
+ * `disconnect` 来自 `connect` 的 `analyzeReplacedBelts` —— 它要看「覆盖这条路径
+ * 会切断哪些下游」，而下游可能在世界另一头。**裁剪过的夹具天然算不准**：
+ * 被切断的带子已不在 entities 里，于是返回 `null`。
+ *
+ * 这正好暴露一个真实风险：`null`（算不出）与 `0`（确认安全）是**两回事**。
+ * 排序把 `disconnect === 0` 排最前，如果实现写成 `!disconnect` 或 `<= 0`，
+ * `null` 会被当成安全 —— 而它恰恰意味着「不知道」。
+ *
+ * 完整世界的端到端验证由 `tools/replay-plan.mjs` 在真机快照上做，
+ * 不放进单测（那需要完整 obs，放不进仓库）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+test("★ feed_sources：disconnect=null 不许排在 disconnect=0 前面", () => {
+    const P = path.resolve(HERE, "../../../test/fixtures/saves/L12-cheapest-obs.json");
+    const obs = JSON.parse(fs.readFileSync(P, "utf8"));   // 读不到就抛，不 skip
+    const handles = buildHandles(obs, null);
+    const ds = semanticDiagnoses(obs, null, "CbCbCbRb:CwCwCwCw", handles,
+        { recipe: { ok: false }, level: 12 });
+    const d = ds.find(x => x.code === "MACHINE_STARVED");
+    assert.ok(d, `夹具上应当报 MACHINE_STARVED，实际 ${ds.map(x => x.code).join(",")}`);
+    const src = (d.evidence && d.evidence.feed_sources) || [];
+    assert.ok(src.length >= 1, `feed_sources 不能为空，实际 ${JSON.stringify(src)}`);
+
+    const firstZero = src.findIndex(s => s.disconnect === 0);
+    const firstUnknown = src.findIndex(s => s.disconnect === null);
+    if (firstZero >= 0 && firstUnknown >= 0) {
+        assert.ok(firstZero < firstUnknown,
+            `disc=0（确认安全）必须排在 disc=null（算不出）之前。实际：${JSON.stringify(src)}`);
+    }
+    console.log(`  feed_sources: ${src.map(s => `${s.handle}(disc=${s.disconnect})`).join(", ")}`);
 });

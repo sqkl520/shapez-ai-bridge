@@ -320,3 +320,211 @@ M13 也要 200~340ms，属于 JIT 与 fs 读 spec 的固定开销）。最坏情
 - **prompt 5300 档四样齐**：16 条带子 + CAPACITY + HUB stored + 挖矿提示，
   5252 token，`over_token_budget=false`。这一档是这轮唯一「三个目标全达成」的。
 - **测试基线持平**（29 → 28 红，无新增），但新增的回归测试有「缺夹具静默通过」的坑，建议改成 fail。
+
+---
+
+## 复验 2：feed_sources
+
+只读验证。世界 = 实验存档 `7c93b3dd…`（`world_info.seed=60908`）。
+全程未发 `tx`/`act`/`step`/`place`/`delete`/`save`，未碰用户存档 `5c967065…`。
+脚本放 `.tmp-verify/`，报告后已删除。
+
+> **HEAD 在验证期间前进了一格**：任务书说的是 `62831a9`，但我跑第 2 步时
+> `8088bc7 feat(diag): 源头推荐带上「会切断几处」` 落了盘。两个版本我都测了，
+> 下面凡是结论对两版都成立的会注明。
+
+### 第 1 步 世界身份（新鲜 obs，唯一一次连游戏）
+
+| 项 | 值 |
+|---|---|
+| goal.level | **12** |
+| goal.requirement.shape | **CbCbCbRb:CwCwCwCw** |
+| delivered / required | 0 / 1000 |
+| entity_count | **749**（truncated=false） |
+| tick | **973078.16**（采样时在走，paused=false） |
+| seed | 60908 |
+| debug_items | belts 375 / ejectors 20 / paths 32 / truncatedPaths=false |
+
+机器构成与上一轮一致：miner 17 / belt 699 / mixer 4 / painter 2 / cutter 3 /
+stacker 1 / rotater 1 / balancer 1 / trash 20 / hub 1。
+
+> ⚠️ **第一次取 obs 的 `resources` 是错的，差点让整份报告反过来。**
+> 任务书给的参数 `max_entities:50000, layer:"all", include_stats:true, include_resources:true`
+> **漏了 `max_resources`**，mod 默认 2000 ⇒ `resources` 只回来 2007 条，
+> 覆盖 `x∈[-255,-179]`（世界 bbox 是 `-15..90`，东半边一个矿都没有）。
+> 后果：17 台矿机的矿种全部 `undefined`，于是 `feed_sources` 的「颜料矿」判据
+> 把所有矿机都筛掉，只剩 `C6(painter)` 一条，精度 0/1。
+> **我一开始把这当成了真实结论。** 换成 loop 真实参数
+> （`max_resources: 20000`，见 `loop.mjs:555/5357`）后回来 11187 条、bbox 覆盖全图，
+> 17 台矿机的矿种全部正确（red×4 / blue×6 / green×4 / RuRuRuRu×1 / CuCuCuCu×1 / …）。
+> 任务书的参数和 `loop.mjs` 的口径不一致 —— 这是**任务书的坑，不是代码的**，
+> 但沿用它的任何人都会得到假结论。
+
+### 第 2 步 feed_sources 的精确度
+
+诊断点名 **`C3`（painter#13552）**，缺 `color` 槽 @ `(-4,15)`（与本文件前几轮一致）。
+`8088bc7` 产出的 `feed_sources`：
+
+| 句柄 | 类型 | 距离 | cells | cut | disconnect | 预演闸门 |
+|---|---|---|---|---|---|---|
+| **M13** | miner(green) | 27 | 29 | 1 | **0** | **落地** 30 ops |
+| **M15** | miner(green) | 28 | 30 | 1 | **0** | **落地** 31 ops |
+| M14 | miner(blue) | 64 | 68 | 3 | 3 | 拒 `PLAN_REJECTED`（-191 条，62%） |
+
+- **精确率 = 2/3**（能落地 / 推荐总数）。
+- 被推荐的 3 台**全部是矿机、全是绿的/蓝的**，没有 `C8`、没有 `M17`。
+- 上一轮 `62831a9` 的版本（只按距离排）在同一份 obs 上给出**完全相同**的
+  `M13, M15, M14` —— `8088bc7` 的 `disconnect` 排序**在这份世界上是惰性的**
+  （前两名本来就 `disc=0`，M14 本来就第三）。
+
+#### 对照：全量扫描（29 个非带子实体的全部）
+
+「可落地」= `connect(opts:{allow_replace:true,prefer:"cheapest"})` 成功 **且**
+`buildTxPlan(partial:true)` 通过。
+
+| 全量可落地集合 | 类型 | 距离 | 是否被 `feed_sources` 推荐 |
+|---|---|---|---|
+| M17 | miner(CuCuCuCu) | 12 | ❌ **漏** |
+| C8 | mixer | 14 | ❌ **漏** |
+| M13 | miner(green) | 27 | ✅ |
+| M15 | miner(green) | 28 | ✅ |
+
+- **recall = 2/4**（全部可落地）；若只看「矿种语义正确」的三台（C8/M13/M15），
+  **recall = 2/3**。
+- **精确率 2/3 掩盖了一个真缺陷**：推荐列表里第 3 名 `M14` 一定过不了闸门，
+  而**更近、更能落地**的 `M17`(12 格) 和 `C8`(14 格) 一个都没进。
+  `M17` 被排除是**对的**（踩 `CuCuCuCu` 形状矿，喂 color 槽不变色）；
+  `C8` 被排除是**错的**，见下。
+
+#### ★ C8 被排除的理由是错的 —— 这是本轮最实的一个发现 ★
+
+`semantic.mjs` 的过滤条件写着「输出口必须空闲 —— 用既有的 slotsOf，不自己算朝向」，
+实现是 `slots.outputs.some(sl => !at(ixd, sl.cell))`，也就是**输出格上只要有任何实体就排除**。
+
+而 `connect` 自己判端口占用的逻辑（`connect.mjs:1208-1212` → `portBoundKind`：1934）
+判的不是「格子上有没有东西」，而是**「格子上的带子是不是朝这台机器流」**：
+
+```
+portBoundKind: beltEntry(b.rv,b.r) === OPP[port.face] ? "accept" : null
+```
+
+两者在「输出格上有一条**向外**送货的带子」时**结论相反**：
+
+| 源 | 输出格 | 格上是什么 | 带子朝向 | `at()` 判据 | `connect` 判据 | 实际能连吗 |
+|---|---|---|---|---|---|---|
+| C8 | `(-5,1)` | belt#14827 | **向外** | 已占 ⇒ 排除 | 未占用 | **能**（已实测 LAND，16 格/拆 2）|
+| M13 | `(-9,-6)` | 空 | — | 空闲 ⇒ 保留 | 未占用 | 能 |
+| M1 | `(8,4)` | belt | **向内** | 已占 ⇒ 排除 | **已占用** | 不能（`port_already_bound`）|
+
+- `C8` 用 **`allow_replace:false`** 连也一样落地 —— 说明它压根没触发 `port_already_bound`，
+  不需要抢端口。它被排除的唯一理由就是 `at()` 那个过宽的判据。
+- 世界里只有 **2 台** mixer 的输出格被「向外」带子占着：`C8`（d=14，LAND）
+  和 `C9`（d=93，宏层就失败）。C8 是这份世界上**第二便宜且能落地**的源头，
+  比被推荐的 M13 近 13 格、比 M15 近 14 格；拆 2 条 vs 拆 1 条、`disc=1` vs `disc=0`。
+- 影响：`feed_sources` 的 3 个名额里，第 3 名给了一台必被拒的 `M14`，
+  而一台能落地的 `C8` 被一条**与宏不一致的判据**挡在门外。
+
+> 这一条正好落在 memory 的 `computed-but-never-delivered` 与
+> `never-write-code-against-imagined-schema` 之间：判据不是「没想到」，
+> 而是**和它要预测的那个东西（connect 的 precondition）用了不同的定义**。
+> 单测里那条 `feed_sources 要给「能产颜料且输出口空闲」的源头` 明确把
+> 「输出口已被占用的 mixer 不该被推荐」写成了断言（`semantic.test.mjs:1986`），
+> 所以**这条缺陷被一个错误的测试固定住了** —— 要改判据得同时改测试。
+
+#### `disconnect` 分离度的实测（`8088bc7` 的核心论点）
+
+commit message 说「0 与非 0 完美分开」。全量 16 个宏层能出路径的源：
+
+| disconnect | 台数 | 其中落地 |
+|---|---|---|
+| 0 | 2（M13, M15） | **2** |
+| 1 | 4（C6, M11, C8, M17） | 2（C8, M17） |
+| 2 | 3（M2, M3, M4） | 0 |
+| 3 | 5（M7, M8, M9, M14, M16） | 0 |
+| ≥4 | 2（C10, C11） | 0 |
+
+- **`disc=0 ⇒ 必落地` 成立（2/2）**；但**`disc>0` 并不等于必拒（6 台里 2 台落地）**。
+- 所以「完美分开」只在**一个方向**成立。真正干净的分界是「距离 ≤28 且 `disc≤1`」，
+  而不是 `disc==0`。
+- 后果：`C8`(disc=1) 和 `M17`(disc=1) 落在「不完美」那一侧，而排序把
+  `disc=0` 的两台顶到前面、`disc=1` 的四台排在后面并被 `slice(0,3)` 砍掉 ——
+  于是 **1 条能落地的路径（C8）被排序挤出了名单**。
+
+### 第 3 步 端到端 A/B —— **未执行（缺凭证）**
+
+- `ANTHROPIC_API_KEY` 未设置；`ANTHROPIC_BASE_URL` 指向
+  `http://127.0.0.1:15721/claude-desktop`（Claude Desktop 网关）。
+- 用 `settings.json` 里的 `ANTHROPIC_AUTH_TOKEN`、`config.json` 里的 `primaryApiKey`、
+  以及 `customApiKeyResponses.approved` 里那个 key 各试一次，
+  一律 `{"error":{"message":"认证失败: Claude Desktop gateway authentication failed","type":"proxy_error"}}`。
+- 结论：**这一轮拿不到模型凭证，A/B 没跑。** 按纪律「必须跑到落地为止」的口径，
+  宁可不报，也不拿「选没选中」冒充结果。
+
+**A/B 工装已写好并在 dry 模式下自检通过**，凭证到位即可直接跑：
+
+- `diagnose()` 只调一次，两臂共用同一批诊断对象；
+- 两臂唯一差异是 `MACHINE_STARVED.evidence.feed_sources` 置空 / 保留；
+- **渲染后长度已配平**：A 组 13667 → 补 102 个 U+3000 到 **13769**，
+  B 组 **13769**，`user.length` 相等；
+- 逐行 diff：**194 行，恰好 1 行不同**（第 171 行，两臂都含 `MACHINE_STARVED`）；
+- 两臂 `belts_shown=16` / CAPACITY 在 / HUB stored 在 / 挖矿提示在 —— **完全一致**，
+  没有出现 `.findings/EXP-chain-hint.md` 里那种「hint 短了 → 预算松了 → 多看见一条带子」的混杂。
+
+判据（照任务书）：`hit_select`（`to` 是不是 `{ref:C3, port:{role:"color"}}`）、
+`hit_land`（该计划过 `buildTxPlan`）、`picked_handle`（选的 `from` 句柄）。
+
+### 第 4 步 预算：`feed_sources` 只吃 102 字符，5300 档**一样都没挤掉**
+
+同一份 obs、`loop.mjs` 真实参数（`in_chars_max:24000`）渲染：
+
+| 档位 | 臂 | user.len | token | 带子 | CAPACITY | HUB stored | 挖矿提示 |
+|---|---|---|---|---|---|---|---|
+| **5300** | A（无 feed_sources） | 13667 | 5255 | 16/699 | **有** | **有** | **有** |
+| **5300** | B（有） | 13769 | 5284 | 16/699 | **有** | **有** | **有** |
+| 4800 | A | 12180 | 4830 | **8** | 有 | 无 | 无 |
+| 4800 | B | 12188 | 4832 | **6** | 有 | 无 | 无 |
+
+- **5300 档：四样东西两臂全在，零挤压。** `Δlen=+102`、`Δtoken=+29`，
+  5284 < 5300，`over_token_budget` 为假。
+- **4800 档：`feed_sources` 会挤掉 2 条带子**（8→6，少了 25%）。
+  这不是新问题（4800 本来就已经丢 HUB stored + 挖矿提示），但它说明
+  **100 字符在紧张档位是真有代价的**。任务书估的「约 60 字符」实际是 **102 字符**
+  （`8088bc7` 加了 `, 安全` / `, 会切断N处` 两个词之后变长）。
+  只要 `prompt_tokens_max` 停在 5300，这条无风险。
+
+渲染出来的那一段（B 组实际文本）：
+
+```
+; nearest sources with a free output: M13(miner, 27格, 安全), M15(miner, 28格, 安全), M14(miner, 64格, 会切断3处)
+```
+
+### 结论
+
+1. **`feed_sources` 的精确率是 2/3，不是 3/3。** 前两名（M13/M15）确实能落地，
+   第三名（M14）一定被预演闸门拒 —— 而且它带着 `会切断3处` 这个自曝标签，
+   模型读得出来，所以**危害有限**，但这 1/3 的名额是浪费的。
+2. **真正的问题在漏，不在错。** 全量可落地 4 台，`feed_sources` 只覆盖 2 台。
+   其中 `M17` 漏得有道理（形状矿），**`C8` 漏得没道理**：
+   它是这份世界上第二便宜、且已实测能落地的源头（16 格/拆2/`disc=1`），
+   被一句「输出格上有实体就算占用」的判据排除，而 `connect` 的同一判断是
+   「带子是不是朝机器流」。**判据与它预测的对象用了不同的定义。**
+   更糟的是这条错误判据被一条回归测试固定住了（`semantic.test.mjs:1986`）。
+3. **`8088bc7` 的 `disconnect` 在这份世界上没改变推荐结果**（`62831a9` 与 `8088bc7`
+   给出同一组 M13/M15/M14）。它的论点「0 与非 0 完美分开」只在一个方向成立：
+   `disc=0 ⇒ 必落地`（2/2）✅，`disc>0 ⇒ 必拒` ❌（6 台里 2 台落地）。
+4. **预算是安全的**：5300 档下 `+102 字符 / +29 token`，四样东西一个没少。
+   但实际开销是任务书估的 60 字符的 **1.7 倍**，4800 档会掉 2 条带子。
+5. **A/B 未跑 —— 没有模型凭证。** 工装已按 `.findings/EXP-chain-hint.md` 的
+   三重等价性控制写好并通过 dry 自检（194 行 / 只差 1 行 / 渲染长度相等 /
+   预算块完全一致），凭证到位即可直接跑。
+
+### 给主线程的建议（按性价比）
+
+1. **修 `C8` 那条判据**：把 `slots.outputs.some(sl => !at(ixd, sl.cell))` 换成
+   「输出格空 **或** 格上的带子不是朝这台机器流」——直接复用 `connect.mjs` 的
+   `portBoundKind`，别在 semantic 里重写一份。同时改 `semantic.test.mjs:1986`
+   那条把错误行为写死的断言。这一条能把 recall 从 2/4 提到 3/4。
+2. **`slice(0,3)` 前先看有没有更好的**：现在 `disc=1` 的 C8/M17 被 `disc=0` 的
+   两台顶掉。若把「`disc<=1` 且距离 ≤ 30」当作同一档，C8 会进前三，
+   M14（`disc=3`, 64 格）会自然出局 —— **精确率和 recall 会同时变好**。
+3. `feed_sources` 的长度预算按 **110 字符**算，不要按 60。
