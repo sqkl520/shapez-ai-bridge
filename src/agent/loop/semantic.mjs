@@ -3440,7 +3440,11 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 try { sl = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m)); } catch { continue; }
                 const ins = (sl && Array.isArray(sl.inputs)) ? sl.inputs : [];
                 if (ins.length < 2) continue;
-                const fed = ins.map(i => ({ cell: i.cell, ok: cellHasCargo(i.cell) }));
+                /* 槽的 `role` 必须带上 —— 它决定「什么能填这个槽」：
+                 * `color` 槽只能吃颜料，`shape`/`primary` 吃形状。
+                 * 第一版没带，下游只能用纯几何筛源头，于是给 `color` 槽
+                 * 推荐了一台 cutter（最近的，但产物是形状，接上去一点用没有）。 */
+                const fed = ins.map(i => ({ cell: i.cell, ok: cellHasCargo(i.cell), role: i.role || "" }));
                 const nFed = fed.filter(f => f.ok).length;
                 /* 只报「部分缺料」：全空交给 CHAIN_UNFED，全满不该报 */
                 if (nFed > 0 && nFed < fed.length) {
@@ -3523,6 +3527,106 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                     const empty = s.fed.filter(f => !f.ok).map(f => JSON.stringify(f.cell)).join("/");
                     return `${s.m.type}#${s.m.uid}(${s.nFed}/${s.total}，缺 ${empty})`;
                 }).join("；");
+                /* ★ 谁最便宜地能填这个槽 ★
+                 *
+                 * ## 为什么需要（2026-11-21 真机验证的直接结论）
+                 *
+                 * 这条诊断能说出「painter C3 的 color 槽空」，模型也确实 9/10 选中了它
+                 * （hint 带句柄那次 A/B）。但**选中端点 ≠ 能落地**：`replay-plan.mjs`
+                 * 实测 30 个样本里「命中根因 9/10、真能落地 1/10」。
+                 *
+                 * 被闸门拒的那 9 个，绝大多数不是路径挑得差，而是**源头选错** ——
+                 * 挑了一台 60 格外、路线横穿主干道的矿机。同一份世界上到 `C3.color`
+                 * 的真实成本表是：
+                 *
+                 *   C8 (mixer)  16 格 / 拆 2 条   ← 已在产线上，产物就是颜料
+                 *   M17          14 格 / 拆 1 条   ← 最便宜，但踩的是形状矿
+                 *   M13/M15     29/30 格 / 拆 1 条  ← 绿矿，矿种对
+                 *   M7/M14/M16  66~70 格 / 拆 3 条  ← 蓝矿，全是远路
+                 *
+                 * `MACHINE_STARVED` 只说「接上缺的那一路」，模型没有任何依据在这些
+                 * 之间做选择 —— 它看不到距离，也看不到「拆几条」。这是
+                 * `computed-but-never-delivered` 的又一形态：宏算得出代价，
+                 * 但**闸门只在事后拒**，模型事前拿不到。
+                 *
+                 * ## 只给「输出口空闲」的机器，不猜矿种语义
+                 *
+                 * 判据只做两件事：① 输出口没被占；② 到缺料格的曼哈顿距离。
+                 * **不判断「这台机器产的是不是对的颜色」** —— 那是模型该做的判断，
+                 * 而且 `## MACHINES` 段已经标了每台矿机采什么（`采green`）。
+                 * 这里越权会给错方向，而错方向比没方向更贵。
+                 *
+                 * 最多 3 台，按距离排。 */
+                const feedSources = (() => {
+                    try {
+                        const target = starved[0];
+                        const missSlotIdx = target.fed.findIndex(f => !f.ok);
+                        const missCell = (target.fed[missSlotIdx] || {}).cell;
+                        if (!Array.isArray(missCell)) return [];
+                        /* 缺的是哪个角色的槽 —— 用它来筛「产物类型对得上」的源头。
+                         *
+                         * 这是第一版踩出来的：纯按距离排，`color` 槽的第一名是
+                         * `C2`（cutter，7 格）。cutter 输出的是**形状**，接到 pigment
+                         * 槽上一个像素都不会变色 —— 而它距离最近，看起来最"便宜"。
+                         *
+                         * 给模型一条**语义上不可能成功**的建议，比不给更糟：
+                         * 它会照着接，然后下一轮发现自己白干。
+                         * 一个错误的指路比没有指路贵得多。 */
+                        const missRole = (target.fed[missSlotIdx] || {}).role || "";
+                        const wantsColor = /color/i.test(missRole);
+                        /* ⚠️ `o` 必须先声明：下面的 `oreAtCell` 读 `o.resources`。
+                           第一版把这两行放在 `const o = unwrapObs(obs)` 之前，
+                           触发 TDZ（`Cannot access 'o' before initialization`），
+                           而整个块包在 `try/catch` 里 —— 异常被吞掉，`feed_sources`
+                           静默变成 `[]`，没有任何报错。 */
+                        const o = unwrapObs(obs);
+                        const ixd = indexOf(o);
+                        /* 颜料矿的矿种是**纯小写单词**（`blue` / `green` / `red`…）；
+                        * 形状矿是 `CuCuCuCu` 那种大写开头的码。矿机在形状矿上时
+                        * 挖出来的是**形状**，喂 `color` 槽一个像素都不会变色。
+                        *
+                        * 第一版只判 `e.type === "miner"` 就放行，于是把 `M17`
+                        * （踩 `CuCuCuCu`、距离 12 格最近）排到了第一位 —— 又是一条
+                        * 「看起来最便宜但语义上不可能成功」的建议。 */
+                        const oreAtCell = (() => {
+                            const list = o && Array.isArray(o.resources) ? o.resources : null;
+                            if (!list) return null;
+                            const m = new Map();
+                            for (const r of list) if (Array.isArray(r) && r.length >= 3) m.set(`${r[0]},${r[1]}`, r[2]);
+                            return m;
+                        })();
+                        const minerOre = (e) => (oreAtCell ? oreAtCell.get(`${e.x},${e.y}`) : null);
+                        const isPigmentOre = (kind) => typeof kind === "string" && /^[a-z]+$/.test(kind);
+                        const rows = [];
+                        for (const e of (o.entities || [])) {
+                            if (!e || e.uid === target.m.uid) continue;
+                            if (e.type === "belt" || e.type === "underground_belt" || e.type === "hub") continue;
+                            /* 输出口必须空闲 —— 用既有的 slotsOf，不自己算朝向 */
+                            let slots = null;
+                            try { slots = slotsOf(e.type, e.variant || "default", e.x, e.y, e.r || 0, beltRvOf(e)); }
+                            catch { slots = null; }
+                            if (!slots || !slots.outputs || !slots.outputs.length) continue;
+                            const free = slots.outputs.some(sl => !at(ixd, sl.cell));
+                            if (!free) continue;
+                            /* 喂 `color` 槽只能用「产颜料」的机器：mixer / painter 的
+                               产物带颜色，矿机在**颜料矿**上时产颜料。
+                               cutter / rotater / stacker / balancer 产的是形状 —— 接上去
+                               什么也变不了色。这一层筛掉它们。 */
+                            if (wantsColor) {
+                                const producesPigment = (e.type === "mixer" || e.type === "painter"
+                                    || e.type === "painterDouble" || e.type === "painterQuad")
+                                    /* 矿机只有在**颜料矿**上才产颜料。形状矿上产的是形状，
+                                       喂 color 槽什么也变不了 —— 而它往往离得最近。 */
+                                    || (e.type === "miner" && isPigmentOre(minerOre(e)));
+                                if (!producesPigment) continue;
+                            }
+                            const d = Math.abs(e.x - missCell[0]) + Math.abs(e.y - missCell[1]);
+                            rows.push({ handle: handleOf(handles, e.uid), type: e.type, d });
+                        }
+                        rows.sort((a, b) => a.d - b.d);
+                        return rows.filter(r => r.handle).slice(0, 3);
+                    } catch { return []; }
+                })();
                 out.push({
                     code: "MACHINE_STARVED",
                     layer: "L4",
@@ -3538,6 +3642,9 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             fed: s.nFed, need: s.total,
                             missing_cells: s.fed.filter(f => !f.ok).map(f => f.cell),
                         })),
+                        /* 可行源头：最近、且输出口空闲的 3 台。
+                           渲染在 `renderDiagnoses` 里，带 `from:` 前缀。 */
+                        feed_sources: feedSources,
                         note: "a multi-input machine that gets only some of its inputs never fires; "
                             + "everything upstream of it backs up and freezes",
                     },

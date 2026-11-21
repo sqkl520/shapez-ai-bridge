@@ -2653,6 +2653,22 @@ function renderDiagnoses(diagnoses) {
                 line += "; NO empty site — clear space first (remove_run / trash_unused)";
             }
         }
+        /* ★ MACHINE_STARVED 的「从哪接」—— 从「指出缺口」到「可施工」的关键 ★
+         *
+         * `evidence.feed_sources` 是 semantic 层算出的「最近、且输出口空闲的 3 台机器」。
+         * 只算距离，**不判断矿种对不对** —— 那该由模型结合 `## MACHINES` 的
+         * `采green` 标注自己决定。
+         *
+         * 不给这一段时，模型只知道「C3 的 color 槽空」，然后从 17 台机器里瞎挑；
+         * 实测挑中的是 66 格外的 M7（路线横穿主干道，闸门拒）。
+         * 而同一份世界上 `C8`（mixer）只要 16 格/拆 2 条就能接上。
+         *
+         * ⚠️ 这段必须放在 `PROCESSOR_REQUIRED` 的 `if` **外面** ——
+         * 第一版插在里面，`code === "MACHINE_STARVED"` 永远为假，静默不生效。 */
+        if (code === "MACHINE_STARVED" && Array.isArray(ev.feed_sources) && ev.feed_sources.length) {
+            line += `; nearest sources with a free output: `
+                + ev.feed_sources.map(s => `${s.handle}(${s.type}, ${s.d}格)`).join(", ");
+        }
         /* WRONG_SHAPE_AT_HUB：病在上游，不在入口（v2 §4 的那句必须出现） */
         if (code === "WRONG_SHAPE_AT_HUB") {
             line += "; the fix is upstream: a missing process step on the line that FEEDS the hub, not at the inlet";

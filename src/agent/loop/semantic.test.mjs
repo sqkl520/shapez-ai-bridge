@@ -1948,6 +1948,99 @@ test("MACHINE_STARVED：stacker 两路只来一路 ⇒ 要报", () => {
     assert.match(d.hint, /是这条链的根/, `要说清为什么先修它。实际：${d.hint}`);
 });
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * MACHINE_STARVED 的「从哪接」—— `feed_sources`
+ *
+ * 2026-11-21 真机验证的直接结论：这条诊断能让模型 9/10 选中**端点**，
+ * 但 `replay-plan.mjs` 实测「真能落地只有 1/10」。被闸门拒的多数是
+ * **源头选错** —— 挑了一台 60 格外、路线横穿主干道的矿机。
+ *
+ * 同一份世界里到 `C3.color` 的真实成本表：
+ *   M13/M15(绿) 27~28 格 / 拆 1 条  ← 能落地
+ *   M17(铜)     14 格 / 拆 1 条      ← 更近，但踩形状矿，产的不是颜料
+ *   M7(蓝)      66 格 / 拆 3 条      ← 全是远路
+ *
+ * 所以 `feed_sources` 必须做**两层**筛选，任一漏掉都会给出错误指路：
+ *   ① 输出口空闲（否则 connect 会 port_already_bound）
+ *   ② 产物类型对得上槽的角色（cutter 产形状，喂 pigment 槽毫无意义）
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("MACHINE_STARVED：feed_sources 要给「能产颜料且输出口空闲」的源头", () => {
+    /* painter 的 color 槽空着；周围放三台干扰源：
+       · cutter        —— 最近，但产形状，不该被推荐
+       · 踩形状矿的矿机 —— 也近，但挖出来是形状，不该被推荐
+       · 踩颜料矿的矿机 —— 该被推荐
+       再放一台输出口已被占用的 mixer —— 不该被推荐。 */
+    const w = {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            /* painter @(-5,14)：`slotsOf` 实测 —— shape 的 approach 格是 **(-6,14)**，
+               color 的 approach 格是 **(-4,13)**。
+               第一版按想象写成 (-5,13)/(-4,15)，于是 shape 槽也被判成空 ⇒
+               走的是「两路全空」分支，报的是别的码。
+               `never-write-code-against-imagined-schema` 的又一形态。 */
+            { uid: 2, type: "painter", x: -5, y: 14, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            /* shape 槽有货（保证走「部分缺料」分支） */
+            { uid: 3, type: "belt", x: -6, y: 14, r: 0, rv: 0, code: 2, layer: "regular" },
+            /* 干扰①：cutter 很近，但产形状 */
+            { uid: 4, type: "cutter", x: -8, y: 10, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            /* 干扰②：踩形状矿的矿机，也近 */
+            { uid: 5, type: "miner", x: -10, y: 9, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            /* ★ 该被推荐的：踩颜料矿、输出口空闲 */
+            { uid: 6, type: "miner", x: -10, y: 12, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            /* 干扰③：输出口已被占用的**第二台 painter**。
+               不能用 mixer —— mixer 会先触发 MIXER_COLOR_AIMED，把 MACHINE_STARVED 盖掉。 */
+            { uid: 7, type: "painter", x: -12, y: 12, r: 0, variant: "default", rotation_variant: 0, layer: "regular" },
+            { uid: 8, type: "belt", x: -11, y: 12, r: 0, rv: 0, code: 2, layer: "regular" },
+        ],
+        resources: [
+            [-10, 9, "CuCuCuCu"],   // 形状矿
+            [-10, 12, "green"],     // 颜料矿
+        ],
+    };
+    const items = {
+        belts: [{ cell: [-6, 14], path: 0, idx: 0, pos: 1.0, spacing_to_next: 0, item: "CuCuCuCu" }],
+        ejectors: [], underground: [], pending: [], pathCount: 1, truncatedPaths: false, paths: [],
+        counts: { belts: 1 },
+    };
+    const handles = buildHandles(w, items);
+    const ds = semanticDiagnoses(w, items, "CbCbCbRb:CwCwCwCw", handles,
+        { recipe: { ok: false }, level: 12 });
+    const d = ds.find(x => x.code === "MACHINE_STARVED");
+    assert.ok(d, `应当报 MACHINE_STARVED，实际 ${ds.map(x => x.code).join(",")}`);
+    const src = (d.evidence && d.evidence.feed_sources) || [];
+    const types = src.map(s => s.type);
+    assert.ok(src.length > 0, "feed_sources 不能为空 —— 否则模型只能瞎挑源头");
+
+    /* ★ 反向断言：产形状的东西一个都不许出现 ★
+     * 这是第一版踩的坑：纯按距离排，`color` 槽的第一名是 cutter（最近），
+     * 而 cutter 输出的是形状，接到 pigment 槽上什么也变不了。 */
+    assert.ok(!types.includes("cutter"),
+        `cutter 产形状，不该被推荐给 color 槽。实际：${JSON.stringify(src)}`);
+
+    /* ★ 正向断言：踩颜料矿的那台必须在里面，且排在形状矿机前面 ★
+     *
+     * ⚠️ `handles.byUid` 的值是**句柄字符串**（`"M2"`），不是 `{handle}` 对象。
+     * 第一版写成 `handles.byUid.get(6).handle` —— `undefined`，
+     * 于是「应当包含」的断言永远红，而报错信息看上去像「没被推荐」，
+     * 实际它就在列表里。又一次「判据写错，结论看起来像代码错」。 */
+    const greenHandle = handles.byUid.get(6);
+    const shapeHandle = handles.byUid.get(5);
+    assert.equal(typeof greenHandle, "string", "byUid 的值应当是句柄字符串");
+    const idxGreen = src.findIndex(s => s.handle === greenHandle);
+    assert.ok(idxGreen >= 0,
+        `踩 green 矿的矿机（uid=6 → ${greenHandle}）必须被推荐。实际：${JSON.stringify(src)}`);
+    const idxShape = src.findIndex(s => s.handle === shapeHandle);
+    assert.ok(idxShape < 0 || idxGreen < idxShape,
+        `颜料矿机必须排在形状矿机前面。实际：${JSON.stringify(src)}`);
+
+    /* 输出口被占的那台不该出现 */
+    const occHandle = handles.byUid.get(7);
+    assert.ok(!src.some(s => s.handle === occHandle),
+        `输出口已被占用的机器（uid=7 → ${occHandle}）不该被推荐。实际：${JSON.stringify(src)}`);
+});
+
 test("MACHINE_STARVED 负例：两路都有货 ⇒ 不报", () => {
     const w = {
         goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 100, delivered: 0 } },
