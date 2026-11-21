@@ -10,7 +10,7 @@
  * 往 `results` 里 push，但汇总早已打印完，读者只看到「49 passed」，
  * 新增的那几项一次都没跑。
  *
- * 2026-11-21 加 `cheapest` 时正是这么踩的：写了 3 个测试，跑了显示 49 passed，
+ * 2026-11-21 加 `cheapest` 时正是这么踩的：写了 3 个测试，跑显示 49 passed，
  * 差点把「没跑」当成「通过」。拆成独立文件是最不容易再犯的形态。
  *
  * ## 为什么这组测试重要
@@ -22,19 +22,30 @@
  * 而它是**唯一**影响「这条路要覆盖多少条正在工作的带子」的参数：
  * 实测 L12，模型选 `M9 → C3.color`，默认 `shortest` 给出 31 格、覆盖 5 条，
  * 其中 `B85` 是 165 段主干道、上面 259 件货；预演闸门判「309 → 21」拒绝。
- * 同一目的地 `M15` 只要 28 格/覆盖 2 条，能直接落地 —— **模型不知道这件事**。
+ *
+ * ## ★ 夹具读不到必须 **fail**，不能 skip ★
+ *
+ * 第一版把快照指向 `research/ai-plan/runs/…/obs-last.json`，而那个目录在
+ * `.gitignore` 里（`research/ai-plan/runs/` 下的 JSON 全部忽略）。后果：
+ * 对任何新克隆的人，这两个最关键的用例**必然**走「读不到 → 打印说明 → return」
+ * 的分支，而 `pass++` 照常执行 —— 实测把文件改名后输出
+ * 「5 passed, 0 failed, exit=0」，M13「拆 6→1」那条断言一次都没跑却显示全绿。
+ *
+ * 我甚至在注释里写了「不静默通过」，代码却是 `console.log` + `return`。
+ * 这正是 `computed-but-never-delivered` 的再现形态：**说出口了，没做到**。
+ *
+ * 现在夹具固化成 `test/fixtures/saves/L12-cheapest-obs.json`（708 实体，
+ * 只保留带子 / hub / 相关的 8 台机器），随仓库走，读不到就红。
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { validateConnectArgs } from "./contract.mjs";
 import { connect } from "./connect.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SAVE = path.resolve(HERE, "../../../research/ai-plan/live-L4-entities.json");
-const SPEC = JSON.parse(fs.readFileSync(path.resolve(HERE, "../../ai/machine-spec.json"), "utf8"));
+const FIXTURE = path.resolve(HERE, "../../../test/fixtures/saves/L12-cheapest-obs.json");
 
 let pass = 0, fail = 0;
 const results = [];
@@ -42,71 +53,33 @@ function t(name, fn) {
     try { fn(); pass++; results.push(["ok", name]); }
     catch (e) { fail++; results.push(["FAIL", name, e && e.message ? e.message : String(e)]); }
 }
-const world = ents => buildWorld(ents, SPEC);
 
-let live = null;
-try { live = JSON.parse(fs.readFileSync(SAVE, "utf8")); } catch { live = null; }
+/* 夹具**必须**在。读不到就抛 —— 让每一个用例都红，而不是悄悄跳过。 */
+function loadFixture() {
+    const raw = fs.readFileSync(FIXTURE, "utf8");
+    const obs = JSON.parse(raw);
+    assert.ok(Array.isArray(obs.entities) && obs.entities.length > 100,
+        `夹具实体数异常：${obs.entities && obs.entities.length}`);
+    return obs.entities;
+}
+const findAt = (ents, x, y, type) => ents.find(e => e.x === x && e.y === y && e.type === type);
+const cut = r => (r.changed && Array.isArray(r.changed.removed_uids) ? r.changed.removed_uids.length : 0);
 
 /* ── 1. 契约 ── */
-t("prefer：合法值集合包含 cheapest，非法值被拒且错误里列全", () => {
-    for (const p of ["shortest", "fewest_turns", "reuse_existing", "cheapest"]) {
-        const v = validateConnectArgs({ from: { uid: 1 }, to: { uid: 2 }, opts: { prefer: p } });
-        assert.ok(v.ok, `prefer=${p} 应当合法，实得 ${v.ok ? "" : v.error.message}`);
-    }
-    const bad = validateConnectArgs({ from: { uid: 1 }, to: { uid: 2 }, opts: { prefer: "nope" } });
-    assert.ok(!bad.ok, "非法 prefer 必须被拒");
-    assert.ok(/cheapest/.test(bad.error.message), `错误必须列出 cheapest，实得：${bad.error.message}`);
-});
+{
+    const { validateConnectArgs } = await import("./contract.mjs");
+    t("prefer：合法值集合包含 cheapest，非法值被拒且错误里列全", () => {
+        for (const p of ["shortest", "fewest_turns", "reuse_existing", "cheapest"]) {
+            const v = validateConnectArgs({ from: { uid: 1 }, to: { uid: 2 }, opts: { prefer: p } });
+            assert.ok(v.ok, `prefer=${p} 应当合法，实得 ${v.ok ? "" : v.error.message}`);
+        }
+        const bad = validateConnectArgs({ from: { uid: 1 }, to: { uid: 2 }, opts: { prefer: "nope" } });
+        assert.ok(!bad.ok, "非法 prefer 必须被拒");
+        assert.ok(/cheapest/.test(bad.error.message), `错误必须列出 cheapest，实得：${bad.error.message}`);
+    });
+}
 
-/* ── 2. 真实世界快照：cheapest 在已知例子上确实更便宜 ──
- *
- * ## 为什么换掉 `live-L4-entities.json`
- *
- * 第一版用 L4 夹具跑全部机器对，结果 136 个组合**零个**能连通：
- * `port_already_bound` 72 + `ambiguous_port` 64。那个存档里大多数端口都已被占用，
- * 剩下的是多槽机器 —— 它不适合测「路径偏好」，因为根本没有路径可选。
- *
- * 改用 L12 的真机快照，并**只测一个已知有效的组合**：
- * `M15 → C3.color`（2026-11-21 实测：shortest 28 格/覆盖 2 条，
- * cheapest 30 格/覆盖 1 条）。这是从真实数据里挑的，不是编的。
- *
- * 全量扫所有机器对会跑掉几分钟（每组都要枚举候选路径），不适合放进单测。 */
-t("prefer=cheapest：L12 真机快照上 M15→C3.color 覆盖更少", () => {
-    const P = path.resolve(HERE, "../../../research/ai-plan/runs/r-20261121072433-521e/obs-last.json");
-    let obs = null;
-    try { obs = JSON.parse(fs.readFileSync(P, "utf8")); } catch { obs = null; }
-    if (!obs || !Array.isArray(obs.entities)) {
-        console.log("（说明）读不到 L12 快照，跳过这一条 —— 不静默通过");
-        return;
-    }
-    const ents = obs.entities;
-    /* 用 uid 定位，不用句柄（句柄表在 handles.mjs 里，本文件不依赖它）。
-       这两个 uid 来自那次观测：M15=17121? 不 —— 用坐标最稳。 */
-    const findByCell = (x, y, type) => ents.find(e => e.x === x && e.y === y && e.type === type);
-    const m15 = findByCell(-10, -7, "miner");     // M15，绿色矿
-    const c3 = findByCell(-5, 14, "painter");     // C3，color 槽空
-    if (!m15 || !c3) {
-        console.log("（说明）L12 快照里找不到 M15/C3 的原始坐标，跳过 —— 世界可能已变");
-        return;
-    }
-    const ep = { uid: c3.uid, port: { role: "color", index: 0 } };
-    const rS = connect({ from: { uid: m15.uid }, to: ep, opts: { allow_replace: true, prefer: "shortest" } }, { entities: ents });
-    const rC = connect({ from: { uid: m15.uid }, to: ep, opts: { allow_replace: true, prefer: "cheapest" } }, { entities: ents });
-    assert.ok(rS.ok, `shortest 应当连通，实得 ${rS.ok ? "" : (rS.error && rS.error.code)}`);
-    assert.ok(rC.ok, `cheapest 应当连通，实得 ${rC.ok ? "" : (rC.error && rC.error.code)}`);
-    const nS = (rS.changed.removed_uids || []).length;
-    const nC = (rC.changed.removed_uids || []).length;
-    assert.ok(nC <= nS, `cheapest 覆盖 ${nC} 条不该多于 shortest 的 ${nS} 条`);
-    /* 这是实测过的差别（2 → 1），把它钉住：如果哪天 cheapest 不再更便宜，
-       说明 scoreOf 里那段接线断了，必须知道。 */
-    if (nC === nS) {
-        console.log(`⚠ M15→C3.color：cheapest 与 shortest 覆盖数相同（都是 ${nS} 条）—— 偏好可能没接线`);
-    } else {
-        console.log(`✓ M15→C3.color：覆盖 ${nS} → ${nC} 条（${rS.cells.length} → ${rC.cells.length} 格）`);
-    }
-});
-
-/* ── 3. 构造性对照：有选择余地时，cheapest 不为了短而多拆 ── */
+/* ── 2. 构造性对照（不依赖夹具） ── */
 t("prefer=cheapest：不为了短而多拆东西（构造性对照）", () => {
     const ents = [
         { uid: 1, type: "hub", x: 20, y: 20, r: 0, variant: "default", rotation_variant: 0 },
@@ -118,13 +91,9 @@ t("prefer=cheapest：不为了短而多拆东西（构造性对照）", () => {
     const rS = connect({ from: { uid: 2 }, to: { uid: 3, port: "primary" }, opts: { allow_replace: true, prefer: "shortest" } }, { entities: ents });
     const rC = connect({ from: { uid: 2 }, to: { uid: 3, port: "primary" }, opts: { allow_replace: true, prefer: "cheapest" } }, { entities: ents });
     assert.ok(rS.ok && rC.ok, `两个偏好都应能连通（shortest ${rS.ok} / cheapest ${rC.ok}）`);
-    const nS = (rS.changed && rS.changed.removed_uids || []).length;
-    const nC = (rC.changed && rC.changed.removed_uids || []).length;
-    /* 故意写得弱：只钉契约「不更差」。强断言会吊死在候选枚举的实现细节上。 */
-    assert.ok(nC <= nS, `cheapest 覆盖 ${nC} 条不该多于 shortest 的 ${nS} 条（${rC.cells.length} vs ${rS.cells.length} 格）`);
+    assert.ok(cut(rC) <= cut(rS), `cheapest 覆盖 ${cut(rC)} 条不该多于 shortest 的 ${cut(rS)} 条`);
 });
 
-/* ── 4. 四个偏好都真的走通了 scoreOf，没有一个是死值 ── */
 t("四个 prefer 取值都能正常返回（没有一个是写了但没接的）", () => {
     const ents = [
         { uid: 1, type: "hub", x: 20, y: 20, r: 0, variant: "default", rotation_variant: 0 },
@@ -139,7 +108,7 @@ t("四个 prefer 取值都能正常返回（没有一个是写了但没接的）
     }
 });
 
-/* ── 5. ★ 早收敛不许把 cheaper 的候选吃掉 ★ ──
+/* ── 3. ★ M13：早收敛不许把 cheaper 的候选吃掉 ★ ──
  *
  * 2026-11-21 真机验证发现的**结构性架空**：`connect` 枚举里有
  *
@@ -148,38 +117,40 @@ t("四个 prefer 取值都能正常返回（没有一个是写了但没接的）
  * 这个优化让 `cheapest` 基本等于 `shortest` —— 17 台矿机里只有 1 台出现差异。
  * 不是因为没有更便宜的候选，而是它们**进不了排序**。
  *
- * M13 是那次的代表案例：默认路径 29 格/**拆 6 条**，
- * 而全枚举里存在一条 29 格但**只拆 1 条**的候选。
+ * ## 断言只钉「严格更少」，不钉具体数字
  *
- * 修法是 `cheapest` 模式下关掉早收敛。这条测试钉住它：
- * 只要这个 break 又对 cheapest 生效，这里就会红。 */
+ * 实测数字会随夹具裁剪浮动（全量快照上 M13 是 6→1，裁剪后的夹具上是 6→0），
+ * 因为覆盖数取决于世界里有哪些带子。**钉死具体数字会让测试变成
+ * 「夹具指纹」，而不是「判据是否生效」** —— 后者才是要保的东西。 */
 t("★ cheapest 关掉早收敛：M13 必须能找到「拆得更少」那条", () => {
-    const P = path.resolve(HERE, "../../../research/ai-plan/runs/r-20261121072433-521e/obs-last.json");
-    let obs = null;
-    try { obs = JSON.parse(fs.readFileSync(P, "utf8")); } catch { obs = null; }
-    if (!obs || !Array.isArray(obs.entities)) {
-        console.log("（说明）读不到 L12 快照，跳过 —— 不静默通过");
-        return;
-    }
-    const ents = obs.entities;
-    const m13 = ents.find(e => e.x === -10 && e.y === -6 && e.type === "miner");
-    const c3 = ents.find(e => e.x === -5 && e.y === 14 && e.type === "painter");
-    if (!m13 || !c3) {
-        console.log("（说明）快照里找不到 M13/C3，跳过 —— 世界可能已变");
-        return;
-    }
+    const ents = loadFixture();
+    const m13 = findAt(ents, -10, -6, "miner");
+    const c3 = findAt(ents, -5, 14, "painter");
+    assert.ok(m13, "夹具里找不到 M13（miner @-10,-6）");
+    assert.ok(c3, "夹具里找不到 C3（painter @-5,14）");
     const ep = { uid: c3.uid, port: { role: "color", index: 0 } };
     const rS = connect({ from: { uid: m13.uid }, to: ep, opts: { allow_replace: true, prefer: "shortest" } }, { entities: ents });
     const rC = connect({ from: { uid: m13.uid }, to: ep, opts: { allow_replace: true, prefer: "cheapest" } }, { entities: ents });
-    assert.ok(rS.ok && rC.ok, `两个偏好都应连通（S ${rS.ok} / C ${rC.ok}）`);
-    const nS = (rS.changed.removed_uids || []).length;
-    const nC = (rC.changed.removed_uids || []).length;
-    /* 实测：shortest 拆 6，cheapest 拆 1。允许世界变化带来的浮动，
-       但**必须严格更少** —— 相等就说明早收敛又把它吃掉了。 */
-    assert.ok(nC < nS,
-        `cheapest 必须比 shortest 拆得少（实得 ${nS} → ${nC} 条）。`
+    assert.ok(rS.ok, `shortest 应能连通，实得 ${rS.ok ? "" : (rS.error && rS.error.code)}`);
+    assert.ok(rC.ok, `cheapest 应能连通，实得 ${rC.ok ? "" : (rC.error && rC.error.code)}`);
+    assert.ok(cut(rC) < cut(rS),
+        `cheapest 必须比 shortest 拆得少（实得 ${cut(rS)} → ${cut(rC)} 条）。`
         + ` 若两者相等，说明 connect.mjs 里的 early-break 又对 cheapest 生效了。`);
-    console.log(`✓ M13→C3.color：拆 ${nS} → ${nC} 条（${rS.cells.length} → ${rC.cells.length} 格）`);
+    console.log(`  M13→C3.color：拆 ${cut(rS)} → ${cut(rC)} 条（${rS.cells.length} → ${rC.cells.length} 格）`);
+});
+
+/* ── 4. M15：另一台独立样本，同样不许被早收敛吃掉 ── */
+t("★ cheapest 在 M15 上也必须严格更少", () => {
+    const ents = loadFixture();
+    const m15 = findAt(ents, -10, -7, "miner");
+    const c3 = findAt(ents, -5, 14, "painter");
+    assert.ok(m15 && c3, "夹具里找不到 M15 或 C3");
+    const ep = { uid: c3.uid, port: { role: "color", index: 0 } };
+    const rS = connect({ from: { uid: m15.uid }, to: ep, opts: { allow_replace: true, prefer: "shortest" } }, { entities: ents });
+    const rC = connect({ from: { uid: m15.uid }, to: ep, opts: { allow_replace: true, prefer: "cheapest" } }, { entities: ents });
+    assert.ok(rS.ok && rC.ok, `两个偏好都应连通（${rS.ok} / ${rC.ok}）`);
+    assert.ok(cut(rC) < cut(rS), `cheapest 必须拆得更少（实得 ${cut(rS)} → ${cut(rC)}）`);
+    console.log(`  M15→C3.color：拆 ${cut(rS)} → ${cut(rC)} 条（${rS.cells.length} → ${rC.cells.length} 格）`);
 });
 
 /* ══════════════════ 报告 ══════════════════ */

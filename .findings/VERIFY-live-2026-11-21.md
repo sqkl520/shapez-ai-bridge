@@ -170,3 +170,153 @@ CAPACITY 段里另有「7 miner(s) have no processor connected」，但**没有*
 5. 落地的 3 条路径中，M15/M13 是绿矿（白=cyan+red 的 cyan 需要绿），语义对；
    **M17 是铜矿**接到 color 槽 —— 机械上能落地，但会把颜料涂成铜色，不是目标色。
    这是模型选择的问题，不是代码缺陷，仅提示。
+
+## 复验（修复后）
+
+只读复验 `dd0c452`。全部在离线快照 `research/ai-plan/runs/r-20261121072433-521e/obs-last.json`
+上跑（**749 实体 / tick 944351.03 / truncated=false / goal=L12 `CbCbCbRb:CwCwCwCw`**），
+未发任何 `tx`/`act`/`step`/`place`/`delete`/`save`，未碰用户存档 `5c967065…`。
+脚本临时放在 `.tmp-verify/`，报告后已删除。
+
+> 与上一轮报告的口径差异：上一轮写 tick 968155、seed 60908，都来自当时的**新鲜 obs**
+> （那次连了游戏）。本轮全程离线，只用这份 run 产物快照，它的 tick 是 944351.03。
+> 世界身份的其他项（749 实体、17 台矿机、C3 唯一断点在 `(-4,15)` 的 color 槽）与上一轮一致。
+
+### 复验 1（核心）：cheapest 现在 6/17 台换了路（修复前 1/17）
+
+同一份快照、同一目的地 `C3.color@(-4,15)`、`allow_replace:true`。
+「拆」= `changed.removed_uids.length`。闸门 = `buildTxPlan(..., {partial:true})`。
+
+| 矿机 | uid | 矿种 | shortest | cheapest | 差异 | 闸门 |
+|---|---|---|---|---|---|---|
+| M1 | 12445 | red | port_already_bound | 同 | — | 宏失败 |
+| M2 | 15044 | red | 21格/拆2 | 同 | — | 拒 loss=181 |
+| M3 | 15046 | red | 20格/拆2 | 同 | — | 拒 loss=182 |
+| M4 | 15113 | red | 19格/拆2 | 同 | — | 拒 loss=183 |
+| M5 | 16204 | blue | port_already_bound | 同 | — | 宏失败 |
+| M6 | 16234 | green | port_already_bound | 同 | — | 宏失败 |
+| M7 | 16586 | blue | 70格/拆3 | 同 | — | 拒 loss=191 |
+| **M8** | 16587 | blue | 72格/拆3 | **70格/拆3** | **DIFF** | 拒 189→191 |
+| **M9** | 16597 | RuRuRuRu | 31格/拆5 | **29格/拆4** | **DIFF** | 拒 288→306 |
+| M10 | 16614 | blue | port_already_bound | 同 | — | 宏失败 |
+| **M11** | 16615 | green | 122格/拆1 | **120格/拆1** | **DIFF** | 拒 loss=24（两侧相同） |
+| M12 | 17119 | blue | occupied | 同 | — | 宏失败 |
+| **M13** | 17120 | green | 29格/拆6 | **29格/拆1** | **DIFF** | **落地 / 落地** |
+| M14 | 17121 | blue | 68格/拆3 | 同 | — | 拒 loss=191 |
+| **M15** | 17122 | green | 28格/拆2 | **30格/拆1** | **DIFF** | **落地 / 落地** |
+| **M16** | 17287 | blue | 68格/拆3 | **66格/拆3** | **DIFF** | 拒 189→191 |
+| M17 | 17644 | CuCuCuCu | 14格/拆1 | 同 | — | 落地 / 落地 |
+
+- **差异台数 6/17**（修复前 1/17）。主线程说的 uid 16597/17120/17122 **三台全部复现**，
+  另有 **16587、16615、17287 三台**是主线程没提的。
+- 用 `git show HEAD~1:src/agent/macros/connect.mjs` 在同一进程里做旧/新 A/B 对照：
+  **OLD 差异 1/17 → NEW 差异 6/17**，`alternatives` 也从 0 变成 1~959。
+  早收敛确实解开了。
+- **能落地仍是 3/17，且最短和最便宜是同一组：M13 / M15 / M17**。
+  没有「只有 cheapest 能落地」的台。全扫 miner × painter × {color,shape} 68 个组合，
+  **闸门结论翻转 0 次**；两边都落地时终点 hub 数相同 7 组、cheapest 更好 1 组、更差 0 组：
+  只有 `M15→C3.color` 从 hub 302(-7) 变成 309(0) —— 唯一一个真实收益。
+
+#### 一个反向观察：cheapest 在 3 台上让闸门损失变大
+
+`M8 189→191`、`M9 288→306`、`M16 189→191`。三条都在闸门层被拒（两种情况都拒），
+所以**没有行为后果**，但方向值得记：`cheapest` 的排序依据是「覆盖了几条带子」，
+不是「切断了几条到 hub 的带子」。这三台 cheapest 拆得更少/更短，却切到了更靠上游的位置。
+不是本次修复引入的缺陷（scoreOf 的口径如此），但如果哪天 `cheapest` 被用来选一条**会通过闸门**的路，
+这个口径差就可能选错。
+
+### 复验 2：5300 档四样东西都在 —— **成立**
+
+按 `loop.mjs:4063` 的真实参数（含 `in_chars_max:24000` / `prompt_tokens_max:5300` /
+`itemsOnBelts:377` / 全套 `buildPrompt` 可选参数）重建：
+
+| 项 | 值 |
+|---|---|
+| `system.length` | **4725**（S1 未变，与修复前同） |
+| `user.length` | **13656** |
+| `tokens_estimate` | **5252** |
+| `blocks.chars` | 18381（targetChars = 5300×3.5 = 18550） |
+| `over_token_budget` | **false** ← 修复前 4800 档是 true |
+| 带子 | **16 条 / 699**（`belts_shown=16`），诊断点名的 4 条**全部**显示（`4/4`） |
+| `blocks.s3_capacity` | **在**（265 字符，`capacity_unavailable=null`） |
+| `blocks.s3_hub_stored` | **在**：`stored (past levels stay here; only the goal's own count advances): CgScScCg×2071  Cu------×33532  Cu----Cu×27823  RuRuRuRu×14843  ----CuCu×8476  RbRb----×6619  ----RuRu×4575  CuCuCuCu×1680  (+8 more)` |
+| 「没有矿机在挖」 | **在**（93 字符，`resource_dropped_for_capacity=false`） |
+| MACHINES | 20 of 49，12 条带「采X」标注 |
+
+主线程说的「16 条带子 / 四样都在」**独立复核成立**。
+
+同 obs 三档对照（我这边测的，与 commit message 略有出入）：
+
+| tok | chars | tokens | belts | CAP | HUB | DIG | over |
+|---|---|---|---|---|---|---|---|
+| 4600 | 16097 | 4599 | 10 | 无 | 无 | 有 | false |
+| 4800 | 17054 | 4873 | 10 | 有 | 无 | **无** | true |
+| 5300 | 18334 | 5238 | 16 | 有 | 有 | 有 | false |
+
+commit message 里写 4600 档是「带子 10 条 / CAPACITY 无」，我测到的是 10；它写的 5300 档
+「16 条 / 5227 token」，我测到 16 条 / 5238 token（差 11，来自 `itemsOnBelts` 我传 377）。
+**结论方向完全一致，数字只有个位数差异。**
+
+### 复验 3：cheapest 几乎没有变慢 —— **1.1x，不是 3 秒级**
+
+先跑两轮热身排除 V8 预热，再各 5 次取中位数（单位 ms）：
+
+| 目标 | shortest 中位 | cheapest 中位 | 比 |
+|---|---|---|---|
+| M13 uid17120 → C3.color | **156** | **168** | 1.08x |
+| M9 uid16597 → C3.color | 145 | 167 | 1.16x |
+| M15 uid17122 → C3.color | 142 | 139 | 0.98x |
+
+17 台合计：shortest 1135ms / cheapest 1253ms，**只多 118ms（1.10x）**。
+
+上一轮观察到的「约 800ms」我没能复现 —— 那是**未热身**的单次冷启动值（我这里首次调用
+M13 也要 200~340ms，属于 JIT 与 fs 读 spec 的固定开销）。最坏情况仍在别处：
+`M17→C6.shape` 单次 **1.4s**（110 格长路径，两偏好相当），`miner→mixer` 272 组合里最慢 1.1s。
+**这些都是既有的长路径枚举代价，不是 cheapest 引入的**（同组合 shortest 一样慢甚至更慢）。
+
+### 全量测试：失败数 29 → 28，**没有新增红**
+
+`node --test src/agent/ src/ai/compiler/` 在修复前（`HEAD~1` 导出到临时目录）与修复后各跑一遍：
+
+| | tests | pass | fail | skipped |
+|---|---|---|---|---|
+| HEAD~1 | 760 | 727 | **29** | 4 |
+| HEAD (dd0c452) | 760 | 728 | **28** | 4 |
+
+逐条 diff 失败集：**只有 now 红的 0 条**，只有 base 红的 1 条
+（`E3 升级需求表与源码一致` —— 它在修复后转绿，不是回归）。
+`connect_prefer.test.mjs` 的 5 条在新版全绿。
+
+### 新发现（本轮，非本次修复引入）
+
+1. **回归测试会静默跳过**。`connect_prefer.test.mjs` 的两个真机快照用例，在快照文件
+   读不到时只 `console.log("（说明）…跳过")` 然后 `return`，`pass++` 照常。
+   我实测把 `obs-last.json` 改名后：**5 passed, 0 failed, exit=0** —— 那两条最关键的
+   断言（M13 拆 6→1、M15 拆 2→1）一条都没跑，却显示全绿。
+   这正是 memory 里 `computed-but-never-delivered` 那条「回归测试缺夹具要 fail 不能 skip」。
+   而且它依赖 `research/ai-plan/runs/…` 这种**会被清理/改名的 run 产物**当夹具，
+   不适合当长期回归基线。
+2. **挖矿提示的文案与数据不符**。`notDug` 这份快照只有 `w` 一种（`没有矿机在挖 w`），
+   但后半句硬编码「**这两种颜色**在地图上没有颜料矿」。这句话是把当时
+   `[C,b,w]` 三种的旧文案留下来的一半 —— 数量词对不上实际列表。
+   语义没错（w 确实没有颜料矿），但「两种」会让模型以为还有第二种没列出来。
+3. **`cheapest` 的送达仍然只有 2 次字符串**，且都在 `opts.prefer:` 那行的行尾注释
+   （`cheapest=少拆东西`）。S1 里 0 次。它现在**真的能挑出更便宜的路了**，
+   但模型要知道「该用它」仍然只靠这 6 个字。这条与上一轮一样，没变。
+4. **`hub 入口 auto` 场景仍在用最好的转角数收紧后续端口对**（`bestTurns` 那段没动）。
+   我做了对照：把 `cheapest` 下 `capTurns` 的 `bestTurns` 收紧也去掉，
+   `M17→hub` 的 20 格会变成 17 格、`alternatives` 从 274 变 3246。
+   但**闸门结论与终点 hub 数一个都没变**，所以这轮不算问题，只是记一笔：
+   `cheapest` 的「早收敛」修的是 `break` 那一处，`capTurns` 那一处还在收敛候选集。
+
+### 结论
+
+- **修复有效**：cheapest 的差异台数 1/17 → **6/17**，`alternatives` 从恒 0 变成 1~959。
+  早收敛是根因这一点被旧/新同进程 A/B 直接证实。
+- **但它没有改变任何一轮的落地结论**：能落地的仍是 M13/M15/M17 三台，
+  与 shortest 完全相同；68 个 miner×painter 组合里闸门翻转 **0 次**。
+  真实收益只有一处：`M15→C3.color` 的终点可交付带子从 302(-7) 变成 309(0)。
+- **性能代价可忽略**：1.08~1.16x，17 台合计 +118ms。不会影响真机轮时效。
+- **prompt 5300 档四样齐**：16 条带子 + CAPACITY + HUB stored + 挖矿提示，
+  5252 token，`over_token_budget=false`。这一档是这轮唯一「三个目标全达成」的。
+- **测试基线持平**（29 → 28 红，无新增），但新增的回归测试有「缺夹具静默通过」的坑，建议改成 fail。

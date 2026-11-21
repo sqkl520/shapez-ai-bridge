@@ -1546,7 +1546,11 @@ function renderGoalResource(obs, goalShape, opts = {}) {
                 return `⇒ ⚠️ 没有矿机在挖 ${digState.notDug.join("/")}（共 ${digState.miners} 台，见上表）。`
                     + (diggable.length
                         ? ` 用 \`insert_machine {at:{"$ore":"${COLOR_LETTER_TO_NAME[diggable[0].toLowerCase()]}"}, machine:"miner", facing:<dir>}\` 补一台。`
-                        : ` 这两种颜色在地图上**没有颜料矿**（RuRuWuWu 那种是形状矿，挖出来的是形状不是颜料）—— 只能靠 mixer 混，不能挖。`);
+                        /* ⚠️ 不能写死「这两种」—— `notDug` 的数量随世界变化。
+                           实测 L12 上只有 `w` 一种，而文案写着「这两种颜色」，
+                           是旧用例（`[C,b,w]`）的残留。改为按实际数量取词。 */
+                        : ` ${digState.notDug.length === 1 ? "这种颜色" : "这几种颜色"}在地图上**没有颜料矿**`
+                            + `（RuRuWuWu 那种是形状矿，挖出来的是形状不是颜料）—— 只能靠 mixer 混，不能挖。`);
             })()
             : null;
 
