@@ -638,6 +638,101 @@ export function flowReachable(obs, idx, opts) {
             }
         }
     }
+
+    /* ★ 无源头的链也不是「能交付」★
+     *
+     * 上面两步都是**几何/类型**判据：路能走通、末端不送颜料。
+     * 但它们看不见一件更基本的事 —— **这条链的起点有没有东西在供货**。
+     *
+     * ## 实测（2026-11-21，L12 `r-20261121072433-521e`）
+     *
+     * 按上游源头类型给 390 条「可交付」带子分类：
+     *
+     *   miner   273
+     *   cycle    81   ← `B678 ↔ B698` 两条带子互指，没有任何外部输入
+     *   none     29   ← 上游是空地，压根没有起点
+     *   cutter/stacker/rotater/trash  7
+     *
+     * 也就是**110/390 = 28% 的"可交付产能"永远不会有货**。
+     * 其中那 81 条是一条挂在 `B678↔B698` 死环上的 80 格长链，
+     * 末端直通 H1 —— 几何完美、类型也对，就是一件货都出不来。
+     *
+     * ## 为什么这件事要紧（它挡住了每一次正确的修法）
+     *
+     * 预演闸门用 `belts_deliverable` 当分母。实测 30 个实验样本里，
+     * **19 个失败样本中有 14 个死在预演闸门**，是唯一最大的拒绝源。
+     * 而那条「-81 可交付带子 / -74%」的代价，绝大多数是这条死链 ——
+     * 模型提的修法（把绿色矿接到 mixer 的空 color 槽）其实只碰掉 6 格真带子。
+     *
+     * 闸门拿一条**早已死透**的线当「产能」来保护，于是每一次正确的修法
+     * 都被判成「会让世界明显变差」。这是**判据的分母错了**，不是模型错了。
+     *
+     * ## 做法
+     *
+     * 对每条还在 `out` 里的带子，用既有的 `sourceEntityOf` 往上爬到源头：
+     *   · `cycle`（回到自己）或 `none`（上游是空地）⇒ **永远不会有货**，摘掉
+     *   · 机器 / miner / hub / trash ⇒ 有源头，留着
+     *
+     * 摘掉之后**还要再跑一遍闭包**：让「只有经它们才能到达」的上游也一起消失，
+     * 与上面 badFeeders 的处理同一条纪律（直接从 out 里删会让上游仍然显示可达）。
+     *
+     * ⚠️ **不依赖 `itemsDoc`** —— 这一点是踩出来的。
+     *
+     * 第一版把它放在 `if (doc && …)` 里（和上面的颜料检查同一个门槛），
+     * 于是**预演后的世界**算出来是 276 → 21。
+     * 原因：`applyTxOpsToObs` 造出的预演世界里，带子是新的（新 uid、新坐标），
+     * 而 `itemsDoc` 是**改动前**的 `debug_items` —— 它描述的格子对不上，
+     * 上面那段颜料检查用的 `byCell` 查不到任何东西，行为整个漂移。
+     *
+     * 而「源头在哪」纯粹是**拓扑**问题：沿 entry 方向爬到机器或空地，
+     * 完全不需要知道货的类型。所以它不该受 `itemsDoc` 门槛限制。
+     *
+     * 只保留一个门槛：`opts.sourceless !== false`（默认开）。
+     * 需要复现旧口径的调用方（对拍测试、历史数据）可以显式关掉。 */
+    if (!opts || opts.sourceless !== false) {
+        try {
+            const sourceless = new Set();
+            for (const e of ix.ent) {
+                if (!out.has(e.uid)) continue;
+                if (!isBelt(e) && e.type !== "underground_belt") continue;
+                let src = null;
+                try { src = sourceEntityOf(ix, e); } catch { src = null; }
+                if (!src) continue;
+                /* ★ 只摘 `cycle`，**不摘 `none`** ★
+                 *
+                 * 两者的确定性完全不同：
+                 *
+                 *   · `cycle` —— 沿 entry 方向爬回到了自己。**数学上不可能有外部输入**，
+                 *     所以这条链永远不会有货。这是硬结论。
+                 *
+                 *   · `none` —— 上游是空地。但「上游是空地」不等于「永远没有货」：
+                 *     模型这一轮正要 connect 一条线到那里（预演里它就是新的起点）；
+                 *     带子上也可能已经有货在滑（`test/fixtures` 里就有这种夹具）。
+                 *
+                 * 第一版把 `none` 也摘了，`tohub_machine.test.mjs` 的 C2 当场打红：
+                 * 那个夹具是「一条带子直接接 hub」，上游当然是空地 —— 但它是一条
+                 * **正常工作的**带子，摘掉它等于说「没有矿机就没有货」，那是错的。
+                 *
+                 * 所以判据收紧到「**能证明它永远不会有货**」，而不是
+                 * 「**不能证明它有货源**」。后者会把正在施工的线和已装货的线一起误伤。 */
+                if (src.kind === "cycle") sourceless.add(e.uid);
+            }
+            if (sourceless.size) {
+                out.clear();
+                out.add(hub.uid);
+                const q3 = [hub.uid];
+                while (q3.length) {
+                    const cur = q3.shift();
+                    for (const up of feeds.get(cur) || []) {
+                        if (sourceless.has(up)) continue;   // 源头都断了，这条路没有货
+                        if (out.has(up)) continue;
+                        out.add(up);
+                        q3.push(up);
+                    }
+                }
+            }
+        } catch { /* 源头分析失败 ⇒ 维持原口径，不猜 */ }
+    }
     return out;
 }
 

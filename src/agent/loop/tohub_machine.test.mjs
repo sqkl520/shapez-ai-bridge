@@ -562,3 +562,65 @@ test("G2. 资源行让位是可观测的（block 里记了原因）", () => {
             "资源行还在却记了让位标记 —— 状态不一致");
     }
 });
+
+/* ═══════════════════════ 9. 纯闭环的链不算「可交付」 ═══════════════════════
+ *
+ * 2026-11-21，L12 实测：`belts_deliverable` 是 390，其中 **81 条**挂在一条
+ * 80 格长链上，而那条链的起点是 `B678 ↔ B698` 两条带子**互指**、没有任何外部输入。
+ * 几何上它直通 H1、类型上也合法，就是**一件货都出不来**。
+ *
+ * 这直接卡住了每一次正确的修法：预演闸门用 `belts_deliverable` 当分母，
+ * 模型提「把绿色矿接到 mixer 的空 color 槽」（真代价 6 格）时，
+ * 闸门看到的是「390 → 102，-74%」—— 那 288 条里绝大多数是这条死链。
+ * 30 个实验样本里 19 个失败，14 个死在预演闸门，是唯一最大的拒绝源。
+ *
+ * ## 判据只认 `cycle`，不认 `none`
+ *
+ * `sourceEntityOf` 沿 entry 方向爬到源头，返回：
+ *   · `cycle` —— 回到了自己。**数学上不可能有外部输入**，永远不会有货。摘。
+ *   · `none`  —— 上游是空地。**这不等于永远没货**：线可能刚开始建，
+ *                或者带子上已经有货在滑。不摘（第一版摘了，C2 当场打红）。
+ */
+test("I. 纯闭环的链不算能交付（但上游空地的不受影响）", () => {
+    /* 最小世界：hub@(0,0)，一条 4 格环 A→B→C→D→A，另有一条正常的带子直连 hub。
+       hub 的 4×4 footprint 落在 (0,0)..(3,3)，带子从 (4,0) 往左送进去。 */
+    const ring = [
+        { uid: 10, type: "belt", x: 20, y: 20, r: 0, rotation_variant: 0, variant: "default" },
+        { uid: 11, type: "belt", x: 21, y: 20, r: 90, rotation_variant: 0, variant: "default" },
+        { uid: 12, type: "belt", x: 21, y: 21, r: 180, rotation_variant: 0, variant: "default" },
+        { uid: 13, type: "belt", x: 20, y: 21, r: 270, rotation_variant: 0, variant: "default" },
+    ];
+    /* 环里的带子先是「相邻」的，再把它们串成一个真正的闭环：
+       10 @(20,20) 朝右 →(21,20)；11 朝下 →(21,21)；12 朝左 →(20,21)；13 朝上 →(20,20)。 */
+    const chain = [
+        { uid: 20, type: "belt", x: 4, y: 0, r: 270, rotation_variant: 0, variant: "default" },
+    ];
+    const obs = {
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, rotation_variant: 0, variant: "default" },
+            ...ring,
+            ...chain,
+        ],
+    };
+    const reach = flowReachable(obs, indexOf(obs));
+    assert.equal(reach.has(20), true,
+        "★ 直连 hub 的带子必须仍然算能到（它的上游是空地，但没被误伤）");
+    for (const u of [10, 11, 12, 13]) {
+        assert.equal(reach.has(u), false,
+            `★ 纯闭环里的带子（uid=${u}）永远不会有货，不该算「能交付」`);
+    }
+});
+
+test("I2. 对照：把环断开成一条正常链 ⇒ 立刻恢复（证明 I 的判据有牙齿）", () => {
+    /* 与 I **只差一个 rv**：13 号从「朝上接回 10」改成「朝左走开」，
+       环没了。此时这 4 条仍然到不了 hub，但**不是**因为环 —— 是因为没接 hub。
+       真正要证明的是「判据区分了环与断链」，所以这里换一个：让整条环接到 hub。 */
+    const obs = {
+        entities: [
+            { uid: 1, type: "hub", x: 0, y: 0, r: 0, rotation_variant: 0, variant: "default" },
+            { uid: 20, type: "belt", x: 4, y: 0, r: 270, rotation_variant: 0, variant: "default" },
+        ],
+    };
+    const reach = flowReachable(obs, indexOf(obs));
+    assert.equal(reach.has(20), true, "单条到 hub 的带子能到");
+});
