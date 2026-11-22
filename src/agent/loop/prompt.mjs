@@ -3178,18 +3178,24 @@ function renderPriorAttempts(attempts) {
         inert: "changed nothing",
     };
     const lines = ["## PRIOR ATTEMPTS", "your own past attempts on THIS goal, most informative first:"];
-    for (const a of attempts.slice(0, 6)) {
+    for (const a of attempts.slice(0, 3)) {
         const kind = String(a && a.kind || "");
         const label = LABEL[kind];
         if (!label) continue;
         const macros = Array.isArray(a.macros) ? a.macros.filter(Boolean) : [];
         if (!macros.length) continue;
-        const ctx = a.ctx && typeof a.ctx === "object" ? a.ctx : null;
+        /* ★ `ctx` 那句不渲染了（2026-11-21）★
+         *
+         * 原来每条都会附 `on a 772-entity world with 309 belts reaching the hub`
+         * （约 55 字符）。三条就是 165 字符，换来的信息是「那次的世界有多大」。
+         *
+         * 而模型真正要判断的是「这个动作在这个目标上被判过什么」——
+         * 世界规模对那个判断几乎没有帮助，本条下方已经注明「这是过去的世界，
+         * 不是这一条世界的规则」。
+         *
+         * 数据仍留在记忆文件里（`a.ctx`），只是不占 prompt 预算。 */
         const bits = [];
-        if (ctx && Number.isFinite(ctx.belts_reaching_hub) && Number.isFinite(ctx.entities)) {
-            bits.push(`on a ${ctx.entities}-entity world with ${ctx.belts_reaching_hub} belts reaching the hub`);
-        }
-        const why = Array.isArray(a.why) && a.why.length ? ` — ${clip(sanitize(String(a.why[0])).text, 95)}` : "";
+        const why = Array.isArray(a.why) && a.why.length ? ` — ${clip(sanitize(String(a.why[0])).text, 55)}` : "";
         /* ★ 别让「最硬的历史结论」看起来像「最近一次也是这样」★
          *
          * `mergeMemory` 保留的是**最硬**的 kind（例如一次 `reverted` 会一直压着
@@ -3629,7 +3635,7 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     /* `## PRIOR ATTEMPTS` 排在 LAST STEP 之后、LAST ROUND 之前：
      * 先给「这一步/上一步」的即时反馈，再给「以前试过什么」的历史。
      * 反过来（历史在前）会让模型以为历史比眼前的世界更重要 —— 而世界是新的。 */
-    const sPrior = renderPriorAttempts(priorAttempts);
+    let sPrior = renderPriorAttempts(priorAttempts);
     /* `## THIS RUN` 紧挨着 PRIOR ATTEMPTS：先看「我以前在别的 run 里试过什么」，
        再看「这次 run 我自己打算干什么」—— 前者是统计，后者是意图，后者更即时。
        放在 LAST ROUND 之后、PRIOR 之前。 */
@@ -3823,6 +3829,38 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
     const composeWith = (machines, belts, capacity) => [s2, sGoalChanged, sLeftover, goalAndRecipe, s3Hub, machines, capacity, belts,
         s3Production, s3Budget, s4, sLastStep, sSticky, sRunLog, sPrior, s5, s6].filter(x => x !== null && x !== undefined).join("\n\n");
     const compose = (belts, capacity) => composeWith(s3Machines, belts, capacity);
+
+    /* ★ 超预算时**先让 `## PRIOR ATTEMPTS` 让位**，再考虑砍带子（2026-11-21）★
+     *
+     * 实测（L12 `r-20261121100232-d10f`，同一份世界，只切 `priorAttempts`）：
+     *
+     *   不传 prior: 带子 16/699  CAPACITY 有  HUB 存量 有
+     *   传 prior  : 带子 11/699  CAPACITY 有  HUB 存量 丢
+     *
+     * 那段占 **612 字符**（3 条 + 末尾的 `⇒ These are facts about past worlds…`），
+     * 换掉 5 条带子 + 整段 HUB 存量。而那 3 条历史判词里：
+     *
+     *   · 第一条是 `connect → ROLLED BACK, judged harmful` —— 已被 `b115ace` 证伪
+     *     （`belts_dead` 混装桶造成的误判，判据已修）；
+     *   · 其余是 `replace_run` / `remove_run` 的「世界没有任何变化」。
+     *
+     * 而 HUB 存量说的是「hub 里躺着 2071 件 CgScScCg，那是上一关的目标」——
+     * 它能一次性排除整条 L11 遗留产线，是这一关**最硬的一条事实**。
+     * 带子更是唯一能就地改造的对象。
+     *
+     * 所以降级顺序再加一档：**prior 段 > HUB 存量 > 带子**里的最低那一档先让位。
+     * 只在超预算时发生 —— 装得下时历史照常出现。 */
+    let priorDroppedForBudget = false;
+    {
+        const withPrior = composeWith(s3Machines, renderBelts(tbl, selection, selection.ordered.length, false), null);
+        /* 用「带子全显示」的完整版量一下是否超预算。超了就去掉 prior 重来。
+           ⚠️ 只在这一档上判定，不动下面既有的截断循环 —— 那条的纪律是
+              「先定带子、余量给 CAPACITY」，不能在这里插队。 */
+        if (s1.length + withPrior.length > targetChars && sPrior) {
+            sPrior = null;
+            priorDroppedForBudget = true;
+        }
+    }
 
     /* ★ 顺序：**先定带子，再花余量** ★
      *
@@ -4215,6 +4253,12 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         /* 「宏选择优先级」提示有没有进去（余量不够时它会被跳过，
            优先级低于 CAPACITY —— 理由见加它的那段注释）。 */
         macro_pref_shown: macroPrefShown,
+        /* `true` = `## PRIOR ATTEMPTS` 因为超预算被整段去掉了（让位给带子 /
+         * CAPACITY / HUB 存量）。装得下时它是 `false`，历史照常出现。
+         * 与 `capacity_unavailable` 同一条纪律：**为什么没出现**必须可观测，
+         * 否则「功能没触发」和「功能坏了」分不清。 */
+        prior_dropped_for_budget: priorDroppedForBudget,
+        prior_shown: sPrior !== null && sPrior !== undefined,
         chars,
         tokens_estimate: Math.round(chars / PROMPT_RULES.CHARS_PER_TOKEN),
         trimmed_belts: trimmed,
