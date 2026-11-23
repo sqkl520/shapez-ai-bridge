@@ -3644,22 +3644,29 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                     + "nothing on the map is producing. Feeding another input into a "
                                     + "stalled chain does not help: the product still cannot get out.",
                             },
-                            candidates: ["trash_unused", "remove_run", "connect", "replace_run"],
-                            /* ★ 前 180 字符必须含动作（2026-11-23）★
+                            /* `trash_unused` 排第一是错的 —— 它对「出口已有下游」的带子恒拒。
+                               真正能落地的是拆（`remove_run`）与改道（`connect`）。 */
+                            candidates: ["remove_run", "connect", "replace_run", "trash_unused"],
+                            /* ★ 动作必须真的能落地（2026-11-23）★
                              *
-                             * `prompt.mjs:2968` 对普通诊断的 hint 做 `clip(…, 180)`。
-                             * 中文一个字算一个字符，所以 180 只够三句话。第一版把
-                             * 「先通开，再谈接上」的**理由**写在了前面，动作被截掉了 ——
-                             * 模型看到病因、看不到做法，与本项目「解法被截断」的老毛病同族。
+                             * 第一版写的是「用 `trash_unused` 吃掉堆积的货」。**那是空头支票**：
+                             * `trash_unused` 对「出口已经有下游」的带子一律拒绝
+                             * （`remove.mjs` 的 `port_already_bound`，注释写着「绝不抢既有货流」），
+                             * 而这里最堵的那条带子末端正好接着 stacker。
                              *
-                             * 现在的顺序：**先说做什么**，再说为什么，最后才说做完会怎样。
-                             * 超出的部分截掉不心疼，因为它只是解释。 */
+                             * 模型照着做必然被拒一轮 —— 这正是项目里「错误的指路比不给更贵」
+                             * 那条教训（`feed-sources-need-two-filters`）的又一次复发。
+                             *
+                             * 现在只给**真的能过闸门**的动作：`remove_run` 拆掉这条死链
+                             * （它整条都在造非目标形状），或者 `connect` 把它改道到有用的地方。
+                             * 句柄取的是**路径末端**那几格 —— `remove_run` 吃带子 uid，不看有没有下游。 */
                             hint: (worst.noAcceptor
                                 ? `整座工厂零产出。这条带子 ${worst.n} 件（${pct}%）且**末端无人接收** —— `
-                                  + `\`trash_unused\` 吃掉这批，或 \`connect\` 接到该去的地方。`
+                                  + `\`connect\` 把它接到该去的地方，或 \`remove_run\` 整段拆掉。`
                                 : `整座工厂零产出。这条带子 ${worst.n} 件（${pct}%），末端那台机器在等另一路料、永远等不到 —— `
-                                  + `\`trash_unused\` 吃掉堆积的货，或 \`remove_run\` 拆掉这条造错形状的线。`)
+                                  + `\`remove_run\` 拆掉这条造错形状的死链，或 \`connect\` 把它改道。`)
                                 + `**先通开，再谈接上**：不疏通的话，接进去的货一样出不来，上游继续淤积到矿机。`
+                                + `（\`trash_unused\` 在这里没用 —— 它不接已有下游的带子。）`
                                 + `清完之后产出会自己恢复，那时再看缺料/缺机器才有意义。`
                                 + (others ? `另有：${others}。` : ""),
                         });

@@ -107,6 +107,32 @@ test("★ 反例：没有 production 数据时不许猜", () => {
         "读不到产出窗口 ⇒ 不判定（与语义层其它地方同一条纪律）");
 });
 
+test("★ 反例：hint 里不许推荐过不了闸门的动作", () => {
+    /* 第一版写的是「用 `trash_unused` 吃掉堆积的货」。**那是空头支票**：
+     * `trash_unused` 对「出口已经有下游」的带子一律拒绝
+     * （`remove.mjs` 的 `port_already_bound`，注释写着「绝不抢既有货流」），
+     * 而这里最堵的那条带子末端正好接着 stacker —— 模型照做必然被拒一轮。
+     *
+     * 本项目已有同族教训（`feed-sources-need-two-filters`）：错误的指路比不给贵得多。 */
+    const { obs, items, production } = loadRun(DEAD_RUN);
+    const ds = diagnose(obs, items, production, null, GOAL, null, { recipe: null });
+    const wf = ds.find(d => d.code === "WORLD_FROZEN");
+    assert.ok(wf, "前提：必须先报出来");
+    assert.ok(wf.evidence.worst.no_acceptor === false,
+        "前提：这份快照的堵点末端**接了**机器（这才让 trash_unused 非法）");
+
+    /* hint 的可用部分（前 180 字符，prompt 的 clip 上限）必须不含被禁动作 */
+    const usable = wf.hint.slice(0, 180);
+    assert.ok(!/`trash_unused` 吃掉|用 `trash_unused`/.test(usable),
+        `前 180 字符里不许把 trash_unused 当解法推荐，实得：${usable}`);
+    /* 必须点名一个真能落地的动作 */
+    assert.ok(/remove_run|connect/.test(usable),
+        `前 180 字符里必须给 remove_run 或 connect，实得：${usable}`);
+    /* candidates 的第一名也必须是能落地的 */
+    assert.ok(["remove_run", "connect"].includes(wf.candidates[0]),
+        `候选第一名必须是 remove_run 或 connect，实得 ${wf.candidates[0]}`);
+});
+
 test("★ 排序：WORLD_FROZEN 必须排在 NO_PRODUCTION 之前", () => {
     /* 两条都描述零产出，但动作方向相反：
      *   WORLD_FROZEN  → 通开

@@ -538,13 +538,14 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["trash_unused", 6],
         ["remove_machine", 3],
     ]),
-    /* 全厂冻结：先疏通，再谈连接。`trash_unused` 排第一 ——
-     * 吃掉送错方向的货是唯一一步就能见效的动作。 */
+    /* 全厂冻结：先疏通，再谈连接。
+     * `remove_run` 排第一 —— `trash_unused` 对「出口已有下游」的带子恒拒，
+     * 而堵点恰恰都接着下游。拆和改道才是真能落地的两个动作。 */
     WORLD_FROZEN: cand([
-        ["trash_unused", 9],
-        ["remove_run", 7],
-        ["connect", 5],
-        ["replace_run", 3],
+        ["remove_run", 9],
+        ["connect", 7],
+        ["replace_run", 5],
+        ["trash_unused", 2],
     ]),
 
     /* ── L3 ── */
