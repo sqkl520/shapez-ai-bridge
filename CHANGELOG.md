@@ -15,6 +15,78 @@
 
 ## [Unreleased]
 
+### Fixed — 2026-11-23（夜）：5 个专家 Agent 交叉验证，推翻了自己的 4 个结论
+
+用 1 个规划 Agent + 5 个并行专家（根因 / 红队 / 验证 / 检索 / 批判）交叉质疑。
+每个都允许递归派子 Agent。结果：**我自己写的 4 个结论被推翻**，另修了 5 个真缺陷。
+
+**被推翻的结论（已更正文档）**
+
+- 「259 件堵带 ⇒ 零产出」**因果反了**。批判 Agent 用 path8 时间轨迹证明：死亡那一刻
+  （11-15 12:19）path8 是 102 格 / 162 件，259 件是 **28.9 游戏小时之后**才攒出来的。
+  而且死亡之前 path8 就已经 100% 满载，那时世界在正常产出。
+  ⇒ 满载既不是死因，也不是死亡的标志。
+- 「L12 在结构上死」**过度概括**。真实死因是一个具体动作（见下），
+  且实验存档被我们自己改死，不能推出玩家真实存档也有这问题。
+- 「补一格 `(36,-40)` 就能把 87 件蓝送进 mixer」**错**。逐格追出口方向：
+  `B16638@(37,-40)` 朝下到 `(37,-39)`，而它和 `(37,-38)` 都是空地。
+  那 87 件被**倒向虚空**。另外 mixer#17340 的两条输入带 `B17410`/`B17648`
+  **互相指着对方**，成环，谁也不会把货送进去。
+- 「`WORLD_FROZEN` 应该开处方」**错**。红队在 516 个零产出快照上模拟「照 hint 做」：
+  **0/516 让到 hub 的带子变多，486/516 让它变少**，没有一个样本出现交付上升。
+  真实死锁链里 path8 是**淤积的那条**，不是堵住的那条 —— 删它是拆受害者。
+
+**修的 5 个缺陷**
+
+1. **`loop.mjs` 丢掉 `tx.diff.modified`。** mod 的 `opTx` 返回 `diff: finalDiff`，
+   里面有 `modified`（`diffSnapshots` 逐字段比对 `canonicalEntityPayload`），
+   而落盘只写 `added.length` / `removed.length`。
+   代价：2026-11-15 12:14:35 那次 `insert_machine(trash) @(-3,-8)` 只声明 1 个 destroy，
+   但游戏侧的 `updateSurroundingBeltPlacement` 顺手把 `belt#14953@(-3,-7)` 的 rv
+   从 2 改成 0（左→下转角变左→右直带），掰断了 painter 唯一的颜料供料线。
+   5 分钟后全图产出归零，**而这一步在 diff 里看不出任何异常**：`added:1, removed:1`。
+2. **`health.mjs` 把「越堵越干净」算成改善。** `items_on_belts` 在 `GOOD_UP` 里，
+   但堵死的世界里货只会往带子上堆。实测 288 个零产出 run 被判 cleanup/positive/
+   constructive（cleanup 274），**221 个的判词靠的就是「▲ items_on_belts」**。
+   最刺眼的一条是**世界死掉那一轮**：`净效果: cleanup — 带上的货 350→362`。
+   改成有条件 —— 只在 `produced` 非空时才算改善。
+3. **`slotRoleAt` 只看方向，同向多槽全判成第一个。** stacker 的 `lower`/`upper`
+   `dir` 都是 `"bottom"`，于是 `B90` 与 `B133` 都被标成 `下游=C4.lower`。
+   后果：`MACHINE_STARVED` 说缺 `[-2,6]`（lower），BELTS 段说两路都是 lower
+   ⇒ 模型推「缺的必然是另一路」⇒ `connect` 到 upper ⇒ `target_already_fed`。
+   真调 LLM 三臂实验：A/C 两臂 14 个 `connect` 里 **13 个指向 `C4.upper`，全部落空**。
+   实测这个 bug 普遍：79 个快照全部命中、515 处重复；修后 0 处。
+4. **`WORLD_FROZEN` 的三处判据缺陷**（全部由红队抓到）：
+   - `handles` 取 `cells.slice(-6)`（末端），那是预演闸门**必拒**的一端。
+     删末端 → 死带子 390→549（+159）→ `PLAN_REJECTED`；删源头 `B522` → 1 op 放行。
+     真调 LLM：指末端落地 0/12，指源头 12/12（p<0.0001）。
+   - `boundAcceptor === null` 被当成「末端没人收货」，实际是**相邻带子的朝向不对**
+     （`belt_path.js:236-256` 判 `ejectSlotWsDirection === beltAcceptingDirection`）。
+     4/4 的「无人接收」样本，末端格上**都有带子**。真正的修法是转一格。
+   - `capacity = floor(cells/0.63)` 忽略弯带有效长度 0.78（`belt.js:6`），
+     **132/516 快照报出 >100% 的满载率**（最高 103%）。
+     改成按每格真实长度累加 +1（游戏 `canAcceptItem()` 允许最后一格多塞一件）。
+     验证：`19 格 / 31 件` 从 102.8% 变成 100.0%。
+5. **载入预热期被当成「世界死」。** `ProductionAnalytics` 不进存档，
+   `load_save` 后头 10 秒 `produced_total` 必然是 `{}`。
+   红队用空窗口当替身把 50 个**活世界**跑了一遍：**50/50 全部误报**。
+   改成「第一轮（`report === null`）+ 片全空 ⇒ 不判」——
+   那份死世界实测 6 片全空但 `run_start → observe` 14.5 秒，早过预热，第二轮照报。
+
+## 根因（另一个 Agent 独立查到，与批判 Agent 指向同一事件）
+
+```
+2026-11-15 12:14:35   r-20261115121125-264d  r3
+                      insert_machine(trash) @(-3,-8)
+                      tx_plan 只声明 destroys:[15021] + placements:1
+                      但游戏重算邻居：belt#14953 rv 2→0、belt#15019 方向翻转
+2026-11-15 12:19:51   produced_total 从 10 个键变成 {}（dt = 5 分钟）
+```
+
+**一个「放垃圾桶」的动作，通过游戏的邻居重算，静默地把 painter 的供料主链改道了。**
+
+记录文档：`.findings/{ROOTCAUSE-COLOR-SLOT,CRITIQUE-DEAD-WORLD,REDTEAM-WORLD-FROZEN,VERIFY-WORLD-FROZEN,SEARCH-WHITE-PATH,DEADLOCK-CHAIN}-2026-11-23.md`
+
 ### Added — 2026-11-23：`WORLD_FROZEN` —— 说出「整座工厂零产出」和它的物理堵点
 
 统计 567 个已保存快照发现的**比所有 prompt 改动都更基础的事实**：按关卡分组

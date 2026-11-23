@@ -48,6 +48,21 @@ function loadRun(id) {
 
 const DEAD_RUN = "r-20261123151728-52a3";
 
+/**
+ * 「第二轮」的假 verify 报告。
+ *
+ * `WORLD_FROZEN` 用 `report === null` 判「本轮是不是第一次观察」：
+ * `ProductionAnalytics` 不进存档，`load_save` 之后头 10 秒 `produced_total`
+ * 必然是 `{}` —— 第一轮的空窗口可能只是预热（红队 §1.3：50 个活世界
+ * 用空窗口当替身，50/50 全部误报）。
+ *
+ * 而**这个死世界的片也是全空的**（实测 6 片全空、`run_start → observe` 14.5 秒，
+ * 早过了预热）。所以判据必须区分「第一轮的预热」与「后续轮次的真零产出」。
+ *
+ * 测试要测的是后者，所以显式给一个非 null 的 report。
+ */
+const SECOND_ROUND = { checks: [] };
+
 test("★ 死世界上必须触发，且数字要与实测对得上", () => {
     const { obs, items, production } = loadRun(DEAD_RUN);
     /* 前提：这个世界确实是死的（否则这条测试就变成在测别的东西） */
@@ -56,7 +71,7 @@ test("★ 死世界上必须触发，且数字要与实测对得上", () => {
     assert.equal(Object.keys(produced || {}).length, 0,
         "前提：该快照的 produced_total 必须为空");
 
-    const ds = diagnose(obs, items, production, null, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
     const wf = ds.find(d => d.code === "WORLD_FROZEN");
     assert.ok(wf, `死世界必须报 WORLD_FROZEN，实得 ${ds.map(d => d.code).join(",")}`);
 
@@ -72,7 +87,7 @@ test("★ 死世界上必须触发，且数字要与实测对得上", () => {
 
 test("★ 必须带能落地的句柄（否则等于没诊断）", () => {
     const { obs, items, production } = loadRun(DEAD_RUN);
-    const ds = diagnose(obs, items, production, null, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
     const wf = ds.find(d => d.code === "WORLD_FROZEN");
     assert.ok(wf, "前提：必须先报出来");
     assert.ok(Array.isArray(wf.handles) && wf.handles.length >= 1,
@@ -96,7 +111,7 @@ test("★ 反例：世界还在动的时候一律不报（满载是常态，不�
     assert.ok(Object.keys(produced || {}).length > 0,
         "前提：这个快照必须还在产出");
 
-    const ds = diagnose(obs, items, production, null, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
     assert.ok(!ds.some(d => d.code === "WORLD_FROZEN"),
         `世界还在产出时不许报 WORLD_FROZEN，实得 ${ds.map(d => d.code).join(",")}`);
 });
@@ -108,31 +123,41 @@ test("★ 反例：没有 production 数据时不许猜", () => {
         "读不到产出窗口 ⇒ 不判定（与语义层其它地方同一条纪律）");
 });
 
-test("★ 反例：hint 里不许推荐过不了闸门的动作", () => {
-    /* 第一版写的是「用 `trash_unused` 吃掉堆积的货」。**那是空头支票**：
-     * `trash_unused` 对「出口已经有下游」的带子一律拒绝
-     * （`remove.mjs` 的 `port_already_bound`，注释写着「绝不抢既有货流」），
-     * 而这里最堵的那条带子末端正好接着 stacker —— 模型照做必然被拒一轮。
+test("★ 反例：hint 里不许推荐任何动作（它是警报，不是处方）", () => {
+    /* 2026-11-23 红队 B1 推翻了「开处方」这件事本身。
      *
-     * 本项目已有同族教训（`feed-sources-need-two-filters`）：错误的指路比不给贵得多。 */
+     * 它在 516 个零产出快照上把「照这条 hint 做」逐个模拟：
+     *
+     *     0/516 让「到 hub 的带子」变多
+     *   486/516 让它变少（中位 -3）
+     *     30 个 cleanup 全是「reach 不变、死带子减少」
+     *     没有一个样本出现 delivered / stored_goal 上升
+     *
+     * 因为真实死锁链是：painter 的 color 槽空 ⇒ stacker 的 lower 没料 ⇒
+     * **path8（upper 那一路）淤 259 件**。path8 是**淤积的那条**，不是堵住的那条。
+     * 删它 = 拆受害者。真正能解开的是给 painter 的 color 槽接料，
+     * 而那正是 `MACHINE_STARVED` 指的地方。
+     *
+     * 所以这条诊断现在的定位是「世界已经停转」的**警报**，
+     * 它必须**明确把处方让出去**，而不是自己开一个。 */
     const { obs, items, production } = loadRun(DEAD_RUN);
-    const ds = diagnose(obs, items, production, null, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
     const wf = ds.find(d => d.code === "WORLD_FROZEN");
     assert.ok(wf, "前提：必须先报出来");
-    assert.ok(wf.evidence.worst.no_acceptor === false,
-        "前提：这份快照的堵点末端**接了**机器（这才让 trash_unused 非法）");
 
-    /* hint 的可用部分（前 180 字符，prompt 的 clip 上限）必须不含被禁动作 */
     const usable = wf.hint.slice(0, 180);
-    assert.ok(!/`trash_unused` 吃掉|用 `trash_unused`/.test(usable),
-        `前 180 字符里不许把 trash_unused 当解法推荐，实得：${usable}`);
-    /* 必须点名一个真能落地的动作 */
-    assert.ok(/remove_run|connect/.test(usable),
-        `前 180 字符里必须给 remove_run 或 connect，实得：${usable}`);
-    /* candidates 的第一名也必须是能落地的 */
-    assert.ok(["remove_run", "connect"].includes(wf.candidates[0]),
-        `候选第一名必须是 remove_run 或 connect，实得 ${wf.candidates[0]}`);
+    /* 不许把 `remove_run` / `trash_unused` / `connect` 当解法推荐 ——
+     * 这 516 个模拟里没有一个让世界变好。 */
+    assert.ok(!/`remove_run`\s*它的/.test(usable),
+        `前 180 字符里不许再把 remove_run 当解法，实得：${usable}`);
+    /* 必须说清「这是结果，不是成因」 */
+    assert.ok(/结果|成因/.test(usable),
+        `必须说清它是结果不是成因，实得：${usable}`);
+    /* 必须把处方让给别的诊断 */
+    assert.ok(/先去修|别的线索|上面那些/.test(usable),
+        `必须把处方让出去，实得：${usable}`);
 });
+
 
 test("★ 回归：堵塞路径终结于 hub 入口时，不许被 dropInlets 过滤掉", () => {
     /* 这个 bug 极隐蔽：`diagnose()` 的 `dropInlets` 按 `subject.uid` 过滤 ——
@@ -146,7 +171,7 @@ test("★ 回归：堵塞路径终结于 hub 入口时，不许被 dropInlets �
      *
      * 这份快照（r-20261116090537-d70e）是 47 个漏报样本之一，正好踩中。 */
     const { obs, items, production } = loadRun("r-20261116090537-d70e");
-    const ds = diagnose(obs, items, production, null, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
     const wf = ds.find(d => d.code === "WORLD_FROZEN");
     assert.ok(wf, `堵塞路径终结于 hub 入口时也不许被过滤，实得 ${ds.map(d => d.code).join(",")}`);
     /* subject 必须是真实带子，而且是**路径起点**那一端，不是 hub 入口 */
@@ -171,7 +196,7 @@ test("★ 句柄必须指向源头端，不能指向末端（预演闸门只放�
      *
      * 所以这条测试钉的不是「句柄格式对不对」，而是「方向对不对」。 */
     const { obs, items, production } = loadRun(DEAD_RUN);
-    const ds = diagnose(obs, items, production, null, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
     const wf = ds.find(d => d.code === "WORLD_FROZEN");
     assert.ok(wf, "前提：必须先报出来");
 
@@ -212,17 +237,50 @@ test("★ 句柄必须指向源头端，不能指向末端（预演闸门只放�
         `句柄不许指向末端（那是预演必拒的一端），重叠：${JSON.stringify(overlap)}`);
 });
 
-test("★ 排序：WORLD_FROZEN 必须排在 NO_PRODUCTION 之前", () => {
-    /* 两条都描述零产出，但动作方向相反：
-     *   WORLD_FROZEN  → 通开
-     *   NO_PRODUCTION → 新建
-     * 在满载世界里让模型看到「去新建」是灾难。 */
+test("★ 反例：载入预热期（第一轮 + 片全空）不许报", () => {
+    /* 2026-11-23 红队 §1.3 抓到的误报源。
+     *
+     * `ProductionAnalytics` **不写进存档** —— `savegame_serializer.js` 的 dump 里
+     * 没有它，`core.js:127` 每次 `new ProductionAnalytics(root)` 造一个全新的，
+     * 构造函数里塞满 `statisticsGraphSlices=100` 个**空片**。
+     *
+     * 所以 `load_save` 之后的头 10 秒 `produced_total` 必然是 `{}`，
+     * 与世界的死活无关。实测 567 个快照里 41 个的 `run_start → observe` < 2 秒。
+     *
+     * 红队用空窗口当替身把 50 个**活世界**跑了一遍：**50/50 全部误报**，
+     * 报出来是「整图零产出，最堵的一条 66 件满载」—— 而那个世界每分钟交 61 件。
+     *
+     * 判据：第一轮（`report === null`）且片全空 ⇒ 可能是预热，不判。
+     * 第二轮及以后的空窗口才是真零产出（那份死世界实测 6 片全空、
+     * `run_start → observe` 14.5 秒，早过了预热）。 */
     const { obs, items, production } = loadRun(DEAD_RUN);
     const ds = diagnose(obs, items, production, null, GOAL, null, { recipe: null });
+    assert.ok(!ds.some(d => d.code === "WORLD_FROZEN"),
+        `第一轮 + 片全空 ⇒ 不许报（可能是载入预热），实得 ${ds.map(d => d.code).join(",")}`);
+
+    /* 对照：同一份快照，第二轮就要报 */
+    const ds2 = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
+    assert.ok(ds2.some(d => d.code === "WORLD_FROZEN"),
+        "第二轮同样的空窗口必须报 —— 那份世界实测早过了预热期");
+});
+
+test("★ 排序：它是警报，必须排在可行动的成因类诊断**之后**", () => {
+    /* 2026-11-23 二次修正。第一版登记 rank 4，后来提到 1（为了压过
+     * `MACHINE_STARVED`）。**那个理由被红队 B1 推翻了。**
+     *
+     * 真实死锁链：painter 的 color 槽空 ⇒ stacker 的 lower 没料 ⇒
+     * **path8（upper 那一路）淤 259 件**。path8 是淤积的那条，不是堵住的那条。
+     * `MACHINE_STARVED` 指的 `C3.color` 才是成因。
+     *
+     * 而且它的 hint 现在明说「先去修上面那些」——排第一会让那句话变成无稽之谈。 */
+    const { obs, items, production } = loadRun(DEAD_RUN);
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
     const iFrozen = ds.findIndex(d => d.code === "WORLD_FROZEN");
-    const iNoProd = ds.findIndex(d => d.code === "NO_PRODUCTION");
+    const iStarved = ds.findIndex(d => d.code === "MACHINE_STARVED");
     assert.ok(iFrozen >= 0, "前提：WORLD_FROZEN 必须存在");
-    assert.ok(iNoProd >= 0, "前提：NO_PRODUCTION 必须存在");
-    assert.ok(iFrozen < iNoProd,
-        `WORLD_FROZEN 必须排在 NO_PRODUCTION 之前（实得 ${iFrozen} vs ${iNoProd}）`);
+    assert.ok(iStarved >= 0, "前提：MACHINE_STARVED 必须存在");
+    assert.ok(iStarved < iFrozen,
+        `指示成因的 MACHINE_STARVED 必须排在警报之前（实得 starved=${iStarved} frozen=${iFrozen}）`);
+    /* hint 里那句「先去修上面那些」要求它前面确实有东西 */
+    assert.ok(iFrozen > 0, "它前面必须有别的诊断，否则「上面那些」指代不到任何东西");
 });

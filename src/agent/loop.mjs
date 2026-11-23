@@ -950,6 +950,14 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
              * 这是本项目最高频的缺陷形态（`computed-but-never-delivered`）的又一次预防：
              * 算得出来的字段，必须确认它真的到了判据手里。 */
             production: production || null,
+            /* ★ 上一轮的 verify 报告 —— `WORLD_FROZEN` 用它判「是不是第一轮」★
+             *
+             * `ProductionAnalytics` 不进存档，`load_save` 之后头 10 秒
+             * `produced_total` 必然是 `{}`。第一轮的空窗口可能只是预热，
+             * 第二轮及以后的空窗口才是真的零产出（红队 §1.3）。
+             *
+             * 第一轮时 `report` 是 `null`（`diagnose()` 的第四个参数）。 */
+            report: report || null,
         }));
         out.push(...semRes.kept);
         semanticDropped = semRes.n;
@@ -1345,16 +1353,31 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
          * 实测依据（567 个快照）：L12 的 508 个快照里 500 个零产出，
          * 而唯一的堵点是一条 259 件 / 165 格的带子。
          *
-         * ★ 还必须排在 `MACHINE_STARVED`(3) **之前** ★
+         * ★ 2026-11-23 二次修正：从 rank 1 退到 rank 8 ★
          *
-         * 两条同时存在时，`MACHINE_STARVED` 会说「从 C4 接它的缺料口」——
-         * 而在满载冻结的世界里，**接上去的货照样出不来**：堵点不在缺料那一端，
-         * 在下游出不去。如果模型先读到「接上」，它会照做一轮，白干。
+         * 第一版登记 4，后来提到 1（为了压过 `MACHINE_STARVED`）。**那个理由被推翻了。**
          *
-         * 实测渲染顺序（L12 真机快照）：rank 3 的 `MACHINE_STARVED` 排第一，
-         * 给出的 hint 正是 `connect` 到缺料口 —— 方向与这条诊断相反。
-         * 所以这条必须是 **rank 1**，排在所有「接上」类诊断之前。 */
-        WORLD_FROZEN: 1,
+         * 红队在 516 个零产出快照上把「照这条 hint 做」逐个模拟：
+         *
+         *     0/516 让「到 hub 的带子」变多
+         *   486/516 让它变少（中位 -3）
+         *     30 个 cleanup 全是「reach 不变、死带子减少」
+         *     没有一个样本出现 delivered / stored_goal 上升
+         *
+         * 真实死锁链（`r-20261123151728-52a3`）逐跳：
+         *
+         *   painter 的 color 槽空 ⇒ 不喷 ⇒ stacker 的 lower 没料 ⇒ 不吐货
+         *     ⇒ **path8（upper 那一路）淤 259 件**
+         *
+         * **path8 是淤积的那条，不是堵住的那条。** 删它 = 拆受害者，
+         * 真正堵住的那端还在。而 `MACHINE_STARVED` 指的 `C3.color` 才是成因。
+         *
+         * 所以它必须排在**后面**，并且它的 hint 现在明说「这是结果，不是成因，
+         * 先去修上面那些」。排第一会让那句「上面那些」变成无稽之谈。
+         *
+         * 8 = 与 `FLOW_UNVERIFIED` 同档、在全部可行动诊断之后。它的价值是
+         * 「确认全图确实停转」这个事实本身，不是一个动作入口。 */
+        WORLD_FROZEN: 8,
         NO_PRODUCTION: 5, PRODUCED_NOT_DELIVERED: 6, FLOW_UNREACHABLE: 7, FLOW_UNVERIFIED: 8,
         SLOT_STARVED: 9, OUTPUT_UNROUTED: 9,
         /* ★ `OUTPUT_STRANDED` 必须登记，否则落到默认 rank=50 被挤掉 ★

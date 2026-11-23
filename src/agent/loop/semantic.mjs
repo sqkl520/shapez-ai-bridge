@@ -3559,13 +3559,55 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 const prod = (opts.production && opts.production.produced_total
                     && typeof opts.production.produced_total === "object")
                     ? opts.production.produced_total : null;
+                /* ★ 空窗口 ≠ 世界死（2026-11-23，红队 §1.3 抓到）★
+                 *
+                 * `ProductionAnalytics` **不写进存档**
+                 * （`savegame_serializer.js` 的 dump 里没有它；`core.js:127` 每次
+                 * `new ProductionAnalytics(root)` 造一个全新的，构造函数里塞满
+                 * `statisticsGraphSlices=100` 个**空片**）。
+                 *
+                 * 所以 `load_save` 之后的头 10 秒，`produced_total` **必然是 `{}`**，
+                 * 与世界的死活无关。红队用「空窗口」当替身把 50 个**活世界**跑了一遍：
+                 * **50/50 全部误报**。
+                 *
+                 * ## 为什么不能简单地「片空就跳过」
+                 *
+                 * 因为**这个死世界的片也是全空的** —— 实测 `r-20261123151728-52a3`：
+                 *
+                 *     produced_slices: [{},{},{},{},{},{}]     slices_returned: 6
+                 *     run_start → observe 间隔: 14.5 秒       （> 10 秒预热期）
+                 *
+                 * 14.5 秒早就过了预热，6 片本该有数据却全空 ⇒ **那是真的零产出**。
+                 * 如果按「片空 ⇒ 没数据 ⇒ 不报」，这条诊断在这个世界上**永远不触发**，
+                 * 功能等于没做（这是本项目反复出现的「加了但静默失效」形态）。
+                 *
+                 * ## 所以用「这一轮是不是第一次观察」当门槛
+                 *
+                 * 预热期只发生在 `load_save` 之后的本 run **第一轮**。
+                 * `opts.report` 是**上一轮**的 verify 报告：第一轮它是 `null`。
+                 *
+                 *   · 第一轮 + 片全空  ⇒ 可能是预热 ⇒ **不判**
+                 *   · 第二轮及以后 + 片全空 ⇒ 至少过了「两轮之间的全部时间」
+                 *     （实测带 tx 的轮次间隔中位数 37 游戏秒、墙钟十几秒），
+                 *     预热早该结束 ⇒ **判**
+                 *
+                 * 这与现有 `prod === null ⇒ 不报` 是同一条纪律（「观测不全 ⇒ 不报」），
+                 * 只是把「不全」的判据从「有没有键」挪到了「够不够老」。 */
+                const isFirstRound = !opts || opts.report === null || opts.report === undefined;
+                const slices = Array.isArray(opts.production && opts.production.produced_slices)
+                    ? opts.production.produced_slices : null;
+                const filledSlices = slices
+                    ? slices.filter(s => s && typeof s === "object" && Object.keys(s).length > 0).length
+                    : null;
+                /* 第一轮且片全空 ⇒ 可能是载入预热，不判；其余情况照判。 */
+                const windowReady = !(isFirstRound && slices !== null && filledSlices === 0);
                 let anyProduced = false;
                 if (prod) {
                     for (const v of Object.values(prod)) {
                         if (Number(v) > 0) { anyProduced = true; break; }
                     }
                 }
-                if (prod && !anyProduced) {
+                if (prod && !anyProduced && windowReady) {
                     /* 每条路径：格数、货量、终点是否真有人接。
                      * `itemsOnPath` 是游戏自己数的（`p.items.length`），不是我们推的。 */
                     const perPath = new Map();
@@ -3582,13 +3624,98 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                         if (!p || !Array.isArray(p.cells) || !p.cells.length) continue;
                         const stat = perPath.get(pi) || { n: 0, items: new Map() };
                         const cells = p.cells.length;
-                        /* 正常容量 ≈ 格数 ÷ 0.63 格/件的间距（见 mod 里 `itemSpacingOnBelts`）。
-                         * 超过 85% 就算满 —— 游戏自己不会让它超过 100%。 */
-                        const capacity = Math.max(1, Math.floor(cells / 0.63));
+                        /* ★ 容量不能用 `cells / 0.63`（2026-11-23，红队抓到）★
+                         *
+                         * 旧式 `Math.max(1, Math.floor(cells / 0.63))` 把每一格都当成
+                         * 满格 1.0 长度。而**弯带的有效长度是 0.78**：
+                         *
+                         *     components/belt.js:6   export const curvedBeltLength = 0.78
+                         *     components/belt.js:70  getEffectiveLengthTiles() {
+                         *                              return this.direction === enumDirection.top
+                         *                                  ? 1.0 : curvedBeltLength; }
+                         *
+                         * mod 自己的 `debugItems` 就用它算 `cellAt`（见
+                         * `shapez-ai-bridge.js` 的 `cellLens`）。用 1.0 会**高估容量**不够，
+                         * 这里恰好相反 —— 它**低估容量**，于是报出物理上不可能的满载率。
+                         *
+                         * 实测（`.findings/REDTEAM-WORLD-FROZEN-2026-11-23.md` §B3）：
+                         * **132/516 的快照报出 >100% 的满载率**，最高 103%。
+                         * 例如 `path 30 cells 19 items 31` ⇒ 旧式算 30 格容量、fill 1.03。
+                         *
+                         * 一旦报出 >100%，模型看到的是一个**不可能的数字**，
+                         * 它没有理由相信这条诊断的其余部分。
+                         *
+                         * 修法：按每格真实长度累加。判转弯的依据与 mod 同源 ——
+                         * 用 `entryDirection/exitDirection` 不一致即转弯。
+                         * 拿不到那两个字段时退回 1.0（不猜）。 */
+                        let usableLen = 0;
+                        for (const c of p.cells) {
+                            const rec = at(idx, c);
+                            let len = 1;
+                            if (rec && (isBelt(rec) || rec.type === "underground_belt")) {
+                                try {
+                                    const rv = typeof rec.rotation_variant === "number"
+                                        ? rec.rotation_variant
+                                        : Math.max(0, (rec.code | 0) - 1);
+                                    /* 弯带（rv 1/2）有效长度 0.78；直带（rv 0/3）1.0。
+                                     * `belt-rules.mjs` 的 rv 语义：0=直、1/2=两种转、3=另一向直。 */
+                                    len = (rv === 1 || rv === 2) ? 0.78 : 1;
+                                } catch { len = 1; }
+                            }
+                            usableLen += len;
+                        }
+                        /* 每件占 0.63；`spacingToFirstItem` 允许最后一格多塞一件
+                         * （游戏 `canAcceptItem()` 只看 `spacingToFirstItem >= itemSpacing`），
+                         * 所以 +1 是**按游戏自己的判据**补的，不是宽松。 */
+                        const capacity = Math.max(1, Math.floor(usableLen / 0.63) + 1);
                         const fill = stat.n / capacity;
-                        /* 终点：`boundAcceptor` 为 null ⇒ 这条线的末端**没人收货**。
-                         * 那是比"满"更硬的证据：它不是堵，是根本没有去处。 */
-                        const noAcceptor = p.boundAcceptor === null;
+                        /* ★ `boundAcceptor === null` **不等于**「末端没人收货」
+                         * （2026-11-23，红队抓到）★
+                         *
+                         * 我一直把它读成「这条线末端没有接收方」。核实质心：
+                         *
+                         *     belt_path.js:236-256  游戏用 computeAcceptingEntityAndSlot() 判定，
+                         *     条件是 ejectSlotWsDirection === beltAcceptingDirection
+                         *
+                         * 也就是说 `null` 的真实含义是**「相邻那条带子的朝向不对」**，
+                         * 而不是「那里什么都没有」。
+                         *
+                         * 实测（`.findings/REDTEAM-WORLD-FROZEN-2026-11-23.md` §B2）：
+                         * 走进这个分支的 4 个样本，**4/4 的末端格上都有一条带子**。
+                         *
+                         *   r-20261112194710-c92a: tail belt 11885 r=90 exit [35,-11]
+                         *     neighbour belt 11963 r=0 at [35,-11]，接受方向是 [35,-10]
+                         *     ⇒ 我们的出料格是 [35,-11]，差一格，收不到
+                         *
+                         * **真正的修法是转一格（`replace_run` facing），不是拆掉。**
+                         * 而旧 hint 说「末端本来就没有接收方 … connect 或 remove_run 整段拆掉」
+                         * —— 把一个一格的朝向问题说成了结构性的无用。
+                         *
+                         * 所以这里区分两种情形：
+                         *   · 末端格**有实体**（带子/机器）⇒ `noAcceptor` 不成立，
+                         *     这是「朝向不对」，该交给 fill 判据或单独处理；
+                         *   · 末端格**真的是空地** ⇒ 保留原来的语义。
+                         *
+                         * 判据用 `at(idx, exitCell)` 直接看物理事实，不解析 `boundAcceptor` 的字符串。 */
+                        let exitCellHasEntity = false;
+                        if (p.boundAcceptor === null) {
+                            const tail = p.cells[p.cells.length - 1];
+                            const tailRec = at(idx, tail);
+                            if (tailRec && (isBelt(tailRec) || tailRec.type === "underground_belt")) {
+                                try {
+                                    const rv = typeof tailRec.rotation_variant === "number"
+                                        ? tailRec.rotation_variant
+                                        : Math.max(0, (tailRec.code | 0) - 1);
+                                    const exitDirName = ["top", "right", "bottom", "left"][(tailRec.r + rv) % 4];
+                                    const dv = DIRV[exitDirName];
+                                    if (dv) {
+                                        const outCell = [tailRec.x + dv[0], tailRec.y + dv[1]];
+                                        exitCellHasEntity = !!at(idx, outCell);
+                                    }
+                                } catch { exitCellHasEntity = false; }
+                            }
+                        }
+                        const noAcceptor = p.boundAcceptor === null && !exitCellHasEntity;
                         if (noAcceptor || fill >= 0.85) {
                             clogged.push({ pi, cells, n: stat.n, fill, noAcceptor, items: stat.items, p });
                         }
@@ -3717,12 +3844,42 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                              * 另外要显式说「别从末端切」：模型读完 `BELTS` 段会自然想从
                              * 我们看到的那一端（末端）动手，而那恰好是预演必拒的一端。
                              * 与其让它撞一次闸门再学，不如直接说。 */
-                            hint: `整座工厂零产出。这条带子 ${worst.n} 件（${pct}%）堵死 —— `
-                                + `\`remove_run\` 它的**源头端** ${hs.length ? hs.join(",") : "（路径起点那几格）"}`
-                                + `（从末端切会让上游 ${worst.cells} 格失去通路，预演必拒）。`
-                                + `**先通开，再谈接上**：不疏通的话，接进去的货一样出不来。`
-                                + (worst.noAcceptor ? `这条线末端本来就没有接收方，` : "")
-                                + `（\`trash_unused\` 在这里没用 —— 它不接已有下游的带子。）`
+                            /* ★ 这条诊断**不开处方**（2026-11-23，红队 B1 推翻处方）★
+                             *
+                             * 它一度说「`remove_run` 这条带子的源头端」。红队在 516 个
+                             * 零产出快照上把这个动作逐个模拟了一遍：
+                             *
+                             *     照 hint 做之后：0/516 让「到 hub 的带子」变多
+                             *                    486/516 让它变少（中位 -3）
+                             *                    30 个 cleanup 全是「reach 不变、死带子减少」
+                             *                    没有任何一个样本出现 delivered / stored_goal 上升
+                             *
+                             * 而且真实的死锁链（`r-20261123151728-52a3`）逐跳追出来是：
+                             *
+                             *     painter#13552 的 color 槽空 ⇒ 不喷漆 ⇒ 16 格竖列恒空
+                             *       ⇒ stacker#14684 的 lower 槽没料 ⇒ 不吐货
+                             *       ⇒ **path8（upper 那一路）淤 259 件**
+                             *
+                             * **path8 是淤积的那条，不是堵住的那条。** 删它等于
+                             * 拆掉受害者，凶手（空的 color 槽）还在。删完
+                             * 255 件原封不动，stacker 还是缺一路，整图还是零产出
+                             * —— 判词 `churn`。
+                             *
+                             * 唯一能解开的是给 painter 的 color 槽接料，而那正是
+                             * `MACHINE_STARVED` 指的地方。所以这条诊断的定位应该是
+                             * **「世界已经停转」的警报**，把处方的机会让给真正指向成因的那条。
+                             *
+                             * ⚠️ 还有一句旧文案是**几何上假的**（B1.4）。它说
+                             * 「末端那台机器在等另一路料、永远等不到」。核实 512 个
+                             * 末端接了机器的样本：**19 个末端是 cutter（单输入，没有
+                             * 「另一路」）**、**41 个的另一路进料是有货的**（其中 39 个
+                             * 末端是 hub 本身 —— hub 有 16 个入口，说它在「等另一路料」荒谬）。
+                             * 「错误的指路比不给更贵」，所以这句必须删掉。 */
+                            hint: `整座工厂零产出（这条带子 ${worst.n} 件 / ${pct}% 是淤积最重的一条）。`
+                                + `这是**结果**，不是成因 —— 别从它下手：` +
+                                `删这条带子只会拆掉受害者，真正堵住的那一端还在，` +
+                                `世界仍然零产出。先去修上面那些说"某台机器缺料 / 某条流到不了 hub"的诊断；` +
+                                `它们指向的才是成因。这条只在**没有别的线索时**用来确认「全图确实停转」。`
                                 + (others ? `另有：${others}。` : ""),
                         });
                     }
