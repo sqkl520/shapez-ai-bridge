@@ -5012,9 +5012,34 @@ export async function runLoop(opts = {}) {
                 /* 成功时 tx.verify 是 null —— 这里显式记 null，别让读的人以为「没记就是没验」 */
                 uid_set_equal: ap.tx.rolled_back === true && ap.tx.verify ? ap.tx.verify.uid_set_equal : null,
                 fake_tx: ap.fake === true,
+                /* ★ `modified` 必须落盘（2026-11-23，批判 Agent 抓到）★
+                 *
+                 * mod 的 `opTx` 返回的是 `diff: finalDiff`，里面**有** `modified`
+                 * （`shapez-ai-bridge.js` 的 `diffSnapshots` 逐字段比对
+                 *  `canonicalEntityPayload`，`{added, removed, modified}` 都是 uid 列表）。
+                 *
+                 * 而这里原来只写了 `added.length` / `removed.length` ——
+                 * **`modified` 被整个丢掉**，模型每轮看到的 `diff` 是 `{added:1, removed:1}`。
+                 *
+                 * 后果是实打实的：2026-11-15 12:14:35 那次
+                 * `insert_machine(trash) @(-3,-8)` 只声明 1 个 destroy，
+                 * 但游戏侧的 `updateSurroundingBeltPlacement` 顺手把
+                 * `belt#14953@(-3,-7)` 的 rv 从 2 改成 0（左→下转角变左→右直带），
+                 * 掰断了 painter 唯一的颜料供料线。5 分钟后全图产出归零，
+                 * **而这一步在 diff 里看不出任何异常** —— `added:1, removed:1`。
+                 *
+                 * 这是 `computed-but-never-delivered` 的又一例，而且它
+                 * 直接掩盖了一次真实的世界损坏。
+                 *
+                 * 落盘形态：`modified` 给 uid 列表（截断到 20，够看），
+                 * 外加 `modified_total`。不在这里展开逐字段差异 ——
+                 * 那是 `tx.verify.diffs` 的职责，且会把 transcript 撑大。
+                 * 但「有东西被改了几何」这件事必须可见。 */
                 diff: ap.tx.diff ? {
                     added: (ap.tx.diff.added || []).length,
                     removed: (ap.tx.diff.removed || []).length,
+                    modified: (ap.tx.diff.modified || []).length,
+                    modified_uids: (ap.tx.diff.modified || []).slice(0, 20),
                 } : null,
                 why: av.why,
             });

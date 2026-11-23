@@ -380,9 +380,44 @@ export function worldHealth({ obs, items = null, production = null, goalShape = 
  *
  * `null` = 不判方向（规模类：加机器当然该变大，那不是健康度）。
  * 没列进来的字段一律按「不判方向」处理，所以新增字段不会意外变成红项。
+ *
+ * ★ `items_on_belts` **不在**这张表里（2026-11-23，批判 Agent 抓到）★
+ *
+ * 它原来是 `GOOD_UP` 的一员。那在正常世界里是对的：货在带子上说明产线在淌。
+ *
+ * **但在一个堵死的世界里，货只会往带子上堆 —— 于是「越堵越干净」。**
+ *
+ * 实测（`.findings/CRITIQUE-DEAD-WORLD-2026-11-23.md`）：
+ *
+ *   · 零产出 run 被判为 cleanup / positive / constructive 的：**288**（其中 cleanup 274）
+ *   · 其中理由是「▲ items_on_belts」的：**221**
+ *
+ * 最刺眼的一条 —— 世界死掉的那一轮 `r-20261115121951-39ea`：
+ *
+ *     净效果: cleanup（改善但不是交货） — 带上的货 350→362
+ *
+ * **世界在这一轮死了，评分给的是 GOOD。** 模型收到的 `## LAST STEP` 是
+ * 「GOOD — the world got cleaner」，于是它继续做让货堆积的动作。
+ *
+ * 所以方向改成**有条件**：只在「本快照确实有产出」时才算 GOOD_UP。
+ * 零产出时它退化成 `sign:"0"`（变了但方向不判）——资料仍然可见，
+ * 只是不再冒充「改善」。
+ *
+ * 判据用 `produced`（`worldHealth()` 的 `produced` 字段，`health.mjs:373`）：
+ * 它为空对象/全零 ⇒ 这一刻的世界没有在造任何东西 ⇒ 货多只是堵。
  */
-const GOOD_UP = new Set(["delivered", "stored_goal", "belts_reaching_hub", "items_on_belts", "reach_pct"]);
+const GOOD_UP = new Set(["delivered", "stored_goal", "belts_reaching_hub", "reach_pct"]);
 const GOOD_DOWN = new Set(["belts_dead", "belts_dead_dangling"]);
+
+/** 这份快照里有没有**任何**产出（`produced` 是 {shape: count} 或 null）。 */
+function anyProducedIn(snap) {
+    const p = snap && snap.produced;
+    if (!p || typeof p !== "object") return false;
+    for (const v of Object.values(p)) {
+        if (Number(v) > 0) return true;
+    }
+    return false;
+}
 
 /**
  * 两份快照的差。**只报真的变了的项** —— 一条静默的 diff 比一条噪音 diff 好用。
@@ -462,6 +497,16 @@ export function healthDelta(before, after) {
         let sign = "0";
         if (GOOD_UP.has(k)) sign = d > 0 ? "+" : (d < 0 ? "-" : "0");
         else if (GOOD_DOWN.has(k)) sign = d < 0 ? "+" : (d > 0 ? "-" : "0");
+        else if (k === "items_on_belts") {
+            /* 见 `GOOD_UP` 上方那段：只在世界确实在产出时，货多才是改善。
+             * 零产出时货多 = 堵得更死，不能标 `+`。
+             *
+             * 判据用**两份快照任一有产出**（保守）：从「有产出」变成「零产出」
+             * 那一轮，货量上涨更可能是堵塞 —— 用 `after` 主判、`before` 兜底，
+             * 避免把「刚开始堵」的那一轮误判成改善。 */
+            const producing = anyProducedIn(after) || anyProducedIn(before);
+            sign = producing ? (d > 0 ? "+" : (d < 0 ? "-" : "0")) : "0";
+        }
         out.push({ metric: k, before: b, after: a, delta: d, dir, sign });
     }
     return out;
@@ -706,7 +751,19 @@ export function classifyNetEffect(before, after, delta = null) {
     const better = [];
     if (reach && reach.delta > 0) better.push(`到 hub 的带子 ${reach.before}→${reach.after}`);
     if (dead && dead.delta < 0) better.push(`死带子 ${dead.before}→${dead.after}`);
-    if (items && items.delta > 0) better.push(`带上的货 ${items.before}→${items.after}`);
+    /* ★ 货变多只在**世界确实在产出**时才算改善（2026-11-23）★
+     *
+     * 判据见 `GOOD_UP` 上方那段长注释。一句话：
+     * 在堵死的世界里，货只会往带子上堆 —— 把它算成 GOOD，等于奖励「越堵越好」。
+     *
+     * 这一条影响面很大：已归档的 288 个零产出 run 里，221 个的 `cleanup`
+     * 判词正是靠这句话撑起来的（含世界死掉那一轮）。
+     * 修完之后那些 run 会退回 `constructive` 或 `churn` —— **这是对的**，
+     * 因为它们确实没让世界变好。 */
+    const producingNow = anyProducedIn(after) || anyProducedIn(before);
+    if (items && items.delta > 0 && producingNow) {
+        better.push(`带上的货 ${items.before}→${items.after}`);
+    }
     /* 悬空带子变少是**真改善** —— 它意味着原本两头不靠的线接上了东西。
        KEEP `belts_dead` 那条（它是既有语义），两条可能同时触发，所以用 Set 去重不必要：
        `dead` 与 `dangling` 描述的是同一个桶的不同切面，文案会并列出现，读日志时互补。 */
@@ -755,7 +812,11 @@ export function classifyNetEffect(before, after, delta = null) {
          * `items.delta > 0`（货量微涨）算作改善，而货量微涨恰恰是
          * 「铺了新线带几个存货」的典型症状。真正的改善只有
          * 「到 hub 的带子变多」或「（悬空）死带子变少」。 */
-        const itemsMoved = !!(items && items.delta > 0);
+        const itemsMoved = !!(items && items.delta > 0)
+            /* 零产出时「货量涨」不算「世界动起来了」—— 见 `GOOD_UP` 上方那段。
+             * 这一处本来就是靠它判 `stalled_growth` 的，而零产出世界里
+             * 货量微涨恰恰是「铺了新线带几个存货」，不是流动。 */
+            && (anyProducedIn(after) || anyProducedIn(before));
         /* ★ 不能从 `delta` 里找 `paths_with_items` ★
          *
          * `healthDelta` 只报**变了的**项。而「带货路径数没变」恰恰是

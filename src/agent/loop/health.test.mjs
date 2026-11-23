@@ -548,12 +548,22 @@ test("H29 ★ 加了东西但带上的货没增加 ⇒ stalled_growth（不是 c
 });
 
 test("H29b ★ 对照：加了东西且货量涨了 ⇒ 仍是 constructive（不是 stalled_growth）", () => {
+    /* ⚠️ 2026-11-23：夹具加了 `produced`（世界在产出）。
+     *
+     * 这条测试原本只说「货量涨 ⇒ 施工中」。而批判 Agent 查到：
+     * 在**零产出**的世界里，货量涨恰恰是「铺了新线带几个存货」——
+     * 那是堵塞，不是流动。所以 `items_on_belts` 的方向现在要看 `produced`
+     * （见 `health.mjs` 的 `GOOD_UP` 注释）。
+     *
+     * 这条测试要测的语义仍然成立，只是前提必须写明「世界在产出」——
+     * 那本来就是它隐含的假设。零产出的情形由 H29d 单独钉。 */
     const snap = (o) => ({
         belts: 100, machines: 10, entities: 120,
         belts_reaching_hub: 80, belts_dead: 20,
         items_on_belts: 50, reach_pct: 0.8,
         delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
         upgrade_levels: { belt: 0 },
+        produced: { CuCuCuCu: 12 },
         shape: "a",
         ...o,
     });
@@ -563,6 +573,47 @@ test("H29b ★ 对照：加了东西且货量涨了 ⇒ 仍是 constructive（�
     const e = classifyNetEffect(before, after, d);
     assert.equal(e.kind, "constructive",
         `货量涨了说明新线接进了活货流 ⇒ 是施工中，不该判 stalled_growth（why=${e.why.join("/")}）`);
+});
+
+test("H29d ★ 零产出世界里货量涨 ⇒ 不算改善（越堵越干净是假象）", () => {
+    /* 批判 Agent 实测（`.findings/CRITIQUE-DEAD-WORLD-2026-11-23.md`）：
+     *
+     *   · 288 个零产出 run 被判成 cleanup/positive/constructive（cleanup 274）
+     *   · 其中 221 个的判词靠的就是「▲ items_on_belts」
+     *
+     * 最刺眼的一条 —— 世界死掉那一轮 `r-20261115121951-39ea`：
+     *
+     *     净效果: cleanup（改善但不是交货） — 带上的货 350→362
+     *
+     * **世界在这一轮死了，评分给的是 GOOD。**
+     *
+     * 所以：零产出时 `items_on_belts` 涨**不是**改善，只是货堆得更多。 */
+    const snap = (o) => ({
+        belts: 100, machines: 10, entities: 120,
+        belts_reaching_hub: 80, belts_dead: 20,
+        items_on_belts: 50, reach_pct: 0.8,
+        delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
+        upgrade_levels: { belt: 0 },
+        produced: {},                    // ← 零产出
+        shape: "a",
+        ...o,
+    });
+    const before = snap({});
+    const after = snap({ items_on_belts: 61, shape: "b" });
+    const d = healthDelta(before, after);
+
+    /* ① delta 里这条不许标 `+` */
+    const items = d.find(x => x.metric === "items_on_belts");
+    assert.ok(items, "前提：货量变了，必须在 delta 里");
+    assert.notEqual(items.sign, "+",
+        `零产出时货量涨不许标成改善，实得 sign=${items.sign}`);
+
+    /* ② 不许因此判成 cleanup */
+    const e = classifyNetEffect(before, after, d);
+    assert.notEqual(e.kind, "cleanup",
+        `零产出时货量涨不许判 cleanup，实得 ${e.kind}（why=${e.why.join("/")}）`);
+    assert.ok(!e.why.some(s => /带上的货/.test(s)),
+        `判词里不许把「带上的货」当改善理由，实得：${e.why.join("/")}`);
 });
 
 test("H29c ★ 对照：加了东西且死带子减少 ⇒ 不算 stalled_growth（有改善）", () => {
@@ -655,6 +706,11 @@ test("H30b ★ 对照：带货路径数涨了 ⇒ 是 constructive（新线真�
 });
 
 test("H30c ★ 拿不到 paths 指标时退回只看货量（不能因缺字段就判停滞）", () => {
+    /* ⚠️ 2026-11-23：同 H29b，夹具必须声明「世界在产出」。
+     *
+     * 「货量涨 ⇒ 不算停滞」这条语义只在有产出时成立。零产出时货量涨
+     * 恰恰**是**停滞的证据（货堆在带子上，一件不流）—— 见 `health.mjs` 的
+     * `GOOD_UP` 注释与 `CRITIQUE-DEAD-WORLD-2026-11-23.md`。 */
     const snap = (o) => ({
         belts: 100, machines: 10, entities: 120,
         belts_reaching_hub: 80, belts_dead: 20,
@@ -662,6 +718,7 @@ test("H30c ★ 拿不到 paths 指标时退回只看货量（不能因缺字段�
         paths_with_items: null, paths_total: null,
         delivered: 0, stored_goal: 0, level: 12, required: 1000, progress: 0,
         upgrade_levels: { belt: 0 },
+        produced: { CuCuCuCu: 8 },
         shape: "a",
         ...o,
     });
