@@ -71,7 +71,7 @@ test("★ 死世界上必须触发，且数字要与实测对得上", () => {
     assert.equal(Object.keys(produced || {}).length, 0,
         "前提：该快照的 produced_total 必须为空");
 
-    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null, tickSincePrev: 40 });
     const wf = ds.find(d => d.code === "WORLD_FROZEN");
     assert.ok(wf, `死世界必须报 WORLD_FROZEN，实得 ${ds.map(d => d.code).join(",")}`);
 
@@ -85,20 +85,35 @@ test("★ 死世界上必须触发，且数字要与实测对得上", () => {
         `必须说出堵的是什么货，实得：${wf.observed}`);
 });
 
-test("★ 必须带能落地的句柄（否则等于没诊断）", () => {
+test("★ 句柄在 evidence 里，不在 `handles` 里（它不施工）", () => {
+    /* 2026-11-23 红队复测 B1 的另一半：
+     *
+     * 改了 hint（不再开处方）之后，`handles` 仍然指向那 3 格，
+     * 于是**模拟删除的结果和修复前一模一样**（0/516 让世界变好）。
+     *
+     * 原因：`handles` 是模型唯一能直接塞进 `$uids` 的形态。只要它在，
+     * 模型就会去用 —— hint 说什么都拦不住一个现成的句柄数组。
+     *
+     * 而这条诊断的定位现在是**警报**：它报告「世界停转了」这个事实，
+     * 不提供施工图。施工图由 `MACHINE_STARVED` 等成因类诊断给。
+     *
+     * 所以句柄挪进 `evidence.clogged_handles`：不参与渲染、不被 `pickBelts`
+     * 优先显示、不占带子名额（红队 §2：`## CAPACITY` 被挤掉 66/516）。 */
     const { obs, items, production } = loadRun(DEAD_RUN);
-    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: 40 });
     const wf = ds.find(d => d.code === "WORLD_FROZEN");
     assert.ok(wf, "前提：必须先报出来");
-    assert.ok(Array.isArray(wf.handles) && wf.handles.length >= 1,
-        `句柄不能为空，实得 ${JSON.stringify(wf.handles)}`);
-    /* 句柄必须是真实存在的带子（照着 prompt 写进 connect/remove_run 能被认出来） */
-    for (const h of wf.handles) {
-        assert.match(h, /^B\d+$/, `句柄格式应是 B<数字>，实得 ${h}`);
-    }
-    /* hint 里必须出现「先通开」这一类语义，否则模型会继续去接缺料口 */
-    assert.ok(/通开|吃掉|拆掉|改道/.test(wf.hint),
-        `hint 必须指向"疏通"而不是"连接"，实得：${wf.hint.slice(0, 120)}`);
+
+    /* `handles` 必须为空 —— 有它模型就会照着拆 */
+    assert.equal((wf.handles || []).length, 0,
+        `handles 必须为空（否则模型会照拆），实得 ${JSON.stringify(wf.handles)}`);
+    /* 但位置上必须留在 evidence 里 —— 报警要说得清是哪条 */
+    assert.ok(Array.isArray(wf.evidence.clogged_handles) && wf.evidence.clogged_handles.length >= 1,
+        `evidence.clogged_handles 必须留档，实得 ${JSON.stringify(wf.evidence.clogged_handles)}`);
+    /* candidates 也必须为空 —— 516 个模拟里没有一个候选宏是对的 */
+    assert.equal((wf.candidates || []).length, 0,
+        `candidates 必须为空，实得 ${JSON.stringify(wf.candidates)}`);
 });
 
 test("★ 反例：世界还在动的时候一律不报（满载是常态，不是故障）", () => {
@@ -111,7 +126,7 @@ test("★ 反例：世界还在动的时候一律不报（满载是常态，不�
     assert.ok(Object.keys(produced || {}).length > 0,
         "前提：这个快照必须还在产出");
 
-    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null, tickSincePrev: 40 });
     assert.ok(!ds.some(d => d.code === "WORLD_FROZEN"),
         `世界还在产出时不许报 WORLD_FROZEN，实得 ${ds.map(d => d.code).join(",")}`);
 });
@@ -141,7 +156,7 @@ test("★ 反例：hint 里不许推荐任何动作（它是警报，不是处�
      * 所以这条诊断现在的定位是「世界已经停转」的**警报**，
      * 它必须**明确把处方让出去**，而不是自己开一个。 */
     const { obs, items, production } = loadRun(DEAD_RUN);
-    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null, tickSincePrev: 40 });
     const wf = ds.find(d => d.code === "WORLD_FROZEN");
     assert.ok(wf, "前提：必须先报出来");
 
@@ -167,18 +182,19 @@ test("★ 回归：堵塞路径终结于 hub 入口时，不许被 dropInlets �
      * `H1.primary`（hub 入口）⇒ 整条诊断在合并阶段被吞掉，一条都到不了 prompt，
      * 而它的内容恰恰是「137 件货堵在入口进不去」—— 最该被看见的那条。
      *
-     * 修法：subject 指向**路径起点**（矿机那一端，拥堵的源头），句柄仍给末端。
+     * 修法：subject 指向**路径起点**（矿机那一端，拥堵的源头），而不取末端。
      *
      * 这份快照（r-20261116090537-d70e）是 47 个漏报样本之一，正好踩中。 */
     const { obs, items, production } = loadRun("r-20261116090537-d70e");
-    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null, tickSincePrev: 40 });
     const wf = ds.find(d => d.code === "WORLD_FROZEN");
     assert.ok(wf, `堵塞路径终结于 hub 入口时也不许被过滤，实得 ${ds.map(d => d.code).join(",")}`);
     /* subject 必须是真实带子，而且是**路径起点**那一端，不是 hub 入口 */
     assert.ok(wf.subject && typeof wf.subject.handle === "string" && /^B\d+$/.test(wf.subject.handle),
         `subject 必须是带子句柄，实得 ${JSON.stringify(wf.subject)}`);
-    /* 句柄仍然要指向末端（模型在那一端动手） */
-    assert.ok(wf.handles.length >= 1, "句柄不能为空");
+    /* 句柄不施工（见上一条测试），但位置要留档 */
+    assert.ok(wf.evidence.clogged_handles.length >= 1,
+        "evidence.clogged_handles 不能为空 —— 报警要说得清是哪条");
 });
 
 test("★ 句柄必须指向源头端，不能指向末端（预演闸门只放行源头）", () => {
@@ -196,7 +212,7 @@ test("★ 句柄必须指向源头端，不能指向末端（预演闸门只放�
      *
      * 所以这条测试钉的不是「句柄格式对不对」，而是「方向对不对」。 */
     const { obs, items, production } = loadRun(DEAD_RUN);
-    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null, tickSincePrev: 40 });
     const wf = ds.find(d => d.code === "WORLD_FROZEN");
     assert.ok(wf, "前提：必须先报出来");
 
@@ -216,10 +232,10 @@ test("★ 句柄必须指向源头端，不能指向末端（预演闸门只放�
     };
     const headHandle = headUid();
     assert.ok(headHandle, "前提：路径起点必须能拿到句柄");
-    assert.ok(wf.handles.includes(headHandle),
-        `句柄必须包含路径**起点** ${headHandle}，实得 ${JSON.stringify(wf.handles)}`);
+    assert.ok(wf.evidence.clogged_handles.includes(headHandle),
+        `存档位置必须包含路径**起点** ${headHandle}，实得 ${JSON.stringify(wf.evidence.clogged_handles)}`);
 
-    /* 终点句柄不能出现在列表里（那正是被闸门拒的那一端） */
+    /* 终点句柄不能出现在列表里（那是预演必拒的一端） */
     const tailCells = worstPath.cells.slice(-6);
     const tailHandles = [];
     {
@@ -232,9 +248,9 @@ test("★ 句柄必须指向源头端，不能指向末端（预演闸门只放�
             }
         }
     }
-    const overlap = wf.handles.filter(h => tailHandles.includes(h));
+    const overlap = wf.evidence.clogged_handles.filter(h => tailHandles.includes(h));
     assert.equal(overlap.length, 0,
-        `句柄不许指向末端（那是预演必拒的一端），重叠：${JSON.stringify(overlap)}`);
+        `存档位置也不许指向末端（那是预演必拒的一端），重叠：${JSON.stringify(overlap)}`);
 });
 
 test("★ 反例：载入预热期（第一轮 + 片全空）不许报", () => {
@@ -259,9 +275,52 @@ test("★ 反例：载入预热期（第一轮 + 片全空）不许报", () => {
         `第一轮 + 片全空 ⇒ 不许报（可能是载入预热），实得 ${ds.map(d => d.code).join(",")}`);
 
     /* 对照：同一份快照，第二轮就要报 */
-    const ds2 = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
+    const ds2 = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null, tickSincePrev: 40 });
     assert.ok(ds2.some(d => d.code === "WORLD_FROZEN"),
         "第二轮同样的空窗口必须报 —— 那份世界实测早过了预热期");
+});
+
+test("★ 反例：两轮间隔 < 10 秒时不许报（窗口可能还没轮转）", () => {
+    /* 2026-11-23 红队复测抓到的漏修。第一版用「第几轮」当门槛（`report === null`），
+     * 实测**只修了一半**：
+     *
+     *   2203 个 round-2..n 的 observe 间隔：min 0.1s  **p10 7.1s**  median 16.6s
+     *   **25% 的轮次间隔不到一个统计片（10 秒）**
+     *
+     * 而 `ProductionAnalytics.update()` 只在
+     * `root.time.now() - lastAnalyticsSlice > 10` 时轮转一片（`production_analytics.js:129`）。
+     * 间隔 < 10 秒 ⇒ 窗口里可能全是旧片、当前片刚被清空 ⇒ `produced_total` 依然 `{}`。
+     *
+     * 复测（50 个健康世界喂空窗口 + `report` 非空）：
+     * **50/50 仍然被误报**，而它们每分钟交 266–291 件成品。
+     *
+     * 判据必须是「这一轮距上一轮过了多少**游戏秒**」，不是「第几轮」。
+     */
+    const { obs, items, production } = loadRun(DEAD_RUN);
+
+    /* 间隔 7.1 秒（红队的 p10 实测值）⇒ 不许报，即使已经是第二轮 */
+    const dsThin = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: 7.1 });
+    assert.ok(!dsThin.some(d => d.code === "WORLD_FROZEN"),
+        `间隔 7.1s < 10s ⇒ 窗口可能没轮转，不许报，实得 ${dsThin.map(d => d.code).join(",")}`);
+
+    /* 间隔 0.1 秒（红队的 min 实测值）⇒ 更不许报 */
+    const dsHair = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: 0.1 });
+    assert.ok(!dsHair.some(d => d.code === "WORLD_FROZEN"),
+        "间隔 0.1s ⇒ 不许报");
+
+    /* 对照：40 游戏秒（> 10s）⇒ 必须报 */
+    const dsOld = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: 40 });
+    assert.ok(dsOld.some(d => d.code === "WORLD_FROZEN"),
+        "间隔 40s ≥ 10s ⇒ 窗口够老，必须报");
+
+    /* 对照：拿不到间隔（首轮）⇒ 不判 */
+    const dsNoTick = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: null });
+    assert.ok(!dsNoTick.some(d => d.code === "WORLD_FROZEN"),
+        "拿不到 tick 间隔 ⇒ 观测不全 ⇒ 不判");
 });
 
 test("★ 排序：它是警报，必须排在可行动的成因类诊断**之后**", () => {
@@ -274,7 +333,7 @@ test("★ 排序：它是警报，必须排在可行动的成因类诊断**之�
      *
      * 而且它的 hint 现在明说「先去修上面那些」——排第一会让那句话变成无稽之谈。 */
     const { obs, items, production } = loadRun(DEAD_RUN);
-    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null });
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null, { recipe: null, tickSincePrev: 40 });
     const iFrozen = ds.findIndex(d => d.code === "WORLD_FROZEN");
     const iStarved = ds.findIndex(d => d.code === "MACHINE_STARVED");
     assert.ok(iFrozen >= 0, "前提：WORLD_FROZEN 必须存在");

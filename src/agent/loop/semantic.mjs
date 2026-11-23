@@ -3593,14 +3593,38 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                  *
                  * 这与现有 `prod === null ⇒ 不报` 是同一条纪律（「观测不全 ⇒ 不报」），
                  * 只是把「不全」的判据从「有没有键」挪到了「够不够老」。 */
-                const isFirstRound = !opts || opts.report === null || opts.report === undefined;
+                /* ★ 判据是「窗口够不够老」，不是「第几轮」（2026-11-23，红队复测）★
+                 *
+                 * 第一版用 `report === null` 判「第一轮」—— 红队复测证明**只修了一半**：
+                 *
+                 *   2203 个 round-2..n 的 observe 间隔：min 0.1s  **p10 7.1s**  median 16.6s
+                 *   **25% 的轮次间隔不到一个统计片（10 秒）**
+                 *
+                 * 而 `ProductionAnalytics.update()` 只在
+                 * `root.time.now() - lastAnalyticsSlice > 10` 时才轮转一片
+                 * （`production_analytics.js:129`）。间隔 < 10 秒 ⇒ 窗口里可能全是旧片、
+                 * 当前片刚被清空 ⇒ `produced_total` 依然是 `{}`。
+                 *
+                 * 复测（50 个健康世界喂空窗口 + `report` 非空，模拟「第二轮」）：
+                 * **50/50 仍然被误报**，而它们每分钟交 266–291 件成品。
+                 *
+                 * 所以判据必须用**这一轮距上一轮过了多少游戏秒**（`opts.tickSincePrev`，
+                 * 由 `loop.mjs` 从两次 `obs.tick` 相减得到 —— 单位与
+                 * `production_analytics.js:129` 的轮转条件一致）：
+                 *
+                 *   · 拿不到 tick 间隔（首轮 / 缺数据）⇒ 不判（观测不全）
+                 *   · 间隔 < 10 秒 ⇒ 窗口可能还没轮转 ⇒ 不判
+                 *   · 间隔 ≥ 10 秒且片全空 ⇒ **真零产出** ⇒ 判
+                 *
+                 * 10 = `globalConfig.analyticsSliceDurationSeconds` 的正式版取值。 */
+                const SLICE_SECS = 10;
+                const dt = Number.isFinite(opts && opts.tickSincePrev) ? opts.tickSincePrev : null;
                 const slices = Array.isArray(opts.production && opts.production.produced_slices)
                     ? opts.production.produced_slices : null;
                 const filledSlices = slices
                     ? slices.filter(s => s && typeof s === "object" && Object.keys(s).length > 0).length
                     : null;
-                /* 第一轮且片全空 ⇒ 可能是载入预热，不判；其余情况照判。 */
-                const windowReady = !(isFirstRound && slices !== null && filledSlices === 0);
+                const windowReady = dt !== null && dt >= SLICE_SECS;
                 let anyProduced = false;
                 if (prod) {
                     for (const v of Object.values(prod)) {
@@ -3800,10 +3824,24 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             observed: `整图零产出；${clogged.length} 条带子满载或无处可去，`
                                 + `最堵的一条 ${worst.n} 件 / ${worst.cells} 格（${pct}%，${topItems}）`
                                 + (worst.noAcceptor ? "，它的末端没有任何机器接收" : ""),
-                            handles: hs,
+                            /* ★ `handles` 留空（2026-11-23，红队复测 B1 的另一半）★
+                             *
+                             * 红队复测指出：改了 hint（不再开处方）之后，`handles` 仍然
+                             * 指向那 3 格，于是**模拟删除的结果和修复前一模一样**
+                             * （0/516 让世界变好）。
+                             *
+                             * 原因不难理解：`handles` 是模型唯一能直接塞进 `$uids` 的形态。
+                             * 只要它在那里，模型就会去用 —— hint 说什么都拦不住一个
+                             * 现成的句柄数组。而这条诊断的定位现在是**警报**，不是施工图。
+                             *
+                             * 所以句柄挪进 `evidence.clogged_handles`：那里**不参与渲染**，
+                             * 也不会被 `pickBelts` 优先显示，但读日志/调试时查得到。
+                             * 空 `handles` 还有第二个好处：不占带子名额（红队 §2 说
+                             * `## CAPACITY` 被挤掉 66/516，句柄是其中一个来源）。 */
+                            handles: [],
                             uids: [],
                             evidence: {
-                                handles: hs,
+                                clogged_handles: hs,
                                 total_produced: 0,
                                 clogged_paths: clogged.length,
                                 worst: {
@@ -3818,9 +3856,14 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                     + "nothing on the map is producing. Feeding another input into a "
                                     + "stalled chain does not help: the product still cannot get out.",
                             },
-                            /* `trash_unused` 排第一是错的 —— 它对「出口已有下游」的带子恒拒。
-                               真正能落地的是拆（`remove_run`）与改道（`connect`）。 */
-                            candidates: ["remove_run", "connect", "replace_run", "trash_unused"],
+                            /* ★ `candidates` 也清空（同一条理由）★
+                             *
+                             * 红队实测：照这条 hint 做的 516 个动作，**0/516 让世界变好、
+                             * 486/516 变差**。既然没有一个候选宏是对的，就不该给候选。
+                             * 空 candidates 在 prompt 里不渲染候选行，也不会把
+                             * `remove_run` 推进 `CANDIDATE MACROS` 卡片表
+                             * （真调 LLM 实验发现它是 `remove_run` 进入候选表的**唯一入口**）。 */
+                            candidates: [],
                             /* ★ 动作必须真的能落地（2026-11-23）★
                              *
                              * 第一版写的是「用 `trash_unused` 吃掉堆积的货」。**那是空头支票**：

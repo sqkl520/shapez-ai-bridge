@@ -958,6 +958,15 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
              *
              * 第一轮时 `report` 是 `null`（`diagnose()` 的第四个参数）。 */
             report: report || null,
+            /* ★ 距上一次 observe 过了多少游戏秒（2026-11-23，红队复测）★
+             *
+             * `ProductionAnalytics.update()` 只在
+             * `root.time.now() - lastAnalyticsSlice > 10` 时轮转（`production_analytics.js:129`）。
+             * 间隔 < 10 秒时窗口可能全是旧片 ⇒ `produced_total` 依然 `{}`，
+             * 而世界完全正常。红队实测 25% 的轮次间隔 < 10 秒。
+             *
+             * `WORLD_FROZEN` 用它判「窗口够不够老」，不判「第几轮」。 */
+            tickSincePrev: Number.isFinite(cx.tickSincePrev) ? cx.tickSincePrev : null,
         }));
         out.push(...semRes.kept);
         semanticDropped = semRes.n;
@@ -3579,6 +3588,12 @@ export async function runLoop(opts = {}) {
                 break;
             }
             st.obs = ob.obs; st.items = ob.items; st.production = ob.production;
+            /* ★ 记录**上一次** observe 的 tick，供 `WORLD_FROZEN` 判「窗口够不够老」★
+             *
+             * 必须在覆盖 `st.lastObs` **之前**取，否则就是自己减自己。
+             * 判据用游戏秒（`root.time.now()` 的返回值，见 `game_time.js:152`），
+             * 与 `production_analytics.js:129` 的轮转条件同一个单位。 */
+            st.obsTickPrev = (st.lastObs && typeof st.lastObs.tick === "number") ? st.lastObs.tick : null;
             st.lastObs = ob.obs; st.lastItems = ob.items; st.lastProduction = ob.production;
             st.handles = buildHandles(ob.obs, ob.items);
 
@@ -4003,7 +4018,23 @@ export async function runLoop(opts = {}) {
                 }
             }
 
-            let diagnoses = diagnose(ob.obs, ob.items, ob.production, st.lastReport, curGoal, st.handles, { recipe: st.recipe });
+            let diagnoses = diagnose(ob.obs, ob.items, ob.production, st.lastReport, curGoal, st.handles, {
+                recipe: st.recipe,
+                /* ★ 距上一次 observe 过了多少**游戏秒** —— `WORLD_FROZEN` 用它判窗口够不够老 ★
+                 *
+                 * `ProductionAnalytics.update()` 只在
+                 * `root.time.now() - lastAnalyticsSlice > 10` 时轮转一片
+                 * （`production_analytics.js:129`）。所以**间隔 < 10 游戏秒**时，
+                 * 窗口里可能全是旧片、当前片刚被清空 ⇒ `produced_total` 依然是 `{}`。
+                 *
+                 * 红队实测：2203 个 round-2..n 的 observe 间隔，
+                 * **p10 = 7.1 秒、25% 不到 10 秒**。用「第几轮」当判据会漏掉这 25%，
+                 * 于是活世界被报「整图零产出」（50/50 复现）。
+                 *
+                 * `st.obsTickPrev` 在每轮 observe 之后更新（见下面赋值处）。 */
+                tickSincePrev: (typeof ob.obs.tick === "number" && Number.isFinite(st.obsTickPrev))
+                    ? ob.obs.tick - st.obsTickPrev : null,
+            });
             /* 观测面的问题（items/production 不可用）与业务诊断并列；它们不导致 halt。 */
             for (const p of ob.problems) if (!diagnoses.some(d => d.code === p.code && d.layer === p.layer)) diagnoses.push(p);
 

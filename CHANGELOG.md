@@ -15,6 +15,43 @@
 
 ## [Unreleased]
 
+### Fixed — 2026-11-23（深夜）：红队复测指出「只修了一半」，再修三处
+
+红队在 `910bf7c` 之后重建脚本、在每个判定上复测，指出两处漏修：
+
+**① `handles` 仍然递给模型（B1 的另一半）**
+
+改了 hint（不再开处方）之后，`handles` 仍指向那 3 格，于是**模拟删除的结果和修复前一模一样**
+（0/516 让世界变好）。原因：`handles` 是模型唯一能直接塞进 `$uids` 的形态，
+只要它在，hint 说什么都拦不住一个现成的句柄数组。
+
+改成 `handles: []` + `candidates: []`，位置挪进 `evidence.clogged_handles`（不参与渲染）。
+
+副作用是好的：`## CAPACITY` 与 `## HUB stored` 现在**都保留**了（之前被挤掉），
+prompt 代价从 578 降到 **382** 字符，带子 17/16（只少 1 条，之前是 18/16）。
+
+**② 「第几轮」不是正确的窗口判据（§1.3 的另一半）**
+
+第一版用 `report === null` 判「第一轮」。红队实测 2203 个 round-2..n 的 observe 间隔：
+
+```
+min 0.1s   p10 7.1s   median 16.6s   |  间隔 < 10s 的: 560/2203（25%）
+```
+
+而 `ProductionAnalytics.update()` 只在 `root.time.now() - lastAnalyticsSlice > 10` 时轮转
+（`production_analytics.js:129`）。间隔 < 10 秒 ⇒ 窗口可能全是旧片 ⇒ `produced_total` 依然 `{}`。
+复测：50 个健康世界喂空窗口 + `report` 非空，**50/50 仍然被误报**，
+而它们每分钟交 266–291 件成品。
+
+改成用 `tickSincePrev`（两次 `obs.tick` 相减，单位与 mod 的轮转条件一致）：
+间隔 < 10 游戏秒 ⇒ 不判；拿不到间隔 ⇒ 不判；≥ 10 秒 ⇒ 判。
+
+**③ 顺带修掉一个自己引入的 bug**
+
+`st.obsTickPrev` 必须在覆盖 `st.lastObs` **之前**取，否则就是自己减自己。
+
+测试 `world_frozen.test.mjs` 10 条全绿（新增「间隔 < 10 秒不报」「句柄在 evidence 里」）。
+
 ### Fixed — 2026-11-23（夜）：5 个专家 Agent 交叉验证，推翻了自己的 4 个结论
 
 用 1 个规划 Agent + 5 个并行专家（根因 / 红队 / 验证 / 检索 / 批判）交叉质疑。
