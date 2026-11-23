@@ -695,13 +695,142 @@ function num(v) {
     return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+/**
+ * `progressLedger` —— 「这条链到底走到哪一步」的**读数**（不是判词）。
+ *
+ * ## 为什么需要它（2026-11-22，506 个 L12 快照的实测）
+ *
+ * 用 `debug_items` 的真实货物（不是形状传播推算）对 506 个 L12 快照做 census：
+ *
+ *   484×  delivered=0 storedGoal=0 goalOnBelt=0 lower=0 upper=0 white=0 blue>0
+ *    22×  同上，但 blue 也没有
+ *    仅 3× 带上出现过「接近目标」的 ---- 而那 3 个是 `CgScScCg`（**上一关 L11 的目标**）
+ *
+ * **本关目标一次都没出现过。** 不是「进度没记」，是进度一直是 0。
+ *
+ * 而模型每一轮都在修一条 2026-11-16 就冻结的 L11 产线
+ * （`CgScScCg` 存 2071 件，此后 373 个 run 一分没动）。
+ * 它不知道这件事 —— 因为**没有任何一处告诉它「这条链不存在」**。
+ *
+ * ## 三态，不是布尔
+ *
+ * 「带上有没有这个形状」是不够的 —— 有也可能是卡死的。
+ *
+ *   · `absent`        带上一件都没有
+ *   · `alive`         有，而且 `produced_total` 正在涨（线在跑）
+ *   · `present-stuck` 有，但产出窗口里没有它（尸体，不是产能）
+ *
+ * 真机 `r-20261121190439-6190`：`ScSc----` 有 139 件但产出为 0 ⇒ `present-stuck`；
+ * `----CgCg` 有 2 件且产出了 4 件 ⇒ `alive`。
+ *
+ * ## 为什么用 `debug_items` 而不走 `beltsCarryingShape`
+ *
+ * 后者要求 `recipe.ok === true`，而 L12 的配方是 `ok:false`
+ * （`solver search capped`，**不是不可解**）⇒ 它在**这一关恒返回 []**（506/506）。
+ * 用它做台账字段会得到一片空，而且不报错。
+ *
+ * 纯函数：零 IO，只读快照。与 `worldHealth` 同一条纪律。
+ *
+ * @returns {{delivered:number|null, required:number|null, layers:Array<{name:string, state:string, onBelt:number}>, pigments:Array, produced:object, everDelivered:boolean}|null}
+ *   `null` = 数据不足（没有 items 且没有 hub 账本），整段不出。
+ */
+export function progressLedger({ obs, items, production, goalShape } = {}) {
+    const o = obs && obs.result && Array.isArray(obs.result.entities) ? obs.result : obs;
+    const goal = typeof goalShape === "string" ? goalShape.trim() : "";
+    if (!goal) return null;
+
+    const req = (o && o.goal && o.goal.requirement) || {};
+    const delivered = num(req.delivered);
+    const required = num(req.required);
+    const stored = (o && o.hub && o.hub.stored_shapes && typeof o.hub.stored_shapes === "object")
+        ? o.hub.stored_shapes : null;
+
+    /* 带上真实货物 census（`items.belts[].item` 是游戏自己给的字符串）。 */
+    const onBelt = new Map();
+    if (items && Array.isArray(items.belts)) {
+        for (const r of items.belts) {
+            const k = r && r.item;
+            if (typeof k !== "string" || !k) continue;
+            onBelt.set(k, (onBelt.get(k) || 0) + 1);
+        }
+    }
+    /* 产出窗口（滑动窗口求和，不是累计）。 */
+    const produced = (production && production.produced_total && typeof production.produced_total === "object")
+        ? production.produced_total : null;
+
+    /** 一个形状的三态。 */
+    const stateOf = (shape) => {
+        const n = onBelt.get(shape) || 0;
+        /* 「层」用整层字符串对不上带上的半成品 —— 用它的**半边**也算。
+           例如目标下层 `CbCbCbRb`，带上可能有 `CbCb----` / `----CbCb`。 */
+        if (n === 0) {
+            const partial = [...onBelt.keys()].some(k => k.replace(/-/g, "") && shape.startsWith(k.replace(/-/g, "")) && k.replace(/-/g, "").length >= 2);
+            return { onBelt: 0, state: partial ? "partial" : "absent" };
+        }
+        const isProducing = !!(produced && Number(produced[shape]) > 0);
+        return { onBelt: n, state: isProducing ? "alive" : "present-stuck" };
+    };
+
+    const layers = String(goal).includes(":")
+        ? String(goal).split(":").map((name, i) => ({ name, layer: i === 0 ? "lower" : "upper", ...stateOf(name) }))
+        : [{ name: goal, layer: "single", ...stateOf(goal) }];
+
+    /* 目标需要的颜料色（只看色码，与 `feed_color` 同口径）。 */
+    const COLOR_NAME = { r: "red", g: "green", b: "blue", y: "yellow", p: "purple", c: "cyan", w: "white" };
+    const wantColors = new Set();
+    for (const layer of String(goal).split(":")) {
+        for (let i = 1; i < layer.length; i += 2) {
+            const c = layer[i];
+            if (c && c !== "-" && COLOR_NAME[c]) wantColors.add(COLOR_NAME[c]);
+        }
+    }
+    const pigments = [...wantColors].map(name => ({
+        name,
+        onBelt: onBelt.get(name) || 0,
+    }));
+
+    /* hub 账本里有没有目标形状 —— 跨关不清零，是**权威**的"曾经交付过"。 */
+    const storedGoal = stored && num(stored[goal]) !== null ? num(stored[goal]) : null;
+    const everDelivered = (storedGoal !== null && storedGoal > 0) || (delivered !== null && delivered > 0);
+
+    if (onBelt.size === 0 && !stored && delivered === null) return null;   // 数据不足
+
+    return { delivered, required, layers, pigments, produced, storedGoal, everDelivered };
+}
+
+/**
+ * 把 `progressLedger` 的结果渲染成**一行**。
+ *
+ * 141 字符量级，放在 `## GOAL` 里（偏移 ~18%，同段已有先例：
+ * `renderMinerColorGap` 就是按 `gap-hint-belongs-in-goal-section` 那条教训加的）。
+ *
+ * @returns {string|null}
+ */
+function renderProgress(ledger) {
+    if (!ledger) return null;
+    const L = ledger.layers.map(x => `${x.name} ${x.state}`).join(" · ");
+    const P = ledger.pigments.length
+        ? ledger.pigments.map(x => `${x.name} ${x.onBelt}`).join(", ")
+        : "";
+    const bits = [];
+    if (ledger.delivered !== null && ledger.required !== null) {
+        bits.push(`delivered ${ledger.delivered}/${ledger.required}`);
+    }
+    bits.push(`layers: ${L}`);
+    if (P) bits.push(`pigments on belts: ${P}`);
+    bits.push(ledger.everDelivered
+        ? `this goal has entered the hub before (${ledger.storedGoal ?? ledger.delivered} total)`
+        : `this goal has NEVER entered the hub`);
+    return `PROGRESS ${bits.join(" | ")}`;
+}
+
 /* ══════════════════════════ 6. S3：goal + state ══════════════════════════ */
 
 /**
  * S3 拆成 5 个子块返回（`blocks.s3_*`），因为硬规矩「超预算只砍带子」需要能被测试逐块验证：
  * 砍之前与砍之后 `s3_goal` 必须逐字节相等。
  */
-function renderGoal(goalShape, goal, obs) {
+function renderGoal(goalShape, goal, obs, ledger = null) {
     const req = (obs && obs.goal && obs.goal.requirement) || {};
     const g = (goal && typeof goal === "object") ? goal : {};
     const level = num(g.level) ?? num(obs && obs.goal && obs.goal.level);
@@ -715,6 +844,12 @@ function renderGoal(goalShape, goal, obs) {
     if (delivered !== null) bits.push(`delivered ${delivered}`);
     if (progress !== null && delivered === null) bits.push(`progress ${progress}`);
     if (bits.length) lines.push(bits.join(" | "));
+    /* ★ 进度读数（2026-11-22，506 个快照证明本关进度恒为 0）★
+     *
+     * 放在 GOAL 段里、紧跟目标 —— 与 `gap-hint-belongs-in-goal-section` 同一条教训：
+     * 同一句话放第 2500 字符处 4 次全忽略，放第 80 字符处当场就去挖了。 */
+    const progressLine = renderProgress(ledger);
+    if (progressLine) lines.push(progressLine);
     /* ★ 「没人挖的颜料」提到 GOAL 段（2026-11-16 凌晨，L12 真机）★
      *
      * 那行 `⚠️ NO miner is digging blue` 原来是 `## MACHINES` 段的**最后一行**，
@@ -3525,7 +3660,7 @@ export class PromptOverBudget extends Error {
  * @throws {PromptOverBudget} code=PROMPT_OVER_BUDGET（总字符 > in_chars_max）
  * @throws {TypeError} 缺 goal / obs / 未知候选宏
  */
-export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, lastNetEffect = null, priorAttempts = null, goalChanged = null, obsoleteLines = null, budget, production = null, itemsOnBelts = null, recipe: injectedRecipe = null, runLog = null, stickyGoal = null } = {}) {
+export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRound, lastNetEffect = null, priorAttempts = null, goalChanged = null, obsoleteLines = null, budget, production = null, itemsOnBelts = null, items: itemsDoc = null, recipe: injectedRecipe = null, runLog = null, stickyGoal = null } = {}) {
     if (!obs || typeof obs !== "object") throw new TypeError("buildPrompt: obs is required");
     const goalShape = typeof goal === "string"
         ? goal
@@ -3567,7 +3702,19 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
         ? [...new Set((obs.resources || []).map(r => (Array.isArray(r) && r.length >= 3) ? r[2] : null).filter(k => typeof k === "string"))]
         : [];
     const s2 = renderCards(candidates, { includeWhen: whenLinesOn, goalShape, oreKinds });
-    const s3Goal = renderGoal(goalShape, goal, obs);
+    /* 进度读数：只读快照、纯函数。数据不足时返回 null ⇒ 那行不出现。
+     *
+     * ⚠️ **只在有 `items` 时才渲染**（2026-11-22）。理由：
+     * `progressLedger` 靠 `items.belts[].item` 判「带上有没有」，没有 items 时
+     * 只能报 `absent` —— 而那个 `absent` 是**假的**（不是「没有」，是「看不到」）。
+     * 报一个假的 absent 比不报更糟：模型会以为要重建一条本来就在的线。
+     *
+     * 顺带也解决了预算问题：L4 冷启动夹具没有 items，那行不出现，
+     * 4700 字符的上限不必为它上调，正解三条不会被挤掉。 */
+    const ledger = itemsDoc
+        ? progressLedger({ obs, items: itemsDoc, production, goalShape })
+        : null;
+    const s3Goal = renderGoal(goalShape, goal, obs, ledger);
     /* ★ 配方（S3 的一部分）：告诉模型这个形状该怎么造 ★
      *
      * 第四轮真 LLM 实验：5 次里 4 次坚持要 rotater，而 `RuRu----` 只需要 cutter 切一半。
@@ -4258,6 +4405,13 @@ export function buildPrompt({ goal, obs, handles, diagnoses, candidates, lastRou
          * 与 `capacity_unavailable` 同一条纪律：**为什么没出现**必须可观测，
          * 否则「功能没触发」和「功能坏了」分不清。 */
         prior_dropped_for_budget: priorDroppedForBudget,
+        /* 进度读数。`null` = 没出现（缺 items ⇒ 判不准，见 `buildPrompt` 里的注释）。
+         * 单独暴露是为了能事后判断「它挤掉了多少东西」—— 实测在
+         * `r-20261121190439-6190`（本来就 -191 超预算）上它挤掉 3 条带子（10 → 7）。
+         * 那是个真实的取舍：那行说的「本关目标从未进过 hub」在这份世界上比
+         * 多 3 条带子更有价值，但必须是**有意识的**，不能悄悄发生。 */
+        progress_ledger: ledger,
+        progress_shown: ledger !== null,
         prior_shown: sPrior !== null && sPrior !== undefined,
         chars,
         tokens_estimate: Math.round(chars / PROMPT_RULES.CHARS_PER_TOKEN),

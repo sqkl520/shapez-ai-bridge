@@ -4201,6 +4201,16 @@ export async function runLoop(opts = {}) {
                          * 口径与 `health.mjs` 的 `items_on_belts` 一致：数
                          * `items.paths[].itemsOnPath`，那是游戏自己数的。 */
                         itemsOnBelts: itemsOnBeltsOf(ob.items),
+                        /* ★ `items` 是进度读数的数据源（2026-11-22）★
+                         *
+                         * `progressLedger` 靠 `items.belts[].item` 判「带上有没有这个形状」，
+                         * 而那是游戏自己给的真实货物字符串 —— 不是形状传播推算。
+                         *
+                         * 实测（506 个 L12 快照）：本关目标形状**一次都没出现过**，
+                         * 而模型每一轮都在修一条 2026-11-16 就冻结的 L11 产线。
+                         * 不加这个参数，那行永远不出现（`buildPrompt` 里有个
+                         * `itemsDoc ? … : null` 的门），功能等于没做。 */
+                        items: ob.items,
                         diagnoses,
                         candidates: cands,
                         lastRound: st.lastPlanSummary || null,
