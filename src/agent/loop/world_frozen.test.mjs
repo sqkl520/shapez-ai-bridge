@@ -133,6 +133,28 @@ test("★ 反例：hint 里不许推荐过不了闸门的动作", () => {
         `候选第一名必须是 remove_run 或 connect，实得 ${wf.candidates[0]}`);
 });
 
+test("★ 回归：堵塞路径终结于 hub 入口时，不许被 dropInlets 过滤掉", () => {
+    /* 这个 bug 极隐蔽：`diagnose()` 的 `dropInlets` 按 `subject.uid` 过滤 ——
+     * 凡是主语落在 hub 入口带子上的诊断，一律当作「入口相关」删掉（那个过滤本身是对的）。
+     *
+     * 而第一版 `WORLD_FROZEN` 的 subject 取的是**路径末端**，那条带子的下游正好是
+     * `H1.primary`（hub 入口）⇒ 整条诊断在合并阶段被吞掉，一条都到不了 prompt，
+     * 而它的内容恰恰是「137 件货堵在入口进不去」—— 最该被看见的那条。
+     *
+     * 修法：subject 指向**路径起点**（矿机那一端，拥堵的源头），句柄仍给末端。
+     *
+     * 这份快照（r-20261116090537-d70e）是 47 个漏报样本之一，正好踩中。 */
+    const { obs, items, production } = loadRun("r-20261116090537-d70e");
+    const ds = diagnose(obs, items, production, null, GOAL, null, { recipe: null });
+    const wf = ds.find(d => d.code === "WORLD_FROZEN");
+    assert.ok(wf, `堵塞路径终结于 hub 入口时也不许被过滤，实得 ${ds.map(d => d.code).join(",")}`);
+    /* subject 必须是真实带子，而且是**路径起点**那一端，不是 hub 入口 */
+    assert.ok(wf.subject && typeof wf.subject.handle === "string" && /^B\d+$/.test(wf.subject.handle),
+        `subject 必须是带子句柄，实得 ${JSON.stringify(wf.subject)}`);
+    /* 句柄仍然要指向末端（模型在那一端动手） */
+    assert.ok(wf.handles.length >= 1, "句柄不能为空");
+});
+
 test("★ 排序：WORLD_FROZEN 必须排在 NO_PRODUCTION 之前", () => {
     /* 两条都描述零产出，但动作方向相反：
      *   WORLD_FROZEN  → 通开

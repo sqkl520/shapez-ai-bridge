@@ -3619,9 +3619,31 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             code: "WORLD_FROZEN",
                             layer: "L2",
                             severity: "blocker",
-                            subject: hs.length
-                                ? subjectOf(handles, (at(idx, endCells[endCells.length - 1]) || {}).uid, "belt")
-                                : { handle: null, type: null },
+                            /* ★ subject 必须取**路径起点**，不能取终点（2026-11-23）★
+                             *
+                             * 第一版用 `endCells` 的最后一格当 subject —— 而这里最堵的那条
+                             * 带子末端正好是 hub 入口（实测 `B360 下游=H1.primary`）。
+                             *
+                             * `diagnose()` 的 `dropInlets` 按 `subject.uid` 过滤：
+                             * 凡是主语落在 hub 入口上的诊断，一律当作「入口带子相关」删掉
+                             * （那个过滤本身是对的 —— 它防的是入口诊断重复占名额）。
+                             * 于是这条诊断在真机上**一条都到不了 prompt**，而它的内容
+                             * 恰恰是「137 件货堵在入口进不去」—— 最该被看见的那条。
+                             *
+                             * 改成指向路径起点（矿机那一端）：那才是拥堵的**源头**，
+                             * 也不与入口过滤冲突。句柄仍然给末端（模型要在那一端动手）。
+                             *
+                             * 这是 `computed-but-never-delivered` 的又一形态：
+                             * 算出来了、写进诊断了，然后在**合并阶段**被一条无关的过滤吞掉。 */
+                            subject: (() => {
+                                for (const c of worst.p.cells) {
+                                    const rec = at(idx, c);
+                                    if (rec && (isBelt(rec) || rec.type === "underground_belt")) {
+                                        return subjectOf(handles, rec.uid, "belt");
+                                    }
+                                }
+                                return { handle: null, type: null };
+                            })(),
                             expected: "工厂在产出，原料能进、成品能出",
                             observed: `整图零产出；${clogged.length} 条带子满载或无处可去，`
                                 + `最堵的一条 ${worst.n} 件 / ${worst.cells} 格（${pct}%，${topItems}）`
