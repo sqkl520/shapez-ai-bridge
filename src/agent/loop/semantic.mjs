@@ -3508,6 +3508,166 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
             }
         }
 
+        /* ★ ③c-quinquies WORLD_FROZEN —— 整座工厂一件货都不产，而且有明确的堵点 ★
+         *
+         * 2026-11-23，567 个快照的统计：
+         *
+         *   level  9   snapshots  58   produced_total 为空 16 (28%)
+         *   level 12   snapshots 508   produced_total 为空 500 (98%)
+         *
+         * 同一存档、同一桥、同一套代码 —— **只有 L12 是死的**。
+         * 而且不是"没载入"：91.0% 的沉默快照同时满足「零产出」与「带子上有货」。
+         *
+         * ## 形态：一条带子把整座工厂焊死
+         *
+         * 真机 `r-20261123151728-52a3` 的实测：
+         *
+         *   path8  165 格带子塞了 **259 件货**（98.9% 满载），
+         *          里面是 blue ×131 + ScSc---- ×128（颜料与星形半片混在一起）
+         *          终点 boundAcceptor="yes" → stacker#14684，而它的另一路进料
+         *          来自 painter#13552，painter 的 color 槽是**空格**
+         *   path20  55 格带子塞了 **87 件纯蓝颜料**，终点 boundAcceptor=**null**
+         *          （那条线根本没接到任何机器上）
+         *
+         * 也就是说：**颜料在往一个不存在的接收端流，同时把星形半片的出路堵死。**
+         * stacker 攒不满两路 → 不吐货 → painter 的上游跟着满 → 矿机出料口 100% 堵死
+         * → 整图零产出。
+         *
+         * ## 为什么现有诊断都不能指导这一步
+         *
+         *   · `NO_PRODUCTION` 说「没有产线在造目标」→ 模型去**新建**。
+         *     在一个已经 98.9% 满载的世界里再铺线，只会让它更堵。
+         *   · `MACHINE_STARVED` 说「从 C3 接它的缺料口」→ 接上去之后那件货
+         *     仍然出不来，因为下游那条路径本身就是堵的。
+         *   · `OUTPUT_STRANDED` 看的是「机器有输出口悬空」→ 而这批机器
+         *     输出口全都接上了，堵的是**带子上**。
+         *
+         * **正确的第一步是"通开"，不是"接上"。** 而这三个字从没出现在 prompt 里。
+         *
+         * ## 判据（三条同时成立）
+         *
+         *   ① 本关目标在窗口内产出为 0（`produced_total[goal]` 缺失或 0）
+         *   ② 全图总产出也为 0（不是"造错了东西"，是真的不动）
+         *   ③ 某条路径的**货量远超它的格数 × 正常间距承载**，或者终点无人接收
+         *
+         * ③ 的两个子判据都指向同一个动作：那条路径需要被**清空或改道**。
+         *
+         * ⚠️ 只在「全图零产出」时报。世界还在动的时候，满载是常态
+         *    （50 个还在产出的快照里 30 个出口也全堵），报它会让模型去修正常的东西。 */
+        if (!o.truncated && itemsDoc && Array.isArray(itemsDoc.paths)) {
+            try {
+                const prod = (opts.production && opts.production.produced_total
+                    && typeof opts.production.produced_total === "object")
+                    ? opts.production.produced_total : null;
+                let anyProduced = false;
+                if (prod) {
+                    for (const v of Object.values(prod)) {
+                        if (Number(v) > 0) { anyProduced = true; break; }
+                    }
+                }
+                if (prod && !anyProduced) {
+                    /* 每条路径：格数、货量、终点是否真有人接。
+                     * `itemsOnPath` 是游戏自己数的（`p.items.length`），不是我们推的。 */
+                    const perPath = new Map();
+                    for (const r of (Array.isArray(itemsDoc.belts) ? itemsDoc.belts : [])) {
+                        if (!r || !Number.isInteger(r.path)) continue;
+                        if (!perPath.has(r.path)) perPath.set(r.path, { n: 0, items: new Map() });
+                        const e = perPath.get(r.path);
+                        e.n++;
+                        const k = typeof r.item === "string" ? r.item : "?";
+                        e.items.set(k, (e.items.get(k) || 0) + 1);
+                    }
+                    const clogged = [];
+                    for (const [pi, p] of itemsDoc.paths.entries()) {
+                        if (!p || !Array.isArray(p.cells) || !p.cells.length) continue;
+                        const stat = perPath.get(pi) || { n: 0, items: new Map() };
+                        const cells = p.cells.length;
+                        /* 正常容量 ≈ 格数 ÷ 0.63 格/件的间距（见 mod 里 `itemSpacingOnBelts`）。
+                         * 超过 85% 就算满 —— 游戏自己不会让它超过 100%。 */
+                        const capacity = Math.max(1, Math.floor(cells / 0.63));
+                        const fill = stat.n / capacity;
+                        /* 终点：`boundAcceptor` 为 null ⇒ 这条线的末端**没人收货**。
+                         * 那是比"满"更硬的证据：它不是堵，是根本没有去处。 */
+                        const noAcceptor = p.boundAcceptor === null;
+                        if (noAcceptor || fill >= 0.85) {
+                            clogged.push({ pi, cells, n: stat.n, fill, noAcceptor, items: stat.items, p });
+                        }
+                    }
+                    /* 按「货量的绝对值」排 —— 一条 259 件的堵点比一条 30 件的更值得先说 */
+                    clogged.sort((a, b) => b.n - a.n);
+                    if (clogged.length) {
+                        const worst = clogged[0];
+                        /* 句柄：堵住那条路径上的带子（取最靠近终点的那几格）。
+                         * 终点那几格是模型真正要动的地方 —— 清空/改道/接走都在那一端。 */
+                        const endCells = worst.p.cells.slice(-6);
+                        const hs = [];
+                        for (const c of endCells) {
+                            const rec = at(idx, c);
+                            if (rec && (isBelt(rec) || rec.type === "underground_belt")) {
+                                const h = handleOf(handles, rec.uid);
+                                if (h && !hs.includes(h)) hs.push(h);
+                            }
+                        }
+                        const topItems = [...worst.items.entries()]
+                            .sort((a, b) => b[1] - a[1]).slice(0, 3)
+                            .map(([k, v]) => `${k}×${v}`).join(", ");
+                        const pct = Math.round(worst.fill * 100);
+                        const others = clogged.slice(1, 4)
+                            .map(c => `${c.n} 件 / ${c.cells} 格${c.noAcceptor ? "（末端无人接）" : ""}`)
+                            .join("；");
+                        out.push({
+                            code: "WORLD_FROZEN",
+                            layer: "L2",
+                            severity: "blocker",
+                            subject: hs.length
+                                ? subjectOf(handles, (at(idx, endCells[endCells.length - 1]) || {}).uid, "belt")
+                                : { handle: null, type: null },
+                            expected: "工厂在产出，原料能进、成品能出",
+                            observed: `整图零产出；${clogged.length} 条带子满载或无处可去，`
+                                + `最堵的一条 ${worst.n} 件 / ${worst.cells} 格（${pct}%，${topItems}）`
+                                + (worst.noAcceptor ? "，它的末端没有任何机器接收" : ""),
+                            handles: hs,
+                            uids: [],
+                            evidence: {
+                                handles: hs,
+                                total_produced: 0,
+                                clogged_paths: clogged.length,
+                                worst: {
+                                    path: worst.pi, cells: worst.cells, items: worst.n,
+                                    fill: Math.round(worst.fill * 100) / 100,
+                                    no_acceptor: worst.noAcceptor,
+                                    item_mix: [...worst.items.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
+                                        .map(([k, v]) => ({ item: k, n: v })),
+                                },
+                                others,
+                                note: "the whole factory is stalled behind this congestion — "
+                                    + "nothing on the map is producing. Feeding another input into a "
+                                    + "stalled chain does not help: the product still cannot get out.",
+                            },
+                            candidates: ["trash_unused", "remove_run", "connect", "replace_run"],
+                            /* ★ 前 180 字符必须含动作（2026-11-23）★
+                             *
+                             * `prompt.mjs:2968` 对普通诊断的 hint 做 `clip(…, 180)`。
+                             * 中文一个字算一个字符，所以 180 只够三句话。第一版把
+                             * 「先通开，再谈接上」的**理由**写在了前面，动作被截掉了 ——
+                             * 模型看到病因、看不到做法，与本项目「解法被截断」的老毛病同族。
+                             *
+                             * 现在的顺序：**先说做什么**，再说为什么，最后才说做完会怎样。
+                             * 超出的部分截掉不心疼，因为它只是解释。 */
+                            hint: (worst.noAcceptor
+                                ? `整座工厂零产出。这条带子 ${worst.n} 件（${pct}%）且**末端无人接收** —— `
+                                  + `\`trash_unused\` 吃掉这批，或 \`connect\` 接到该去的地方。`
+                                : `整座工厂零产出。这条带子 ${worst.n} 件（${pct}%），末端那台机器在等另一路料、永远等不到 —— `
+                                  + `\`trash_unused\` 吃掉堆积的货，或 \`remove_run\` 拆掉这条造错形状的线。`)
+                                + `**先通开，再谈接上**：不疏通的话，接进去的货一样出不来，上游继续淤积到矿机。`
+                                + `清完之后产出会自己恢复，那时再看缺料/缺机器才有意义。`
+                                + (others ? `另有：${others}。` : ""),
+                        });
+                    }
+                }
+            } catch { /* 观测不全 ⇒ 不报，与语义层其它地方同一条纪律 */ }
+        }
+
         /* ★ ③c-ter MACHINE_STARVED —— 加工机器缺一路进料，整条链冻住 ★
          *
          * 2026-11-21。6 个 Agent 并行调查（`.findings/CONCLUSION.md`）挖出的

@@ -106,6 +106,15 @@ export const DIAG_CODES = Object.freeze({
      *
      * 于是「机器在跑、但一半产物被堵死」这个状态完全没被覆盖。 */
     OUTPUT_STRANDED: "L2: a machine that is running has an output slot with nothing on it",
+    /* ★ 整座工厂零产出，而且有明确的物理堵点（2026-11-23）★
+     *
+     * 与 `NO_PRODUCTION` 的分工：后者只说「没有产线在造目标」，把模型推向**新建**；
+     * 这条说的是「货堵住了、出不去了」，把模型推向**疏通**。
+     * 动作方向相反，绝不能合并 —— 在 98.9% 满载的世界里继续新建只会更堵。
+     *
+     * 判据必须是「全图零产出」，不能是「输出口堵」——实测 50 个还在产出的快照里
+     * 有 30 个出口也是全堵的，满载是这套工厂的常态。 */
+    WORLD_FROZEN: "L2: nothing on the map is producing, and a specific belt run is holding the congestion",
     FLOW_UNREACHABLE: "L3: a declared flow does not reach its target",
     FLOW_UNVERIFIED: "L3 was degraded (no flows supplied) — not a pass",
 
@@ -528,6 +537,14 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["connect", 8],
         ["trash_unused", 6],
         ["remove_machine", 3],
+    ]),
+    /* 全厂冻结：先疏通，再谈连接。`trash_unused` 排第一 ——
+     * 吃掉送错方向的货是唯一一步就能见效的动作。 */
+    WORLD_FROZEN: cand([
+        ["trash_unused", 9],
+        ["remove_run", 7],
+        ["connect", 5],
+        ["replace_run", 3],
     ]),
 
     /* ── L3 ── */

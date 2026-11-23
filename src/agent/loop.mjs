@@ -941,6 +941,15 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
         const semRes = dropInlets(semanticDiagnoses(o, it, goalShape, tbl, {
             recipe: cx.recipe || null,
             level: (o.goal && Number.isFinite(o.goal.level)) ? o.goal.level : undefined,
+            /* ★ `production` 必须传进来 —— `WORLD_FROZEN` 的判据是「全图零产出」 ★
+             *
+             * 那个判据只能从产出窗口读，而 `production` 是 `diagnose()` 的**第三个参数**，
+             * 不在 `obs` 里。漏传的后果很典型：这条诊断恒不触发，而且不报错
+             * （`prod === null` 时代码走 `if (prod && !anyProduced)`，静默跳过）。
+             *
+             * 这是本项目最高频的缺陷形态（`computed-but-never-delivered`）的又一次预防：
+             * 算得出来的字段，必须确认它真的到了判据手里。 */
+            production: production || null,
         }));
         out.push(...semRes.kept);
         semanticDropped = semRes.n;
@@ -1324,6 +1333,18 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
          *
          * 排在 `NO_PRODUCTION` 前面，这份信息才不会被「零产出」那句盖掉。 */
         WRONG_SHAPE_PRODUCED: 4,
+        /* ★ `WORLD_FROZEN` 排在 `NO_PRODUCTION` **之前**（2026-11-23）★
+         *
+         * 两者都描述「零产出」，但动作方向**相反**：
+         *   · `WORLD_FROZEN`  → 货堵住了，先**通开**
+         *   · `NO_PRODUCTION` → 没有线在造，去**新建**
+         *
+         * 在 98.9% 满载的世界里，让模型看到「去新建」是灾难性的 ——
+         * 它会再铺一条线，把仅剩的空间也填掉。
+         *
+         * 实测依据（567 个快照）：L12 的 508 个快照里 500 个零产出，
+         * 而唯一的堵点是一条 259 件 / 165 格的带子。 */
+        WORLD_FROZEN: 4,
         NO_PRODUCTION: 5, PRODUCED_NOT_DELIVERED: 6, FLOW_UNREACHABLE: 7, FLOW_UNVERIFIED: 8,
         SLOT_STARVED: 9, OUTPUT_UNROUTED: 9,
         /* ★ `OUTPUT_STRANDED` 必须登记，否则落到默认 rank=50 被挤掉 ★
