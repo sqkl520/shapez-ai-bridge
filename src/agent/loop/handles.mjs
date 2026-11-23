@@ -610,6 +610,37 @@ export function describeEntity(e, obs, items = null, table = null) {
 /**
  * 某格上的实体，是不是「朝 facingDir 这个方向」的某个槽（in/out），返回该槽 role。
  * 用于把「下游=B9」细化成「下游=C1.left」。
+ *
+ * ★ 必须按**格子**消歧，不能只比方向（2026-11-23，真调 LLM 三臂实验抓到）★
+ *
+ * 旧实现是 `list.find(sl => sl.dir === facingDir)` —— 只看方向、取**第一个**匹配。
+ *
+ * 而 stacker 的两个输入槽 `dir` **都是 `"bottom"`**：
+ *
+ *     stacker#14684  inputs = [
+ *       { role:"lower", dir:"bottom", cell:[-2,6] },
+ *       { role:"upper", dir:"bottom", cell:[-1,6] },
+ *     ]
+ *
+ * 于是任何从下方进料的带子都被标成 `下游=C4.lower`。实测（L12 真机快照）：
+ *
+ *     B90  belt 上游=B89.out 下游=C4.lower 货=259   ← 实际接的是 **upper**
+ *     B133 belt 上游=B132.out 下游=C4.lower 货=0    ← 这个才真是 lower
+ *
+ * 后果不是渲染难看，是**模型据此推错方向**。同轮 prompt 里：
+ *
+ *   · `MACHINE_STARVED` 说「stacker#14684 缺 [-2,6]」（那是 lower 的 approach 格）
+ *   · BELTS 段说 B90 与 B133 **都**是 `下游=C4.lower`
+ *
+ * 模型读到「lower 已有两个来路」⇒「缺的必然是另一路」⇒ 去 `connect` 到 `upper`
+ * ⇒ 撞 `target_already_fed`。
+ *
+ * 真调 LLM 实测（`.findings/VERIFY-WORLD-FROZEN-2026-11-23.md`）：
+ * A/C 两臂合计 14 个 `connect`，**13 个目标是 `C4.upper`**，全部落空。
+ *
+ * 修法：方向相同（多个槽共用一个面）时，用**槽的格子与来料格的拓扑关系**消歧 ——
+ * 每个槽的 `cell` 就是它自己的 approach 格，直接与 `cell` 参数比对即可。
+ * 方向不同的老路径完全不变（先按 dir 过滤，再在其中按 cell 命中）。
  */
 function slotRoleAt(table, obs, cell, facingDir, side) {
     const h = handleAt(table, cell);
@@ -620,8 +651,52 @@ function slotRoleAt(table, obs, cell, facingDir, side) {
     if (!s) return null;
     const list = side === "in" ? s.inputs : s.outputs;
     /* 槽的 dir 是「机器 → 外侧」；带子从外面看进来时方向相反，已由调用方取 OPP */
-    const hit = list.find(sl => sl.dir === facingDir);
-    return hit ? hit.role : null;
+    const sameDir = list.filter(sl => sl.dir === facingDir);
+    if (!sameDir.length) return null;
+    if (sameDir.length === 1) return sameDir[0].role;
+    /* 多个槽共用同一个面 ⇒ 只能靠格子认。
+     *
+     * `sl.cell` 是那个槽**自己的 approach 格**（机器外侧那一格）。
+     * 而调用方传进来的 `cell` 有两种形态：
+     *   · 带子的进料侧 —— 传的是带子自己那一格（在机器外侧，与 `sl.cell` 相同）
+     *   · 带子的出料侧 —— 传的是**下一格**，那格可能正好是机器的本体格
+     *     （`slot`），而不是 approach 格（`cell`）
+     *
+     * 所以下面同时比 `sl.cell` 与 `sl.slot`，并且用**曼哈顿距离**兜底：
+     * 两个槽面同向时，离得最近的那个就是它。
+     * 宁可给对角色，也不能因为几何差一格就退化成「无角色」——
+     * 退化本身就是在把模型推向 `target_already_fed`。 */
+    const eq = (a, b) => Array.isArray(a) && Array.isArray(b) && a[0] === b[0] && a[1] === b[1];
+    const hit = sameDir.find(sl => eq(sl.cell, cell) || eq(sl.slot, cell));
+    /* 兜底：离 `cell` 最近的槽（同向槽数极少，通常就是 2） */
+    let picked = hit || null;
+    if (!picked) {
+        let bestD = Infinity;
+        for (const sl of sameDir) {
+            const ref = Array.isArray(sl.cell) ? sl.cell : sl.slot;
+            if (!Array.isArray(ref)) continue;
+            const d = Math.abs(ref[0] - cell[0]) + Math.abs(ref[1] - cell[1]);
+            if (d < bestD) { bestD = d; picked = sl; }
+        }
+    }
+    if (!picked) return null;
+    /* ★ `role` 在同一个面上也可能重名 ⇒ 必须带索引（2026-11-23）★
+     *
+     * hub 的 16 个入口**全部**叫 `primary`，其中 `primary@top` 就有 4 个。
+     * 光渲染成 `下游=H1.primary` 会让 5 条不同的带子看起来都接同一个口。
+     *
+     * 这与 `role@dir` 那次改动（`handles.mjs` 里带子/机器描写的注释）是同一条纪律：
+     * 名字不唯一时，模型必须能指名到**具体哪一个**，否则它写的 `port` 参数
+     * 在宏里会命中 `ambiguous_port`。
+     *
+     * 只在**确实重名**时才加后缀 —— 单槽的情形保持原样，不动已冻结的渲染文本。 */
+    const dupRole = list.filter(sl => sl.role === picked.role).length > 1;
+    if (!dupRole) return picked.role;
+    /* ⚠️ 索引用**整个 list 的全局下标**，不能用 `sameDir.indexOf` ——
+     * 后者只在该方向的子集里编号，不同方向会撞号（实测 `primary[0]` 出现两次）。
+     * 全局下标与宏的 `port.index` 是同一个空间（`slotsOf` 的返回顺序）。 */
+    const gi = list.indexOf(picked);
+    return `${picked.role}[${gi >= 0 ? gi : 0}]`;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

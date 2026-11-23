@@ -3599,9 +3599,34 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                         const worst = clogged[0];
                         /* 句柄：堵住那条路径上的带子（取最靠近终点的那几格）。
                          * 终点那几格是模型真正要动的地方 —— 清空/改道/接走都在那一端。 */
-                        const endCells = worst.p.cells.slice(-6);
+                        /* ★ 句柄必须取**源头端**（2026-11-23，三臂真调 LLM 实验）★
+                         *
+                         * 原来取的是 `cells.slice(-6)`（**末** 6 格）。那 6 个句柄模型
+                         * 确实 11/12 一字不差地照抄了（「hint 带句柄」这条能力是满分的），
+                         * **但它们全是死路**：
+                         *
+                         *   `buildTxPlan` 的预演闸门对两端不对称 ——
+                         *     删末端 `B85..B90` → 死带子 390→549（+159）⇒ PLAN_REJECTED
+                         *     删中段 30 格     → 390→450          ⇒ PLAN_REJECTED
+                         *     删 **`B522`（第一格，矿机出料口）** → **1 op，放行**
+                         *
+                         * 原因是几何的：删末端 ⇒ 上游 165-x 格立刻失去到 hub 的通路；
+                         * 删源头 ⇒ 只断一格，剩下的仍是「一条通到 stacker 的静置带子」。
+                         *
+                         * 真调 LLM 实测（`.findings/VERIFY-WORLD-FROZEN-2026-11-23.md`，n=12）：
+                         *   hint 指末端 → 落地 **0/12**
+                         *   hint 指源头 → 落地 **12/12**（p<0.0001）
+                         *   同一份 obs、同一个模型、同一套宏，**只换了一个句柄**。
+                         *
+                         * ⚠️ 这不是「换个更好的写法」，是修复一个**指针指错方向**的缺陷：
+                         * 同一个诊断里 `subject` 已经算对了（路径起点），
+                         * 而 `handles` 指向相反的一端 —— 模型只能抓 `handles`（那是能塞进
+                         * `$uids` 的形态），于是 11/11 次都抓错。
+                         * 这是 `computed-but-never-delivered` 的隐蔽变体：
+                         * 不是「算出来没渲染」，而是「两个字段指向相反方向」。 */
+                        const headCells = worst.p.cells.slice(0, 3);
                         const hs = [];
-                        for (const c of endCells) {
+                        for (const c of headCells) {
                             const rec = at(idx, c);
                             if (rec && (isBelt(rec) || rec.type === "underground_belt")) {
                                 const h = handleOf(handles, rec.uid);
@@ -3682,14 +3707,22 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                              * 现在只给**真的能过闸门**的动作：`remove_run` 拆掉这条死链
                              * （它整条都在造非目标形状），或者 `connect` 把它改道到有用的地方。
                              * 句柄取的是**路径末端**那几格 —— `remove_run` 吃带子 uid，不看有没有下游。 */
-                            hint: (worst.noAcceptor
-                                ? `整座工厂零产出。这条带子 ${worst.n} 件（${pct}%）且**末端无人接收** —— `
-                                  + `\`connect\` 把它接到该去的地方，或 \`remove_run\` 整段拆掉。`
-                                : `整座工厂零产出。这条带子 ${worst.n} 件（${pct}%），末端那台机器在等另一路料、永远等不到 —— `
-                                  + `\`remove_run\` 拆掉这条造错形状的死链，或 \`connect\` 把它改道。`)
-                                + `**先通开，再谈接上**：不疏通的话，接进去的货一样出不来，上游继续淤积到矿机。`
+                            /* ★ 前 180 字符必须含动作，且动作必须是**源头端**（2026-11-23）★
+                             *
+                             * `prompt.mjs` 对普通诊断做 `clip(…, 180)`，中文一字一字符。
+                             * 第一版把「259 件 / 99%」这些证据写在前面，模型读到了病因
+                             * 却在 36 次采样里**一次都没复述数字**（0/36）—— 数字没进推理。
+                             * 真正影响动作的是「删哪一端」，所以那一句必须在最前面。
+                             *
+                             * 另外要显式说「别从末端切」：模型读完 `BELTS` 段会自然想从
+                             * 我们看到的那一端（末端）动手，而那恰好是预演必拒的一端。
+                             * 与其让它撞一次闸门再学，不如直接说。 */
+                            hint: `整座工厂零产出。这条带子 ${worst.n} 件（${pct}%）堵死 —— `
+                                + `\`remove_run\` 它的**源头端** ${hs.length ? hs.join(",") : "（路径起点那几格）"}`
+                                + `（从末端切会让上游 ${worst.cells} 格失去通路，预演必拒）。`
+                                + `**先通开，再谈接上**：不疏通的话，接进去的货一样出不来。`
+                                + (worst.noAcceptor ? `这条线末端本来就没有接收方，` : "")
                                 + `（\`trash_unused\` 在这里没用 —— 它不接已有下游的带子。）`
-                                + `清完之后产出会自己恢复，那时再看缺料/缺机器才有意义。`
                                 + (others ? `另有：${others}。` : ""),
                         });
                     }
