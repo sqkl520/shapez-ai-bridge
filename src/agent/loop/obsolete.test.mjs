@@ -410,3 +410,50 @@ test("V43 目标是配方的最后一步时也不会被当残线（闭包含目�
     const recipe = { ok: true, steps: [{ hash: "CuCuCuCu" }, { hash: "Cu------" }] };
     assert.deepEqual(findObsoleteLines(prod, "Cu------", { recipe }).map(x => x.shape), ["CuCu----"]);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 2026-11-23：`levelChanged` 不再是唯一门槛
+ *
+ * 原来 `findStoredObsolete` 开头写死 `if (levelChanged !== true) return []`。
+ * 那个推理对「本次 run **观察到的**换关」成立，但对
+ * 「世界换过关、只是 loop 没观察到」不成立 —— 而后者是常态：
+ * `levelChanged` 只在「调用方传的 goal == 记忆里的 last_goal 且 != 世界当前目标」
+ * 时为 true。我们**显式传 goal**，这条判据**永远不触发**。
+ *
+ * 实测后果：那条 2026-11-16 就冻结的 L11 产线（`CgScScCg` 存 2071 件、
+ * 373 个 run 一分没动）没有任何诊断看得见它。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+test("★ W1：账本里有「别的关卡达成过」的证据 ⇒ 即使 levelChanged=false 也报", () => {
+    /* `CgScScCg` 是 L11 的目标（1000 件通关）。它满 4 象限、四个象限**不全同**
+       （`Cg Sc Sc Cg`，圆绿 + 星青混排）⇒ 只可能是产线加工出来的。 */
+    const hub = { stored_shapes: {
+        "CgScScCg": 2071,
+        "CrCrCrCr": 41662,      // 红矿，四格同形，不算证据
+        "RuRuRuRu": 14843,      // 钌矿
+    } };
+    const st = findStoredObsolete({ hub, goalShape: "CbCbCbRb:CwCwCwCw", recipe: null, levelChanged: false });
+    assert.ok(st.length > 0, `有达成证据时必须报，实得 ${JSON.stringify(st)}`);
+    assert.equal(st[0].shape, "CgScScCg",
+        `加工产物必须排在矿石前面，实得 ${JSON.stringify(st)}`);
+});
+
+test("★ W2：只有矿石（四格同形）⇒ 即使存量巨大也不报", () => {
+    /* L4 那种小世界：只有矿机产物。不放行 —— 与旧行为一致。 */
+    const hub = { stored_shapes: { "RuRuRuRu": 112866, "CuCuCuCu": 1680 } };
+    const st = findStoredObsolete({ hub, goalShape: "RuRu----", recipe: null, levelChanged: false });
+    assert.deepEqual(st, [], `矿石不是残线证据，实得 ${JSON.stringify(st)}`);
+});
+
+test("★ W3：加工产物但存量不到一关量级 ⇒ 不报（可能是刚建的中间态）", () => {
+    const hub = { stored_shapes: { "CgScScCg": 12 } };
+    const st = findStoredObsolete({ hub, goalShape: "CbCbCbRb:CwCwCwCw", recipe: null, levelChanged: false });
+    assert.deepEqual(st, [], `12 件达不到「一关达成」的量级，实得 ${JSON.stringify(st)}`);
+});
+
+test("★ W4：levelChanged=true 时行为不变（旧路径不受影响）", () => {
+    const hub = { stored_shapes: { "CgScScCg": 2071 } };
+    const a = findStoredObsolete({ hub, goalShape: "CbCbCbRb:CwCwCwCw", recipe: null, levelChanged: true });
+    const b = findStoredObsolete({ hub, goalShape: "CbCbCbRb:CwCwCwCw", recipe: null, levelChanged: false });
+    assert.deepEqual(a, b, `两条路径在有证据时应当一致：${JSON.stringify(a)} vs ${JSON.stringify(b)}`);
+});

@@ -197,8 +197,20 @@ export function findObsoleteLines(production, goalShape, opts = {}) {
  * @returns {Array<{shape:string, stored:number}>}
  */
 export function findStoredObsolete({ hub, goalShape, recipe = null, levelChanged = false } = {}, opts = {}) {
-    /* ★ 没有换关就没有残线 ★ 见上面那段（一条误报会废掉整个回滚机制）。 */
-    if (levelChanged !== true) return [];
+    /* ★ `levelChanged` 不再是唯一门槛（2026-11-23 实测）★
+     *
+     * 原来这里写死 `if (levelChanged !== true) return []` ——「没有换关就没有旧目标」。
+     * 那个推理对「本次 run **观察到的**换关」成立，但对
+     * 「世界换过关、只是 loop 没观察到」**不成立**。而后者是常态：
+     * `levelChanged` 只在「调用方传的 goal == 记忆里的 last_goal 且 != 世界当前目标」
+     * 时为 true。我们**显式传 goal**，这条判据**永远不触发** ——
+     * 实测本 run 是 `null`，于是整个函数返回 `[]`。
+     *
+     * 后果：那条 2026-11-16 就冻结的 L11 产线（`CgScScCg` 存 2071 件、
+     * 373 个 run 一分没动）**没有任何诊断看得见它**。
+     *
+     * 更硬的判据见下面 `sawOtherLevelOutput`：hub 账本里有没有
+     * 「非均匀复合形状 + 存量达到一关量级 + 不是本关目标」。 */
     const stored = hub && typeof hub === "object" && hub.stored_shapes && typeof hub.stored_shapes === "object"
         ? hub.stored_shapes : null;
     if (!stored) return [];
@@ -217,16 +229,73 @@ export function findStoredObsolete({ hub, goalShape, recipe = null, levelChanged
     const minItems = num(opts.minItems) !== null ? opts.minItems : OBSOLETE_MIN_ITEMS;
     const maxReport = num(opts.maxReport) !== null ? opts.maxReport : 2;
 
+    /* ★ 排序不能只看库存量（2026-11-23 实测）★
+     *
+     * 旧实现 `out.sort((a, b) => b.stored - a.stored)`，在这份世界上报的是：
+     *
+     *   CrCrCrCr×41662   （红矿，直接挖出来的）
+     *   Cu------×33532   （铜半切，L4/L5 的遗留）
+     *
+     * 而真正的残线 `CgScScCg×2081`（**上一关 L11 的目标形状**，那个 hub 里躺着 2081 件、
+     * 2026-11-16 之后 373 个 run 一分没动）排**第 8**，永远进不了前 2。
+     *
+     * 判据改成先按「像不像**加工出来**的复合形状」：
+     *   · 四个象限**完全一样**（`CrCrCrCr` / `CuCuCuCu`）⇒ 矿机直接产物，进 hub 是常态
+     *   · 含空格子 ⇒ 中间态
+     *   · **满 4 象限且象限不全同**（`CgScScCg` = 圆绿+星青混排）⇒ 只可能是某条线造出来的
+     *
+     * ⚠️ 这与 `prompt.mjs` 里 `renderHubStored` 的 `isUniform` / `looksFinished`
+     * **必须同一口径**——两处判「哪个形状值得说」用的是同一个形状数学。
+     * 改动其一就要改另一个（`obsolete.test.mjs` 和 `prompt_hub_stored.test.mjs`
+     * 分别钉住两侧）。 */
+    const bodyOf = (s) => (s.includes(":") ? s.split(":")[0] : s);
+    const looksFinished = (s) => {
+        const body = bodyOf(s);
+        if (body.length !== 8 || body.includes("-")) return false;
+        for (let i = 0; i < 8; i += 2) {
+            if (!/[RCSW]/.test(body[i])) return false;
+            if (!/[rgbypcw]/.test(body[i + 1])) return false;
+        }
+        return true;
+    };
+    const isUniform = (s) => {
+        const body = bodyOf(s);
+        if (body.length !== 8) return false;
+        const q0 = body.slice(0, 2);
+        return body.slice(2, 4) === q0 && body.slice(4, 6) === q0 && body.slice(6, 8) === q0;
+    };
+    /* 0 = 加工出来的复合形状（最有信息量），1 = 含空格的中间态，2 = 四格同形（矿石） */
+    const rankOf = (s) => {
+        if (!looksFinished(s)) return 1;
+        return isUniform(s) ? 2 : 0;
+    };
+
     const out = [];
     for (const [shape, raw] of Object.entries(stored)) {
         const s = str(shape).trim();
         if (!s || own.has(s)) continue;
         const n = num(raw);
         if (n === null || n < minItems) continue;
-        out.push({ shape: s, stored: n });
+        out.push({ shape: s, stored: n, rank: rankOf(s) });
     }
-    out.sort((a, b) => b.stored - a.stored);
-    return out.slice(0, maxReport);
+    /* 先按「像不像加工产物」，同档再按库存量降序。 */
+    out.sort((a, b) => (a.rank - b.rank) || (b.stored - a.stored));
+
+    /* ★ 放行条件：`levelChanged` **或** 账本里有「别的关卡达成过」的硬证据 ★
+     *
+     * 后者 = 存在一个 rank 0（加工出来的复合形状）且存量 ≥ `LEVEL_DONE_ITEMS`。
+     * 那个量级（1000）是关卡需求量级 —— 一个「必须加工才能造出来、且存量上千」
+     * 的形状，只可能是某一关被**做完了**留下的。矿机产物做不到（rank 2），
+     * 中间态存量都很小（rank 1 + 数量不够）。
+     *
+     * 实测这份世界：`CgScScCg = 2071`（L11 目标，1000 件通关）⇒ 放行。
+     * 而 L4 那种小世界（只有 `RuRuRuRu×112866` 这种四格同形）⇒ 不放行，
+     * 与旧行为一致（不会因为「有存量」就乱报残线）。 */
+    const LEVEL_DONE_ITEMS = 1000;
+    const sawOtherLevelOutput = out.some(x => x.rank === 0 && x.stored >= LEVEL_DONE_ITEMS);
+    if (levelChanged !== true && !sawOtherLevelOutput) return [];
+
+    return out.slice(0, maxReport).map(({ shape, stored }) => ({ shape, stored }));
 }
 
 /**
