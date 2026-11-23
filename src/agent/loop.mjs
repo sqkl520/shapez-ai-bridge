@@ -1343,8 +1343,18 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
          * 它会再铺一条线，把仅剩的空间也填掉。
          *
          * 实测依据（567 个快照）：L12 的 508 个快照里 500 个零产出，
-         * 而唯一的堵点是一条 259 件 / 165 格的带子。 */
-        WORLD_FROZEN: 4,
+         * 而唯一的堵点是一条 259 件 / 165 格的带子。
+         *
+         * ★ 还必须排在 `MACHINE_STARVED`(3) **之前** ★
+         *
+         * 两条同时存在时，`MACHINE_STARVED` 会说「从 C4 接它的缺料口」——
+         * 而在满载冻结的世界里，**接上去的货照样出不来**：堵点不在缺料那一端，
+         * 在下游出不去。如果模型先读到「接上」，它会照做一轮，白干。
+         *
+         * 实测渲染顺序（L12 真机快照）：rank 3 的 `MACHINE_STARVED` 排第一，
+         * 给出的 hint 正是 `connect` 到缺料口 —— 方向与这条诊断相反。
+         * 所以这条必须是 **rank 1**，排在所有「接上」类诊断之前。 */
+        WORLD_FROZEN: 1,
         NO_PRODUCTION: 5, PRODUCED_NOT_DELIVERED: 6, FLOW_UNREACHABLE: 7, FLOW_UNVERIFIED: 8,
         SLOT_STARVED: 9, OUTPUT_UNROUTED: 9,
         /* ★ `OUTPUT_STRANDED` 必须登记，否则落到默认 rank=50 被挤掉 ★
