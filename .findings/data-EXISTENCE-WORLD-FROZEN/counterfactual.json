@@ -1,0 +1,6842 @@
+[
+ {
+  "run": "r-20261112193013-99fb",
+  "level": 9,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B633",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261112210803-e1a3",
+  "level": 9,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B627",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261113084958-4e86",
+  "level": 9,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B336",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261113091844-77ce",
+  "level": 9,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B336",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261113093827-cf54",
+  "level": 9,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B336",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261113095918-3f38",
+  "level": 9,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B336",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261113140707-184b",
+  "level": 9,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B336",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261113141840-a195",
+  "level": 9,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B309",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261113143352-72dd",
+  "level": 9,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B309",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115124954-59a1",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115125626-8cca",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115131200-23cc",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115133406-4bd7",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115133738-e6f2",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115134024-9fda",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115134204-8b15",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115134432-adff",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115134541-d5f2",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115134845-f98c",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115135429-7213",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115135528-7831",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115135747-3126",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115135804-2f22",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115140819-dcb5",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B14",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115141044-aba3",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B13",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115141613-fb0a",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B13",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115141931-aed4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115141959-a870",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115142237-978f",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115142430-bcae",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115142642-ad0e",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115142742-05a4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115143112-bf01",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115144407-b81e",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115144620-f243",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115145004-2845",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115145153-4fe5",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115145458-3f70",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115145731-8fc9",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115145958-7806",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115150248-e23e",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115152854-2391",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115153538-07af",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115153842-fb61",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115154215-db2a",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115154848-7b88",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115155440-22a1",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115155800-aeee",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115160022-d449",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115160243-abad",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B12",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115160444-58f7",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115160724-f916",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115195411-2b7b",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115195650-5b38",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115195951-033e",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115200157-ca09",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115200541-bd55",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115200805-6824",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115201017-7dce",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115201243-72ca",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115201513-5234",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115203026-a5eb",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115203520-a695",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115203925-7314",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115204504-4dd2",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115204835-6548",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115204956-fb84",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115205241-01c2",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115205713-acc8",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115210053-db38",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B8",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115210348-5383",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B8",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115210524-9f1d",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B6",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115210709-1de8",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B6",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115211206-7318",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B6",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115211346-e3d6",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B6",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115211505-0582",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B5",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115211733-dae9",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B3",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115211849-df44",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B3",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115212038-389f",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B3",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115213356-3315",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115214155-8960",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115214352-78ae",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115214746-093c",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115220130-2d64",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115220443-2fca",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115220917-899c",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115222441-2c06",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115222757-03c4",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115223017-d021",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115223658-a3ed",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115224117-baad",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115224252-1a8f",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115224613-f2c7",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115225145-ab38",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115225425-cc9b",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115230531-f1f2",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115230743-2ec8",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115230943-50ef",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115231111-2cbb",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115231335-15b2",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115231456-c610",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115231703-5bed",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115231819-3608",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115231938-f153",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115232121-4435",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115232731-7ad2",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115233052-b567",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115233544-2088",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115233758-66c9",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115235245-4c8b",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115235521-4dbb",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261115235728-444b",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116000701-a7f9",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116000755-b8f7",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B2",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116000936-a913",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B1",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116001350-3610",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B1",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116002553-15c0",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B1",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116002724-a395",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B1",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116003251-c82f",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B115",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116003556-aa3d",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B571",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116003806-69b4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B563",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116004136-2531",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B557",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116004634-556a",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B545",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116004758-9a85",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B533",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116005053-bdd0",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116005407-37e7",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B11",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116005525-d96f",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B8",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116090308-7b3e",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B1",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116090537-d70e",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B465",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116090857-5fad",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B465",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116092432-c769",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B465",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116092546-6525",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B465",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116092657-8aec",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B465",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116092804-6d31",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B465",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116094725-f310",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B465",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116094930-6f4b",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B465",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116100759-4225",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B448",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116101236-9d86",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B431",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116101440-7282",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B424",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116101551-ba0a",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B424",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116115057-2772",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B424",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116115203-4c60",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B423",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116115426-eb62",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B412",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116115731-e085",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B404",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116120151-84c4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B398",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116120640-357c",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B398",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116123329-2e78",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B394",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116123716-12a5",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B384",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116124627-84cb",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B372",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116125312-b542",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B369",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116125751-8082",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B369",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116133134-ed88",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B368",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116133442-c5b1",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B363",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116133845-3ab8",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B363",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116134236-36b2",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B353",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116134638-344b",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B316",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116145033-9b70",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B574",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116145124-cbe9",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B574",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116145211-9ffc",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B574",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116145257-3506",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B574",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116145414-33c5",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B574",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116145523-6d06",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B574",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116145622-0a2a",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B574",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116145717-0242",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B574",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116150132-a35c",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B341",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116150309-5729",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B341",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116150359-8837",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B341",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116150500-e4c4",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B341",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116150617-9e33",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B341",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116150724-482e",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B341",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116152801-5fcf",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B338",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116153232-a83e",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B567",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116154241-6124",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B656",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116154644-c9b1",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B656",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261116154930-9ae0",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B656",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118101559-f3b9",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B653",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118101828-55c8",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B653",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118121302-637c",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B653",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118121421-3edd",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B653",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118121720-7f46",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B611",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118121928-f2f8",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B593",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118122108-bf69",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B593",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118122315-9955",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B593",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118122559-3f96",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B590",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118122901-ba5d",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B590",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118123107-0f9c",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B590",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118123326-b891",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B590",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118123608-2ed7",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B590",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118123745-009d",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B564",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118124345-1c1c",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B563",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118124551-9ea5",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B558",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118124752-c33b",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B557",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118125028-d224",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B551",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118125202-94d6",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B551",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118125726-1710",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B551",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118125842-0625",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B551",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118130004-4202",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118130201-418d",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118130245-3dec",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118130353-33b5",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118130527-c1ec",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118131039-851b",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118131141-8f04",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118131427-1ca9",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118152154-b23d",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118152324-dbed",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118152415-02cb",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118152500-cf26",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118152633-44f6",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118153202-a893",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B550",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118153359-39f4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B548",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118153550-88d4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B542",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118155637-cb52",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B542",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118155907-98ca",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B542",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118160033-bceb",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B542",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118160402-d703",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B541",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118160535-9945",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B541",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118160718-4851",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B541",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118160942-7a8b",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B541",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118161208-fb0c",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B539",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118161234-7c3a",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B540",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118161451-98b6",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B531",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118161625-25fe",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118161823-8fba",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118162110-65c3",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118162419-20ac",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118162527-5694",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118162532-c8fc",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118162657-da5a",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118162726-98a9",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118162807-d191",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118162811-3e06",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118162853-2f32",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118162927-6c4e",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118163127-f005",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118163229-bd7b",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118163335-8d45",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118163433-50ce",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118163517-0ef3",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118163604-0196",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118164103-0d3e",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118164111-da4b",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118164148-187f",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118164308-cabc",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118164310-0229",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118164401-4441",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118164521-7234",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118164714-87e1",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118170650-7a2f",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171033-23bc",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171124-4ee3",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171202-3d43",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171442-38af",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171747-c401",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171815-c0c0",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171822-ee30",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171858-842b",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171858-d768",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171922-2937",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118171952-74d0",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118172012-2ce6",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118172107-c392",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118172123-ef51",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118172240-6fb3",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118172425-c9c1",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118172650-ef48",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118172739-8326",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118172745-bf30",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118172912-0b78",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118173009-b22a",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118173123-68ec",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118173206-b172",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118173239-bb77",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118173424-3719",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118173627-4418",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118173705-9374",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118173733-abca",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118173742-99af",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118173857-f0e1",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118174054-ba87",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118174110-e687",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118174223-bd17",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118174316-810d",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118174339-5e13",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118174451-1a9e",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118174507-3fd5",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118174648-4aa1",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118174750-17cb",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118174909-0f05",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118175018-4807",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118175059-7049",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118175123-2a5d",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B527",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118175236-8ccb",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118175335-8307",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118175403-7ff6",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118175504-bb79",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118175814-cdfe",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118175912-a8b6",
+  "level": 12,
+  "A": {
+   "any": false,
+   "cap": false,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118180029-d757",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118180243-070d",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118180437-7017",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118180651-2680",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118180929-e3e1",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B526",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118182716-e1cb",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118182912-9a81",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118182959-a7d6",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118183059-a81a",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118183152-153d",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118183242-29ee",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118183528-2a2f",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118183630-6cab",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118183634-4875",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118183818-88c3",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118183916-7995",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118183938-b284",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118184106-a66f",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118184206-5701",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118184306-06e6",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118184410-ebe6",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118184613-45e4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118184714-4ed4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118184800-602a",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118184904-f438",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118185002-2f34",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118190529-8ad4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118190832-61aa",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118191410-e4ed",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118191641-5285",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118191734-4ec7",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118200043-1c80",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118200147-781b",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118200329-bb7a",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118200430-07a3",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118200537-1552",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118200704-b753",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118200819-6110",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118200932-e927",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118202537-4289",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118202648-a38c",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118202826-e7cc",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118202912-4346",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118203038-5d40",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118203122-f529",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118203225-90eb",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118205607-2646",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118205658-6bec",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118205806-9125",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118205913-aab6",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118210106-517b",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118210201-70df",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118211837-18c5",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118212025-b941",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118212231-034e",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118212347-efd4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118212443-74f1",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118212539-4aeb",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261118212630-5745",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119125838-461e",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119125932-d4a4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B525",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119161003-b682",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119161115-4052",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119162617-6fbf",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119162730-8c53",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119163115-a0a4",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119163245-352e",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119163550-a018",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119165045-3256",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119165213-a1e7",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119165409-fab0",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261119165604-d423",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261120114323-f14c",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261120194503-6274",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261120195126-7567",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261121072433-521e",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261121100232-d10f",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261123135733-fe21",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261123151728-52a3",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261123231202-765f",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261123234341-c6c7",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ },
+ {
+  "run": "r-20261123235846-de15",
+  "level": 12,
+  "A": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "B": {
+   "any": true,
+   "cap": true,
+   "noprod": true
+  },
+  "AhasWf": true,
+  "BhasWf": false,
+  "subjA": "B522",
+  "subjInBeltsB": false
+ }
+]

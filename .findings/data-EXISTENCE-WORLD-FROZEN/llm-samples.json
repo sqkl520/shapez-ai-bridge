@@ -1,0 +1,7768 @@
+[
+ {
+  "arm": "A",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so upstream production can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "The cutter's unused right output is blocking the chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the stalled stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restores the missing stacker input while consuming C2's stranded output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4"
+     }
+    },
+    "why": "Restore the missing stacker input without adding a parallel line."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:ambiguous_port"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so its upstream line can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with an unconnected output, which can block its upstream supply."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "I will clear the stranded cutter output so upstream production can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unconnected output that is blocking its upstream chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Fix the known belt handoff direction and clear the cutter's stranded output.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "top"
+     }
+    },
+    "why": "Corrects the diagnosed wrong-way belt handoff."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevents the cutter's unused output from blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run",
+    "trash_unused"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "C",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so upstream production can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unconnected output that can block the active chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's right output is explicitly unconnected and can stall the active line."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Reconnect the cutter's free output to the starved stacker input.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restore the missing stacker feed using the nearest free machine output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output and repair the broken belt handoff.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent the cutter's unused output from blocking production."
+   },
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "Reconnect the rejected belt handoff to the downstream belt."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused",
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope,connect:occupied"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is currently stranding production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the missing upper input of the upstream stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "This supplies C4 and prevents C2's active output from stranding."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output and rebind its missing input.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the rejected belt handoff first so stranded items can continue downstream.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "Reconnect the broken belt handoff using the existing endpoints."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:occupied"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing upper input from C2's free cutter output and unblock the stalled chain.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Restore the missing feed into the upstream stacker.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "C4 is starved and C2 has a free cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 568（+178），到 hub 的带子 309 → 138；这一步是 13 条 op"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing input from the free cutter output to restart the blocked chain.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4"
+     }
+    },
+    "why": "C4 is the upstream starved machine and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:ambiguous_port"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded waste output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused cutter output that can stall the active chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Drain the cutter's unused output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free output that is currently stranding production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free output that is blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter and dispose of the cutter's unused output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "Supply the missing stacker input from C2."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "left"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent the cutter's unused output from backing up."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect",
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed,trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "Repair the missing stacker input using the nearest free machine output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output to unblock upstream production.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused output that can back up the line."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the starved stacker by feeding its missing upper input from the available mixer output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C8",
+      "port": "out"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream blocker and C8 is a nearby source for the missing color."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：能真正交付的形状带子 309 → 111（-198，64%），死带子 390 → 580；这一步是 18 条 op（几何上到 hub 的带子是 309 → 121，但几何可达只是「路能走通」——hub 的入口只收形状，运颜料的带子物理上交付不了）"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Repair C4's missing input and unblock production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so upstream production can continue.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's unused output is blocking the active production chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing input from C2.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "Use C2's free cutter output to unblock the starved stacker."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with one output unhandled, causing upstream blockage."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Free the cutter's stranded output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unconnected cutter output that can back up production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Remove the cutter's stranded output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's right output is explicitly unused and would otherwise stall the chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing stacker input from the free cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Unblocks the starved stacker input."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output and rebind the missing input.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "Supplies C4's missing input while consuming C2's stranded output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 568（+178），到 hub 的带子 309 → 138；这一步是 13 条 op"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair C4 by feeding its missing stacker input from the cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream starvation blocker and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unconnected output that can block production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the rejected handoff and clear the cutter's stranded output so production can resume.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "Restore the belt flow into the downstream belt."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Consume the cutter output that has no downstream destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run",
+    "trash_unused"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "P",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's unused output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "allow_replace": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has an unused cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 568（+178），到 hub 的带子 309 → 138；这一步是 13 条 op"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the missing stacker input from the available mixer output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C8",
+      "port": "out"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream production blocker and C8 provides the missing color."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：能真正交付的形状带子 309 → 111（-198，64%），死带子 390 → 580；这一步是 18 条 op（几何上到 hub 的带子是 309 → 121，但几何可达只是「路能走通」——hub 的入口只收形状，运颜料的带子物理上交付不了）"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output and rebind the blocked inlet.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restore the missing stacker input from an available cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is currently blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing upper input from C2's free cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has a free cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:ambiguous_port"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the missing upper input of the upstream stacker from the available mixer output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C8",
+      "port": "out"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the highest upstream blocker and lacks one required input."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line cannot stall.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a stranded cutter output and needs a waste destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the available mixer output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C8"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "Restore the missing stacker input using the diagnosed mixer source."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：能真正交付的形状带子 309 → 111（-198，64%），死带子 390 → 584；这一步是 14 条 op（几何上到 hub 的带子是 309 → 121，但几何可达只是「路能走通」——hub 的入口只收形状，运颜料的带子物理上交付不了）"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "修复堆叠器缺失的上游供料，优先解除整条产线停滞。",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "将切割器的空闲输出接入堆叠器缺料输入。"
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restore the missing stacker input using C2's available cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has a free shape output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Fix the rejected belt handoff and consume the cutter's unused output to unblock production.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "Align B692 to B699's top-facing input."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent C2's unused cutter output from backing up the line."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run",
+    "trash_unused"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "A",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded waste output so upstream processing can continue.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's unused right output is explicitly stranded and can block the active chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's unused cutter output is blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the missing stacker input from the cutter output to restart the upstream chain.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4"
+     }
+    },
+    "why": "C4 is the highest upstream blocker and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:ambiguous_port"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Fix the rejected belt handoff and clear the cutter's stranded output.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "top"
+     }
+    },
+    "why": "Correct B692 so it feeds B699 from the accepted direction."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent C2's unused output from blocking its upstream chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run",
+    "trash_unused"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "A",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is currently stranding material."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a confirmed stranded cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the rejected belt handoff and clear the cutter's unused output to restart flow.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "Reconnect the stranded belt to its downstream acceptor."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent the cutter's unclaimed output from blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect",
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:occupied,trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused cutter output that is blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the available mixer output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C8",
+      "port": "out"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream production blocker and C8 provides the missing color."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing upper input from C2's free cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream starvation blocker, and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "把 C2 的悬空输出接到 C4 缺失的上层输入，解除堆叠器饥饿并疏通生产。",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 的 upper 输入为空，C2 的 right 输出空闲。"
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output with no destination, so consuming it prevents backpressure."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with one output stranded, which can block its upstream supply."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing input from C2 and clear the cutter's stranded output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 lacks its upper input, and C2's right cutter output is free."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the missing stacker input from the cutter's unused output to unblock production.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "Supplies C4 and gives C2 its stranded output a destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output to unblock the upstream line.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's right output is explicitly unused and is blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "I will clear the stranded cutter output and repair the rejected belt handoff.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Dispose of C2's unused cutter output so it cannot back up the line."
+   },
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "Reconnect the rejected belt handoff to the downstream belt."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused",
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope,connect:occupied"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's right output is explicitly unused and is blocking the active cutter."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the rejected handoff and clear the cutter's stranded output.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "Correct the belt direction so the handoff reaches its downstream belt."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent the cutter's unused output from blocking upstream production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run",
+    "trash_unused"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "P",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "prefer": "reuse_existing"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has an unused cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Reconnect the cutter output to the starved stacker input.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "Feeds C4's missing upper input from C2's free cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 568（+178），到 hub 的带子 309 → 138；这一步是 13 条 op"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the broken belt handoff and clear the cutter's stranded waste output.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "Make B692 deliver into B699 from the accepted side."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent the cutter's unused output from blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run",
+    "trash_unused"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "C",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so upstream processing can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused cutter output that can back up the active line."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the available mixer output and clear the cutter's unused output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C8",
+      "port": "out"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "Restore the missing stacker input using a nearby free source."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent the cutter's stranded output from blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect",
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：能真正交付的形状带子 309 → 111（-198，64%），死带子 390 → 584；这一步是 14 条 op（几何上到 hub 的带子是 309 → 121，但几何可达只是「路能走通」——hub 的入口只收形状，运颜料的带子物理上交付不了）"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing stacker input from C2's free cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream starvation blocker and C2 has an unused output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused output that is blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restores the missing stacker input and gives C2's stranded output a destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the nearby free red miner.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "M4",
+      "port": "out"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "C4 is the upstream blocker and M4 is a nearby free source."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：能真正交付的形状带子 309 → 144（-165，53%），死带子 390 → 553；这一步是 11 条 op（几何上到 hub 的带子是 309 → 153，但几何可达只是「路能走通」——hub 的入口只收形状，运颜料的带子物理上交付不了）"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the missing stacker input from the cutter's free output to restore production.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "C4 is the upstream starved machine and C2 has an unused cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 568（+178），到 hub 的带子 309 → 138；这一步是 13 条 op"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output with no downstream destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output and rebind its missing input.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has a free cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Fix the known belt handoff and dispose of the cutter's stranded output to relieve the blocked chain.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "Correct B692 so it receives from the top and hands off in the accepted direction."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent C2's unused output from backing up the upstream line."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run",
+    "trash_unused"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "A",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "先清理 C2 悬空的副产物，解除上游堵塞。",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 的 right 输出没有去处，会使整条上游链路回堵。"
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": true
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so upstream production can continue.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's right output is the only free cutter outlet and must not remain blocked."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "I will clear the stranded cutter output and repair the rejected belt handoff.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Stops the cutter from backing up on its unused output."
+   },
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "Reorients the belt so B699 receives from its expected side."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused",
+    "replace_run"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "P",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the rejected belt handoff and clear the cutter's stranded output so production can resume.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     },
+     "opts": {
+      "allow_replace": true
+     }
+    },
+    "why": "Reconnect the rejected handoff into B699."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Consume C2's unneeded output and prevent upstream blockage."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect",
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:occupied,trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "把 C2 的废料输出接入垃圾桶，解除切割器回堵。",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 的 right 输出悬空，会使上游堵塞。"
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": true
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so upstream production can continue.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused cutter output that can stall its upstream chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "释放 C2 悬空的副产物，避免上游堵塞。",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 的一个输出无去处，接入垃圾桶可解除回堵。"
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": true
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so upstream production can flow again.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is blocking its upstream chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's unused output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has a free cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the stalled stacker from the cutter's free output and clear the cutter's waste stream.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restore the missing stacker input from an available cutter output."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent the cutter's unused output from backing up."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect",
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Drain the cutter's unused output to prevent upstream backpressure.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free output that is currently stranding production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the rejected handoff and consume the cutter's unused output to unblock production.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "Correct B692 so it accepts the incoming flow from the top."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent C2's unused cutter output from backing up the line."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run",
+    "trash_unused"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "A",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free output and is otherwise running, so consuming its waste side removes a confirmed downstream blockage."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the stalled stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is missing one input and C2 has a free cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the starved stacker input first, then fix the rejected belt handoff.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "Feed C4's missing input from C2's free cutter output."
+   },
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "Reconnect the rejected belt handoff using the existing endpoint."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect",
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed,connect:occupied"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's blocked waste output so upstream production can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with one output stranded, so trashing the unused side prevents it from backing up."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has an unused output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a stranded cutter output that can block production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Stop the cutter's unused output from backing up the upstream line.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is currently stranded."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output to unblock upstream production.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused output that is blocking the active chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter blockage so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a running but stranded output; trashing the unwanted half prevents backpressure."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused cutter output that is blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Stop the cutter backlog first by disposing of its unused output.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is blocking upstream production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the stalled stacker from the cutter output that is currently stranded.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Connects C2's free output to C4's missing stacker input and unblocks production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has an unused output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line cannot stall.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is currently stranding production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Stop the cutter from buffering its unused output while preserving the active production line.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a confirmed dangling cutter output that can block its upstream chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing upper input from C2's free cutter output to restart the blocked chain.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has an unused output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 568（+178），到 hub 的带子 309 → 138；这一步是 13 条 op"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "Restore the missing upstream input to C4."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unclaimed cutter output that can block production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free right output that is currently stranding production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the stalled stacker from the available mixer output and dispose of the cutter's unused side output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C8",
+      "port": "out"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "prefer": "cheapest"
+     }
+    },
+    "why": "Supply the stacker's missing upper input from the mixer."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent the cutter's unused output from backing up the line."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect",
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed,trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the stacker’s missing shape input from the cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream blocked machine and C2 has a free shape output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the broken belt handoff first so goods can rejoin the downstream chain.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "Reconnect the stranded belt to its downstream belt without guessing geometry."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:occupied"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the rejected belt handoff and clear the cutter's unused output so production can resume.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "Correct B692 so B699 receives from the top."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent C2's unconsumed cutter output from blocking its input."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run",
+    "trash_unused"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "P",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output and repair the rejected belt handoff.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "The cutter's unused output is blocking its upstream chain."
+   },
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "The belt receives from above and must send its contents toward the downstream belt."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused",
+    "replace_run"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "A",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with one output unconnected, so trashing the unused side prevents it from stalling the line."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded waste output so upstream production can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with an unhandled output; trashing the unwanted side prevents blockage."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4"
+     }
+    },
+    "why": "C4 is the upstream production blocker and C2 has an unused output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:ambiguous_port"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the missing stacker input from the cutter's free output to restart the upstream chain.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream production blocker and C2 has an unused output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Route the cutter's unused output to waste so the upstream chain can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with its right output unconnected, which can back up production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "prefer": "cheapest"
+     }
+    },
+    "why": "C4 is the upstream production blocker and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the missing stacker input from the cutter output to restart the blocked chain.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter and clear the cutter's unused output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Connect the free cutter output to the stacker's missing input."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "left"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Prevent the cutter's unused product from blocking its input."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect",
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing upper input from C2's free cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "allow_replace": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "C4 is the upstream starvation blocker, and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 568（+178），到 hub 的带子 309 → 138；这一步是 13 条 op"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the missing stacker input from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "Unblocks C4 and gives C2's stranded output a destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "allow_replace": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "Restore the missing upper input at C4 using C2's available cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "prefer": "cheapest"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has an unused cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's unused output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restores the missing stacker input and uses C2's free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output and rebind the missing input.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream production blocker, and C2 has a free cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter backpressure and repair the rejected belt handoff so production can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is stalling its upstream chain."
+   },
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "Reconnect the rejected handoff into the downstream belt."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused",
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope,connect:occupied"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker with the cutter's free shape output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Supplies C4's missing input and unblocks the upstream chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the rejected belt handoff so this branch can resume feeding downstream.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "Reconnect the stranded belt to its downstream acceptor with a valid handoff."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:occupied"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the available miner output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "M4",
+      "port": "out"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restores the missing stacker input from a free source."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：能真正交付的形状带子 309 → 144（-165，53%），死带子 390 → 553；这一步是 11 条 op（几何上到 hub 的带子是 309 → 153，但几何可达只是「路能走通」——hub 的入口只收形状，运颜料的带子物理上交付不了）"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's stalled upper input from C2's free cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restores the missing stacker input and unblocks production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's right output is free and currently has no destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unhandled output so upstream production can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with its right output stranded; consuming that waste prevents blockage."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's right output is free and has no downstream destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing stacker input from the available cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restores the starved C4 input and gives C2's free output a destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so its upstream line can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a stranded output that can block the processing chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output and repair the rejected belt handoff.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "The cutter's free output is blocking upstream production."
+   },
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "Reconnect the rejected belt handoff so this branch can feed its downstream belt."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused",
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope,connect:occupied"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the rejected belt handoff so the stranded line can resume downstream flow.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "Reconnect the misdirected belt directly to the waiting downstream belt."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:occupied"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter backlog and repair the rejected belt handoff.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "Consume the cutter output that has no downstream destination."
+   },
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "Reverse the belt so B699 receives from the expected side."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused",
+    "replace_run"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "P",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a stranded right output that can block production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free waste-side output that is currently stranding production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing upper input from C2's free cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "Unblocks the starved stacker and consumes C2's stranded output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so the upstream line can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's right output is unused and is blocking its cutter."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 1,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Fix the rejected belt handoff and clear the cutter's stranded waste output.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "B692 must receive from above and send onward toward B699."
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's unused cutter output is blocking upstream flow."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run",
+    "trash_unused"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "A",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the missing stacker input from the available mixer output to restart production.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C8",
+      "port": "out"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true,
+      "prefer": "cheapest"
+     }
+    },
+    "why": "C4 is the upstream production blocker and C8 can provide the missing color."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：能真正交付的形状带子 309 → 111（-198，64%），死带子 390 → 584；这一步是 14 条 op（几何上到 hub 的带子是 309 → 121，但几何可达只是「路能走通」——hub 的入口只收形状，运颜料的带子物理上交付不了）"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's blocked waste output so the upstream line can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output with no destination, which can stall production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 2,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter output that is blocking its upstream line.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a stranded output that can stall the active chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line cannot stall.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with one stranded output; consuming the unwanted branch prevents backpressure."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a stranded cutter output that can block production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is blocking the running chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 3,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so its upstream line can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused output that can block the active chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the misoriented handoff so the downstream belt can receive items.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "top"
+     }
+    },
+    "why": "B692 currently sends items into B699 from the wrong direction."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "B",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's unused output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "Restores the missing second stacker input."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 provides a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 4,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing stacker input from the free cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has an unused output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so upstream production can flow again.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused cutter output that is blocking its upstream chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output with no destination, which can block production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Reconnect the cutter's free output to the starved stacker input so the upstream chain can resume.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Feeds the missing stacker input from the cutter's available output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 5,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing upper input from the cutter output to restart the blocked stacker chain.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream machine starved by one missing input."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Consume the cutter's unused output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with one stranded output, which can stall its upstream chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Repair the stranded belt handoff so production can resume.",
+  "calls": [
+   {
+    "macro": "replace_run",
+    "args": {
+     "region": {
+      "$path_of": [
+       "B692"
+      ]
+     },
+     "building": "belt",
+     "opts": {
+      "facing": "bottom"
+     }
+    },
+    "why": "B692 is pointed into an inlet direction B699 does not accept."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "replace_run"
+   ],
+   "land": true,
+   "ops": 2,
+   "opKinds": [
+    null,
+    null
+   ],
+   "why": null
+  }
+ },
+ {
+  "arm": "C",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing upper input from C2's unused cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "Restores the starved stacker input and gives C2's stranded output a destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 6,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has one free output while the cutter is active, causing backpressure."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "I will clear the cutter's stranded output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's right output is explicitly unconnected and is blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the stalled stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream production blocker and C2 has a free cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output to unblock its upstream chain.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused cutter output that is causing backpressure."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 7,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so upstream production can continue without blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2's right output is explicitly unconnected and currently strands half its production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Discard the stranded cutter output so it cannot block the upstream line.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with an unconnected output, which can cause upstream backpressure."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 8,
+  "attempts": 2,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so its upstream line cannot stall.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is already identified as stranded."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so the upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unused cutter output that is blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 8,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed C4's missing upper input from C2's free cutter output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "Unblocks the starved stacker and gives C2's stranded output a destination."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream production blocker and C2 has a free cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unconnected cutter output that can stall the production chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "修复已知的带子交接并处理切割机悬空输出，先解除当前堵塞。",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "B692"
+     },
+     "to": {
+      "$ref": "B699"
+     }
+    },
+    "why": "修复 B692 到 B699 的错误交接"
+   },
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "清理 C2 悬空的副输出"
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": true
+  },
+  "eval": {
+   "macros": [
+    "connect",
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:occupied,trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 9,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     },
+     "opts": {
+      "rebind": true
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has a free cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "预演：死带子 390 → 567（+177），到 hub 的带子 309 → 141；这一步是 15 条 op"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so its upstream line cannot jam.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is stranding material and blocking production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": true
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's unused output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream production blocker and C2 has an unused cutter output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4"
+     }
+    },
+    "why": "Supplies C4's missing input and clears the cutter's stranded output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:ambiguous_port"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 10,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the stacker’s missing shape input from the cutter’s free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream blocker and C2 has an unused shape output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's stranded output so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unconnected right output that can block the active chain."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Feed the starved stacker from the cutter's free output.",
+  "calls": [
+   {
+    "macro": "connect",
+    "args": {
+     "from": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "to": {
+      "$ref": "C4",
+      "port": "upper"
+     }
+    },
+    "why": "C4 is the upstream production blocker and C2 has a free output."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "connect"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "connect:target_already_fed"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 11,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so the upstream line can resume.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that is currently stranding production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 11,
+  "attempts": 4,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so the upstream chain can flow again.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has an unconnected output that can block production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "A",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output to prevent upstream blockage.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is running with its right output unconnected, so discarding that branch prevents the cutter and its upstream line from stalling."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "B",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the stranded cutter output so upstream production cannot stall.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has one unconnected output and the unused cutter half should be discarded."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "C",
+  "round": 12,
+  "attempts": 2,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Clear the cutter's unused output so its upstream line can keep flowing.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 has a free cutter output that can otherwise block production."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ },
+ {
+  "arm": "P",
+  "round": 12,
+  "attempts": 1,
+  "ok": true,
+  "err": null,
+  "parseErr": null,
+  "say": "Stop the cutter from backing up on its unused output.",
+  "calls": [
+   {
+    "macro": "trash_unused",
+    "args": {
+     "outlet": {
+      "$ref": "C2",
+      "port": "right"
+     },
+     "opts": {
+      "confirm_waste": true
+     }
+    },
+    "why": "C2 is producing with one output stranded, so consume the unwanted branch to unblock upstream."
+   }
+  ],
+  "readsObserved": {
+   "numbers": false,
+   "jam": false
+  },
+  "eval": {
+   "macros": [
+    "trash_unused"
+   ],
+   "land": false,
+   "ops": 0,
+   "opKinds": [],
+   "why": "trash_unused:out_of_scope"
+  }
+ }
+]
