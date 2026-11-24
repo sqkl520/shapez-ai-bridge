@@ -941,7 +941,7 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
         const semRes = dropInlets(semanticDiagnoses(o, it, goalShape, tbl, {
             recipe: cx.recipe || null,
             level: (o.goal && Number.isFinite(o.goal.level)) ? o.goal.level : undefined,
-            /* ★ `production` 必须传进来 —— `WORLD_FROZEN` 的判据是「全图零产出」 ★
+            /* ★ `production` 必须传进来 —— （历史上漏传过，导致一条诊断恒不触发且不报错） ★
              *
              * 那个判据只能从产出窗口读，而 `production` 是 `diagnose()` 的**第三个参数**，
              * 不在 `obs` 里。漏传的后果很典型：这条诊断恒不触发，而且不报错
@@ -950,7 +950,7 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
              * 这是本项目最高频的缺陷形态（`computed-but-never-delivered`）的又一次预防：
              * 算得出来的字段，必须确认它真的到了判据手里。 */
             production: production || null,
-            /* ★ 上一轮的 verify 报告 —— `WORLD_FROZEN` 用它判「是不是第一轮」★
+            /* ★ 上一轮的 verify 报告 —— 与两次轮首 observe 之间的游戏秒数★
              *
              * `ProductionAnalytics` 不进存档，`load_save` 之后头 10 秒
              * `produced_total` 必然是 `{}`。第一轮的空窗口可能只是预热，
@@ -965,7 +965,7 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
              * 间隔 < 10 秒时窗口可能全是旧片 ⇒ `produced_total` 依然 `{}`，
              * 而世界完全正常。红队实测 25% 的轮次间隔 < 10 秒。
              *
-             * `WORLD_FROZEN` 用它判「窗口够不够老」，不判「第几轮」。 */
+             * 诊断用它判统计窗口够不够老。 */
             tickSincePrev: Number.isFinite(cx.tickSincePrev) ? cx.tickSincePrev : null,
         }));
         out.push(...semRes.kept);
@@ -1350,62 +1350,6 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
          *
          * 排在 `NO_PRODUCTION` 前面，这份信息才不会被「零产出」那句盖掉。 */
         WRONG_SHAPE_PRODUCED: 4,
-        /* ★ `WORLD_FROZEN` 排在 `NO_PRODUCTION` **之前**（2026-11-23）★
-         *
-         * 两者都描述「零产出」，但动作方向**相反**：
-         *   · `WORLD_FROZEN`  → 货堵住了，先**通开**
-         *   · `NO_PRODUCTION` → 没有线在造，去**新建**
-         *
-         * 在 98.9% 满载的世界里，让模型看到「去新建」是灾难性的 ——
-         * 它会再铺一条线，把仅剩的空间也填掉。
-         *
-         * 实测依据（567 个快照）：L12 的 508 个快照里 500 个零产出，
-         * 而唯一的堵点是一条 259 件 / 165 格的带子。
-         *
-         * ★ 2026-11-23 二次修正：从 rank 1 退到 rank 8 ★
-         *
-         * 第一版登记 4，后来提到 1（为了压过 `MACHINE_STARVED`）。**那个理由被推翻了。**
-         *
-         * 红队在 516 个零产出快照上把「照这条 hint 做」逐个模拟：
-         *
-         *     0/516 让「到 hub 的带子」变多
-         *   486/516 让它变少（中位 -3）
-         *     30 个 cleanup 全是「reach 不变、死带子减少」
-         *     没有一个样本出现 delivered / stored_goal 上升
-         *
-         * 真实死锁链（`r-20261123151728-52a3`）逐跳：
-         *
-         *   painter 的 color 槽空 ⇒ 不喷 ⇒ stacker 的 lower 没料 ⇒ 不吐货
-         *     ⇒ **path8（upper 那一路）淤 259 件**
-         *
-         * **path8 是淤积的那条，不是堵住的那条。** 删它 = 拆受害者，
-         * 真正堵住的那端还在。而 `MACHINE_STARVED` 指的 `C3.color` 才是成因。
-         *
-         * 所以它必须排在**后面**，并且它的 hint 现在明说「这是结果，不是成因，
-         * 先去修上面那些」。排第一会让那句「上面那些」变成无稽之谈。
-         *
-         * ★ 2026-11-24 三次真机 run 证明：rank 8 会挤掉 `MINER_UNWIRED` ★
-         *
-         * 真机实测（`.findings/LIVEVERIFY-ALARM-2026-11-24.md`，3 个 run / 8 轮，
-         * 三次独立复现）：
-         *
-         *   r1（无 WORLD_FROZEN）: CHAIN_UNFED×2, MINER_UNWIRED        ← 8 条
-         *   r2（有 WORLD_FROZEN）: WORLD_FROZEN, CHAIN_UNFED×2         ← MINER_UNWIRED 消失
-         *
-         * 而 `MINER_UNWIRED` 是 rank **11**，比 8 更靠后 —— 所以这条纯报警
-         * **精确地抢了它的最后一格**。
-         *
-         * 「9 台矿机踩在矿上、输出口是空的」是一张**施工单**（接一下就能出货）；
-         * 「整图零产出」是一句**报警**（说了也不给动作）。用报警挤掉施工单，
-         * 是把 `LIMITS.TOTAL = 8` 这个稀缺额度花在了不产生动作的信息上。
-         *
-         * 所以降到 **15**（`TRASH_OVERGROWN`(14) 之后）：预算紧时它自己先被砍掉。
-         * 它的价值仍然在 —— 没有别的线索时能确认「全图确实停转」——
-         * 但那个价值**低于任何一条可施工的诊断**。
-         *
-         * ⚠️ 不要因为「它是 blocker 级事实」就把它排前面。severity 与 rank 是两件事：
-         * severity 说「这事多严重」，rank 说「值不值得占一个名额」。 */
-        WORLD_FROZEN: 8,
         NO_PRODUCTION: 5, PRODUCED_NOT_DELIVERED: 6, FLOW_UNREACHABLE: 7, FLOW_UNVERIFIED: 8,
         SLOT_STARVED: 9, OUTPUT_UNROUTED: 9,
         /* ★ `OUTPUT_STRANDED` 必须登记，否则落到默认 rank=50 被挤掉 ★
@@ -3191,7 +3135,7 @@ export async function runLoop(opts = {}) {
          *  只由轮首那一行写，不受 verify / 撤销 / 收尾 obs 影响 ——
          *  它回答的是「两次 observe 之间过了多少游戏秒」，
          *  也就是 `ProductionAnalytics` 的统计窗口有没有轮转过一片。
-         *  见 `WORLD_FROZEN` 的 `tickSincePrev` 判据。 */
+         *  供诊断判统计窗口够不够老。 */
         obsTickLastSeen: null,
         diagnoses: [],        /** fp → {count, actions:Set} */
         fpSeen: new Map(),
@@ -3613,7 +3557,7 @@ export async function runLoop(opts = {}) {
                 break;
             }
             st.obs = ob.obs; st.items = ob.items; st.production = ob.production;
-            /* ★ 记录**上一次轮首 observe** 的 tick，供 `WORLD_FROZEN` 判「窗口够不够老」★
+            /* ★ 记录**上一次轮首 observe** 的 tick，供诊断判统计窗口够不够老★
              *
              * ## 为什么不能用 `st.lastObs`（2026-11-24，回归审计 B4）
              *
@@ -4071,7 +4015,7 @@ export async function runLoop(opts = {}) {
 
             let diagnoses = diagnose(ob.obs, ob.items, ob.production, st.lastReport, curGoal, st.handles, {
                 recipe: st.recipe,
-                /* ★ 距上一次 observe 过了多少**游戏秒** —— `WORLD_FROZEN` 用它判窗口够不够老 ★
+                /* ★ 距上一次 observe 过了多少**游戏秒** —— 诊断用它判统计窗口够不够老 ★
                  *
                  * `ProductionAnalytics.update()` 只在
                  * `root.time.now() - lastAnalyticsSlice > 10` 时轮转一片

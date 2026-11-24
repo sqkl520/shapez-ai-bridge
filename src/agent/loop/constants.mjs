@@ -106,15 +106,6 @@ export const DIAG_CODES = Object.freeze({
      *
      * 于是「机器在跑、但一半产物被堵死」这个状态完全没被覆盖。 */
     OUTPUT_STRANDED: "L2: a machine that is running has an output slot with nothing on it",
-    /* ★ 整座工厂零产出，而且有明确的物理堵点（2026-11-23）★
-     *
-     * 与 `NO_PRODUCTION` 的分工：后者只说「没有产线在造目标」，把模型推向**新建**；
-     * 这条说的是「货堵住了、出不去了」，把模型推向**疏通**。
-     * 动作方向相反，绝不能合并 —— 在 98.9% 满载的世界里继续新建只会更堵。
-     *
-     * 判据必须是「全图零产出」，不能是「输出口堵」——实测 50 个还在产出的快照里
-     * 有 30 个出口也是全堵的，满载是这套工厂的常态。 */
-    WORLD_FROZEN: "L2: nothing on the map is producing, and a specific belt run is holding the congestion",
     FLOW_UNREACHABLE: "L3: a declared flow does not reach its target",
     FLOW_UNVERIFIED: "L3 was degraded (no flows supplied) — not a pass",
 
@@ -538,15 +529,6 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["trash_unused", 6],
         ["remove_machine", 3],
     ]),
-    /* 全厂冻结：先疏通，再谈连接。
-     * `remove_run` 排第一 —— `trash_unused` 对「出口已有下游」的带子恒拒，
-     * 而堵点恰恰都接着下游。拆和改道才是真能落地的两个动作。 */
-    WORLD_FROZEN: cand([
-        ["remove_run", 9],
-        ["connect", 7],
-        ["replace_run", 5],
-        ["trash_unused", 2],
-    ]),
 
     /* ── L3 ── */
     FLOW_UNREACHABLE: cand([
@@ -576,6 +558,17 @@ export const RETRIEVAL_TABLE = Object.freeze({
         ["connect", 8],
         ["insert_machine", 6],
         ["extend_line", 4],
+        /* ★ 补 `remove_run`（2026-11-24，`WORLD_FROZEN` 删除的配套）★
+         *
+         * `remove_run` 原来只在两个入口：`DEAD_LINES` 和 `WORLD_FROZEN`。
+         * 后者被删之后，实测有 **184/380** 个零产出快照上 `remove_run` 从
+         * `CANDIDATE MACROS` 卡片表里消失（真调 LLM 四臂实验，见
+         * `.findings/EXISTENCE-WORLD-FROZEN-2026-11-24.md` §1.6）。
+         *
+         * 而 `CHAIN_UNFED` 本来就在说同一件事：「这条链没有源头」——
+         * 「拆掉它」是它的合法出路之一（`structural.mjs` 的 `chain_belt_uids`
+         * 就是为此准备的选区）。给最低权重，让它排在「接上」之后。 */
+        ["remove_run", 3],
     ]),
     WASTE_NO_SINK: cand([
         ["insert_machine", 7],        // insert_machine 的 allowed 表里有 trash（place.mjs:378）

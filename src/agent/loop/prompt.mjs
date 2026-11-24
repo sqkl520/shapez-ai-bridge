@@ -2562,6 +2562,26 @@ export function renderCapacity(capacity, options = null, opts = {}) {
         if (produced === 0 && delivered === 0) {
             const iso = num(cap.miners && cap.miners.isolated);
             const flowing = onBelts !== null && onBelts > 0;
+            /* ★ 零产出这一句必须**保底送达**（2026-11-24，`WORLD_FROZEN` 删除的配套）★
+             *
+             * 它是「全图零产出，不只是目标零产出」这个事实的**唯一来源** ——
+             * `NO_PRODUCTION` 只说「目标形状窗口产出 0」，模型的自然反应是「去建一条目标产线」，
+             * 而正确方向是「先别建，去疏通」。两者方向相反。
+             *
+             * 但实测（`.findings/EXISTENCE-WORLD-FROZEN-2026-11-24.md`）：
+             * 完整版 ~340 字符，而这里有一道 `room >= 120` 的门槛 ——
+             * **98/380（25.8%）的零产出快照上它整段被 `dropped-for-budget` 挤掉**。
+             *
+             * 所以零产出时加一档**极短保底**（≤120 字符）：宁可只说一句
+             * 「货在带上流但零产出零交付」，也不能让这个方向性区分消失。
+             * 门槛也降到 60 —— 那句话 100 字符左右，60 的余量足够放下短版。 */
+            if (opts.form === "short" && num(opts.room) !== null && num(opts.room) < 200) {
+                return flowing
+                    ? "## CAPACITY\nitems ride the belts but ZERO produced / ZERO delivered — "
+                        + "repair the LAST segment, do not add machines."
+                    : "## CAPACITY\nnothing produced, nothing delivered, nothing on the belts — "
+                        + "first make one path carry items.";
+            }
             const head = flowing
                 ? `## CAPACITY\n${onBelts} items ARE riding the belts, but ZERO produced and ZERO delivered — `
                     + "goods circulate without ever reaching the hub. Repair the LAST segment; "
