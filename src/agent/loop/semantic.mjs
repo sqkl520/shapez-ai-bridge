@@ -3650,8 +3650,35 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                 });
                 const worst = starved[0];
                 const hs = starved.map(s => handleOf(handles, s.m.uid)).filter(Boolean);
+                /* ★ 缺的是**哪个槽**，必须说出来（2026-11-25，真调 LLM 77:0 实测）★
+                 *
+                 * 旧版这里写 `缺 ${JSON.stringify(f.cell)}` —— 一个坐标。
+                 * 而 `sanitize()` 会把坐标打成 `<coord>`，所以模型看到的是
+                 * **`缺 [<coord>]`**：一个既看不懂、又不含角色名的东西。
+                 *
+                 * 实测（`.findings/C4-UPPER-WALL-2026-11-25.md`，192 条真调样本）：
+                 *
+                 *   目标是 C4 的提案：83 次
+                 *     port=upper:  77
+                 *     port=lower:   0     ← 一次都没有
+                 *
+                 * 因为 `## MACHINES` 那行给了两个候选（`lower@bottom(←B133)` /
+                 * `upper@bottom(←B90)`，**两个都标着已接**），图例又说
+                 * `port=a|b ⇒ must name one` 逼它二选一，而**没有任何一句说缺的是 lower**。
+                 *
+                 * 它只能猜 —— 而 hint 里「最靠**上游**」是它唯一能抓的线索，
+                 * 「上游」(upstream) 和 `upper` 在中文模型里高度混淆
+                 * （`why` 里提到 "上游/upstream" 44/77，提到 "upper" 字面 18/77）。
+                 * **模型脑子里装的是「上游」，写出来的是 `upper`。**
+                 *
+                 * 对照：历史上 `SLOT_STARVED` 明说「lower 空着」时，模型立刻写了
+                 * `port:"lower"` 并落地。⇒ **它会读角色名，问题是这次诊断没给。**
+                 *
+                 * 所以这里给出角色名而不是坐标：**更短、且含信息**。 */
                 const detail = starved.map(s => {
-                    const empty = s.fed.filter(f => !f.ok).map(f => JSON.stringify(f.cell)).join("/");
+                    const empty = s.fed.filter(f => !f.ok)
+                        .map(f => (f.role ? `${f.role}槽` : JSON.stringify(f.cell)))
+                        .join("/");
                     return `${s.m.type}#${s.m.uid}(${s.nFed}/${s.total}，缺 ${empty})`;
                 }).join("；");
                 /* ★ 谁最便宜地能填这个槽 ★
@@ -3939,11 +3966,32 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                         return rows.filter(r => r.handle).slice(0, 3);
                     } catch { return []; }
                 })();
+                /* ★ 缺的槽名，在 hint 里直接写出来（2026-11-25）★
+                 *
+                 * 见下面 `detail` 与 `slot` 两处的长注释：77:0 的实测证明
+                 * 不写角色名模型只能猜，而它 100% 猜错（全选 `upper`）。
+                 * 这里算一次，供 `slot` / `hint` 两处共用。 */
+                const worstMissRoles = worst.fed.filter(f => !f.ok).map(f => f.role || "").filter(Boolean);
+                const missRole = worstMissRoles[0] || "";
                 out.push({
                     code: "MACHINE_STARVED",
                     layer: "L4",
                     severity: "blocker",
                     subject: subjectOf(handles, worst.m.uid, worst.m.type),
+                    /* ★ 缺的是哪个槽 —— 直接渲染进标题行（2026-11-25）★
+                     *
+                     * `prompt.mjs:2803` 的 `@${d.slot.role}` 从造出来就是死代码：
+                     * 全 run 24 条诊断里 `.slot` 出现 **0 次**。这里把它填上，
+                     * 标题行会变成 `1. MACHINE_STARVED …: C4 (stacker) @lower`（+6 字符）。
+                     *
+                     * 实测 77:0（模型全选 `upper`，一次都没选对）——
+                     * **不写角色名，它只能猜，而它 100% 猜错。**
+                     * 对照：历史上 `SLOT_STARVED` 明说「lower 空着」时，模型立刻写
+                     * `port:"lower"` 并落地。⇒ 它会读角色名，问题是没给。 */
+                    slot: (() => {
+                        const miss = worst.fed.filter(f => !f.ok);
+                        return miss.length ? { role: miss[0].role || null } : undefined;
+                    })(),
                     expected: `每台多输入机器（${[...MULTI_IN].join("/")}）的每个输入槽都有货`,
                     observed: `${starved.length} 台机器缺进料：${detail}`,
                     evidence: {
@@ -3953,6 +4001,14 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             type: s.m.type, uid: s.m.uid, at: [s.m.x, s.m.y],
                             fed: s.nFed, need: s.total,
                             missing_cells: s.fed.filter(f => !f.ok).map(f => f.cell),
+                            /* ★ 角色名（2026-11-25）。`prompt.mjs:2803` 的 `@${d.slot.role}`
+                             * 渲染位从造出来那天起就是死代码 —— 全 run 24 条诊断里 `.slot`
+                             * 出现 **0 次**。这里把它填上，让 `MACHINE_STARVED` 的标题行
+                             * 直接渲染成 `C4 (stacker) @lower`（+6 字符）。
+                             *
+                             * 见上面 `detail` 那段的长注释：77:0 的实测证明
+                             * **不写角色名，模型只能猜，而它 100% 猜错。** */
+                            missing: s.fed.filter(f => !f.ok).map(f => ({ role: f.role || null })),
                         })),
                         /* 可行源头：最近、且输出口空闲的 3 台。
                            渲染在 `renderDiagnoses` 里，带 `from:` 前缀。 */
@@ -3989,10 +4045,22 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                      * `sanitize()` 会按契约把 `(-4,15)` 换成 `<coord>`，
                      * 于是模型读到「先修 painter#13552 的 `<coord>` 那个空格」，
                      * 一半句子是废话，还占字符额度。想指位置就给句柄。 */
+                    /* ★ 「上游」这个词必须点明它不是 `upper` 槽（2026-11-25）★
+                     *
+                     * 实测 192 条真调样本：目标是 C4 的提案 83 次，其中
+                     * **`port=upper` 77 次、`port=lower` 0 次**。
+                     *
+                     * 而 `why` 里提到「上游/upstream」44/77、提到 `upper` 字面 18/77
+                     * —— **模型脑子里装的是「上游」，写出来的 port 是 `upper`。**
+                     * 这两个词在这份 prompt 里只差两个字母，而 `## MACHINES` 那行
+                     * 恰好把两个槽命名为 `lower` / `upper`。
+                     *
+                     * 所以这里把「上游」明确排除掉，并把缺的槽直接写出来。
+                     * 字数上是**净增 ~8 字符**，但它省掉的是整整一轮白干。 */
                     hint: `**${starved.length} 台机器只吃到一半的料，永远不会产出**，整条链会一起冻死。`
                         + `**从 ${worst.m.type}#${worst.m.uid}（句柄 ${handleOf(handles, worst.m.uid) || "?"}）开始**`
-                        + `—— 它在缺料机器里最靠**上游**，是这条链的根。`
-                        + `把缺的那一路接上：\`connect\` 到它的缺料口；源头不存在就 \`insert_machine\`。`
+                        + (missRole ? `—— 缺的是 \`${missRole}\` 槽（不是别的槽）。` : `—— 它是这条链的根。`)
+                        + `把这一路接上：\`connect\` 到它的 \`${missRole || "缺料"}\` 口；源头不存在就 \`insert_machine\`。`
                         + (starved.length > 1 ? `这台通了再看另外 ${starved.length - 1} 台。` : ""),
                 });
             }
