@@ -2575,7 +2575,25 @@ export function renderCapacity(capacity, options = null, opts = {}) {
              * 所以零产出时加一档**极短保底**（≤120 字符）：宁可只说一句
              * 「货在带上流但零产出零交付」，也不能让这个方向性区分消失。
              * 门槛也降到 60 —— 那句话 100 字符左右，60 的余量足够放下短版。 */
-            if (opts.form === "short" && num(opts.room) !== null && num(opts.room) < 200) {
+            /* ★ 零产出这一句必须**按 room 选长度**，不能靠外层的 form 循环
+             *   （2026-11-25，送达审计抓到：上一版是死代码）★
+             *
+             * 外层调用点是：
+             *   for (const form of ["full", "short"]) { const text = renderCapacity(..., {form, room}); if (text) break; }
+             *
+             * 而上一版这里是 `if (opts.form === "short" && room < 200) return 短版`，
+             * 紧接着的 full 分支**返回前根本不看 room** —— 于是 `full` 永远「成功」，
+             * `short` 永远轮不到。**那段保底是死代码，一行都没执行过。**
+             *
+             * 现在改成：零产出这一支自己读 `room`，短就返回短版。
+             * 这样与 form 无关 —— 外层传 full 也照样按 room 降级。
+             *
+             * 为什么这件事重要：这句是「全图零产出，不只是目标零产出」的**唯一来源**
+             * （`NO_PRODUCTION` 只说「目标形状窗口产出 0」，模型的自然反应是「去建一条
+             * 目标产线」，而正确方向是「先别建，去疏通」—— 两者方向相反）。
+             * 实测 98/380（25.8%）的零产出快照上它整段被 `dropped-for-budget` 挤掉。 */
+            const room = num(opts && opts.room);
+            if (room !== null && room < 200) {
                 return flowing
                     ? "## CAPACITY\nitems ride the belts but ZERO produced / ZERO delivered — "
                         + "repair the LAST segment, do not add machines."
