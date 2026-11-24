@@ -760,7 +760,28 @@ export function classifyNetEffect(before, after, delta = null) {
      * 判词正是靠这句话撑起来的（含世界死掉那一轮）。
      * 修完之后那些 run 会退回 `constructive` 或 `churn` —— **这是对的**，
      * 因为它们确实没让世界变好。 */
-    const producingNow = anyProducedIn(after) || anyProducedIn(before);
+    /* ★ 只用 `after`，不用 `||`（2026-11-24，回归审计 B2）★
+     *
+     * 上一版写的是 `anyProducedIn(after) || anyProducedIn(before)`，而**它上方的注释
+     * 说的是「用 `after` 主判、`before` 兜底，避免把刚开始堵的那一轮误判成改善」——
+     * OR 的实际行为与那句话相反。**
+     *
+     * 实测（回归审计 `probe-died-round.mjs`，五组受控对照）：
+     *
+     *   两边都产出，货量涨 50→62                              ⇒ cleanup ✅ 对
+     *   两边都零产出，货量涨 50→62                            ⇒ churn   ✅ 对
+     *   before 零产出、after 有产出，货量涨                    ⇒ cleanup ✅ 对
+     *   **世界这一轮死掉（before 有产出、after 零产出），350→362 ⇒ cleanup ❌ 错**
+     *
+     * 第 4 行正是我上一轮想修的那个场景 —— `r-20261115121951-39ea` 的原数据
+     * 就是 `350→362`。**OR 让它逃过了修正。**
+     *
+     * 改成只看 `after`：「这一轮结束时世界在不在产出」才是判断「货堆起来算不算改善」
+     * 的正确口径。世界死亡的那一刻 `after` 已经是零产出 ⇒ 货涨不再算改善。
+     *
+     * 副作用：「before 零产出、after 有产出」那一例仍然判 cleanup —— 那是对的，
+     * 世界刚活过来时货在带子上流动确实是改善。 */
+    const producingNow = anyProducedIn(after);
     if (items && items.delta > 0 && producingNow) {
         better.push(`带上的货 ${items.before}→${items.after}`);
     }
@@ -856,7 +877,19 @@ export function classifyNetEffect(before, after, delta = null) {
        把死带子挪个位置、改了一条带子的朝向……），没变才是真的什么都没做。
        这一条必须用指纹而不是 delta：上面所有指标对「A→B 与 B→A」都不敏感。 */
     if (before && after && before.shape !== after.shape) {
-        why.push("世界形态变了，但规模、连通性、货量、目标全都没动 —— 等价替换");
+        /* ★ 判词不许声称「货量没动」（2026-11-24，回归审计 B3）★
+         *
+         * 旧文案写死了「规模、连通性、货量、目标全都没动」。而在零产出世界里
+         * `items_on_belts` 的方向被条件抑制，货量涨了却走到这个分支 ——
+         * 于是判词在说一件**同一行 delta 里明明不成立的事**。
+         *
+         * 实测那一例：`items 350→362`，判词却写「货量没动」。
+         * 改成**据实列出到底什么没动**：连通性与目标确实没动（那是这条分支的
+         * 进入条件的一部分），但货量动不动要去 delta 里查。 */
+        const itemsMoved = d.some(x => x.metric === "items_on_belts" && Number(x.delta) > 0);
+        why.push(itemsMoved
+            ? "世界形态变了，但连通性与目标没动 —— 货量虽然涨了，那只是货堆在带子上，不是流动"
+            : "世界形态变了，但规模、连通性、货量、目标全都没动 —— 等价替换");
         return { kind: "churn", why, delta: d };
     }
     why.push("世界没有任何变化");
@@ -894,8 +927,32 @@ export function formatDeadBySource(h) {
 /** 人读的格式（timeline.log 用） */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
-/** 「不判方向」的字段：它们的 delta 也要打出来（规模变化本身就是排查时最想看的）。 */
-const NO_DIRECTION = new Set(["entities", "belts", "machines", "level", "required", "progress"]);
+/**
+ * 「不判方向」的字段：它们的 delta 也要打出来（规模变化本身就是排查时最想看的）。
+ *
+ * ★ `items_on_belts` 也在里面（2026-11-24，回归审计 B3）★
+ *
+ * 它原本**不在**，靠 `sign ∈ {+,-}` 决定打不打印。而我上一轮把它的方向条件化
+ * 之后（零产出时 `sign` 退化成 `"0"`），**整条事实从时间线消失了**：
+ *
+ *   items 350→362，其余完全不变
+ *     → 时间线一行变成「无变化」                      ← 事实消失
+ *     → 净效果仍写「churn — 规模、连通性、货量、目标全都没动」  ← 判词还说谎
+ *
+ * 实测影响面（回归审计，570 个 run 的 timeline.log）：
+ * **403 行**「只有 items_on_belts（+redundancy）」的记录会变成「无变化」。
+ *
+ * 这正是本项目最高频的缺陷形态（`computed-but-never-delivered`）的新一次重演：
+ * 值算出来了、delta 产出了，被渲染层的过滤器吞掉。
+ *
+ * 加进 `NO_DIRECTION` ⇒ 它**总是打印**，标记是 `·`（变了但方向不判），
+ * 而不是消失。`sign:"0"` 的语义是「这一轮故意不判方向」，不是「没有方向」，
+ * 但两者在渲染上的正确处置是同一个：**照样印出来，别替读的人做决定**。
+ */
+const NO_DIRECTION = new Set([
+    "entities", "belts", "machines", "level", "required", "progress",
+    "items_on_belts",
+]);
 
 /**
  * 在 `formatDelta` 里**不打印**的字段。

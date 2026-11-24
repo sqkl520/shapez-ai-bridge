@@ -692,11 +692,48 @@ function slotRoleAt(table, obs, cell, facingDir, side) {
      * 只在**确实重名**时才加后缀 —— 单槽的情形保持原样，不动已冻结的渲染文本。 */
     const dupRole = list.filter(sl => sl.role === picked.role).length > 1;
     if (!dupRole) return picked.role;
-    /* ⚠️ 索引用**整个 list 的全局下标**，不能用 `sameDir.indexOf` ——
-     * 后者只在该方向的子集里编号，不同方向会撞号（实测 `primary[0]` 出现两次）。
-     * 全局下标与宏的 `port.index` 是同一个空间（`slotsOf` 的返回顺序）。 */
-    const gi = list.indexOf(picked);
-    return `${picked.role}[${gi >= 0 ? gi : 0}]`;
+    /* ★ 重名时必须带索引，但**形态必须能被宏接受**（2026-11-24，回归审计 B1）★
+     *
+     * 上一版渲染成 `primary[12]`。信息是对的（12 与宏的 `port.index` 同一空间），
+     * **但形态是错的**：
+     *
+     *   `contract.mjs` 里 `validatePort` 对字符串的判据是
+     *   `/^[a-z][a-z0-9_]{0,31}$/` —— `primary[12]` 含方括号，**必被拒**。
+     *
+     * 回归审计实测（fixture 里全部 47 处 `[N]` 下游引用）：
+     *
+     *     原样抄成字符串 "role[N]"  ⇒ bad_type: 47/47
+     *     改写成 {role,index}       ⇒ 形态正确（本例撞 port_already_bound，说明解析过了）
+     *
+     * 也就是说：**模型照 desc 抄一次端口，就白掉一轮。**
+     * 这正是本项目第八次「格式与参数格式不一致」，也是「错误的指路比不给更贵」
+     * 的又一次复发 —— 我上一版只解决了「读得懂」，没解决「写得出」。
+     *
+     * 现在直接渲染成**宏的字面量形态** `{role:"primary", index:12}`：
+     * 模型要 `to.port` 时把它整个抄过去就是合法的 `{role,index}` 对象，
+     * 不需要任何转写。代价是这一段的字符数变多，但它只在**重名**时出现
+     * （单槽机器仍渲染成裸 `primary`，已冻结的文本不动）。
+     *
+     * ⚠️ 不要改回 `role[N]`。它看起来更短，但那是**模型必被拒**的形态。
+     *
+     * ## 一个沉睡的不一致（写在这里防止下一个人以为两套编号同源）
+     *
+     * `list.indexOf(picked)` 是**整个 list 的全局下标**；而宏的 `port.index`
+     * 按「同一角色内编号」（`connect.mjs` 的 `seen` map）。
+     *
+     * 实测（回归审计 `probe-all-templates.mjs`，49 个 building/variant）：
+     *
+     *   mixer/default  inputs color:   handles [0,1]    宏 [0,1]       一致
+     *   hub/default    inputs primary: handles [0..15]  宏 [0..15]     一致
+     *   painter/quad   inputs color:   handles [1,2,3,4] 宏 [0,1,2,3]  **偏 1**
+     *
+     * `painter/quad` 不在 v1 支持矩阵内（`place.mjs` 的 `SUPPORTED_BUILDINGS`
+     * 只有 `painter: [default, mirrored, double]`），历史 570 个 run 的实体里
+     * **0 台 painter/quad**，所以今天不咬人。
+     * **一旦 quad painter 进 v1，这里必须改成「同角色内编号」。** */
+    const sameRole = list.filter(sl => sl.role === picked.role);
+    const idx = sameRole.indexOf(picked);
+    return `{role:"${picked.role}", index:${idx >= 0 ? idx : 0}}`;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

@@ -76,17 +76,27 @@ test("★ stacker 的两路进料必须分得开（lower vs upper）", () => {
     assert.notEqual(r90, r133, "两路不能同名 —— 同名会让模型推错方向");
 });
 
-test("★ hub 的同名入口必须带索引", () => {
+test("★ hub 的同名入口必须带索引，且形态要能被宏接受", () => {
     const { obs, items } = loadRun(RUN);
     const h = buildHandles(obs.result || obs, items.result || items);
     /* hub 的 16 个入口全叫 `primary`，其中 `primary@top` 就有 4 个。
-     * 只渲染 `H1.primary` 的话，多条不同的带子看起来接同一个口。 */
+     * 只渲染 `H1.primary` 的话，多条不同的带子看起来接同一个口。
+     *
+     * ⚠️ 2026-11-24 回归审计 B1：上一版渲染成 `primary[12]`，而宏的
+     * `validatePort` 对字符串的判据是 `/^[a-z][a-z0-9_]{0,31}$/` ——
+     * 含方括号**必被拒**。实测 47/47 处 `[N]` 原样抄进 `port` 全部 `bad_type`。
+     *
+     * 现在渲染成宏的字面量形态 `{role:"primary", index:12}`：
+     * 模型整个抄过去就是合法的 `{role,index}` 对象，不需要转写。 */
     const hubBelts = [...h.byHandle.values()]
         .filter(e => /下游=H1\./.test(e.desc || ""));
     assert.ok(hubBelts.length >= 2, `前提：至少 2 条带子进 hub，实得 ${hubBelts.length}`);
     for (const e of hubBelts) {
-        assert.match(e.desc, /下游=H1\.primary\[\d+\]/,
-            `hub 入口必须带索引，实得：${e.desc}`);
+        /* 必须是 `{role:"...", index:N}` 字面量；不许是 `role[N]` */
+        assert.match(e.desc, /下游=H1\.\{role:"[a-z_]+", index:\d+\}/,
+            `hub 入口必须渲染成 {role,index} 字面量，实得：${e.desc}`);
+        assert.ok(!/下游=H1\.[a-z_]+\[\d+\]/.test(e.desc),
+            `不许用 role[N] 形态（宏会 bad_type），实得：${e.desc}`);
     }
 });
 

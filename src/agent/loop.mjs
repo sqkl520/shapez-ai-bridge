@@ -1384,8 +1384,27 @@ export function diagnose(obs, items, production, report, goal, handles, ctx = {}
          * 所以它必须排在**后面**，并且它的 hint 现在明说「这是结果，不是成因，
          * 先去修上面那些」。排第一会让那句「上面那些」变成无稽之谈。
          *
-         * 8 = 与 `FLOW_UNVERIFIED` 同档、在全部可行动诊断之后。它的价值是
-         * 「确认全图确实停转」这个事实本身，不是一个动作入口。 */
+         * ★ 2026-11-24 三次真机 run 证明：rank 8 会挤掉 `MINER_UNWIRED` ★
+         *
+         * 真机实测（`.findings/LIVEVERIFY-ALARM-2026-11-24.md`，3 个 run / 8 轮，
+         * 三次独立复现）：
+         *
+         *   r1（无 WORLD_FROZEN）: CHAIN_UNFED×2, MINER_UNWIRED        ← 8 条
+         *   r2（有 WORLD_FROZEN）: WORLD_FROZEN, CHAIN_UNFED×2         ← MINER_UNWIRED 消失
+         *
+         * 而 `MINER_UNWIRED` 是 rank **11**，比 8 更靠后 —— 所以这条纯报警
+         * **精确地抢了它的最后一格**。
+         *
+         * 「9 台矿机踩在矿上、输出口是空的」是一张**施工单**（接一下就能出货）；
+         * 「整图零产出」是一句**报警**（说了也不给动作）。用报警挤掉施工单，
+         * 是把 `LIMITS.TOTAL = 8` 这个稀缺额度花在了不产生动作的信息上。
+         *
+         * 所以降到 **15**（`TRASH_OVERGROWN`(14) 之后）：预算紧时它自己先被砍掉。
+         * 它的价值仍然在 —— 没有别的线索时能确认「全图确实停转」——
+         * 但那个价值**低于任何一条可施工的诊断**。
+         *
+         * ⚠️ 不要因为「它是 blocker 级事实」就把它排前面。severity 与 rank 是两件事：
+         * severity 说「这事多严重」，rank 说「值不值得占一个名额」。 */
         WORLD_FROZEN: 8,
         NO_PRODUCTION: 5, PRODUCED_NOT_DELIVERED: 6, FLOW_UNREACHABLE: 7, FLOW_UNVERIFIED: 8,
         SLOT_STARVED: 9, OUTPUT_UNROUTED: 9,
@@ -3168,6 +3187,12 @@ export async function runLoop(opts = {}) {
         runLog: [],
         rounds: 0,
         llmCalls: 0, txCount: 0, ticks: 0,
+        /** 上一次**轮首** observe 的 `obs.tick`（游戏秒）。
+         *  只由轮首那一行写，不受 verify / 撤销 / 收尾 obs 影响 ——
+         *  它回答的是「两次 observe 之间过了多少游戏秒」，
+         *  也就是 `ProductionAnalytics` 的统计窗口有没有轮转过一片。
+         *  见 `WORLD_FROZEN` 的 `tickSincePrev` 判据。 */
+        obsTickLastSeen: null,
         diagnoses: [],        /** fp → {count, actions:Set} */
         fpSeen: new Map(),
         /** 上一轮用过的宏（供「必须换动作」时从候选中剔除，以及机器判定是否照抄） */
@@ -3588,12 +3613,38 @@ export async function runLoop(opts = {}) {
                 break;
             }
             st.obs = ob.obs; st.items = ob.items; st.production = ob.production;
-            /* ★ 记录**上一次** observe 的 tick，供 `WORLD_FROZEN` 判「窗口够不够老」★
+            /* ★ 记录**上一次轮首 observe** 的 tick，供 `WORLD_FROZEN` 判「窗口够不够老」★
              *
-             * 必须在覆盖 `st.lastObs` **之前**取，否则就是自己减自己。
-             * 判据用游戏秒（`root.time.now()` 的返回值，见 `game_time.js:152`），
+             * ## 为什么不能用 `st.lastObs`（2026-11-24，回归审计 B4）
+             *
+             * `st.lastObs` 有**三个**写入点：
+             *
+             *   loop.mjs:3621  轮首 observe
+             *   loop.mjs:3886  撤销后重读
+             *   loop.mjs:5183  **verify 之后** ← 这一行是关键
+             *
+             * 上一轮结束时代码写的是 `st.lastObs = afterObs`，所以从这里取到的旧 tick
+             * 是**上一轮 verify 结束**的时刻。而 verify 内部会 `step(2400)`（20 游戏秒），
+             * `checkBehavior` 还会再 extend 最多 2×2400。于是 `tickSincePrev` 量的是
+             * 「verify 结束 → 本轮 observe」的**闲置间隔**，不是 observe→observe。
+             *
+             * 实测（回归审计 `probe-obstickprev.mjs`）：
+             *
+             *   上一轮**有** apply（跑过 verify step）: n=945，p10 26.5s，<10s 的 0 个
+             *   ⇒ 残差(=gap−20s) < 10s 的有 **245 个（25.9%）**
+             *   ⇒ 而这 245 个里，**100% 都是真实死世界**（本轮诊断含 NO_PRODUCTION）
+             *
+             * 也就是说：verify 那 20 秒已经让统计窗口轮转了，我却把它当成「窗口没过期」，
+             * 于是**四分之一的死世界被自己的门槛挡掉了**。
+             *
+             * ## 修法：单独记一个只由「轮首 observe」写的字段
+             *
+             * `st.obsTickLastSeen` 只在本行（轮首 observe）更新，不受 verify / 撤销影响。
+             * 判据用游戏秒（`root.time.now()`，`game_time.js:152`），
              * 与 `production_analytics.js:129` 的轮转条件同一个单位。 */
-            st.obsTickPrev = (st.lastObs && typeof st.lastObs.tick === "number") ? st.lastObs.tick : null;
+            st.obsTickPrev = Number.isFinite(st.obsTickLastSeen) ? st.obsTickLastSeen : null;
+            st.obsTickLastSeen = (typeof ob.obs.tick === "number" && Number.isFinite(ob.obs.tick))
+                ? ob.obs.tick : null;
             st.lastObs = ob.obs; st.lastItems = ob.items; st.lastProduction = ob.production;
             st.handles = buildHandles(ob.obs, ob.items);
 
@@ -5158,6 +5209,9 @@ export async function runLoop(opts = {}) {
                 goalShape: curGoal,
                 flows: planned.txPlan.flows,
                 tx: ap.tx,
+                /* 句柄表：只用于把「被改向的带子」渲染成模型认得出的名字（B149）。
+                   没有它也能算（退成 uid），但那正是模型读不懂的形态。 */
+                handles: st.handles,
                 behavior: mode === "live"
                     ? { ticks: Math.min(2400, Math.max(0, budget.TICKS_MAX - st.ticks)) }
                     : false,
@@ -5199,6 +5253,23 @@ export async function runLoop(opts = {}) {
                 apply: report.apply,
                 /* V2 §2.4：hash 不足以定位「谁消失了」——落 uidDiff 的具体 uid 列表 */
                 uid_diff: report.uidDiff || [],
+                /* ★ 被游戏静默重算朝向的邻居带子（2026-11-24）★
+                 *
+                 * 2026-11-15 12:14:35 那次 `insert_machine(trash)` 只声明 1 destroy，
+                 * 游戏却顺手把 belt#14953 的 rv 从 2 改成 0、belt#15019 的 r 从 180 改成 90 ——
+                 * 掰断了 painter 唯一的颜料供料线，5 分钟后全图产出归零。
+                 * 这两格改向**没进过任何 op / warning / diff**，所以事后复盘时
+                 * 只能靠把两份 obs 逐格相减才找得回来。
+                 *
+                 * 从今天起它是一条读数：每轮 apply 之后都算一遍，写进 transcript
+                 * 与下一轮 prompt（`## LAST ROUND` 的 `reoriented belts:` 段）。 */
+                belt_reorient: report.reoriented
+                    ? {
+                        count: report.reoriented.count,
+                        items: report.reoriented.items.slice(0, 5),
+                        truncated: report.reoriented.truncated,
+                    }
+                    : null,
                 untrustworthy: cls.untrustworthy,
                 goal_delta: goalDelta,
                 world_hash: worldUidSetHash(afterObs),
@@ -5243,6 +5314,17 @@ export async function runLoop(opts = {}) {
                  * 都要 `break` 出去了，下一轮不存在，塞进去也没人读。
                  * 放在这里而不是更早：partial 之后 `planned.calls` 已定稿。 */
                 macro_warnings: planned.macro_warnings || [],
+                /* ★ 上一轮游戏顺手改了哪几条带子的朝向（2026-11-24）★
+                 *
+                 * 只在 continue 路径上给：上面 success / offline_only 两条都要 break 出去。
+                 *
+                 * 数据源是 `verifyRound` 的 `reoriented` —— 它由 before/after 两份 obs
+                 * 相减得出，**不改 mod、不需要重新 patch 游戏**，离线可测。
+                 * 这正是 2026-11-15 事故里唯一缺失的那条事实：
+                 * 「你这一步没写要改它们，但游戏替你改了」。 */
+                belt_reorient: report.reoriented && report.reoriented.count
+                    ? report.reoriented
+                    : null,
             };
             /* 失败指纹已在**轮首**计数（见 countFingerprint）：
                「同一世界诊断第 3 次」只可能在下一次轮首被看见，那一轮不花钱即停。 */

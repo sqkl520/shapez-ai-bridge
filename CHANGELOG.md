@@ -15,6 +15,151 @@
 
 ## [Unreleased]
 
+### Added — 2026-11-24：`## LAST ROUND` 报出「游戏顺手改向了哪些别人的带子」
+
+上一轮修了 `tx.diff.modified` 的**落盘**，但没修**送达** —— `prompt.mjs` 对
+`modified` / `rewired` / `neighbor` 零引用。规划 Agent 独立核实了这一点（F4）。
+
+而事故的直接原因正是「邻居 rv 被改」：2026-11-15 12:14:35 那次
+`insert_machine(trash) @(-3,-8)` 只声明 1 个 destroy，游戏却顺手把
+`belt#14953` 的 rv 从 2 改成 0（左→下转角变左→右直带）、`belt#15019` 的 r 从 180 改成 90，
+掰断了 painter 唯一的颜料供料线，5 分钟后全图产出归零。
+
+- 新纯函数 `reorientedBelts(beforeObs, afterObs, opts)`（`loop/verify.mjs`）：
+  两份同口径 obs 相减，找出**朝向变了但没有任何 op 声明要改**的带子。
+  - 只看 `(r, rv)` 任一变化 —— `code = 1 + rv`，多看只会重复计数
+  - 排除 `txPlan.destroys` 里的 uid（计划声明过的删除不算「静默」）
+  - 只看两份 obs 都在的带子（`added`/`removed` 归 diff 管）
+  - 入口/出口方位用 `belt-rules.mjs` 的 `beltEntry()`/`beltExit()`，不是第二份几何
+- `verifyRound()` 产出 `report.reoriented`，新增 check `V-belt-reorient`（**`ok: true`**，
+  它是读数不是批评，**不动** `strictVerdict` / `round.ok` / `applyVerdict`）
+- `## LAST ROUND` 新增一段（≤200 字符，`count === 0` 时整段不出现）：
+  ```
+  reoriented belts (the game rewrote these — no op asked for it):
+    · B149: in left→left, out bottom→right
+    ⇒ You did not declare these. The game recomputes belts next to anything you
+      place/remove. If one of them was feeding a machine, your change broke it.
+  ```
+- **不改 mod、不需要重装** —— 判据需要的信息 loop 本来就有。
+- 测试 `reorient.test.mjs` 13 条全绿（含事故复现、判别力、反例、变异验证）。
+
+### Fixed — 2026-11-24：`WORLD_FROZEN` 在 `truncatedPaths` 下把「可见最堵」说成「全局最堵」
+
+`mod` 的 `debug_items` 只返回前 40 条路径（`out.paths = paths.slice(0, 40)`），
+而 `WORLD_FROZEN` 用 `paths.entries()` 遍历 —— 截断时它指着的可能不是真正最堵的那条。
+
+实测（567 个快照）：44 个 `truncatedPaths === true`，其中 17 个触发 `WORLD_FROZEN`，
+**10 个报的不是真正最堵的路径**。最严重一例 `r-20261113084958-4e86`：
+
+```
+报出来：最堵的一条 31 件 / 19 格（100%）
+被切掉的：path 49 一条就有 166 件（5.3 倍），40–49 这 10 条合计 277 件
+```
+
+- `observed` 分两支：截断时明说「可见的 N/M 条路径里…另有 K 条未返回，至少 X 件货
+  （单条最多 ≥Y 件）—— "最堵" 只在可见部分成立」；非截断时**逐字不动**（500 个快照零增长）
+- 漏报的量**真的算出来**：`belts[]` 不按路径截断，所以被切部分的货量数得出来。
+  口径核对：566 个快照 / 16828 条路径上，`belts[].path` 的行数与游戏自己报的
+  `paths[i].itemsOnPath` **零失配**
+- **否决了「让 mod 按货量排序再截断」**：会破坏 `belts[].path ↔ paths[]` 的下标对齐
+  （红队核过的 523/523），用一条判据换另一条判据
+- ⚠️ 踩到一个坑：第一版 126 字符的 `observed` 被 `compact(…,120)` 切成
+  「… —— 真正的「最堵」可…」，**警告本身被切掉**。压到 109 字符以内才通过
+- 新增 6 条测试（截断不许说全局最堵 / 货量必须算出来 / ≤120 字符 / 非截断逐字不变 /
+  hint 处方仍在 180 内 / 无货时不许编造）
+
+### Fixed — 2026-11-24：`CHAIN_UNFED` 的 `uids` 把「矿机自己」和「它下游带子」混成一个数组
+
+`evidence.uids = [矿机 uid, ...它馈着的每条链的链头 uid]`，而 `candidates[0]` 是 `remove_run`。
+**混组不是「冗余信息」，它正好给了 `remove_run` 一个合法选区。**
+
+事故形态：`M15` 脚下没矿（正确结论），但那 2 格带子末端是 **painter#13552 的 color 槽**
+—— painter 唯一的颜料供料口。诊断自己不知道那几格末端接着谁。
+
+实测（567 个快照，重新调用 `structuralDiagnoses()`）：
+
+```
+CHAIN_UNFED ∧ barren_miner:true 的快照       23
+分组（每台架空矿机一个）                      25
+被一起列进 uids 的带子                     598 格
+其中末端接着「活机器」的分组              11 / 25
+其中是「该槽唯一供料」的                  11 / 11
+这些分组原先 candidates[0] 全是 remove_run  11 / 11
+```
+
+- `uids` 只放矿机；新增 `chain_belt_uids` 放下游带子（让混用**不可能**发生）
+- 末端有任何一台「活机器」且该槽**唯一供料**时，`candidates` 换成
+  `["connect","remove_machine","insert_machine"]`，`remove_run` 彻底不出现
+  （**不抑制诊断本身** —— 矿机脚下没矿是事实，仍要报）
+- `evidence.live_chain_ends` 给出 `{handle, type, uid, slot, unique_feed}`，hint 点名
+  「末端是 C1（painter）的 color 槽（唯一供料）」，**只在句柄查得到时才写**
+- 「活机器」用 `accepts()` 而不是 `at()` —— `painter.color` 的槽位本体**不在 footprint 内**，
+  `at()` 返回 null 会把接好的线判成「断在空格」（这个 footprint 陷阱本项目已踩过四次）
+- **`evidence.handles` 仍然保留链头句柄**：`pickBelts` 靠它决定哪些带子进 `BELTS` 段。
+  摘掉的只有「允许删」这个授权，不是「看得见」这个信息
+- 10 处引用点逐一检查（`fingerprintOf` / `dropInlets` / `candidatesFor` / `pickBelts` /
+  `referencedHandles` / 排序 …），`uids[0]` 仍是矿机，排序不变
+- 新增 8 条测试（拆两组 / 活末端去 remove_run / 点名 / ≤180 字符 / 三个负例 / 确定性 / 非唯一供料仍可拆）
+
+### Fixed — 2026-11-24：回归审计抓到的 4 个问题（3 个真、1 个无）
+
+**B1（blocker）：`slotRoleAt` 的 `[N]` 后缀是宏必然拒绝的字符串。**
+
+上一轮为「重名角色要能指名」加了 `下游=H1.primary[12]`，而 `contract.mjs` 的
+`validatePort` 对字符串的判据是 `/^[a-z][a-z0-9_]{0,31}$/` —— 含方括号**必被拒**。
+实测 fixture 里全部 47 处 `[N]` 下游引用，**原样抄进 `port` 全部 `bad_type`**。
+
+改成宏的字面量形态 `下游=H1.{role:"primary", index:1}`：模型整个抄过去就是合法的
+`{role,index}` 对象，不需要转写。这是我上一版的第八次「格式与参数格式不一致」——
+只解决了「读得懂」，没解决「写得出」。
+
+**B2：`health` 的 `||` 让「世界死掉那一轮」逃过修正。**
+
+上一版写 `anyProducedIn(after) || anyProducedIn(before)`，而注释说的是「用 `after` 主判」。
+OR 的实际行为与那句话相反 —— 实测「before 有产出、after 零产出、货量 350→362」
+**仍然判 cleanup**，那正是我上一轮想修的那条原数据。改成只看 `after`。
+
+**B3：`items_on_belts` 的时间线整行消失。**
+
+方向条件化之后 `sign: "0"`，而 `formatDelta` 的 `keep` 只保留 `sign ∈ {+,-}` 或 `NO_DIRECTION`。
+实测 **403 行**历史记录会变成「无变化」，而读日志的人再也看不到货量在动。
+加进 `NO_DIRECTION` ⇒ 总是打印，标 `·`。
+
+顺带修了 `churn` 的判词：它写死「规模、连通性、**货量**、目标全都没动」，
+而同一行 delta 里货量明明涨了 12 —— 改成据实区分。
+
+**B4：`st.obsTickPrev` 取的是「verify 之后」而不是「上一轮 observe」。**
+
+`st.lastObs` 有三个写入点，其中 `5183` 是 verify 之后。而 verify 内部会 `step(2400)`
+（20 游戏秒）。于是 `tickSincePrev` 量的是「verify 结束 → 本轮 observe」的闲置间隔。
+
+实测：上一轮有 apply 时 p10 26.5s、`<10s` 的 0 个，但**残差 <10s 的有 245 个（25.9%）**，
+而这 245 个**100% 都是真实死世界**（本轮诊断含 `NO_PRODUCTION`）——
+四分之一的死世界被自己的门槛挡掉了。
+
+改成单独的 `st.obsTickLastSeen`，只由轮首 observe 写，不受 verify / 撤销 / 收尾影响。
+
+**关于测试基线的更正**：我用 `git worktree` 建干净副本验证基线，先得出 `fail 29/41/43`
+三个不同数字，查明原因是 **`research/ai-plan/runs/` 是 gitignored 的运行产物，
+worktree 里没有它**，所有依赖真实快照的测试全红。软链接之后基线是 **29**，
+而当前是 **28** ——「28 是基线」这个数字一直是对的。
+
+### Added — 2026-11-24：真机恢复（`mod_connected: false` 的根因）
+
+**不是 bridge、不是 mod、不是存档、不是 rAF —— 是 Steam 客户端没启动。**
+
+shapez 主进程在 `greenworks.init()`（`app.asar` 的 `steam.js:31`）抛
+`Error: Steam initialization failed. Steam is not running.`，Electron 弹出**模态错误框**，
+整个 app 停在崩溃态。极易误判：进程名 `shapezio` 还在、窗口标题只写 `Error`、
+`/health` 返回 `mod_connected: false`、bridge 日志只有 `mod=no` —— **四条线索全指向 mod**。
+
+排查顺序已写进 `.findings/REVIVE-GAME-2026-11-24.md` 第 7 节。
+卡在 Error 框时用 `PostMessage(hwnd, WM_CLOSE)` 正常关闭，**绝不 `Stop-Process -Force`**。
+
+顺带核实：游戏的自动存档约 60 秒一次，会覆写同一 `internal_id` 的 `.bin`，
+所以实验期间存档文件的 **sha256 会变 —— 那不是损坏**（实体数/level/beltPaths/
+实体 code 序列/hub storedShapes 逐项完全一致）。
+
 ### Fixed — 2026-11-23（深夜）：红队复测指出「只修了一半」，再修三处
 
 红队在 `910bf7c` 之后重建脚本、在每个判定上复测，指出两处漏修：

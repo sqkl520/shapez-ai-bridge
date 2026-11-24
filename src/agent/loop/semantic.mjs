@@ -3643,6 +3643,45 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                         const k = typeof r.item === "string" ? r.item : "?";
                         e.items.set(k, (e.items.get(k) || 0) + 1);
                     }
+                    /* ★ `paths[]` 会被截断到 40 条，而 `belts[]` **不会** ★
+                     *
+                     * mod 的 `debugItems` 是 `out.paths = paths.slice(0, 40)`，
+                     * 同时给出 `pathCount`（全局条数）与 `truncatedPaths`；
+                     * 而 `out.belts` 只是逐格列表，**只按 region 过滤、不按路径截断**
+                     * （`shapez-ai-bridge.js:1082-1141`）。
+                     *
+                     * 于是第 40 条之后的路径：几何（`cells`/`boundAcceptor`）看不见，
+                     * **但货量看得见** —— `belts[].path` 就是那条路径的原始下标。
+                     *
+                     * 统计口径已核对（`.findings/FIX-TRUNCATED-PATHS-2026-11-24.md`）：
+                     * 566 个快照、16828 条路径上，`belts[].path` 的行数
+                     * 与游戏自己报的 `paths[i].itemsOnPath` **零失配**。
+                     * 所以「被截断部分有多少货」不是猜的，是数出来的。
+                     *
+                     * ⚠️ `belts` 受 region 限制，所以这个数是**下界**不是精确值 ——
+                     *    文案与 evidence 都必须按「至少」说。 */
+                    const shownPaths = itemsDoc.paths.length;
+                    const totalPaths = Number.isInteger(itemsDoc.pathCount)
+                        ? itemsDoc.pathCount : shownPaths;
+                    /* `pathCount` 与 `truncatedPaths` 都是 mod 给的，正常情况下一致。
+                     * 但**任意一个**说「有没返回的路径」就按截断处理 —— 宁可少数几条，
+                     * 也不要在证据不全时把「可见最堵」说成「最堵」。
+                     * （`truncatedPaths` 存在而 `pathCount` 缺失时，旧式只比数字会漏判。） */
+                    const pathsTruncated = itemsDoc.truncatedPaths === true
+                        || totalPaths > shownPaths;
+                    let hiddenPathsWithItems = 0;
+                    let hiddenMaxItems = 0;
+                    let hiddenMaxPath = null;
+                    let hiddenItems = 0;
+                    if (pathsTruncated) {
+                        for (const [pi, st] of perPath.entries()) {
+                            if (pi < shownPaths) continue;
+                            if (st.n > 0) hiddenPathsWithItems++;
+                            hiddenItems += st.n;
+                            if (st.n > hiddenMaxItems) { hiddenMaxItems = st.n; hiddenMaxPath = pi; }
+                        }
+                    }
+
                     const clogged = [];
                     for (const [pi, p] of itemsDoc.paths.entries()) {
                         if (!p || !Array.isArray(p.cells) || !p.cells.length) continue;
@@ -3821,9 +3860,41 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                                 return { handle: null, type: null };
                             })(),
                             expected: "工厂在产出，原料能进、成品能出",
-                            observed: `整图零产出；${clogged.length} 条带子满载或无处可去，`
-                                + `最堵的一条 ${worst.n} 件 / ${worst.cells} 格（${pct}%，${topItems}）`
-                                + (worst.noAcceptor ? "，它的末端没有任何机器接收" : ""),
+                            /* ★ 截断时**不许说「最堵的一条」**（2026-11-24）★
+                             *
+                             * mod 只给前 40 条路径的几何，第 40 条之后的只看得到货量
+                             * （见上面 `pathsTruncated` 那段）。而这里 `clogged` 是在**可见**
+                             * 路径上筛出来的，「最堵」只对可见范围成立。
+                             *
+                             * 实测（`.findings/FIX-TRUNCATED-PATHS-2026-11-24.md`）：
+                             * 516 个触发快照里有 17 个截断，其中 **10 个**的被切部分藏着
+                             * 比报出来的 `worst` 更重的路径 —— 最严重的一例报了 31 件，
+                             * 而被切掉的那条第 49 号路径上有 **166 件**。
+                             * 一句话把「31 件」说成「最堵」，方向还是最糟的**低估**。
+                             *
+                             * ## 120 字符的硬预算（这条是被实测逼出来的）
+                             *
+                             * `prompt.mjs:renderDiagnoses` 对 `observed` 做
+                             * `compact(…, 120)`。第一版文案 126 字符，渲染后变成
+                             * 「… —— 真正的「最堵」可…」—— **警告本身被切掉了**，
+                             * 等于没改。这是仓库里 `hint-truncated-before-arrival` 的同一形态：
+                             * 「算出来」≠「送达」。
+                             *
+                             * 所以截断分支**砍掉 `item_mix`**（它已在 `evidence.worst.item_mix`
+                             * 里留档，读日志查得到），把预算全留给「另有 K 条未返回，至少 N 件」
+                             * 这个必须到达的数字。非截断分支保持原文案不动。 */
+                            observed: pathsTruncated
+                                ? (`整图零产出；可见的 ${shownPaths}/${totalPaths} 条路径里 `
+                                    + `${clogged.length} 条满载或无处可去，可见最堵 `
+                                    + `${worst.n} 件 / ${worst.cells} 格（${pct}%）`
+                                    + `；另有 ${totalPaths - shownPaths} 条**未返回**，`
+                                    + (hiddenItems > 0
+                                        ? `至少 ${hiddenItems} 件货（单条最多 ≥${hiddenMaxItems} 件）`
+                                            + ` ——「最堵」只在可见部分成立`
+                                        : `其中无货（几何仍未知）`))
+                                : (`整图零产出；${clogged.length} 条带子满载或无处可去，`
+                                    + `最堵的一条 ${worst.n} 件 / ${worst.cells} 格（${pct}%，${topItems}）`
+                                    + (worst.noAcceptor ? "，它的末端没有任何机器接收" : "")),
                             /* ★ `handles` 留空（2026-11-23，红队复测 B1 的另一半）★
                              *
                              * 红队复测指出：改了 hint（不再开处方）之后，`handles` 仍然
@@ -3843,14 +3914,28 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                             evidence: {
                                 clogged_handles: hs,
                                 total_produced: 0,
+                                /* `clogged_paths` 只在**可见**路径上数。截断时它是下界，
+                                 * 所以同时给出 `paths_shown` / `paths_total` / `paths_truncated`，
+                                 * 让读日志的人不必再猜这个数覆盖了多少。 */
                                 clogged_paths: clogged.length,
                                 worst: {
                                     path: worst.pi, cells: worst.cells, items: worst.n,
                                     fill: Math.round(worst.fill * 100) / 100,
                                     no_acceptor: worst.noAcceptor,
+                                    /* `scope:"visible"` = 只在返回的路径里最堵；
+                                     * 截断时不存在任何全局最堵（见上面的注释）。 */
+                                    scope: pathsTruncated ? "visible" : "all",
                                     item_mix: [...worst.items.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
                                         .map(([k, v]) => ({ item: k, n: v })),
                                 },
+                                paths_shown: shownPaths,
+                                paths_total: totalPaths,
+                                paths_truncated: pathsTruncated,
+                                hidden_paths_with_items: hiddenPathsWithItems,
+                                /* 下界：`belts` 受 region 过滤，可能数不满。 */
+                                hidden_items_at_least: hiddenItems,
+                                hidden_worst_items_at_least: hiddenMaxItems,
+                                hidden_worst_path: hiddenMaxPath,
                                 others,
                                 note: "the whole factory is stalled behind this congestion — "
                                     + "nothing on the map is producing. Feeding another input into a "
@@ -3918,11 +4003,26 @@ export function semanticDiagnoses(obs, items, goal, handles, opts = {}) {
                              * 「另一路」）**、**41 个的另一路进料是有货的**（其中 39 个
                              * 末端是 hub 本身 —— hub 有 16 个入口，说它在「等另一路料」荒谬）。
                              * 「错误的指路比不给更贵」，所以这句必须删掉。 */
-                            hint: `整座工厂零产出（这条带子 ${worst.n} 件 / ${pct}% 是淤积最重的一条）。`
+                            hint: `整座工厂零产出（${pathsTruncated ? "可见范围里" : ""}这条带子 `
+                                + `${worst.n} 件 / ${pct}% 是${pathsTruncated ? "看得见的" : ""}淤积最重的一条）。`
                                 + `这是**结果**，不是成因 —— 别从它下手：` +
                                 `删这条带子只会拆掉受害者，真正堵住的那一端还在，` +
                                 `世界仍然零产出。先去修上面那些说"某台机器缺料 / 某条流到不了 hub"的诊断；` +
                                 `它们指向的才是成因。这条只在**没有别的线索时**用来确认「全图确实停转」。`
+                                /* ★ 截断警告放在**后面**（2026-11-24）★
+                                 *
+                                 * `prompt.mjs` 对普通诊断的 hint 做 `clip(…, 180)`，
+                                 * 而前 180 字符必须留给「这是结果不是成因 / 先去修上面那些」——
+                                 * 那是 `REDTEAM-WORLD-FROZEN` B1 用 516 个样本换来的定位。
+                                 * 把截断警告插在中间会把它挤出去，等于用一条警告换掉一条处方。 */
+                                + (pathsTruncated
+                                    ? ` ⚠ 世界有 ${totalPaths} 条路径，只返回了 ${shownPaths} 条`
+                                        + (hiddenItems > 0
+                                            ? `，被切掉的部分至少还有 ${hiddenItems} 件货`
+                                                + (hiddenMaxItems > 0 ? `（最多的一条 ≥${hiddenMaxItems} 件）` : "")
+                                                + ` —— 真正最堵的可能不在上面这条。`
+                                            : `（被切掉的部分没有货，但它们的几何未知）。`)
+                                    : "")
                                 + (others ? `另有：${others}。` : ""),
                         });
                     }

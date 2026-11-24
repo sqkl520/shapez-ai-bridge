@@ -61,7 +61,7 @@ import { OPP, beltEntry, beltExit } from "../../ai/belt-rules.mjs";
 import {
     K, indexOf, at, isBelt, isTunnel, tunnelIsSender, tunnelPeer,
     dirOfRotation, exitDirOf, exitCellOf, entryCellOf,
-    accepts, runEnd, upstreamFed, hubReachable, sourceEntityOf,
+    accepts, runEnd, upstreamFed, hubReachable, sourceEntityOf, inputFed, outputRouted,
 } from "./topology.mjs";
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -435,6 +435,185 @@ function collectTopologyFacts(idx) {
     return { deadEnds, rejected, unfedHeads };
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * 3b. 「这条死链的末端有谁在等它」—— CHAIN_UNFED 的 止删判据
+ * ──────────────────────────────────────────────────────────────────────────
+ *
+ * ## 为什么需要这一段
+ *
+ * 2026-11-15 的真机事故（`.findings/ROOTCAUSE-COLOR-SLOT-2026-11-23.md`）：
+ *
+ *   `CHAIN_UNFED{barren_miner:true, uids:[15103,14975,14976]}` 报出「M15 脚下无矿，
+ *   它馈着的 2 条链因此全是死的」，`candidates[0] = remove_run`。
+ *   模型照做，拆掉 B342/B341 —— 而这两格正是 **painter#13552 的 color 供料口**。
+ *
+ * 诊断错在**把「矿机空转」这个正确结论传播成「它下游的带子也该拆」**。
+ * 那两条带子确实没有货，但它们**有人等着**：画家还在，另一路（shape）还在进料，
+ * 输出口还接着东西。真正该做的是**换一个矿机/换个颜色**，不是把干线拆掉。
+ *
+ * ## 判据（三个都要，缺一不判「末端有人」）
+ *
+ *   ① 从链里某条带子的出口出发，沿货流**真的走到**一台机器（`accepts()` 走到终点）。
+ *      —— 必须用 `accepts()` 而不是 `at()`：`painter.color` 的槽位本体**不在 footprint 内**，
+ *      `at()` 会返回 null，把一条接好的线判成「断在空格」。
+ *      这个 footprint 陷阱在本项目已经踩过四次（DEAD_END / upstreamFed / accepts / 这里）。
+ *   ② 落点确实是它的**输入槽**（不是隔壁的槽、也不是「机器占地」）。
+ *   ③ 那台机器**还活着**：另外至少一个输入槽有货，**或**它的某个输出槽有去处。
+ *      矿机不算活着（它自己就是被架空的那台）；hub / trash 单独归类。
+ *
+ * 额外记录 `unique_feed`：这个槽**没有别的供料带**（链外的）。那说明拆掉就是
+ * 「这台机器再也收不到这一路」—— 最强的「别删」信号。
+ *
+ * ## 为什么不是「分析整条链」
+ *
+ * 只走**每条带的出口**（不是每格），且遇到链内带子就跳过。L4 的 M4 有 7 条带子、
+ * L12 的 M15 只有 2 条，真机上 22 条的也有 —— 但都只走 O(链长)，与 `runEnd` 同量级。
+ * `structuralDiagnoses` 是每轮都跑的纯函数，不能在这里引入平方项。
+ */
+
+/** 从一条带子出发沿货流走到终点。与 `runEnd` 同路，但**用 `accepts()` 认槽位本体**。 */
+function chainEndOf(idx, belt) {
+    let cell = exitCellOf(belt);
+    let d = exitDirOf(belt);
+    let cur = belt;
+    const seen = new Set([belt.uid]);
+    for (let i = 0; i < 512; i++) {
+        const acc = accepts(idx, cell, d);
+        if (acc.kind === "belt") {
+            const e = at(idx, cell);
+            if (!e || seen.has(e.uid)) return { kind: "cycle", by: null, accepted: false, tail: cur };
+            seen.add(e.uid);
+            cur = e;
+            d = exitDirOf(e);
+            cell = exitCellOf(e);
+            continue;
+        }
+        if (acc.kind === "tunnel_sender") {
+            const e = at(idx, cell);
+            const peer = e ? tunnelPeer(idx, e) : null;
+            if (!peer) return { kind: "empty", by: null, accepted: false, tail: cur };
+            seen.add(e.uid);
+            seen.add(peer.uid);
+            cur = peer;
+            d = exitDirOf(peer);
+            cell = exitCellOf(peer);
+            continue;
+        }
+        /* `acc.by` 在「落点是槽位本体」时给出那台机器的 uid（`accepts` 的 viaSlotBody 分支）；
+           落点是 footprint 内的机器格时它是那台机器。两者都按机器处理。 */
+        return {
+            kind: acc.kind, by: acc.by, accepted: acc.ok, opaque: !!acc.opaque,
+            tail: cur, endCell: cell, endDir: d,
+        };
+    }
+    return { kind: "truncated", by: null, accepted: false, tail: cur };
+}
+
+/**
+ * 一个输入槽的**链外**供料带（谁把货送进这个槽）。
+ *
+ * 与 `topology.inputFed` 同口径但**返回 uid**：`inputFed` 只回答「喂没喂」，
+ * 这里要回答「是不是**只**有这条链在喂」。两者判据必须一致，否则会出现
+ * 「诊断说没人喂、而 inputFed 说喂了」这种自相矛盾。
+ */
+function feedersOfSlot(idx, slotCell) {
+    const out = [];
+    if (!Array.isArray(slotCell)) return out;
+    for (const [dx, dy] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
+        const e = at(idx, [slotCell[0] + dx, slotCell[1] + dy]);
+        if (!e) continue;
+        if (!isBelt(e) && !isTunnel(e)) continue;
+        const c = exitCellOf(e);
+        if (c && c[0] === slotCell[0] && c[1] === slotCell[1]) out.push(e.uid);
+    }
+    return out;
+}
+
+/**
+ * 这台机器「还在等这一路」吗：另外的输入槽有货 **或** 任一输出槽有去处。
+ *
+ * ★ hub / trash 不算「在等」★
+ *
+ * 它们是**汇**，不是**消费者**：hub 有 16 个入口、少一路不缺什么；
+ * trash 本来就吃任何东西、更不会「等着某一颗」。把这两个也算进来，
+ * 会让「矿机空转 → 那几条废带子」这种**确实该拆**的形态也失去 `remove_run`
+ * （实测样本里 11/25 个分组是这种，还有 2 个是 hub 入口）—— 那是过度保守。
+ *
+ * 矿机同样不算：它自己没有输入槽，不是这里的「下游」。
+ *
+ * 判据与 `remove.mjs` 的 `would_starve` 互补：那边问「删了会不会饿死下游」，
+ * 这边问「这个下游现在是否在工作」。
+ */
+function machineAliveAt(idx, m, exceptSlotCell) {
+    if (!m) return { alive: false, why: "missing" };
+    if (m.type === "hub") return { alive: false, why: "hub" };
+    if (m.type === "trash") return { alive: false, why: "trash" };
+    if (m.type === "miner") return { alive: false, why: "miner" };
+    let s = null;
+    try { s = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m)); } catch { s = null; }
+    if (!s) return { alive: false, why: "opaque" };
+    const otherFed = (s.inputs || []).some(i =>
+        !(exceptSlotCell && Array.isArray(i.slot)
+            && i.slot[0] === exceptSlotCell[0] && i.slot[1] === exceptSlotCell[1])
+        && inputFed(i, idx));
+    if (otherFed) return { alive: true, why: "input" };
+    const routed = (s.outputs || []).some(o => outputRouted(o, idx));
+    if (routed) return { alive: true, why: "output" };
+    return { alive: false, why: "idle" };
+}
+
+/**
+ * 一个「矿机被架空」分组的死链，末端有没有人在等。
+ *
+ * @returns {{ends:Array<object>, liveEnds:Array<object>}}
+ *   `liveEnds` 里每项 `{handle, type, uid, slot, uniqueFeed}` —— 只放**可解析**的，
+ *   解析不出来就**不放**（宁可不点名，也不编一个句柄出来）。
+ */
+function chainEndsOf(idx, beltUids) {
+    const chain = new Set(beltUids);
+    const ends = [];
+    const liveEnds = [];
+    const seenMachines = new Set();
+    for (const uid of beltUids) {
+        const e = idx.byUid.get(uid);
+        if (!e) continue;
+        const t = chainEndOf(idx, e);
+        if (t.by === null) { ends.push({ belt: uid, kind: t.kind, by: null }); continue; }
+        if (chain.has(t.by)) continue;          // 终点还在链内 ⇒ 不是末端
+        if (seenMachines.has(t.by)) continue;   // 同一台机器只算一次
+        seenMachines.add(t.by);
+        const m = idx.byUid.get(t.by);
+        if (!m || isBelt(m) || isTunnel(m)) { ends.push({ belt: uid, kind: t.kind, by: t.by }); continue; }
+        let slots = null;
+        try { slots = slotsOf(m.type, m.variant, m.x, m.y, m.r || 0, beltRvOf(m)); } catch { slots = null; }
+        const slot = (slots && Array.isArray(slots.inputs))
+            ? slots.inputs.find(i => Array.isArray(i.slot)
+                && Array.isArray(t.endCell)
+                && i.slot[0] === t.endCell[0] && i.slot[1] === t.endCell[1])
+            : null;
+        const live = machineAliveAt(idx, m, slot ? slot.slot : null);
+        const feeders = slot ? feedersOfSlot(idx, slot.slot) : [];
+        const uniqueFeed = slot ? feeders.filter(u => !chain.has(u)).length === 0 : null;
+        const rec = {
+            belt: uid, kind: m.type, by: m.uid, slot: slot ? (slot.role || null) : null,
+            alive: live.alive, why: live.why, uniqueFeed,
+        };
+        ends.push(rec);
+        /* ★ 只把「真的有人在等、而且**只有这一路**在等」的放进 liveEnds ★
+         *
+         * 三个条件：
+         *   ① `machineAliveAt` 说它活着（已排除 hub / trash / 矿机 —— 汇不算消费者）；
+         *   ② 落点是它的一个输入槽（`slot` 非 null）—— 能指名到槽才谈得上「供料」；
+         *   ③ `uniqueFeed` 不为 `false`：槽外**没有第二条带子**也喂着它。
+         *      `false` 意味着有冗余供料 ⇒ 拆这条链不会让那台机器断粮，
+         *      `remove_run` 仍然是安全的（**这是防「过度保守」的那道门**）。
+         *      实测样本里 11/11 都是 `true`，所以第 ③ 条没有削弱这次的修复，
+         *      它只是把「有备份时也拦」这种错方向堵掉。 */
+        if (live.alive && slot && uniqueFeed !== false) liveEnds.push(rec);
+    }
+    return { ends, liveEnds };
+}
+
 /**
  * 声明了废料口的机器：它的废料输出跑链终到哪儿。
  *
@@ -788,6 +967,87 @@ export function structuralDiagnoses(obs, items, goal, handles, opts = {}) {
         const minerH = handleOf(handles, g.miner.uid);
         const chainH = g.heads.map(x => handleOf(handles, x.uid)).filter(Boolean);
         const subj = subjectOf(handles, g.miner.uid, "miner");
+        const minerUid = g.miner.uid;
+        const beltUids = g.heads.map(x => x.uid);
+        /* ★ `uids` 只放**这台矿机自己**，下游带子单列 ★
+         *
+         * 2026-11-15 真机事故：`uids:[15103,14975,14976]` + `candidates[0]=remove_run`
+         * 让模型把 painter 唯一的那路 color 供料口拆了。
+         *
+         * `remove_run` 只作用于带子，`remove_machine` 只作用于机器 —— 把两类 uid
+         * 混在同一个数组里，**任何**读到它的消费者都得自己重新分类，而
+         * `remove_run` 的选区恰恰就是「这个数组里的带子」。
+         * 分成两组之后，「删带子」与「搬矿机」各看各的字段，混用不再可能。
+         *
+         * 向后兼容：`uids[0]` 仍然是矿机（`fingerprintOf` 与若干测试按这个位置读），
+         * 只是不再把带子拼在后面。 */
+        const endsInfo = chainEndsOf(idx, beltUids);
+        const liveRecs = endsInfo.liveEnds;
+
+        /* ★ 末端有人在等 ⇒ `remove_run` 从候选里拿掉 ★
+         *
+         * 判据见 `chainEndsOf`：真的沿货流走到了机器（`accepts` 认槽位本体）、
+         * 落点是它的输入槽、而那台机器还活着（别的槽有货或输出有去处）。
+         *
+         * 这批样本里 **11/25 个分组**是这种形态（画家 10 次、mixer 1 次），
+         * 全部是「唯一供料」—— 拆掉就是让那台机器彻底收不到这一路。
+         * 而「矿机空转」的正确解法是**换源头 / 删掉这台空转矿机**，不是拆下游。
+         *
+         * 注意：这里**不抑制诊断本身**。矿机脚底无矿是事实，仍然要报；
+         * 去掉的只是「拆这条链」这个选项。
+         *
+         * 候选只用**真宏名**（`MACRO_NAMES` 的闭集），不造词：
+         *   · `connect`        —— 从别的有矿矿机把这一路接过来（正解）；
+         *   · `remove_machine` —— 删掉这台空转矿机：它零产出、只占格，
+         *                         而 `removeMachine` 的差异法判据对矿机是放行的
+         *                         （删矿机不缩小 `flowReachable`，因为下游带子仍然连通）；
+         *   · `insert_machine` —— 需要补一台机器时用。
+         * 顺序上 `connect` 第一：它是唯一能真正把货送到达标机器的那条路。 */
+        const guarded = liveRecs.length > 0;
+        const cands = guarded
+            ? ["connect", "remove_machine", "insert_machine"]
+            : ["remove_run", "replace_run", "insert_machine"];
+
+        /* ★ 点名那个末端 —— 只说算得出来的东西 ★
+         *
+         * `liveRecs` 里的每项都带 uid，句柄由 `handleOf` 现查；查不到句柄的就
+         * **不进这句话**（宁可不点名，也不编一个）。role 来自 `slotsOf` 的真槽位表。
+         *
+         * 「唯一供料」必须说出来：它是「拆了会怎样」的直接答案。
+         *
+         * ⚠️ 这里刻意**不建议搬矿机**：`insert_machine` 目前放不到资源格上
+         * （见 `miner-relocation-gap`），教它去搬等于给一条走不通的路。 */
+        const nameEnds = liveRecs
+            .map(r => {
+                const h = handleOf(handles, r.by);
+                if (!h) return null;
+                const uni = r.uniqueFeed === true ? "（唯一供料）" : "";
+                const sl = r.slot ? ` 的 ${r.slot} 槽` : "";
+                return `${h}（${r.kind}）${sl}${uni}`;
+            })
+            .filter(Boolean);
+        /* ★ 长度受 180 字符的渲染闸门约束 ★
+         *
+         * `prompt.mjs` 把 hint 截到 180 字符（`CAP_WIDE=400` 只给
+         * `HUB_FED_BY_COLOR` / `HUB_INLET_THIN`）。实测这一条写满会到 204 字符，
+         * 而超出部分正好是**可执行的那半句**（`remove_machine {...}`）——
+         * 又是 `hint-truncated-before-arrival` 那个形态：模型看懂病因、动不了手。
+         *
+         * 所以这里刻意压到 180 以内，并且**把宏调用放在前半句之前的位置**：
+         * 「别拆 + 末端是谁 + 唯一供料」在最前，动作紧跟其后。
+         * `structural.test.mjs` 有一条断言钉住 ≤180。 */
+        const hint = guarded
+            ? `⚠️ 别拆这条链。`
+                + (nameEnds.length
+                    ? `末端是 ${nameEnds.join("、")}，那台机器还活着、一直在等这一路。`
+                    : `末端还接着正在工作的机器，拆了它们再也收不到这一路。`)
+                + `病根是这台矿机脚下没有矿。`
+                + `出路：${minerH
+                    ? `\`remove_machine {uids:$uids(["${minerH}"])}\` 拆掉空转矿机，`
+                    : `换掉这台空转矿机，`}`
+                + `再用 \`connect\` 从有矿的矿机接过来。`
+            : null;
+
         out.push({
             code: "CHAIN_UNFED",
             layer: "L2",
@@ -795,16 +1055,39 @@ export function structuralDiagnoses(obs, items, goal, handles, opts = {}) {
             subject: subj,
             expected: "矿机脚底下有矿，能持续出货",
             observed: `${labelOf(handles, g.miner)} 脚底下没有矿（矿机被架空，永远不出货）`
-                + `，它馈着的 ${g.heads.length} 条链因此全是死的`,
+                + `，它馈着的 ${g.heads.length} 条链因此全是死的`
+                + (guarded ? `；但其中 ${liveRecs.length} 处末端还接着活着的机器` : ""),
             evidence: {
                 handles: [minerH, ...chainH].filter(Boolean),
-                uids: [g.miner.uid, ...g.heads.map(x => x.uid)],
-                tier: tierOf(g.miner.uid, [g.miner.x, g.miner.y]),
+                uids: [minerUid],
+                /* 下游带子单列。`remove_run` 只作用于这一组；`remove_machine` 只作用于 `uids`。 */
+                chain_belt_uids: beltUids,
+                tier: tierOf(minerUid, [g.miner.x, g.miner.y]),
                 source: "miner",
                 barren_miner: true,
                 chain_belts: g.heads.length,
+                /* ★ 末端活着的机器 —— 只放可解析的字段，不放坐标 ★
+                 *
+                 * 每项 `{handle, type, uid, slot, unique_feed}`。
+                 * `slot` 是 `slotsOf()` 的真 role（painter 的 `color`、mixer 的 `color`），
+                 * 不是猜的；`unique_feed` 是「链外没有别的带子喂这个槽」。
+                 * 下游没有任何活机器时**不出现这个键**（不是空数组 ——
+                 * 空数组会让「有没有算过」变得含混）。 */
+                ...(liveRecs.length
+                    ? {
+                        live_chain_ends: liveRecs.map(r => ({
+                            handle: handleOf(handles, r.by) || null,
+                            type: r.kind || null,
+                            uid: r.by,
+                            slot: r.slot || null,
+                            unique_feed: r.uniqueFeed,
+                        })).filter(r => r.handle),
+                    }
+                    : {}),
             },
-            candidates: ["remove_run", "replace_run", "insert_machine"],
+            /* 有活的末端 ⇒ 不给 `remove_run`；没有 ⇒ 保持原样（那条链确实该拆）。 */
+            candidates: cands,
+            ...(hint ? { hint } : {}),
         });
     }
 

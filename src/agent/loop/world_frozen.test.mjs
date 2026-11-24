@@ -343,3 +343,165 @@ test("★ 排序：它是警报，必须排在可行动的成因类诊断**之�
     /* hint 里那句「先去修上面那些」要求它前面确实有东西 */
     assert.ok(iFrozen > 0, "它前面必须有别的诊断，否则「上面那些」指代不到任何东西");
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 截断（`truncatedPaths === true`）：`paths[]` 只有前 40 条，但 `belts[]` 是全量的
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ## 缺陷（`REDTEAM-WORLD-FROZEN-2026-11-23.md` §5.2）
+ *
+ * `out.paths = paths.slice(0, 40)` —— 而 `WORLD_FROZEN` 的 `clogged` 扫描跟着
+ * `itemsDoc.paths` 走，于是**第 40 条之后的路径完全看不见**。
+ * 它们的货量却仍被算进 `itemsDoc.belts`（那个数组只按 region 过滤，不按路径截断）。
+ *
+ * 复现（`.findings/FIX-TRUNCATED-PATHS-2026-11-24.md`，516 个触发快照）：
+ *
+ *   截断且触发的快照            17
+ *   报出来的 `worst` 低于被切部分  **10**
+ *   最严重的一例（r-20261113084958-4e86）：
+ *     报「最堵的一条 31 件 / 19 格」
+ *     实际第 49 号路径上有 **166 件**，被切掉的部分合计 ≥277 件
+ *
+ * `observed` 里那句「最堵的一条」因此在 10/17 的快照上是**错的**，
+ * 而且错向最糟的一边（**低估**）。
+ *
+ * ## 修法与它的边界
+ *
+ * 语义层**不假装看得见**：截断时把话说成「可见最堵」，并报出「另有 K 条未返回、
+ * 至少还有 N 件货」。`N` 由 `belts[].path` 聚合而来 —— 口径已核对：
+ * 566 个快照、16828 条路径上，`belts[].path` 的行数与游戏自己的
+ * `paths[i].itemsOnPath` **零失配**（脚本见上面那份 findings）。
+ *
+ * ⚠️ 它是**下界**：`belts` 受 region 过滤，可能数不满。文案与 evidence
+ * 都必须说「至少」，测试也钉住这一点。
+ *
+ * 为什么不在 mod 里按货量排序后再截断（那会让模型永远看到最堵的）：
+ * 那需要重新 patch 游戏，而当时 `mod_connected: false`，无法真机验证；
+ * 而且改了顺序就**破坏了 `belts[].path` ↔ `paths[]` 下标对齐**
+ * （那个对齐在 523/523 个快照上是成立的，gates.mjs 的流向判据依赖它）。
+ */
+
+/** §5.2 里那一例：pathCount 50、只返回 40 条、被切部分藏着 166 件。 */
+const TRUNCATED_RUN = "r-20261113084958-4e86";
+
+test("★ 截断时：observed 不许把可见范围内的最堵说成全局最堵", () => {
+    const { obs, items, production } = loadRun(TRUNCATED_RUN);
+    const it = items.result || items;
+    assert.equal(it.truncatedPaths, true, "前提：这份夹具必须是截断的");
+    assert.ok(it.pathCount > it.paths.length, "前提：pathCount 必须大于返回条数");
+
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: 40 });
+    const wf = ds.find(d => d.code === "WORLD_FROZEN");
+    assert.ok(wf, "前提：它必须报出来");
+
+    /* ① 不许出现「最堵的一条」这种全局断言 —— 那是 10/17 快照上错掉的那句话 */
+    assert.ok(!/最堵的一条/.test(wf.observed),
+        `截断时不许说「最堵的一条」，实得：${wf.observed}`);
+    /* ② 必须说的是「可见」 */
+    assert.ok(/可见/.test(wf.observed), `必须标明这是可见范围，实得：${wf.observed}`);
+    /* ③ 必须把「还有多少没看见」说出来 */
+    assert.ok(/未返回|没被返回/.test(wf.observed),
+        `必须说明有路径没返回，实得：${wf.observed}`);
+    assert.ok(/至少/.test(wf.observed),
+        `货量是下界，必须写「至少」，实得：${wf.observed}`);
+});
+
+test("★ 截断时：被切部分的货量必须真的算出来（那一例是 166 件）", () => {
+    const { obs, items, production } = loadRun(TRUNCATED_RUN);
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: 40 });
+    const wf = ds.find(d => d.code === "WORLD_FROZEN");
+    assert.ok(wf, "前提：它必须报出来");
+    const ev = wf.evidence;
+
+    /* 这几条是**从数据里数出来的**，不是占位符：
+     * path 49 上有 166 件，被切掉的部分合计 ≥277 件。 */
+    assert.equal(ev.paths_shown, 40, "可见 40 条");
+    assert.equal(ev.paths_total, 50, "世界共 50 条");
+    assert.equal(ev.paths_truncated, true, "必须标记截断");
+    assert.equal(ev.hidden_worst_items_at_least, 166, "被切部分最重的一条 ≥166 件");
+    assert.equal(ev.hidden_worst_path, 49, "那条是 path 49");
+    assert.equal(ev.hidden_items_at_least, 277, "被切部分合计 ≥277 件");
+    assert.ok(ev.hidden_worst_items_at_least > ev.worst.items,
+        "这一例正是「被切掉的比报出来的更重」—— 修之前报的是 31 件");
+    /* 可见范围内的 worst 仍然要报（它本身没错，只是不能说成全局） */
+    assert.equal(ev.worst.scope, "visible", "截断时 worst 的作用域必须是 visible");
+    /* observed 里必须出现那个 166 —— 否则模型看不到「漏了多少」 */
+    assert.ok(wf.observed.includes("166"),
+        `observed 必须带上被切部分的最重值，实得：${wf.observed}`);
+});
+
+test("★ 截断时：observed 必须在 120 字符内（否则警告本身会被渲染端切掉）", () => {
+    /* `prompt.mjs:renderDiagnoses` 对 observed 做 `compact(…, 120)`。
+     * 第一版文案 126 字符 —— 渲染后变成「… —— 真正的「最堵」可…」，
+     * **警告本身被截掉了**，等于没改。
+     *
+     * 这是 `hint-truncated-before-arrival` 的同一形态：算出来 ≠ 送达。
+     * 所以这里直接钉住长度，而不是只钉住「字符串里有这个词」。 */
+    const { obs, items, production } = loadRun(TRUNCATED_RUN);
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: 40 });
+    const wf = ds.find(d => d.code === "WORLD_FROZEN");
+    assert.ok(wf, "前提：它必须报出来");
+    assert.ok(wf.observed.length <= 120,
+        `observed 必须 ≤120 字符（渲染端硬预算），实得 ${wf.observed.length}：${wf.observed}`);
+    /* 关键的三个数字都必须在 120 字符之内出现 */
+    for (const must of ["40", "50", "166"]) {
+        assert.ok(wf.observed.indexOf(must) < 120, `「${must}」必须落在前 120 字符里：${wf.observed}`);
+    }
+});
+
+test("★ 非截断时：文案与作用域都不变（不许把截断逻辑漏进正常路径）", () => {
+    /* 反向保护：`pathsTruncated` 为 false 时，一切必须与修改前逐字一致 ——
+     * 那 500 个非截断快照上的文案是被红队逐字核过的。 */
+    const { obs, items, production } = loadRun(DEAD_RUN);
+    const it = items.result || items;
+    assert.equal(it.truncatedPaths, false, "前提：这份夹具不是截断的");
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: 40 });
+    const wf = ds.find(d => d.code === "WORLD_FROZEN");
+    assert.ok(wf, "前提：它必须报出来");
+    assert.ok(/最堵的一条/.test(wf.observed),
+        `非截断时必须保留原来的「最堵的一条」，实得：${wf.observed}`);
+    assert.ok(!/未返回/.test(wf.observed), `非截断时不许出现截断警告，实得：${wf.observed}`);
+    assert.equal(wf.evidence.worst.scope, "all", "非截断时作用域是 all");
+    assert.equal(wf.evidence.paths_truncated, false, "非截断时标记必须是 false");
+    assert.equal(wf.evidence.hidden_items_at_least, 0, "非截断时没有「被切部分」");
+});
+
+test("★ 截断时：hint 的处方仍在 180 字符内（截断警告不许挤掉「先去修上面那些」）", () => {
+    /* `renderDiagnoses` 对普通诊断的 hint 做 `clip(…, 180)`。
+     * 前 180 字符必须留给 `REDTEAM B1` 用 516 个样本换来的定位 ——
+     * 「这是结果，不是成因 / 先去修上面那些」。
+     * 把截断警告插在中间会把它挤出去 = 用一条警告换掉一条处方。 */
+    const { obs, items, production } = loadRun(TRUNCATED_RUN);
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: 40 });
+    const wf = ds.find(d => d.code === "WORLD_FROZEN");
+    assert.ok(wf, "前提：它必须报出来");
+    const head = wf.hint.slice(0, 180);
+    assert.ok(/先去修|别的线索|上面那些/.test(head),
+        `前 180 字符必须仍然把处方让出去，实得：${head}`);
+    /* 截断警告也要送达（可以落在 180 之后，但必须在 hint 里） */
+    assert.ok(/只返回了|未返回/.test(wf.hint), `hint 里必须带截断警告，实得：${wf.hint}`);
+});
+
+test("★ 截断 + 被切部分无货时：不许编造「藏着更重的路径」", () => {
+    /* 反例保护。r-20261115225425-cc9b：pathCount 41、返回 40，
+     * 被切掉的那 1 条上**没有货**。
+     * 这种情况下文案必须说「其中无货」，而不能跟着喊「至少还有 N 件」。 */
+    const { obs, items, production } = loadRun("r-20261115225425-cc9b");
+    const it = items.result || items;
+    assert.equal(it.truncatedPaths, true, "前提：这份夹具必须是截断的");
+    const ds = diagnose(obs, items, production, SECOND_ROUND, GOAL, null,
+        { recipe: null, tickSincePrev: 40 });
+    const wf = ds.find(d => d.code === "WORLD_FROZEN");
+    assert.ok(wf, "前提：它必须报出来");
+    assert.equal(wf.evidence.hidden_items_at_least, 0, "被切部分确实无货");
+    assert.ok(/无货/.test(wf.observed), `必须说「其中无货」，实得：${wf.observed}`);
+    assert.ok(!/至少 [1-9]/.test(wf.observed), `没有货就不许说「至少 N 件」，实得：${wf.observed}`);
+    /* 但仍然要标记截断 —— 几何未知这件事本身不该被隐去 */
+    assert.equal(wf.evidence.paths_truncated, true, "仍然要标记截断");
+    assert.ok(/未知/.test(wf.observed), `几何未知必须说出来，实得：${wf.observed}`);
+});

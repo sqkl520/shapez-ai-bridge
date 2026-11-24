@@ -3161,6 +3161,61 @@ function renderLastRound(lastRound) {
         }
         if (fails.length > 2) lines.push(`  (+${fails.length - 2} more)`);
     }
+    /* ★ 游戏**顺手**改了哪几条带子的朝向（2026-11-24）★
+     *
+     * ## 为什么这条单独于一切其它反馈
+     *
+     * 2026-11-15 12:14:35（`r-20261115121125-264d` r3）那一刀 `insert_machine(trash)`：
+     * 计划只声明「拆 1 格带子、放 1 个垃圾桶」，`apply` 也回报 `diff{added:1,removed:1}`。
+     * 但游戏把 `BeltSystem.updateSurroundingBeltPlacement` 挂在 `entityAdded` 上
+     * （`systems/belt.js:63`），于是它把这栋建筑**周围一圈**的带子按邻居重算，
+     * 把 `belt#14953` 的 rv 从 2 改成 0（左→下转角变左→右直带）、
+     * `belt#15019` 的方向也翻了。这是一条供料主链的脖子。
+     * **5 分钟后全图产出从 10 个键变成 `{}`，508 个快照再没恢复过。**
+     *
+     * 模型这一步做错了吗？没有 —— 它得到的全部信息是「拆 1 格、放 1 个」。
+     * 它**不可能**知道自己顺手掰断了什么，因为没有任何一条报告说过这件事。
+     * 这是 `computed-but-never-delivered` 在本仓库的第 N 次复发。
+     *
+     * ## 数据从哪来
+     *
+     * `verifyRound` 的 `reoriented`：两份 obs（apply 前 / 后，同口径）相减，
+     * 找出「两边都在、但 `(r, rv)` 变了、且不在 `destroys` 里」的带子。
+     * **不改 mod、不需要重新 patch 游戏**，判据纯数据、可离线验。
+     *
+     * ## 排版纪律
+     *
+     *   · 用**句柄**（`B149`）而不是 uid —— 模型在 S3 段认的就是这个；
+     *   · 报**入口/出口方位变化**而不是裸数字（`in left, out bottom` 比 `rv 2→0` 可读）；
+     *   · 最多 3 条、每条 1 行：预算硬，且第 4 条之后的信息量急剧下降；
+     *   · 放在 `consequences of last round's calls` **之前** ——
+     *     「你没写但世界变了」比「宏自己算出的后果」更意外，也更该先被看见。 */
+    const reo = lastRound.belt_reorient;
+    if (reo && Number.isInteger(reo.count) && reo.count > 0 && Array.isArray(reo.items)) {
+        const fmtDir = d => (typeof d === "string" && d) ? d : "?";
+        const one = it => {
+            const name = it && it.handle ? it.handle : (it && Number.isInteger(it.uid) ? `belt#${it.uid}` : "belt?");
+            const eb = it && it.entry ? fmtDir(it.entry.before) : "?";
+            const ea = it && it.entry ? fmtDir(it.entry.after) : "?";
+            const xb = it && it.exit ? fmtDir(it.exit.before) : "?";
+            const xa = it && it.exit ? fmtDir(it.exit.after) : "?";
+            /* 只有方位算得出来时才用「in/out」讲法；否则退回 r/rv 数字（不猜）。 */
+            if (eb !== "?" && ea !== "?" && xb !== "?" && xa !== "?") {
+                return `${name}: in ${eb}→${ea}, out ${xb}→${xa}`;
+            }
+            const rb = it && it.before ? it.before : {};
+            const ra = it && it.after ? it.after : {};
+            return `${name}: r ${rb.r}→${ra.r}, rv ${rb.rv}→${ra.rv}`;
+        };
+        lines.push("reoriented belts (the game rewrote these — no op asked for it):");
+        for (const it of reo.items.slice(0, 3)) lines.push(`  · ${one(it)}`);
+        if (reo.count > 3) lines.push(`  (+${reo.count - 3} more)`);
+        /* 只说**这意味什么**，不给修法：修法是诊断与模型的事。
+           但必须说清「如果这几条在关键链上，你的计划就比你想的多改了东西」——
+           否则模型会把它们当成噪音（这正是 `stranded-items-unknown` 被淹没的方式）。 */
+        lines.push("  ⇒ You did not declare these. The game recomputes belts next to anything you"
+            + " place/remove. If one of them was feeding a machine, your change broke it.");
+    }
     /* ★ 上一轮那些宏**算出来的后果**（P17 §6.1）★
      *
      * 宏的 `warnings` 一直有：`would-disconnect` / `removal-is-clean` /

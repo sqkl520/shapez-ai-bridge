@@ -596,3 +596,181 @@ test("T-unfed-nearby2 ★ 对照：链头附近没有机器 ⇒ 不许编一个�
     assert.ok(!/格外/.test(String(unfed[0].hint || "")),
         `★ 没有 nearby source 时 hint 不许提「N 格外」：${unfed[0].hint}`);
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * CHAIN_UNFED 的「矿机被架空」分组：`uids` 不许把下游带子和矿机混在一起
+ * ──────────────────────────────────────────────────────────────────────────
+ *
+ * 真机事故（2026-11-15，`.findings/ROOTCAUSE-COLOR-SLOT-2026-11-23.md` 缺陷 2）：
+ *
+ *   CHAIN_UNFED{barren_miner:true, uids:[15103, 14975, 14976],
+ *               candidates:["remove_run","replace_run","insert_machine"]}
+ *
+ * 模型读到「candidates 第一条是 remove_run」+「uids 里那两格」，就把 B342/B341
+ * 拆了 —— 而那是 **painter#13552 唯一的 color 供料口**。
+ *
+ * 三件事同时错：
+ *   ① `uids` 里矿机和带子混在一起：`remove_run` 只作用于带子、
+ *      `remove_machine` 只作用于机器，同一个数组没法给两个动作用；
+ *   ② `candidates[0]=remove_run` 把一个「矿机空转」的诊断变成了「去拆下游」；
+ *   ③ 诊断**算得出来**下游是谁（那条带子的出口正落在 painter 的 color 槽上），
+ *      却从没说过 —— 于是模型只能把「矿机没货」理解成「整条链都该消失」。
+ *
+ * 下面几条夹具钉住这三件事。几何全是真的（painter r=90 的 color 槽本体在
+ * 相对 (0,1)，shape 槽本体在 (0,0)，out 槽本体也是 (0,1) —— 见 `slotsOf`）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** 一条 3 格的死链：矿机 @(16,12) 朝 left → 带子 (15,12)(14,12)(13,12) → painter @(12,11) r=90。 */
+function barrenPainterWorld({ painterLive }) {
+    const miner = (uid, x, y, r) => ({ uid, type: "miner", x, y, r, variant: "default", rotation_variant: 0, code: 7, layer: "regular" });
+    const belt = (uid, x, y, r, rv) => ({
+        uid, type: "belt", x, y, r, variant: "default", rotation_variant: rv,
+        code: rv === 0 ? 1 : rv === 1 ? 2 : rv === 2 ? 3 : 4, layer: "regular",
+    });
+    const painter = (uid, x, y, r) => ({ uid, type: "painter", x, y, r, variant: "default", rotation_variant: 0, code: 16, layer: "regular" });
+    const trash = (uid, x, y) => ({ uid, type: "trash", x, y, r: 0, variant: "default", rotation_variant: 0, code: 20, layer: "regular" });
+    return {
+        goal: { level: 12, requirement: { shape: "CbCbCbRb:CwCwCwCw", required: 1000, delivered: 0 } },
+        entities: [
+            { uid: 1, type: "hub", x: 40, y: 40, r: 0, variant: "default", rotation_variant: 0, code: 26, layer: "regular" },
+            /* 矿机脚下【没有矿】：resources 里只有 (100,100) */
+            miner(2, 16, 12, 270),
+            belt(3, 15, 12, 270, 0),
+            belt(4, 14, 12, 270, 0),
+            belt(5, 13, 12, 270, 0),   // 出口格 (12,12) = painter 的 color 槽本体
+            painter(6, 12, 11, 90),
+            /* 画家活着：shape 槽有货、out 槽有去处 */
+            ...(painterLive ? [belt(7, 12, 10, 180, 0), belt(8, 12, 13, 180, 0), trash(9, 12, 14)] : []),
+        ],
+        resources: [[100, 100, "CuCuCuCu"]],
+    };
+}
+
+const barrenOf = ds => byCode(ds, "CHAIN_UNFED").filter(d => d.evidence && d.evidence.barren_miner === true);
+
+test("T-chain-1 ★ `uids` 只放矿机自己；下游带子单列在 `chain_belt_uids`", () => {
+    const w = barrenPainterWorld({ painterLive: true });
+    const ds = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    const g = barrenOf(ds);
+    assert.equal(g.length, 1, "夹具必须产出恰好一条 barren 分组");
+    const d = g[0];
+    assert.deepEqual(d.evidence.uids, [2],
+        `★ uids 只许有矿机自己（remove_run 会照这个数组拆带子）：${JSON.stringify(d.evidence.uids)}`);
+    assert.deepEqual(d.evidence.chain_belt_uids, [3, 4, 5],
+        `★ 下游带子必须在独立字段里：${JSON.stringify(d.evidence.chain_belt_uids)}`);
+    assert.equal(d.evidence.chain_belts, 3);
+    /* 两组不许有任何交集 —— 混一组就是把这次的 bug 又写回来了。 */
+    const inter = d.evidence.uids.filter(u => d.evidence.chain_belt_uids.includes(u));
+    assert.deepEqual(inter, [], "uids 与 chain_belt_uids 不许有交集");
+});
+
+test("T-chain-2 ★ 末端是活着的 painter.color ⇒ 候选里不许出现 remove_run", () => {
+    const w = barrenPainterWorld({ painterLive: true });
+    const ds = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    const d = barrenOf(ds)[0];
+    assert.ok(Array.isArray(d.candidates) && d.candidates.length > 0);
+    assert.ok(!d.candidates.includes("remove_run"),
+        `★ 拆了画家就永远喷不了漆 —— 候选里不许有 remove_run：${JSON.stringify(d.candidates)}`);
+    assert.equal(d.candidates[0], "connect",
+        `★ 第一条必须是能救的那个（从别的有矿矿机接过来），实得 ${JSON.stringify(d.candidates)}`);
+    assert.ok(d.candidates.every(m => typeof m === "string" && !m.includes("_guarded")),
+        "候选必须是真宏名，不许造词");
+});
+
+test("T-chain-3 ★ 末端活着时，evidence 要说出「末端是谁、哪个槽、是不是唯一供料」", () => {
+    const w = barrenPainterWorld({ painterLive: true });
+    const ds = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    const d = barrenOf(ds)[0];
+    const ends = d.evidence.live_chain_ends;
+    assert.ok(Array.isArray(ends) && ends.length === 1,
+        `★ 必须记下那个活着的末端（实得 ${JSON.stringify(ends)}）`);
+    assert.equal(ends[0].uid, 6);
+    assert.equal(ends[0].type, "painter");
+    assert.equal(ends[0].slot, "color", "★ 槽的 role 来自 slotsOf 的真实槽位表，不是猜的");
+    assert.equal(ends[0].unique_feed, true, "★ 这个槽只有这一路供料 —— 拆了就彻底断");
+    assert.ok(typeof ends[0].handle === "string" && ends[0].handle.length > 0,
+        "★ 必须带句柄，否则模型没法指名");
+    /* 不许放坐标进来（本文件的硬约束）。 */
+    assert.ok(!("cells" in ends[0]) && !("x" in ends[0]),
+        `★ evidence 里不许出现坐标：${JSON.stringify(ends[0])}`);
+});
+
+test("T-chain-4 ★ hint 必须点名那台机器和那个槽（模型读的是渲染文本，不是 evidence）", () => {
+    const w = barrenPainterWorld({ painterLive: true });
+    const ds = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    const d = barrenOf(ds)[0];
+    const h = String(d.hint || "");
+    assert.ok(h.length > 0, "★ 末端活着时 hint 不许为空");
+    assert.ok(/painter/.test(h), `★ hint 必须说清末端是什么机器：${h}`);
+    assert.ok(/color/.test(h), `★ hint 必须说清是哪个槽：${h}`);
+    assert.ok(/唯一供料/.test(h), `★ 「唯一供料」是拆了会怎样的直接答案：${h}`);
+    assert.ok(/别拆/.test(h), `★ 必须明说别拆：${h}`);
+    assert.ok(/remove_machine/.test(h),
+        `★ 必须给出正确出路（删空转矿机）并写对宏名语法：${h}`);
+    /* 不许教 remove_run —— 那是这次事故的那个动作。 */
+    assert.ok(!/remove_run\s*\{/.test(h), `★ hint 不许教 remove_run：${h}`);
+    /* ★ 必须放得进 180 字符的渲染闸门 ★
+     *
+     * `prompt.mjs` 把 hint `clip(..., 180)`（只给 HUB_FED_BY_COLOR / HUB_INLET_THIN 放宽到 400）。
+     * 第一版写满 204 字符，被截掉的正好是 `remove_machine {...}` 那半句 ——
+     * 「进了 prompt ≠ 完整到达」，模型看懂病因却拿不到动作
+     * （见 `hint-truncated-before-arrival`）。 */
+    assert.ok(h.length <= 180, `★ hint 必须 ≤180 字符（渲染闸门），实得 ${h.length}：${h}`);
+    /* 可执行的那半句必须在闸门之前 —— 用「宏调用在第 180 字符内」直接判。 */
+    const callAt = h.indexOf("remove_machine {");
+    assert.ok(callAt >= 0 && callAt < 180, `★ 宏调用不许被闸门截掉（位置 ${callAt}）：${h}`);
+});
+
+test("T-chain-5 ★ 负例：末端没有活机器 ⇒ 保持原样（remove_run 排第一 + 没有 live_chain_ends）", () => {
+    /* 同一条链，但画家不接受 shape、输出也没接东西 ⇒ 它自己也是死的。
+       这时「拆这条链」确实是干净动作，诊断不许因为修法的存在而变哑。 */
+    const w = barrenPainterWorld({ painterLive: false });
+    const ds = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    const d = barrenOf(ds)[0];
+    assert.equal(d.candidates[0], "remove_run",
+        `★ 没有人在等它时必须仍给 remove_run（否则这条判据把真死链也保护了）：${JSON.stringify(d.candidates)}`);
+    assert.ok(!("live_chain_ends" in d.evidence),
+        `★ 没有活末端时不许出现这个键（不是空数组 —— 空数组让「有没有算过」含混）`);
+    assert.ok(!("hint" in d) || !d.hint, `★ 没有活末端时不许编一条「别拆」的 hint：${d.hint}`);
+});
+
+test("T-chain-6 ★ 负例：末端是 trash ⇒ 不算「有人在等」（trash 是汇不是消费者）", () => {
+    /* 把 painter 换成 trash：一条从空转矿机直通垃圾桶的线，拆掉它是对的。
+       如果把 trash 也当「活机器」，这类形态会全部失去 remove_run —— 过度保守。 */
+    const w = barrenPainterWorld({ painterLive: true });
+    w.entities = w.entities.filter(e => e.uid !== 6);
+    w.entities.push({ uid: 6, type: "trash", x: 12, y: 11, r: 0, variant: "default", rotation_variant: 0, code: 20, layer: "regular" });
+    const ds = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    const g = barrenOf(ds);
+    if (g.length) {
+        assert.equal(g[0].candidates[0], "remove_run",
+            `★ 直通 trash 的死链仍应可拆：${JSON.stringify(g[0].candidates)}`);
+        assert.ok(!("live_chain_ends" in g[0].evidence));
+    }
+});
+
+test("T-chain-8 ★ 负例：那个槽已有**第二条**供料带 ⇒ 不算「唯一供料」，仍可拆", () => {
+    /* 这是「防过度保守」的那道门：如果同一个 color 槽上还挂着另一条带子，
+       拆掉矿机这条链不会让画家断粮 ⇒ `remove_run` 必须留着。
+       没有这条，本修法会把「有备份的死链」也保护起来，那才是过度保守。 */
+    const w = barrenPainterWorld({ painterLive: true });
+    /* 再加一条也落进 (12,12) 的带子（从左边来：@(11,12) 朝 right） */
+    w.entities.push({ uid: 20, type: "belt", x: 11, y: 12, r: 90, variant: "default", rotation_variant: 0, code: 1, layer: "regular" });
+    const ds = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", buildHandles(w, null), {});
+    const g = barrenOf(ds);
+    assert.ok(g.length, "夹具必须仍产出 barren 分组");
+    const d = g[0];
+    assert.equal(d.candidates[0], "remove_run",
+        `★ 有第二条供料时不许拦 remove_run：${JSON.stringify(d.candidates)}`);
+    assert.ok(!("live_chain_ends" in d.evidence),
+        `★ 有第二条供料时不许记进 live_chain_ends：${JSON.stringify(d.evidence.live_chain_ends)}`);
+});
+
+test("T-chain-7 ★ 确定性：同一份 obs 两次调用，chain_belt_uids / live_chain_ends 逐字节相同", () => {
+    /* 这两个字段会进 hint 文案；若 Map/Set 迭代序不稳，prompt 会抖动。 */
+    const w = barrenPainterWorld({ painterLive: true });
+    const h = buildHandles(w, null);
+    const a = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", h, {});
+    const b = structuralDiagnoses(w, null, "CbCbCbRb:CwCwCwCw", h, {});
+    assert.equal(JSON.stringify(a), JSON.stringify(b));
+});

@@ -21,7 +21,7 @@
  */
 
 import { verifyRuntime, slotsOf, beltRvOf } from "../verify_runtime.mjs";
-import { DIRV, beltExit } from "../../ai/belt-rules.mjs";
+import { DIRV, beltExit, beltEntry } from "../../ai/belt-rules.mjs";
 import { worldHealth, healthDelta, classifyNetEffect } from "./health.mjs";
 
 const isInt = n => typeof n === "number" && Number.isInteger(n);
@@ -87,6 +87,101 @@ export function undeclaredDestruction(beforeObs, afterObs, declaredDestroys) {
         out.push(uid);
     }
     return out.sort((x, y) => x - y);
+}
+
+/* ═══════════════ 被游戏静默重算方向的带子（邻居重算） ═══════════════ */
+
+/**
+ * 找出「两份 obs 之间朝向变了、但**没有任何 op 声明要改**」的带子。
+ *
+ * ## 为什么需要它（2026-11-24，接 `ROOTCAUSE-COLOR-SLOT-2026-11-23.md`）
+ *
+ * 游戏把 `BeltSystem.updateSurroundingBeltPlacement` 挂在 `entityAdded` /
+ * `entityDestroyed` 上（`systems/belt.js:59-64`）：一次 `insert_machine` /
+ * `place` / `delete` 落地时，它会把这栋建筑**周围一圈**的带子按邻居重算
+ * `rotation` 与 `rotationVariant`，并**覆写 `code`**（`systems/belt.js:117-212`）。
+ *
+ * 实测事故（2026-11-15 12:14:35，`r-20261115121125-264d` r3）：
+ * 一次「放垃圾桶」只声明 `destroys:[15021] + placements:1`，
+ * 但游戏顺手把
+ *
+ *   belt#14953@(-3,-7)  rv 2 → 0   （左→下转角 变成 左→右直带）
+ *   belt#15019@(-2,-7)  r 180 → 90
+ *
+ * 掰断了 painter 唯一的颜料供料线；5 分钟后全图产出归零。
+ * **这两格改向没有出现在任何 op、任何 warning、任何 diff 里** ——
+ * 旧版的 `tx.diff` 只报 `added`/`removed`，模型和人都看不见。
+ *
+ * ## 为什么在 loop 侧算，而不是在 mod 侧报
+ *
+ * `tx` 返回里其实能算出来（`snapshotWorld` / `diffSnapshots` 已有 `modified` uid 列表），
+ * 但那需要**改 mod → 重新 patch 游戏 → 真机验证**；而这一步的判据是纯数据：
+ * loop 每轮本来就有 `beforeObs` 与 `afterObs` 两份同口径的世界，
+ * 两份一减就知道谁被改了。所以这里用 obs 差集，**不改 mod、可离线验**。
+ *
+ * 判据刻意窄：只看**两份 obs 都在**的带子（`added`/`removed` 归 diff 管），
+ * 且 `(r, rv)` 任一变化。`code` 不单独看 —— 它由 `rv` 决定（`code = 1 + rv`），
+ * 多看一遍只会重复计数。
+ *
+ * @param {object} beforeObs
+ * @param {object} afterObs
+ * @param {object} [opts]
+ * @param {Array<number>} [opts.declaredDestroys] 计划声明要删的 uid（它们不在 afterObs，天然被排除）
+ * @param {object} [opts.handleTable] 可选：afterObs 的句柄表（`buildHandles`），用于给模型认得出的名字
+ * @returns {{count:number, items:Array<{uid:number, handle:string|null, x:number, y:number,
+ *            before:{r:number|null, rv:number|null}, after:{r:number|null, rv:number|null},
+ *            entry:{before:string|null, after:string|null}, exit:{before:string|null, after:string|null}}>,
+ *            truncated:boolean}}
+ */
+export function reorientedBelts(beforeObs, afterObs, opts = {}) {
+    const b = unwrapObs(beforeObs), a = unwrapObs(afterObs);
+    const beforeList = Array.isArray(b.entities) ? b.entities : [];
+    const afterList = Array.isArray(a.entities) ? a.entities : [];
+    const beforeByUid = new Map();
+    for (const e of beforeList) {
+        if (e && isInt(e.uid)) beforeByUid.set(e.uid, e);
+    }
+    const wanted = new Set(Array.isArray(opts.declaredDestroys) ? opts.declaredDestroys.filter(isInt) : []);
+    const handleTable = opts.handleTable || null;
+    const LIMIT = 8;
+
+    const rvOf = e => beltRvOf(e);
+    const items = [];
+    for (const e of afterList) {
+        if (!e || !isInt(e.uid)) continue;
+        if (!BELT_KINDS.has(e.type)) continue;
+        /* 计划自己声明要删的：即便它又出现在 after 里（uid 复用之类），也不算静默改向 */
+        if (wanted.has(e.uid)) continue;
+        const before = beforeByUid.get(e.uid);
+        if (!before) continue;                       // 新放的带子 = added，不是「被改」
+        const rBefore = isInt(before.r) ? before.r : null;
+        const rAfter = isInt(e.r) ? e.r : null;
+        const rvBefore = rvOf(before);
+        const rvAfter = rvOf(e);
+        const sameR = rBefore === rAfter;
+        const sameRv = rvBefore === rvAfter;
+        if (sameR && sameRv) continue;               // 朝向没动 —— 这才是「静默」
+
+        /* 入口/出口方向：让模型读得懂「从哪进、往哪出」，而不只是两个数字。
+           任一 r/rv 缺失时退成 null（不猜）。 */
+        const dirOf = (r, rv, which) => {
+            if (r === null || rv === null || ![0, 1, 2].includes(rv)) return null;
+            try { return which === "entry" ? beltEntry(rv, r) : beltExit(rv, r); } catch { return null; }
+        };
+        const handle = handleTable && handleTable.byUid ? (handleTable.byUid.get(e.uid) || null) : null;
+        items.push({
+            uid: e.uid,
+            handle,
+            x: isInt(e.x) ? e.x : null,
+            y: isInt(e.y) ? e.y : null,
+            before: { r: rBefore, rv: rvBefore },
+            after: { r: rAfter, rv: rvAfter },
+            entry: { before: dirOf(rBefore, rvBefore, "entry"), after: dirOf(rAfter, rvAfter, "entry") },
+            exit: { before: dirOf(rBefore, rvBefore, "exit"), after: dirOf(rAfter, rvAfter, "exit") },
+        });
+    }
+    items.sort((p, q) => p.uid - q.uid);
+    return { count: items.length, items: items.slice(0, LIMIT), truncated: items.length > LIMIT };
 }
 
 /* ══════════════════════════ v2 §2.2：apply 判据 ══════════════════════════ */
@@ -494,7 +589,7 @@ function resolveUid(ep, uidMap) {
  *                    uidDiff:number[], evidence:object}>}
  */
 export async function verifyRound({
-    reader, txPlan, uidMap, beforeObs, mode, goalShape, flows, tx, behavior,
+    reader, txPlan, uidMap, beforeObs, mode, goalShape, flows, tx, behavior, handles,
 }) {
     const uidMapObj = uidMap instanceof Map ? Object.fromEntries(uidMap) : (uidMap || {});
     const evidence = {
@@ -592,6 +687,25 @@ export async function verifyRound({
         : [];
     if (afterObs) evidence.after_hash = worldUidSetHash(afterObs);
 
+    /* ── 游戏静默重算的邻居带子（2026-11-24） ──
+     *
+     * 这一项**不进 strict 判据、不判红**：邻居重算本身是游戏正常行为，
+     * 而且大多数时候它算出来的方向和我们要的一致（`systems/belt.js:117-212`）。
+     * 把它判红会让每一次「正常放置」都被当成失败 —— 那正是
+     * `tx.verify` 注释里那条纪律（「modified 非空可能是合法重算」）。
+     *
+     * 但它**必须可见**：2026-11-15 那次事故的教训是「一个放垃圾桶的动作
+     * 静默掰断了供料主链，而所有报告里都看不出来」。所以这里只做两件事：
+     *   ① 把明细放进 `report.reoriented`（transcript / 下一轮 prompt 的原料）
+     *   ② 加一条 `ok:true` 的 check，把「改了几条」放进 evidence ——
+     *      让「没有」和「有但没算」在 verify-last.json 里长得不一样。 */
+    const reoriented = afterObs
+        ? reorientedBelts(beforeObs, afterObs, {
+            declaredDestroys: txPlan.destroys || [],
+            handleTable: handles || null,
+        })
+        : { count: 0, items: [], truncated: false };
+
     /* ── 额外判据（verifyRuntime 不管的两件事） ── */
     const checks = Array.isArray(report.checks) ? report.checks.slice() : [];
     if (!afterObs) {
@@ -609,6 +723,25 @@ export async function verifyRound({
             evidence: { undeclared: uidDiff, declared: (txPlan.destroys || []).length },
         });
     }
+
+    /* 邻居重算：**不判红**，只让「有几条带子被游戏改了朝向」这件事可观测。
+     *
+     * 判红的理由不够：游戏按邻居重算本身是正常行为（`systems/belt.js:117-212`），
+     * 且大多数时候算出来与我们要的一致。但它**必须留下痕迹** —— 2026-11-15
+     * 那次「放垃圾桶掰断供料主链」的事故，证据链上唯一缺的就是这一格。
+     * `ok:true` 是刻意的：它不是一条批评，是一条读数。 */
+    checks.push({
+        name: "V-belt-reorient",
+        ok: true,
+        reason: null,
+        evidence: {
+            reoriented: reoriented.count,
+            items: reoriented.items,
+            truncated: reoriented.truncated,
+            note: "game recomputed neighbour belt rotation_variant on entityAdded/entityDestroyed; "
+                + "not declared by any op",
+        },
+    });
 
     /* obs 版连通性：不依赖 debug_items（>40 条 path 时 checkFlow 永久 undecidable），
        用「从 from 沿 beltExit 走到 to」这一条独立证据。它验不了「机器输出 → 下游」之外的东西，
@@ -760,8 +893,11 @@ export async function verifyRound({
     evidence.has_placements = hasPlacements;
     evidence.checks_ok = checks.filter(c => c.ok && !c.skipped).length;
     evidence.checks_failed = checks.filter(c => !c.ok && !c.skipped).map(c => c.name);
+    /* 邻居重算的明细单列一份 —— 下一轮 prompt 与 transcript 都从这里取，
+       不必再从 checks[].evidence 里翻（那条是给 verify-last.json 的读数）。 */
+    evidence.reoriented = reoriented;
 
-    return { ok, checks, strict, apply, uidDiff, evidence };
+    return { ok, checks, strict, apply, uidDiff, evidence, reoriented };
 }
 
 export default verifyRound;
